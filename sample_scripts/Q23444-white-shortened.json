@@ -1,0 +1,2994 @@
+{
+  "entities": {
+    "Q23444": {
+      "pageid": 26835,
+      "ns": 0,
+      "title": "Q23444",
+      "lastrevid": 943468240,
+      "modified": "2019-05-17T08:14:50Z",
+      "type": "item",
+      "id": "Q23444",
+      "labels": {
+        "szl": {
+          "language": "szl",
+          "value": "Bjo\u0142o farba"
+        },
+        "zh": {
+          "language": "zh",
+          "value": "\u767d\u8272"
+        },
+        "pl": {
+          "language": "pl",
+          "value": "barwa bia\u0142a"
+        },
+        "eu": {
+          "language": "eu",
+          "value": "zuri"
+        },
+        "bs": {
+          "language": "bs",
+          "value": "Bijela"
+        },
+        "es": {
+          "language": "es",
+          "value": "blanco"
+        },
+        "oc": {
+          "language": "oc",
+          "value": "Blanc"
+        },
+        "hu": {
+          "language": "hu",
+          "value": "feh\u00e9r"
+        },
+        "pdc": {
+          "language": "pdc",
+          "value": "Weiss"
+        },
+        "sq": {
+          "language": "sq",
+          "value": "Ngjyra e bardh\u00eb"
+        },
+        "mt": {
+          "language": "mt",
+          "value": "abjad"
+        },
+        "ia": {
+          "language": "ia",
+          "value": "blanco"
+        },
+        "ga": {
+          "language": "ga",
+          "value": "B\u00e1n"
+        },
+        "ar": {
+          "language": "ar",
+          "value": "\u0623\u0628\u064a\u0636"
+        },
+        "nl": {
+          "language": "nl",
+          "value": "wit"
+        },
+        "pt": {
+          "language": "pt",
+          "value": "branco"
+        },
+        "eo": {
+          "language": "eo",
+          "value": "blanko"
+        },
+        "yi": {
+          "language": "yi",
+          "value": "\u05d5\u05d5\u05d9\u05d9\u05e1"
+        },
+        "su": {
+          "language": "su",
+          "value": "Bodas"
+        },
+        "new": {
+          "language": "new",
+          "value": "\u0924\u0941\u092f\u0941"
+        },
+        "nrm": {
+          "language": "nrm",
+          "value": "Blianc"
+        },
+        "sr": {
+          "language": "sr",
+          "value": "\u0431\u0435\u043b\u0430"
+        },
+        "fi": {
+          "language": "fi",
+          "value": "valkoinen"
+        },
+        "uk": {
+          "language": "uk",
+          "value": "\u0431\u0456\u043b\u0438\u0439 \u043a\u043e\u043b\u0456\u0440"
+        },
+        "jbo": {
+          "language": "jbo",
+          "value": "blabi"
+        },
+        "gan": {
+          "language": "gan",
+          "value": "\u767d"
+        },
+        "ne": {
+          "language": "ne",
+          "value": "\u0938\u0947\u0924\u094b"
+        },
+        "hr": {
+          "language": "hr",
+          "value": "Bijela"
+        },
+        "az": {
+          "language": "az",
+          "value": "A\u011f"
+        },
+        "fur": {
+          "language": "fur",
+          "value": "Blanc"
+        },
+        "an": {
+          "language": "an",
+          "value": "Blanco"
+        },
+        "da": {
+          "language": "da",
+          "value": "hvid"
+        },
+        "nah": {
+          "language": "nah",
+          "value": "Izt\u0101c"
+        },
+        "he": {
+          "language": "he",
+          "value": "\u05dc\u05d1\u05df"
+        },
+        "be": {
+          "language": "be",
+          "value": "\u0411\u0435\u043b\u044b \u043a\u043e\u043b\u0435\u0440"
+        },
+        "lad": {
+          "language": "lad",
+          "value": "Blanko"
+        },
+        "mwl": {
+          "language": "mwl",
+          "value": "Branco"
+        },
+        "mdf": {
+          "language": "mdf",
+          "value": "\u0410\u043a\u0448\u0430"
+        },
+        "it": {
+          "language": "it",
+          "value": "bianco"
+        },
+        "ay": {
+          "language": "ay",
+          "value": "Janq'u"
+        },
+        "ja": {
+          "language": "ja",
+          "value": "\u767d"
+        },
+        "ml": {
+          "language": "ml",
+          "value": "\u0d35\u0d46\u0d33\u0d41\u0d2a\u0d4d\u0d2a\u0d4d"
+        },
+        "vi": {
+          "language": "vi",
+          "value": "tr\u1eafng"
+        },
+        "yue": {
+          "language": "yue",
+          "value": "\u767d"
+        },
+        "sa": {
+          "language": "sa",
+          "value": "\u0936\u094d\u0935\u0947\u0924"
+        },
+        "ht": {
+          "language": "ht",
+          "value": "Blan"
+        },
+        "gn": {
+          "language": "gn",
+          "value": "Morot\u0129"
+        },
+        "lzh": {
+          "language": "lzh",
+          "value": "\u767d"
+        },
+        "tg": {
+          "language": "tg",
+          "value": "\u0421\u0430\u0444\u0435\u0434"
+        },
+        "ku": {
+          "language": "ku",
+          "value": "Sp\u00ee"
+        },
+        "sk": {
+          "language": "sk",
+          "value": "Biela"
+        },
+        "th": {
+          "language": "th",
+          "value": "\u0e2a\u0e35\u0e02\u0e32\u0e27"
+        },
+        "ca": {
+          "language": "ca",
+          "value": "blanc"
+        },
+        "la": {
+          "language": "la",
+          "value": "Albus"
+        },
+        "cy": {
+          "language": "cy",
+          "value": "gwyn"
+        },
+        "sgs": {
+          "language": "sgs",
+          "value": "Balta"
+        },
+        "cs": {
+          "language": "cs",
+          "value": "b\u00edl\u00e1"
+        },
+        "mr": {
+          "language": "mr",
+          "value": "\u092a\u093e\u0902\u0922\u0930\u093e"
+        },
+        "bg": {
+          "language": "bg",
+          "value": "\u0431\u044f\u043b\u043e"
+        },
+        "arc": {
+          "language": "arc",
+          "value": "\u071a\u0718\u072a\u0710"
+        },
+        "te": {
+          "language": "te",
+          "value": "\u0c24\u0c46\u0c32\u0c41\u0c2a\u0c41"
+        },
+        "ur": {
+          "language": "ur",
+          "value": "\u0633\u0641\u06cc\u062f"
+        },
+        "lb": {
+          "language": "lb",
+          "value": "W\u00e4iss"
+        },
+        "jv": {
+          "language": "jv",
+          "value": "Putih"
+        },
+        "bo": {
+          "language": "bo",
+          "value": "\u0f51\u0f40\u0f62\u0f0b\u0f54\u0f7c\u0f0d"
+        },
+        "qu": {
+          "language": "qu",
+          "value": "Yuraq"
+        },
+        "za": {
+          "language": "za",
+          "value": "Hau"
+        },
+        "ta": {
+          "language": "ta",
+          "value": "\u0bb5\u0bc6\u0bb3\u0bcd\u0bb3\u0bc8"
+        },
+        "af": {
+          "language": "af",
+          "value": "wit"
+        },
+        "ceb": {
+          "language": "ceb",
+          "value": "Puti"
+        },
+        "ms": {
+          "language": "ms",
+          "value": "Putih"
+        },
+        "ce": {
+          "language": "ce",
+          "value": "\u041aI\u0430\u0439\u043d"
+        },
+        "et": {
+          "language": "et",
+          "value": "Valge"
+        },
+        "bn": {
+          "language": "bn",
+          "value": "\u09b8\u09be\u09a6\u09be"
+        },
+        "br": {
+          "language": "br",
+          "value": "gwenn"
+        },
+        "el": {
+          "language": "el",
+          "value": "\u03bb\u03b5\u03c5\u03ba\u03cc"
+        },
+        "pnb": {
+          "language": "pnb",
+          "value": "\u0686\u0679\u0627"
+        },
+        "ba": {
+          "language": "ba",
+          "value": "\u0410\u04a1"
+        },
+        "sv": {
+          "language": "sv",
+          "value": "vit"
+        },
+        "is": {
+          "language": "is",
+          "value": "hv\u00edtur"
+        },
+        "ru": {
+          "language": "ru",
+          "value": "\u0431\u0435\u043b\u044b\u0439"
+        },
+        "ast": {
+          "language": "ast",
+          "value": "blancu"
+        },
+        "tr": {
+          "language": "tr",
+          "value": "Beyaz"
+        },
+        "mk": {
+          "language": "mk",
+          "value": "\u0431\u0435\u043b\u0430"
+        },
+        "myv": {
+          "language": "myv",
+          "value": "\u0410\u0448\u043e"
+        },
+        "nn": {
+          "language": "nn",
+          "value": "kvit"
+        },
+        "io": {
+          "language": "io",
+          "value": "Blanka"
+        },
+        "ln": {
+          "language": "ln",
+          "value": "Mp\u025b\u0301mb\u025b\u0301"
+        },
+        "nan": {
+          "language": "nan",
+          "value": "Pe\u030dh-sek"
+        },
+        "so": {
+          "language": "so",
+          "value": "Cad"
+        },
+        "fr": {
+          "language": "fr",
+          "value": "blanc"
+        },
+        "ko": {
+          "language": "ko",
+          "value": "\ud558\uc591"
+        },
+        "lbe": {
+          "language": "lbe",
+          "value": "\u041a\u04c0\u044f\u043b\u0430\u0441\u0441\u0430"
+        },
+        "lv": {
+          "language": "lv",
+          "value": "balt\u0101 kr\u0101sa"
+        },
+        "gl": {
+          "language": "gl",
+          "value": "Branco"
+        },
+        "de": {
+          "language": "de",
+          "value": "Wei\u00df"
+        },
+        "de-ch": {
+          "language": "de-ch",
+          "value": "Weiss"
+        },
+        "id": {
+          "language": "id",
+          "value": "Putih"
+        },
+        "en": {
+          "language": "en",
+          "value": "white"
+        },
+        "sh": {
+          "language": "sh",
+          "value": "Bijelo"
+        },
+        "hi": {
+          "language": "hi",
+          "value": "\u0936\u094d\u0935\u0947\u0924"
+        },
+        "ro": {
+          "language": "ro",
+          "value": "Alb"
+        },
+        "sl": {
+          "language": "sl",
+          "value": "Bela"
+        },
+        "war": {
+          "language": "war",
+          "value": "Busag"
+        },
+        "fa": {
+          "language": "fa",
+          "value": "\u0633\u0641\u06cc\u062f"
+        },
+        "ch": {
+          "language": "ch",
+          "value": "\u00c1'paka"
+        },
+        "lt": {
+          "language": "lt",
+          "value": "Balta"
+        },
+        "vro": {
+          "language": "vro",
+          "value": "Valg\u00f5"
+        },
+        "en-ca": {
+          "language": "en-ca",
+          "value": "white"
+        },
+        "en-gb": {
+          "language": "en-gb",
+          "value": "white"
+        },
+        "pa": {
+          "language": "pa",
+          "value": "\u0a1a\u0a3f\u0a71\u0a1f\u0a3e"
+        },
+        "hak": {
+          "language": "hak",
+          "value": "Pha\u030dk-set"
+        },
+        "sr-ec": {
+          "language": "sr-ec",
+          "value": "\u0431\u0435\u043b\u0430"
+        },
+        "sr-el": {
+          "language": "sr-el",
+          "value": "bela"
+        },
+        "nb": {
+          "language": "nb",
+          "value": "hvit"
+        },
+        "sco": {
+          "language": "sco",
+          "value": "White"
+        },
+        "ang": {
+          "language": "ang",
+          "value": "Hw\u012bt"
+        },
+        "am": {
+          "language": "am",
+          "value": "\u1290\u132d"
+        },
+        "cdo": {
+          "language": "cdo",
+          "value": "B\u0103h-s\u00e1ik"
+        },
+        "sah": {
+          "language": "sah",
+          "value": "\u04ae\u0440\u04af\u04a5"
+        },
+        "vec": {
+          "language": "vec",
+          "value": "Bianco"
+        },
+        "tl": {
+          "language": "tl",
+          "value": "Puti"
+        },
+        "ik": {
+          "language": "ik",
+          "value": "Qatiqtaaq"
+        },
+        "rup": {
+          "language": "rup",
+          "value": "Albu"
+        },
+        "ak": {
+          "language": "ak",
+          "value": "Fitaa"
+        },
+        "scn": {
+          "language": "scn",
+          "value": "biancu"
+        },
+        "zh-cn": {
+          "language": "zh-cn",
+          "value": "\u767d\u8272"
+        },
+        "zh-hans": {
+          "language": "zh-hans",
+          "value": "\u767d\u8272"
+        },
+        "zh-hant": {
+          "language": "zh-hant",
+          "value": "\u767d\u8272"
+        },
+        "zh-hk": {
+          "language": "zh-hk",
+          "value": "\u767d\u8272"
+        },
+        "zh-mo": {
+          "language": "zh-mo",
+          "value": "\u767d\u8272"
+        },
+        "zh-my": {
+          "language": "zh-my",
+          "value": "\u767d\u8272"
+        },
+        "zh-sg": {
+          "language": "zh-sg",
+          "value": "\u767d\u8272"
+        },
+        "zh-tw": {
+          "language": "zh-tw",
+          "value": "\u767d\u8272"
+        },
+        "pam": {
+          "language": "pam",
+          "value": "Maputi"
+        },
+        "lmo": {
+          "language": "lmo",
+          "value": "Bianch"
+        },
+        "hy": {
+          "language": "hy",
+          "value": "\u057d\u057a\u056b\u057f\u0561\u056f"
+        },
+        "azb": {
+          "language": "azb",
+          "value": "\u0622\u063a"
+        },
+        "sd": {
+          "language": "sd",
+          "value": "\u0627\u0687\u0648"
+        },
+        "ckb": {
+          "language": "ckb",
+          "value": "\u0633\u067e\u06cc"
+        },
+        "nso": {
+          "language": "nso",
+          "value": "T\u0161hweu"
+        },
+        "vep": {
+          "language": "vep",
+          "value": "Vauged muju"
+        },
+        "kk": {
+          "language": "kk",
+          "value": "\u0410\u049b \u0442\u04af\u0441"
+        },
+        "jam": {
+          "language": "jam",
+          "value": "Wait"
+        },
+        "fo": {
+          "language": "fo",
+          "value": "hv\u00edt"
+        },
+        "nap": {
+          "language": "nap",
+          "value": "Ghiangh"
+        },
+        "pag": {
+          "language": "pag",
+          "value": "amputi"
+        },
+        "lo": {
+          "language": "lo",
+          "value": "\u0eaa\u0eb5\u0e82\u0eb2\u0ea7"
+        },
+        "ty": {
+          "language": "ty",
+          "value": "\u2019uo\u2019uo"
+        },
+        "yo": {
+          "language": "yo",
+          "value": "funfun"
+        },
+        "ilo": {
+          "language": "ilo",
+          "value": "puraw"
+        },
+        "se": {
+          "language": "se",
+          "value": "vielgat"
+        },
+        "sma": {
+          "language": "sma",
+          "value": "veelkes"
+        },
+        "smj": {
+          "language": "smj",
+          "value": "bedjat"
+        },
+        "hsb": {
+          "language": "hsb",
+          "value": "b\u011b\u0142o"
+        },
+        "aeb-arab": {
+          "language": "aeb-arab",
+          "value": "\u0623\u0628\u064a\u0636"
+        },
+        "tt": {
+          "language": "tt",
+          "value": "\u0430\u043a"
+        },
+        "tt-cyrl": {
+          "language": "tt-cyrl",
+          "value": "\u0430\u043a"
+        },
+        "pcd": {
+          "language": "pcd",
+          "value": "Blanc"
+        },
+        "kbp": {
+          "language": "kbp",
+          "value": "T\u0254l\u0269m k\u028ah\u028al\u028am\u0269\u014b"
+        },
+        "lfn": {
+          "language": "lfn",
+          "value": "Blanca"
+        },
+        "ts": {
+          "language": "ts",
+          "value": "Basa"
+        },
+        "sw": {
+          "language": "sw",
+          "value": "Rangi nyeupe"
+        },
+        "kn": {
+          "language": "kn",
+          "value": "\u0cac\u0cbf\u0cb3\u0cbf"
+        },
+        "pt-br": {
+          "language": "pt-br",
+          "value": "branco"
+        },
+        "be-tarask": {
+          "language": "be-tarask",
+          "value": "\u0431\u0435\u043b\u044b \u043a\u043e\u043b\u0435\u0440"
+        },
+        "ka": {
+          "language": "ka",
+          "value": "\u10d7\u10d4\u10d7\u10e0\u10d8"
+        }
+      },
+      "descriptions": {
+        "es": {
+          "language": "es",
+          "value": "color de claridad m\u00e1xima y de oscuridad nula, similar a la coloraci\u00f3n de la nieve"
+        },
+        "de": {
+          "language": "de",
+          "value": "unbunte Farbe"
+        },
+        "en": {
+          "language": "en",
+          "value": "color"
+        },
+        "en-ca": {
+          "language": "en-ca",
+          "value": "colour of milk and snow; contains all the wavelengths of visible light without absorption, has maximum brightness, and does not have any hue; opposite of black"
+        },
+        "en-gb": {
+          "language": "en-gb",
+          "value": "colour of milk and snow; contains all the wavelengths of visible light without absorption, has maximum brightness, and does not have any hue; opposite of black"
+        },
+        "fr": {
+          "language": "fr",
+          "value": "couleur"
+        },
+        "it": {
+          "language": "it",
+          "value": "colore"
+        },
+        "sr": {
+          "language": "sr",
+          "value": "\u0431\u043e\u0458\u0430"
+        },
+        "sr-ec": {
+          "language": "sr-ec",
+          "value": "\u0431\u043e\u0458\u0430"
+        },
+        "sr-el": {
+          "language": "sr-el",
+          "value": "boja"
+        },
+        "hu": {
+          "language": "hu",
+          "value": "sz\u00edn"
+        },
+        "scn": {
+          "language": "scn",
+          "value": "lu culuri cchiu' chiaru"
+        },
+        "ca": {
+          "language": "ca",
+          "value": "color"
+        },
+        "da": {
+          "language": "da",
+          "value": "farve"
+        },
+        "nl": {
+          "language": "nl",
+          "value": "kleur"
+        },
+        "cy": {
+          "language": "cy",
+          "value": "lliw"
+        },
+        "fo": {
+          "language": "fo",
+          "value": "litur"
+        },
+        "yue": {
+          "language": "yue",
+          "value": "\u8272"
+        },
+        "zh": {
+          "language": "zh",
+          "value": "\u984f\u8272"
+        },
+        "zh-cn": {
+          "language": "zh-cn",
+          "value": "\u989c\u8272"
+        },
+        "zh-hans": {
+          "language": "zh-hans",
+          "value": "\u989c\u8272"
+        },
+        "zh-hant": {
+          "language": "zh-hant",
+          "value": "\u984f\u8272"
+        },
+        "zh-hk": {
+          "language": "zh-hk",
+          "value": "\u984f\u8272"
+        },
+        "zh-mo": {
+          "language": "zh-mo",
+          "value": "\u984f\u8272"
+        },
+        "zh-my": {
+          "language": "zh-my",
+          "value": "\u989c\u8272"
+        },
+        "zh-sg": {
+          "language": "zh-sg",
+          "value": "\u989c\u8272"
+        },
+        "zh-tw": {
+          "language": "zh-tw",
+          "value": "\u984f\u8272"
+        },
+        "el": {
+          "language": "el",
+          "value": "\u03c7\u03c1\u03ce\u03bc\u03b1"
+        },
+        "ty": {
+          "language": "ty",
+          "value": "\u2019\u016b"
+        },
+        "bn": {
+          "language": "bn",
+          "value": "\u09b0\u0999"
+        },
+        "he": {
+          "language": "he",
+          "value": "\u05e6\u05d1\u05e2"
+        },
+        "sv": {
+          "language": "sv",
+          "value": "ljusaste f\u00e4rgen"
+        },
+        "ga": {
+          "language": "ga",
+          "value": "Dath"
+        },
+        "bg": {
+          "language": "bg",
+          "value": "\u0446\u0432\u044f\u0442"
+        },
+        "pl": {
+          "language": "pl",
+          "value": "kolor"
+        },
+        "ar": {
+          "language": "ar",
+          "value": "\u0644\u0648\u0646 \u062d\u0633\u0628 \u0627\u0644\u0645\u0641\u0647\u0648\u0645 \u0627\u0644\u062d\u0633\u0651\u064a \u0644\u0625\u062f\u0631\u0627\u0643 \u0627\u0644\u0623\u0644\u0648\u0627\u0646\u060c \u0644\u0643\u0646\u0651\u0647 \u0628\u0627\u0644\u062d\u0642\u064a\u0642\u0629 \u0644\u0648\u0646 \u0645\u0646 \u063a\u064a\u0631 \u0635\u0628\u063a\u0629 \u0648\u0645\u062c\u0645\u0648\u0639 \u0643\u0627\u0641\u0651\u0629 \u0627\u0644\u0623\u0644\u0648\u0627\u0646 \u0641\u064a \u0627\u0644\u0637\u064a\u0641 \u0627\u0644\u0645\u0631\u0626\u064a"
+        },
+        "hsb": {
+          "language": "hsb",
+          "value": "barba"
+        },
+        "eo": {
+          "language": "eo",
+          "value": "plej hela koloro"
+        },
+        "io": {
+          "language": "io",
+          "value": "koloro"
+        },
+        "fy": {
+          "language": "fy",
+          "value": "kleur"
+        },
+        "vo": {
+          "language": "vo",
+          "value": "k\u00f6l"
+        },
+        "ia": {
+          "language": "ia",
+          "value": "color"
+        },
+        "te": {
+          "language": "te",
+          "value": "\u0c30\u0c02\u0c17\u0c41"
+        },
+        "tt": {
+          "language": "tt",
+          "value": "\u0442\u04e9\u0441"
+        },
+        "tt-cyrl": {
+          "language": "tt-cyrl",
+          "value": "\u0442\u04e9\u0441"
+        },
+        "lv": {
+          "language": "lv",
+          "value": "kr\u0101sa"
+        },
+        "pt": {
+          "language": "pt",
+          "value": "cor"
+        },
+        "pt-br": {
+          "language": "pt-br",
+          "value": "cor"
+        },
+        "de-ch": {
+          "language": "de-ch",
+          "value": "unbunte Farbe"
+        },
+        "ru": {
+          "language": "ru",
+          "value": "\u0446\u0432\u0435\u0442 \u0441\u043d\u0435\u0433\u0430, \u043c\u043e\u043b\u043e\u043a\u0430, \u043c\u0435\u043b\u0430"
+        },
+        "br": {
+          "language": "br",
+          "value": "liv"
+        },
+        "be-tarask": {
+          "language": "be-tarask",
+          "value": "\u043a\u043e\u043b\u0435\u0440"
+        },
+        "eu": {
+          "language": "eu",
+          "value": "kolorerik argiena"
+        },
+        "ka": {
+          "language": "ka",
+          "value": "\u10e4\u10d4\u10e0\u10d8"
+        }
+      },
+      "aliases": {
+        "zh": [{
+          "language": "zh",
+          "value": "\u767d"
+        }, {
+          "language": "zh",
+          "value": "\u7689"
+        }],
+        "pl": [{
+          "language": "pl",
+          "value": "biel"
+        }, {
+          "language": "pl",
+          "value": "\u015bwiat\u0142o bia\u0142e"
+        }, {
+          "language": "pl",
+          "value": "bia\u0142y"
+        }, {
+          "language": "pl",
+          "value": "kolor bia\u0142y"
+        }],
+        "eu": [{
+          "language": "eu",
+          "value": "txuri"
+        }],
+        "bs": [{
+          "language": "bs",
+          "value": "Bijelo"
+        }],
+        "es": [{
+          "language": "es",
+          "value": "albo"
+        }, {
+          "language": "es",
+          "value": "n\u00edveo"
+        }, {
+          "language": "es",
+          "value": "lechoso"
+        }, {
+          "language": "es",
+          "value": "albar"
+        }, {
+          "language": "es",
+          "value": "albug\u00edneo"
+        }, {
+          "language": "es",
+          "value": "cande"
+        }, {
+          "language": "es",
+          "value": "cano"
+        }, {
+          "language": "es",
+          "value": "c\u00e1ndido"
+        }, {
+          "language": "es",
+          "value": "niveo"
+        }, {
+          "language": "es",
+          "value": "albugineo"
+        }, {
+          "language": "es",
+          "value": "candido"
+        }],
+        "pdc": [{
+          "language": "pdc",
+          "value": "White"
+        }],
+        "sq": [{
+          "language": "sq",
+          "value": "E bardh\u00eb"
+        }, {
+          "language": "sq",
+          "value": "E bardha"
+        }],
+        "ar": [{
+          "language": "ar",
+          "value": "\u0627\u0644\u0644\u0648\u0646 \u0627\u0644\u0627\u0628\u064a\u0636"
+        }, {
+          "language": "ar",
+          "value": "\u0627\u0628\u064a\u0636"
+        }, {
+          "language": "ar",
+          "value": "\u0627\u0644\u0623\u0628\u064a\u0636"
+        }, {
+          "language": "ar",
+          "value": "\u0627\u0644\u0644\u0648\u0646 \u0627\u0644\u0623\u0628\u064a\u0636"
+        }],
+        "pt": [{
+          "language": "pt",
+          "value": "Branca"
+        }, {
+          "language": "pt",
+          "value": "Cor branca"
+        }],
+        "eo": [{
+          "language": "eo",
+          "value": "blanka"
+        }, {
+          "language": "eo",
+          "value": "blanka koloro"
+        }],
+        "su": [{
+          "language": "su",
+          "value": "Putih"
+        }],
+        "new": [{
+          "language": "new",
+          "value": "\u0936\u094d\u0935\u0947\u0924\u0948\u0903"
+        }, {
+          "language": "new",
+          "value": "\u0936\u094d\u0935\u0947\u0924"
+        }],
+        "nrm": [{
+          "language": "nrm",
+          "value": "Bllaun"
+        }, {
+          "language": "nrm",
+          "value": "Bllaunc"
+        }],
+        "sr": [{
+          "language": "sr",
+          "value": "Bijelo"
+        }, {
+          "language": "sr",
+          "value": "\u0411\u0435\u043b\u0430 \u0431\u043e\u0458\u0430"
+        }, {
+          "language": "sr",
+          "value": "\u0411\u0438\u0458\u0435\u043b\u0430 \u0431\u043e\u0458\u0430"
+        }, {
+          "language": "sr",
+          "value": "\u0411\u0438\u0458\u0435\u043b\u043e"
+        }, {
+          "language": "sr",
+          "value": "\u0411\u0438\u0458\u0435\u043b\u0430"
+        }],
+        "fi": [{
+          "language": "fi",
+          "value": "Lumivalkea"
+        }],
+        "uk": [{
+          "language": "uk",
+          "value": "\u0431\u0456\u043b\u0430 \u0431\u0430\u0440\u0432\u0430"
+        }],
+        "hr": [{
+          "language": "hr",
+          "value": "Bijela boja"
+        }, {
+          "language": "hr",
+          "value": "Bijelo"
+        }],
+        "an": [{
+          "language": "an",
+          "value": "Blan"
+        }],
+        "nah": [{
+          "language": "nah",
+          "value": "Istak"
+        }, {
+          "language": "nah",
+          "value": "Iztac"
+        }, {
+          "language": "nah",
+          "value": "Blanco"
+        }],
+        "he": [{
+          "language": "he",
+          "value": "\u05e6\u05d7\u05d5\u05e8"
+        }],
+        "ay": [{
+          "language": "ay",
+          "value": "Blanco"
+        }],
+        "ja": [{
+          "language": "ja",
+          "value": "\u767d\u3044"
+        }, {
+          "language": "ja",
+          "value": "\u767d\u8272"
+        }, {
+          "language": "ja",
+          "value": "\u7d14\u767d"
+        }],
+        "ml": [{
+          "language": "ml",
+          "value": "White"
+        }, {
+          "language": "ml",
+          "value": "\u0d35\u0d46\u0d33\u0d4d\u0d33"
+        }],
+        "vi": [{
+          "language": "vi",
+          "value": "m\u00e0u tr\u1eafng"
+        }],
+        "yue": [{
+          "language": "yue",
+          "value": "\u767d\u8272"
+        }, {
+          "language": "yue",
+          "value": "White"
+        }],
+        "sk": [{
+          "language": "sk",
+          "value": "Biely"
+        }],
+        "th": [{
+          "language": "th",
+          "value": "\u0e02\u0e32\u0e27"
+        }],
+        "ca": [{
+          "language": "ca",
+          "value": "color blanc"
+        }, {
+          "language": "ca",
+          "value": "blanca"
+        }],
+        "cs": [{
+          "language": "cs",
+          "value": "B\u00edl\u00fd"
+        }, {
+          "language": "cs",
+          "value": "B\u00edl\u00e1 barva"
+        }, {
+          "language": "cs",
+          "value": "B\u00edl\u00e9 sv\u011btlo"
+        }],
+        "bg": [{
+          "language": "bg",
+          "value": "\u0411\u044f\u043b"
+        }, {
+          "language": "bg",
+          "value": "\u0431\u044f\u043b \u0446\u0432\u044f\u0442"
+        }],
+        "jv": [{
+          "language": "jv",
+          "value": "Pethak"
+        }],
+        "qu": [{
+          "language": "qu",
+          "value": "Blanco"
+        }, {
+          "language": "qu",
+          "value": "Yurak"
+        }],
+        "ceb": [{
+          "language": "ceb",
+          "value": "Blanc"
+        }],
+        "ms": [{
+          "language": "ms",
+          "value": "Puteh"
+        }, {
+          "language": "ms",
+          "value": "Warna putih"
+        }],
+        "el": [{
+          "language": "el",
+          "value": "\u0386\u03c3\u03c0\u03c1\u03bf"
+        }],
+        "pnb": [{
+          "language": "pnb",
+          "value": "\u0628\u06af\u0627"
+        }, {
+          "language": "pnb",
+          "value": "\u0686\u0679\u06d2"
+        }],
+        "sv": [{
+          "language": "sv",
+          "value": "vitt"
+        }],
+        "is": [{
+          "language": "is",
+          "value": "Hv\u00edtt"
+        }],
+        "ru": [{
+          "language": "ru",
+          "value": "\u0446\u0432\u0435\u0442 \u0431\u0435\u043b\u044b\u0439"
+        }, {
+          "language": "ru",
+          "value": "\u0431\u0435\u043b\u044b\u0439 \u0446\u0432\u0435\u0442"
+        }],
+        "tr": [{
+          "language": "tr",
+          "value": "Ak"
+        }],
+        "mk": [{
+          "language": "mk",
+          "value": "Mp\u025b\u0301mb\u025b\u0301"
+        }, {
+          "language": "mk",
+          "value": "Ngjyra e bardh\u00eb"
+        }, {
+          "language": "mk",
+          "value": "\u071a\u0718\u072a\u0710"
+        }, {
+          "language": "mk",
+          "value": "Bianco"
+        }, {
+          "language": "mk",
+          "value": "\u0411\u0435\u043b\u044b \u043a\u043e\u043b\u0435\u0440"
+        }, {
+          "language": "mk",
+          "value": "A\u011f"
+        }, {
+          "language": "mk",
+          "value": "W\u00e4iss"
+        }, {
+          "language": "mk",
+          "value": "\u05d5\u05d5\u05d9\u05d9\u05e1"
+        }, {
+          "language": "mk",
+          "value": "Blianc"
+        }, {
+          "language": "mk",
+          "value": "Zuri"
+        }, {
+          "language": "mk",
+          "value": "Sp\u00ee"
+        }, {
+          "language": "mk",
+          "value": "Bjo\u0142o farba"
+        }, {
+          "language": "mk",
+          "value": "Blanko"
+        }, {
+          "language": "mk",
+          "value": "\u0d35\u0d46\u0d33\u0d41\u0d2a\u0d4d\u0d2a\u0d4d"
+        }, {
+          "language": "mk",
+          "value": "Bodas"
+        }, {
+          "language": "mk",
+          "value": "Puti"
+        }, {
+          "language": "mk",
+          "value": "Hvid"
+        }, {
+          "language": "mk",
+          "value": "\u0411\u0435\u043b\u043e"
+        }, {
+          "language": "mk",
+          "value": "B\u00e1n"
+        }, {
+          "language": "mk",
+          "value": "Feh\u00e9r"
+        }, {
+          "language": "mk",
+          "value": "Weiss"
+        }, {
+          "language": "mk",
+          "value": "\u767d"
+        }, {
+          "language": "mk",
+          "value": "White"
+        }, {
+          "language": "mk",
+          "value": "\u0410\u0448\u043e"
+        }, {
+          "language": "mk",
+          "value": "\u0623\u0628\u064a\u0636"
+        }, {
+          "language": "mk",
+          "value": "\u767d\u8272"
+        }, {
+          "language": "mk",
+          "value": "Biela"
+        }, {
+          "language": "mk",
+          "value": "\u0411\u0456\u043b\u0438\u0439 \u043a\u043e\u043b\u0456\u0440"
+        }, {
+          "language": "mk",
+          "value": "Hvit"
+        }, {
+          "language": "mk",
+          "value": "Bela"
+        }, {
+          "language": "mk",
+          "value": "Valge"
+        }, {
+          "language": "mk",
+          "value": "Putih"
+        }, {
+          "language": "mk",
+          "value": "Blanka"
+        }, {
+          "language": "mk",
+          "value": "Hau"
+        }],
+        "nn": [{
+          "language": "nn",
+          "value": "Kvitt"
+        }, {
+          "language": "nn",
+          "value": "Hvit"
+        }],
+        "io": [{
+          "language": "io",
+          "value": "Blanko"
+        }],
+        "ln": [{
+          "language": "ln",
+          "value": "Mp\u00e9mb\u00e9"
+        }],
+        "ko": [{
+          "language": "ko",
+          "value": "\ud558\uc580\uc0c9"
+        }, {
+          "language": "ko",
+          "value": "\ubc31\uc0c9"
+        }, {
+          "language": "ko",
+          "value": "\ud770"
+        }, {
+          "language": "ko",
+          "value": "\ud558\uc591\uc0c9"
+        }, {
+          "language": "ko",
+          "value": "\ud770\uc0c9"
+        }],
+        "lbe": [{
+          "language": "lbe",
+          "value": "\u041aI\u044f\u043b\u0430\u0441\u0441\u0430"
+        }],
+        "lv": [{
+          "language": "lv",
+          "value": "balta kr\u0101sa"
+        }, {
+          "language": "lv",
+          "value": "balts"
+        }],
+        "sh": [{
+          "language": "sh",
+          "value": "Bela boja"
+        }, {
+          "language": "sh",
+          "value": "Belo"
+        }, {
+          "language": "sh",
+          "value": "Bela"
+        }, {
+          "language": "sh",
+          "value": "Bijela boja"
+        }],
+        "hi": [{
+          "language": "hi",
+          "value": "\u0938\u092b\u0947\u0926"
+        }, {
+          "language": "hi",
+          "value": "\u0932\u093f\u0928\u0947\u0928"
+        }],
+        "fa": [{
+          "language": "fa",
+          "value": "\u0633\u067e\u06cc\u062f"
+        }],
+        "en-gb": [{
+          "language": "en-gb",
+          "value": "colour white"
+        }, {
+          "language": "en-gb",
+          "value": "white colour"
+        }],
+        "en-ca": [{
+          "language": "en-ca",
+          "value": "colour white"
+        }, {
+          "language": "en-ca",
+          "value": "white colour"
+        }],
+        "nb": [{
+          "language": "nb",
+          "value": "Kvitt"
+        }, {
+          "language": "nb",
+          "value": "Kvit"
+        }, {
+          "language": "nb",
+          "value": "Hvitt"
+        }],
+        "tl": [{
+          "language": "tl",
+          "value": "Maputi"
+        }, {
+          "language": "tl",
+          "value": "Mapuputi"
+        }],
+        "scn": [{
+          "language": "scn",
+          "value": "jancu"
+        }],
+        "fo": [{
+          "language": "fo",
+          "value": "hv\u00edtur"
+        }, {
+          "language": "fo",
+          "value": "hv\u00edta"
+        }],
+        "en": [{
+          "language": "en",
+          "value": "W"
+        }, {
+          "language": "en",
+          "value": "color white"
+        }],
+        "hsb": [{
+          "language": "hsb",
+          "value": "b\u011b\u0142a barba"
+        }],
+        "tt": [{
+          "language": "tt",
+          "value": "\u0430\u043a \u0442\u04e9\u0441"
+        }],
+        "tt-cyrl": [{
+          "language": "tt-cyrl",
+          "value": "\u0430\u043a \u0442\u04e9\u0441"
+        }],
+        "bn": [{
+          "language": "bn",
+          "value": "\u09b6\u09cd\u09ac\u09c7\u09a4"
+        }],
+        "pt-br": [{
+          "language": "pt-br",
+          "value": "cor branca"
+        }, {
+          "language": "pt-br",
+          "value": "branca"
+        }],
+        "be-tarask": [{
+          "language": "be-tarask",
+          "value": "\u0431\u0435\u043b\u044b"
+        }, {
+          "language": "be-tarask",
+          "value": "\u043a\u043e\u043b\u0435\u0440 \u0431\u0435\u043b\u044b"
+        }]
+      },
+      "claims": {
+        "P31": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P31",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 1075,
+                "id": "Q1075"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$16917386-4fb9-fb94-2b18-36005b256ff6",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P31",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 56053097,
+                "id": "Q56053097"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$22C6B13F-2599-40BB-96FC-DA537C0AB94E",
+          "rank": "normal"
+        }],
+        "P18": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P18",
+            "datavalue": {
+              "value": "Color icon white.svg",
+              "type": "string"
+            },
+            "datatype": "commonsMedia"
+          },
+          "type": "statement",
+          "id": "Q23444$e4461dcd-474d-e465-3105-f5130e91b5d0",
+          "rank": "normal"
+        }],
+        "P461": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P461",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 23445,
+                "id": "Q23445"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "qualifiers": {
+            "P1013": [{
+              "snaktype": "value",
+              "property": "P1013",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 690182,
+                  "id": "Q690182"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }]
+          },
+          "qualifiers-order": ["P1013"],
+          "id": "q23444$97514ccd-48b2-4af5-20db-2da5cf3773db",
+          "rank": "normal"
+        }],
+        "P373": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P373",
+            "datavalue": {
+              "value": "White",
+              "type": "string"
+            },
+            "datatype": "string"
+          },
+          "type": "statement",
+          "id": "q23444$AA27913F-8AE4-447B-8C44-F1EB1CF0B495",
+          "rank": "normal",
+          "references": [{
+            "hash": "9a24f7c0208b05d6be97077d855671d1dfdbc0dd",
+            "snaks": {
+              "P143": [{
+                "snaktype": "value",
+                "property": "P143",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 48183,
+                    "id": "Q48183"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }]
+            },
+            "snaks-order": ["P143"]
+          }]
+        }],
+        "P508": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P508",
+            "datavalue": {
+              "value": "34363",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "q23444$8C5E9237-A676-4B19-9129-CBF45289BE66",
+          "rank": "normal",
+          "references": [{
+            "hash": "a235ba3d92daf43853b23688674b7ab464b4eea8",
+            "snaks": {
+              "P248": [{
+                "snaktype": "value",
+                "property": "P248",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 460907,
+                    "id": "Q460907"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }]
+            },
+            "snaks-order": ["P248"]
+          }]
+        }],
+        "P465": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P465",
+            "datavalue": {
+              "value": "FFFFFF",
+              "type": "string"
+            },
+            "datatype": "string"
+          },
+          "type": "statement",
+          "id": "q23444$d28f5bee-405b-eb9a-afcf-daba7990bf31",
+          "rank": "normal"
+        }],
+        "P227": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P227",
+            "datavalue": {
+              "value": "4189483-2",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$CBD08BB6-CAE5-4E2A-B3BD-93D10D31646A",
+          "rank": "normal",
+          "references": [{
+            "hash": "9a24f7c0208b05d6be97077d855671d1dfdbc0dd",
+            "snaks": {
+              "P143": [{
+                "snaktype": "value",
+                "property": "P143",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 48183,
+                    "id": "Q48183"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }]
+            },
+            "snaks-order": ["P143"]
+          }]
+        }],
+        "P646": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P646",
+            "datavalue": {
+              "value": "/m/083jv",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$7E6FBAC2-B55A-41A6-ADF1-A8A8E5A0C586",
+          "rank": "normal",
+          "references": [{
+            "hash": "2b00cb481cddcac7623114367489b5c194901c4a",
+            "snaks": {
+              "P248": [{
+                "snaktype": "value",
+                "property": "P248",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 15241312,
+                    "id": "Q15241312"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }],
+              "P577": [{
+                "snaktype": "value",
+                "property": "P577",
+                "datavalue": {
+                  "value": {
+                    "time": "+2013-10-28T00:00:00Z",
+                    "timezone": 0,
+                    "before": 0,
+                    "after": 0,
+                    "precision": 11,
+                    "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                  },
+                  "type": "time"
+                },
+                "datatype": "time"
+              }]
+            },
+            "snaks-order": ["P248", "P577"]
+          }]
+        }],
+        "P910": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P910",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 19847219,
+                "id": "Q19847219"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$1539d7c6-4615-98d2-a4d6-ddebb8e598f5",
+          "rank": "normal"
+        }],
+        "P279": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P279",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 35120,
+                "id": "Q35120"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$4657e742-4341-6c4c-1733-a2129fb5d5c1",
+          "rank": "normal"
+        }],
+        "P1014": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P1014",
+            "datavalue": {
+              "value": "300129784",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$059179B1-718F-4B61-A2D9-EB980C7420F7",
+          "rank": "normal"
+        }],
+        "P2910": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P2910",
+            "datavalue": {
+              "value": "White spore print icon.png",
+              "type": "string"
+            },
+            "datatype": "commonsMedia"
+          },
+          "type": "statement",
+          "id": "Q23444$4a7af91a-4b68-99bc-ee9c-da92fd0fa275",
+          "rank": "normal"
+        }],
+        "P527": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 3142,
+                "id": "Q3142"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$d16c632d-47e4-fe20-3db4-1b4d2624be7f",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 39338,
+                "id": "Q39338"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$d4e50937-4fe4-7a16-34c2-8cc1e079754c",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 943,
+                "id": "Q943"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$173c7abd-4b01-8223-1238-bd6548ac963b",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 3133,
+                "id": "Q3133"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$1a9a6978-4631-7821-a45e-29a3a39bfd5b",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 373160,
+                "id": "Q373160"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$7259d297-4859-a098-689a-894e12578d3d",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 1088,
+                "id": "Q1088"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$3e4b22c5-44ec-6ff1-6937-af3cecc0953d",
+          "rank": "normal"
+        }, {
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P527",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 428124,
+                "id": "Q428124"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "id": "Q23444$ab9b96aa-406a-2122-b4c9-cde83d662f81",
+          "rank": "normal"
+        }],
+        "P3417": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P3417",
+            "datavalue": {
+              "value": "White-color",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$17981d53-4753-41bf-bc48-606e0810c7c3",
+          "rank": "normal"
+        }],
+        "P2919": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P2919",
+            "datavalue": {
+              "value": "Csc-blanc-spreadthesign.ogv",
+              "type": "string"
+            },
+            "datatype": "commonsMedia"
+          },
+          "type": "statement",
+          "qualifiers": {
+            "P407": [{
+              "snaktype": "value",
+              "property": "P407",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 35768,
+                  "id": "Q35768"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }]
+          },
+          "qualifiers-order": ["P407"],
+          "id": "Q23444$7d6af9cf-4141-8138-8d22-4810484fd54a",
+          "rank": "normal"
+        }],
+        "P2581": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P2581",
+            "datavalue": {
+              "value": "00081052n",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$26FD23F4-F6B6-4C86-AA1D-CC594EBCD258",
+          "rank": "normal",
+          "references": [{
+            "hash": "248ac337a217a5f5eed7139a82a4e60931611af0",
+            "snaks": {
+              "P248": [{
+                "snaktype": "value",
+                "property": "P248",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 4837690,
+                    "id": "Q4837690"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }]
+            },
+            "snaks-order": ["P248"]
+          }]
+        }],
+        "P1813": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P1813",
+            "datavalue": {
+              "value": {
+                "text": "W",
+                "language": "en"
+              },
+              "type": "monolingualtext"
+            },
+            "datatype": "monolingualtext"
+          },
+          "type": "statement",
+          "qualifiers": {
+            "P1013": [{
+              "snaktype": "value",
+              "property": "P1013",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 1738955,
+                  "id": "Q1738955"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }],
+            "P1793": [{
+              "snaktype": "value",
+              "property": "P1793",
+              "datavalue": {
+                "value": "W",
+                "type": "string"
+              },
+              "datatype": "string"
+            }]
+          },
+          "qualifiers-order": ["P1013", "P1793"],
+          "id": "Q23444$5d40ba98-4da4-fc04-7b8d-cd843cdf5454",
+          "rank": "normal"
+        }],
+        "P3832": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P3832",
+            "datavalue": {
+              "value": "10416",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "qualifiers": {
+            "P1810": [{
+              "snaktype": "value",
+              "property": "P1810",
+              "datavalue": {
+                "value": "white",
+                "type": "string"
+              },
+              "datatype": "string"
+            }],
+            "P4900": [{
+              "snaktype": "value",
+              "property": "P4900",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 1075,
+                  "id": "Q1075"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }]
+          },
+          "qualifiers-order": ["P1810", "P4900"],
+          "id": "Q23444$A4A9AFE3-933C-4E63-A479-65FC81DB719D",
+          "rank": "normal",
+          "references": [{
+            "hash": "084c005c75aa5da8dbb846ca0e1545727d904f67",
+            "snaks": {
+              "P248": [{
+                "snaktype": "value",
+                "property": "P248",
+                "datavalue": {
+                  "value": {
+                    "entity-type": "item",
+                    "numeric-id": 28890038,
+                    "id": "Q28890038"
+                  },
+                  "type": "wikibase-entityid"
+                },
+                "datatype": "wikibase-item"
+              }]
+            },
+            "snaks-order": ["P248"]
+          }]
+        }],
+        "P1417": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P1417",
+            "datavalue": {
+              "value": "science/white-colour",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$6E0B5347-8711-48D3-931C-33022CB3353D",
+          "rank": "normal"
+        }],
+        "P1343": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P1343",
+            "datavalue": {
+              "value": {
+                "entity-type": "item",
+                "numeric-id": 602358,
+                "id": "Q602358"
+              },
+              "type": "wikibase-entityid"
+            },
+            "datatype": "wikibase-item"
+          },
+          "type": "statement",
+          "qualifiers": {
+            "P805": [{
+              "snaktype": "value",
+              "property": "P805",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 24344799,
+                  "id": "Q24344799"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }]
+          },
+          "qualifiers-order": ["P805"],
+          "id": "Q23444$7f5006ee-47f5-692d-2bc6-591f3eaba805",
+          "rank": "normal"
+        }],
+        "P244": [{
+          "mainsnak": {
+            "snaktype": "value",
+            "property": "P244",
+            "datavalue": {
+              "value": "sh85146459",
+              "type": "string"
+            },
+            "datatype": "external-id"
+          },
+          "type": "statement",
+          "id": "Q23444$85c86986-4dd7-1d57-975a-8d68a02d7587",
+          "rank": "normal"
+        }]
+      },
+      "sitelinks": {
+        "afwiki": {
+          "site": "afwiki",
+          "title": "Wit",
+          "badges": [],
+          "url": "https://af.wikipedia.org/wiki/Wit"
+        },
+        "amwiki": {
+          "site": "amwiki",
+          "title": "\u1290\u132d",
+          "badges": [],
+          "url": "https://am.wikipedia.org/wiki/%E1%8A%90%E1%8C%AD"
+        },
+        "angwiki": {
+          "site": "angwiki",
+          "title": "Hw\u012bt",
+          "badges": [],
+          "url": "https://ang.wikipedia.org/wiki/Hw%C4%ABt"
+        },
+        "anwiki": {
+          "site": "anwiki",
+          "title": "Blanco",
+          "badges": [],
+          "url": "https://an.wikipedia.org/wiki/Blanco"
+        },
+        "arcwiki": {
+          "site": "arcwiki",
+          "title": "\u071a\u0718\u072a\u0710",
+          "badges": [],
+          "url": "https://arc.wikipedia.org/wiki/%DC%9A%DC%98%DC%AA%DC%90"
+        },
+        "arwiki": {
+          "site": "arwiki",
+          "title": "\u0623\u0628\u064a\u0636",
+          "badges": ["Q17437796"],
+          "url": "https://ar.wikipedia.org/wiki/%D8%A3%D8%A8%D9%8A%D8%B6"
+        },
+        "astwiki": {
+          "site": "astwiki",
+          "title": "Blancu",
+          "badges": [],
+          "url": "https://ast.wikipedia.org/wiki/Blancu"
+        },
+        "aywiki": {
+          "site": "aywiki",
+          "title": "Janq'u",
+          "badges": [],
+          "url": "https://ay.wikipedia.org/wiki/Janq%27u"
+        },
+        "azbwiki": {
+          "site": "azbwiki",
+          "title": "\u0622\u063a",
+          "badges": [],
+          "url": "https://azb.wikipedia.org/wiki/%D8%A2%D8%BA"
+        },
+        "azwiki": {
+          "site": "azwiki",
+          "title": "A\u011f",
+          "badges": [],
+          "url": "https://az.wikipedia.org/wiki/A%C4%9F"
+        },
+        "azwikiquote": {
+          "site": "azwikiquote",
+          "title": "A\u011f",
+          "badges": [],
+          "url": "https://az.wikiquote.org/wiki/A%C4%9F"
+        },
+        "bat_smgwiki": {
+          "site": "bat_smgwiki",
+          "title": "Balta",
+          "badges": [],
+          "url": "https://bat-smg.wikipedia.org/wiki/Balta"
+        },
+        "bawiki": {
+          "site": "bawiki",
+          "title": "\u0410\u04a1",
+          "badges": [],
+          "url": "https://ba.wikipedia.org/wiki/%D0%90%D2%A1"
+        },
+        "bewiki": {
+          "site": "bewiki",
+          "title": "\u0411\u0435\u043b\u044b \u043a\u043e\u043b\u0435\u0440",
+          "badges": [],
+          "url": "https://be.wikipedia.org/wiki/%D0%91%D0%B5%D0%BB%D1%8B_%D0%BA%D0%BE%D0%BB%D0%B5%D1%80"
+        },
+        "bgwiki": {
+          "site": "bgwiki",
+          "title": "\u0411\u044f\u043b \u0446\u0432\u044f\u0442",
+          "badges": [],
+          "url": "https://bg.wikipedia.org/wiki/%D0%91%D1%8F%D0%BB_%D1%86%D0%B2%D1%8F%D1%82"
+        },
+        "bnwiki": {
+          "site": "bnwiki",
+          "title": "\u09b8\u09be\u09a6\u09be",
+          "badges": [],
+          "url": "https://bn.wikipedia.org/wiki/%E0%A6%B8%E0%A6%BE%E0%A6%A6%E0%A6%BE"
+        },
+        "bowiki": {
+          "site": "bowiki",
+          "title": "\u0f51\u0f40\u0f62\u0f0b\u0f54\u0f7c\u0f0d",
+          "badges": [],
+          "url": "https://bo.wikipedia.org/wiki/%E0%BD%91%E0%BD%80%E0%BD%A2%E0%BC%8B%E0%BD%94%E0%BD%BC%E0%BC%8D"
+        },
+        "brwiki": {
+          "site": "brwiki",
+          "title": "Gwenn (liv)",
+          "badges": [],
+          "url": "https://br.wikipedia.org/wiki/Gwenn_(liv)"
+        },
+        "bswiki": {
+          "site": "bswiki",
+          "title": "Bijela",
+          "badges": [],
+          "url": "https://bs.wikipedia.org/wiki/Bijela"
+        },
+        "cawiki": {
+          "site": "cawiki",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://ca.wikipedia.org/wiki/Blanc"
+        },
+        "cawikiquote": {
+          "site": "cawikiquote",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://ca.wikiquote.org/wiki/Blanc"
+        },
+        "cdowiki": {
+          "site": "cdowiki",
+          "title": "B\u0103h-s\u00e1ik",
+          "badges": [],
+          "url": "https://cdo.wikipedia.org/wiki/B%C4%83h-s%C3%A1ik"
+        },
+        "cebwiki": {
+          "site": "cebwiki",
+          "title": "Puti",
+          "badges": [],
+          "url": "https://ceb.wikipedia.org/wiki/Puti"
+        },
+        "cewiki": {
+          "site": "cewiki",
+          "title": "\u041a\u04c0\u0430\u0439\u043d",
+          "badges": [],
+          "url": "https://ce.wikipedia.org/wiki/%D0%9A%D3%80%D0%B0%D0%B9%D0%BD"
+        },
+        "chwiki": {
+          "site": "chwiki",
+          "title": "\u00c1'paka",
+          "badges": [],
+          "url": "https://ch.wikipedia.org/wiki/%C3%81%27paka"
+        },
+        "ckbwiki": {
+          "site": "ckbwiki",
+          "title": "\u0633\u067e\u06cc",
+          "badges": [],
+          "url": "https://ckb.wikipedia.org/wiki/%D8%B3%D9%BE%DB%8C"
+        },
+        "cswiki": {
+          "site": "cswiki",
+          "title": "B\u00edl\u00e1",
+          "badges": [],
+          "url": "https://cs.wikipedia.org/wiki/B%C3%ADl%C3%A1"
+        },
+        "cywiki": {
+          "site": "cywiki",
+          "title": "Gwyn",
+          "badges": [],
+          "url": "https://cy.wikipedia.org/wiki/Gwyn"
+        },
+        "dawiki": {
+          "site": "dawiki",
+          "title": "Hvid",
+          "badges": [],
+          "url": "https://da.wikipedia.org/wiki/Hvid"
+        },
+        "dewiki": {
+          "site": "dewiki",
+          "title": "Wei\u00df",
+          "badges": [],
+          "url": "https://de.wikipedia.org/wiki/Wei%C3%9F"
+        },
+        "dewikiquote": {
+          "site": "dewikiquote",
+          "title": "Wei\u00df (Farbe)",
+          "badges": [],
+          "url": "https://de.wikiquote.org/wiki/Wei%C3%9F_(Farbe)"
+        },
+        "elwiki": {
+          "site": "elwiki",
+          "title": "\u039b\u03b5\u03c5\u03ba\u03cc",
+          "badges": [],
+          "url": "https://el.wikipedia.org/wiki/%CE%9B%CE%B5%CF%85%CE%BA%CF%8C"
+        },
+        "enwiki": {
+          "site": "enwiki",
+          "title": "White",
+          "badges": [],
+          "url": "https://en.wikipedia.org/wiki/White"
+        },
+        "eowiki": {
+          "site": "eowiki",
+          "title": "Blanko",
+          "badges": [],
+          "url": "https://eo.wikipedia.org/wiki/Blanko"
+        },
+        "eowikiquote": {
+          "site": "eowikiquote",
+          "title": "Blanko",
+          "badges": [],
+          "url": "https://eo.wikiquote.org/wiki/Blanko"
+        },
+        "eswiki": {
+          "site": "eswiki",
+          "title": "Blanco",
+          "badges": [],
+          "url": "https://es.wikipedia.org/wiki/Blanco"
+        },
+        "etwiki": {
+          "site": "etwiki",
+          "title": "Valge",
+          "badges": [],
+          "url": "https://et.wikipedia.org/wiki/Valge"
+        },
+        "euwiki": {
+          "site": "euwiki",
+          "title": "Zuri",
+          "badges": [],
+          "url": "https://eu.wikipedia.org/wiki/Zuri"
+        },
+        "fawiki": {
+          "site": "fawiki",
+          "title": "\u0633\u0641\u06cc\u062f",
+          "badges": [],
+          "url": "https://fa.wikipedia.org/wiki/%D8%B3%D9%81%DB%8C%D8%AF"
+        },
+        "fiu_vrowiki": {
+          "site": "fiu_vrowiki",
+          "title": "Valg\u00f5",
+          "badges": [],
+          "url": "https://fiu-vro.wikipedia.org/wiki/Valg%C3%B5"
+        },
+        "fiwiki": {
+          "site": "fiwiki",
+          "title": "Valkoinen",
+          "badges": [],
+          "url": "https://fi.wikipedia.org/wiki/Valkoinen"
+        },
+        "frwiki": {
+          "site": "frwiki",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://fr.wikipedia.org/wiki/Blanc"
+        },
+        "furwiki": {
+          "site": "furwiki",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://fur.wikipedia.org/wiki/Blanc"
+        },
+        "ganwiki": {
+          "site": "ganwiki",
+          "title": "\u767d",
+          "badges": [],
+          "url": "https://gan.wikipedia.org/wiki/%E7%99%BD"
+        },
+        "gawiki": {
+          "site": "gawiki",
+          "title": "B\u00e1n",
+          "badges": [],
+          "url": "https://ga.wikipedia.org/wiki/B%C3%A1n"
+        },
+        "glwiki": {
+          "site": "glwiki",
+          "title": "Branco",
+          "badges": [],
+          "url": "https://gl.wikipedia.org/wiki/Branco"
+        },
+        "gnwiki": {
+          "site": "gnwiki",
+          "title": "Morot\u0129",
+          "badges": [],
+          "url": "https://gn.wikipedia.org/wiki/Morot%C4%A9"
+        },
+        "hakwiki": {
+          "site": "hakwiki",
+          "title": "Pha\u030dk-set",
+          "badges": [],
+          "url": "https://hak.wikipedia.org/wiki/Pha%CC%8Dk-set"
+        },
+        "hewiki": {
+          "site": "hewiki",
+          "title": "\u05dc\u05d1\u05df",
+          "badges": [],
+          "url": "https://he.wikipedia.org/wiki/%D7%9C%D7%91%D7%9F"
+        },
+        "hiwiki": {
+          "site": "hiwiki",
+          "title": "\u0936\u094d\u0935\u0947\u0924",
+          "badges": [],
+          "url": "https://hi.wikipedia.org/wiki/%E0%A4%B6%E0%A5%8D%E0%A4%B5%E0%A5%87%E0%A4%A4"
+        },
+        "hrwiki": {
+          "site": "hrwiki",
+          "title": "Bijela",
+          "badges": [],
+          "url": "https://hr.wikipedia.org/wiki/Bijela"
+        },
+        "htwiki": {
+          "site": "htwiki",
+          "title": "Blan",
+          "badges": [],
+          "url": "https://ht.wikipedia.org/wiki/Blan"
+        },
+        "huwiki": {
+          "site": "huwiki",
+          "title": "Feh\u00e9r",
+          "badges": [],
+          "url": "https://hu.wikipedia.org/wiki/Feh%C3%A9r"
+        },
+        "hywiki": {
+          "site": "hywiki",
+          "title": "\u054d\u057a\u056b\u057f\u0561\u056f \u0563\u0578\u0582\u0575\u0576",
+          "badges": [],
+          "url": "https://hy.wikipedia.org/wiki/%D5%8D%D5%BA%D5%AB%D5%BF%D5%A1%D5%AF_%D5%A3%D5%B8%D6%82%D5%B5%D5%B6"
+        },
+        "idwiki": {
+          "site": "idwiki",
+          "title": "Putih",
+          "badges": [],
+          "url": "https://id.wikipedia.org/wiki/Putih"
+        },
+        "ikwiki": {
+          "site": "ikwiki",
+          "title": "Qatiqtaaq",
+          "badges": [],
+          "url": "https://ik.wikipedia.org/wiki/Qatiqtaaq"
+        },
+        "iowiki": {
+          "site": "iowiki",
+          "title": "Blanka",
+          "badges": [],
+          "url": "https://io.wikipedia.org/wiki/Blanka"
+        },
+        "iswiki": {
+          "site": "iswiki",
+          "title": "Hv\u00edtur",
+          "badges": [],
+          "url": "https://is.wikipedia.org/wiki/Hv%C3%ADtur"
+        },
+        "itwiki": {
+          "site": "itwiki",
+          "title": "Bianco",
+          "badges": [],
+          "url": "https://it.wikipedia.org/wiki/Bianco"
+        },
+        "itwikiquote": {
+          "site": "itwikiquote",
+          "title": "Bianco",
+          "badges": [],
+          "url": "https://it.wikiquote.org/wiki/Bianco"
+        },
+        "jamwiki": {
+          "site": "jamwiki",
+          "title": "Wait",
+          "badges": [],
+          "url": "https://jam.wikipedia.org/wiki/Wait"
+        },
+        "jawiki": {
+          "site": "jawiki",
+          "title": "\u767d",
+          "badges": [],
+          "url": "https://ja.wikipedia.org/wiki/%E7%99%BD"
+        },
+        "jawikiquote": {
+          "site": "jawikiquote",
+          "title": "\u767d",
+          "badges": [],
+          "url": "https://ja.wikiquote.org/wiki/%E7%99%BD"
+        },
+        "jbowiki": {
+          "site": "jbowiki",
+          "title": "blabi",
+          "badges": [],
+          "url": "https://jbo.wikipedia.org/wiki/blabi"
+        },
+        "jvwiki": {
+          "site": "jvwiki",
+          "title": "Putih",
+          "badges": [],
+          "url": "https://jv.wikipedia.org/wiki/Putih"
+        },
+        "kawiki": {
+          "site": "kawiki",
+          "title": "\u10d7\u10d4\u10d7\u10e0\u10d8",
+          "badges": [],
+          "url": "https://ka.wikipedia.org/wiki/%E1%83%97%E1%83%94%E1%83%97%E1%83%A0%E1%83%98"
+        },
+        "kbpwiki": {
+          "site": "kbpwiki",
+          "title": "T\u0254l\u0269m k\u028ah\u028al\u028am\u0269\u014b",
+          "badges": [],
+          "url": "https://kbp.wikipedia.org/wiki/T%C9%94l%C9%A9m_k%CA%8Ah%CA%8Al%CA%8Am%C9%A9%C5%8B"
+        },
+        "kkwiki": {
+          "site": "kkwiki",
+          "title": "\u0410\u049b \u0442\u04af\u0441",
+          "badges": [],
+          "url": "https://kk.wikipedia.org/wiki/%D0%90%D2%9B_%D1%82%D2%AF%D1%81"
+        },
+        "knwiki": {
+          "site": "knwiki",
+          "title": "\u0cac\u0cbf\u0cb3\u0cbf",
+          "badges": [],
+          "url": "https://kn.wikipedia.org/wiki/%E0%B2%AC%E0%B2%BF%E0%B2%B3%E0%B2%BF"
+        },
+        "kowiki": {
+          "site": "kowiki",
+          "title": "\ud558\uc591",
+          "badges": [],
+          "url": "https://ko.wikipedia.org/wiki/%ED%95%98%EC%96%91"
+        },
+        "kuwiki": {
+          "site": "kuwiki",
+          "title": "Sp\u00ee (reng)",
+          "badges": [],
+          "url": "https://ku.wikipedia.org/wiki/Sp%C3%AE_(reng)"
+        },
+        "ladwiki": {
+          "site": "ladwiki",
+          "title": "Blanko",
+          "badges": [],
+          "url": "https://lad.wikipedia.org/wiki/Blanko"
+        },
+        "lawiki": {
+          "site": "lawiki",
+          "title": "Albus",
+          "badges": [],
+          "url": "https://la.wikipedia.org/wiki/Albus"
+        },
+        "lbewiki": {
+          "site": "lbewiki",
+          "title": "\u041a\u04c0\u044f\u043b\u0430\u0441\u0441\u0430",
+          "badges": [],
+          "url": "https://lbe.wikipedia.org/wiki/%D0%9A%D3%80%D1%8F%D0%BB%D0%B0%D1%81%D1%81%D0%B0"
+        },
+        "lbwiki": {
+          "site": "lbwiki",
+          "title": "W\u00e4iss",
+          "badges": [],
+          "url": "https://lb.wikipedia.org/wiki/W%C3%A4iss"
+        },
+        "lfnwiki": {
+          "site": "lfnwiki",
+          "title": "Blanca",
+          "badges": [],
+          "url": "https://lfn.wikipedia.org/wiki/Blanca"
+        },
+        "lmowiki": {
+          "site": "lmowiki",
+          "title": "Bianch",
+          "badges": [],
+          "url": "https://lmo.wikipedia.org/wiki/Bianch"
+        },
+        "lnwiki": {
+          "site": "lnwiki",
+          "title": "Mp\u025b\u0301mb\u025b\u0301",
+          "badges": [],
+          "url": "https://ln.wikipedia.org/wiki/Mp%C9%9B%CC%81mb%C9%9B%CC%81"
+        },
+        "lowiki": {
+          "site": "lowiki",
+          "title": "\u0eaa\u0eb5\u0e82\u0eb2\u0ea7",
+          "badges": [],
+          "url": "https://lo.wikipedia.org/wiki/%E0%BA%AA%E0%BA%B5%E0%BA%82%E0%BA%B2%E0%BA%A7"
+        },
+        "ltwiki": {
+          "site": "ltwiki",
+          "title": "Balta",
+          "badges": [],
+          "url": "https://lt.wikipedia.org/wiki/Balta"
+        },
+        "ltwikiquote": {
+          "site": "ltwikiquote",
+          "title": "Balta",
+          "badges": [],
+          "url": "https://lt.wikiquote.org/wiki/Balta"
+        },
+        "lvwiki": {
+          "site": "lvwiki",
+          "title": "Balt\u0101 kr\u0101sa",
+          "badges": [],
+          "url": "https://lv.wikipedia.org/wiki/Balt%C4%81_kr%C4%81sa"
+        },
+        "mdfwiki": {
+          "site": "mdfwiki",
+          "title": "\u0410\u043a\u0448\u0430",
+          "badges": [],
+          "url": "https://mdf.wikipedia.org/wiki/%D0%90%D0%BA%D1%88%D0%B0"
+        },
+        "mkwiki": {
+          "site": "mkwiki",
+          "title": "\u0411\u0435\u043b\u0430 \u0431\u043e\u0458\u0430",
+          "badges": [],
+          "url": "https://mk.wikipedia.org/wiki/%D0%91%D0%B5%D0%BB%D0%B0_%D0%B1%D0%BE%D1%98%D0%B0"
+        },
+        "mlwiki": {
+          "site": "mlwiki",
+          "title": "\u0d35\u0d46\u0d33\u0d41\u0d2a\u0d4d\u0d2a\u0d4d",
+          "badges": [],
+          "url": "https://ml.wikipedia.org/wiki/%E0%B4%B5%E0%B5%86%E0%B4%B3%E0%B5%81%E0%B4%AA%E0%B5%8D%E0%B4%AA%E0%B5%8D"
+        },
+        "mrwiki": {
+          "site": "mrwiki",
+          "title": "\u092a\u093e\u0902\u0922\u0930\u093e",
+          "badges": [],
+          "url": "https://mr.wikipedia.org/wiki/%E0%A4%AA%E0%A4%BE%E0%A4%82%E0%A4%A2%E0%A4%B0%E0%A4%BE"
+        },
+        "mswiki": {
+          "site": "mswiki",
+          "title": "Putih",
+          "badges": [],
+          "url": "https://ms.wikipedia.org/wiki/Putih"
+        },
+        "mtwiki": {
+          "site": "mtwiki",
+          "title": "Abjad",
+          "badges": [],
+          "url": "https://mt.wikipedia.org/wiki/Abjad"
+        },
+        "mwlwiki": {
+          "site": "mwlwiki",
+          "title": "Branco",
+          "badges": [],
+          "url": "https://mwl.wikipedia.org/wiki/Branco"
+        },
+        "myvwiki": {
+          "site": "myvwiki",
+          "title": "\u0410\u0448\u043e",
+          "badges": [],
+          "url": "https://myv.wikipedia.org/wiki/%D0%90%D1%88%D0%BE"
+        },
+        "nahwiki": {
+          "site": "nahwiki",
+          "title": "Iztac",
+          "badges": [],
+          "url": "https://nah.wikipedia.org/wiki/Iztac"
+        },
+        "napwiki": {
+          "site": "napwiki",
+          "title": "Ghiangh",
+          "badges": [],
+          "url": "https://nap.wikipedia.org/wiki/Ghiangh"
+        },
+        "newiki": {
+          "site": "newiki",
+          "title": "\u0938\u0947\u0924\u094b",
+          "badges": [],
+          "url": "https://ne.wikipedia.org/wiki/%E0%A4%B8%E0%A5%87%E0%A4%A4%E0%A5%8B"
+        },
+        "newwiki": {
+          "site": "newwiki",
+          "title": "\u0924\u0941\u092f\u0941",
+          "badges": [],
+          "url": "https://new.wikipedia.org/wiki/%E0%A4%A4%E0%A5%81%E0%A4%AF%E0%A5%81"
+        },
+        "nlwiki": {
+          "site": "nlwiki",
+          "title": "Wit",
+          "badges": [],
+          "url": "https://nl.wikipedia.org/wiki/Wit"
+        },
+        "nnwiki": {
+          "site": "nnwiki",
+          "title": "Kvit",
+          "badges": [],
+          "url": "https://nn.wikipedia.org/wiki/Kvit"
+        },
+        "nowiki": {
+          "site": "nowiki",
+          "title": "Hvit",
+          "badges": [],
+          "url": "https://no.wikipedia.org/wiki/Hvit"
+        },
+        "nrmwiki": {
+          "site": "nrmwiki",
+          "title": "Blianc",
+          "badges": [],
+          "url": "https://nrm.wikipedia.org/wiki/Blianc"
+        },
+        "nsowiki": {
+          "site": "nsowiki",
+          "title": "T\u0161hweu",
+          "badges": [],
+          "url": "https://nso.wikipedia.org/wiki/T%C5%A1hweu"
+        },
+        "ocwiki": {
+          "site": "ocwiki",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://oc.wikipedia.org/wiki/Blanc"
+        },
+        "pamwiki": {
+          "site": "pamwiki",
+          "title": "Maputi",
+          "badges": [],
+          "url": "https://pam.wikipedia.org/wiki/Maputi"
+        },
+        "pawiki": {
+          "site": "pawiki",
+          "title": "\u0a1a\u0a3f\u0a71\u0a1f\u0a3e",
+          "badges": [],
+          "url": "https://pa.wikipedia.org/wiki/%E0%A8%9A%E0%A8%BF%E0%A9%B1%E0%A8%9F%E0%A8%BE"
+        },
+        "pcdwiki": {
+          "site": "pcdwiki",
+          "title": "Blanc",
+          "badges": [],
+          "url": "https://pcd.wikipedia.org/wiki/Blanc"
+        },
+        "pdcwiki": {
+          "site": "pdcwiki",
+          "title": "Weiss",
+          "badges": [],
+          "url": "https://pdc.wikipedia.org/wiki/Weiss"
+        },
+        "plwiki": {
+          "site": "plwiki",
+          "title": "Barwa bia\u0142a",
+          "badges": [],
+          "url": "https://pl.wikipedia.org/wiki/Barwa_bia%C5%82a"
+        },
+        "plwikiquote": {
+          "site": "plwikiquote",
+          "title": "Biel",
+          "badges": [],
+          "url": "https://pl.wikiquote.org/wiki/Biel"
+        },
+        "pnbwiki": {
+          "site": "pnbwiki",
+          "title": "\u0686\u0679\u0627",
+          "badges": [],
+          "url": "https://pnb.wikipedia.org/wiki/%DA%86%D9%B9%D8%A7"
+        },
+        "ptwiki": {
+          "site": "ptwiki",
+          "title": "Branco",
+          "badges": [],
+          "url": "https://pt.wikipedia.org/wiki/Branco"
+        },
+        "quwiki": {
+          "site": "quwiki",
+          "title": "Yuraq",
+          "badges": [],
+          "url": "https://qu.wikipedia.org/wiki/Yuraq"
+        },
+        "roa_rupwiki": {
+          "site": "roa_rupwiki",
+          "title": "Albu",
+          "badges": [],
+          "url": "https://roa-rup.wikipedia.org/wiki/Albu"
+        },
+        "rowiki": {
+          "site": "rowiki",
+          "title": "Alb",
+          "badges": [],
+          "url": "https://ro.wikipedia.org/wiki/Alb"
+        },
+        "ruwiki": {
+          "site": "ruwiki",
+          "title": "\u0411\u0435\u043b\u044b\u0439 \u0446\u0432\u0435\u0442",
+          "badges": [],
+          "url": "https://ru.wikipedia.org/wiki/%D0%91%D0%B5%D0%BB%D1%8B%D0%B9_%D1%86%D0%B2%D0%B5%D1%82"
+        },
+        "sahwiki": {
+          "site": "sahwiki",
+          "title": "\u04ae\u0440\u04af\u04a5",
+          "badges": [],
+          "url": "https://sah.wikipedia.org/wiki/%D2%AE%D1%80%D2%AF%D2%A5"
+        },
+        "sawiki": {
+          "site": "sawiki",
+          "title": "\u0936\u094d\u0935\u0947\u0924\u0903",
+          "badges": [],
+          "url": "https://sa.wikipedia.org/wiki/%E0%A4%B6%E0%A5%8D%E0%A4%B5%E0%A5%87%E0%A4%A4%E0%A4%83"
+        },
+        "scowiki": {
+          "site": "scowiki",
+          "title": "White",
+          "badges": [],
+          "url": "https://sco.wikipedia.org/wiki/White"
+        },
+        "sdwiki": {
+          "site": "sdwiki",
+          "title": "\u0627\u0687\u0648",
+          "badges": [],
+          "url": "https://sd.wikipedia.org/wiki/%D8%A7%DA%87%D9%88"
+        },
+        "shwiki": {
+          "site": "shwiki",
+          "title": "Bijelo",
+          "badges": [],
+          "url": "https://sh.wikipedia.org/wiki/Bijelo"
+        },
+        "simplewiki": {
+          "site": "simplewiki",
+          "title": "White",
+          "badges": [],
+          "url": "https://simple.wikipedia.org/wiki/White"
+        },
+        "skwiki": {
+          "site": "skwiki",
+          "title": "Biela",
+          "badges": [],
+          "url": "https://sk.wikipedia.org/wiki/Biela"
+        },
+        "skwikiquote": {
+          "site": "skwikiquote",
+          "title": "Biela",
+          "badges": [],
+          "url": "https://sk.wikiquote.org/wiki/Biela"
+        },
+        "slwiki": {
+          "site": "slwiki",
+          "title": "Bela",
+          "badges": [],
+          "url": "https://sl.wikipedia.org/wiki/Bela"
+        },
+        "sowiki": {
+          "site": "sowiki",
+          "title": "Cad",
+          "badges": [],
+          "url": "https://so.wikipedia.org/wiki/Cad"
+        },
+        "sqwiki": {
+          "site": "sqwiki",
+          "title": "Ngjyra e bardh\u00eb",
+          "badges": [],
+          "url": "https://sq.wikipedia.org/wiki/Ngjyra_e_bardh%C3%AB"
+        },
+        "srwiki": {
+          "site": "srwiki",
+          "title": "\u0411\u0435\u043b\u043e",
+          "badges": [],
+          "url": "https://sr.wikipedia.org/wiki/%D0%91%D0%B5%D0%BB%D0%BE"
+        },
+        "suwiki": {
+          "site": "suwiki",
+          "title": "Bodas",
+          "badges": [],
+          "url": "https://su.wikipedia.org/wiki/Bodas"
+        },
+        "svwiki": {
+          "site": "svwiki",
+          "title": "Vit",
+          "badges": [],
+          "url": "https://sv.wikipedia.org/wiki/Vit"
+        },
+        "swwiki": {
+          "site": "swwiki",
+          "title": "Rangi nyeupe",
+          "badges": [],
+          "url": "https://sw.wikipedia.org/wiki/Rangi_nyeupe"
+        },
+        "szlwiki": {
+          "site": "szlwiki",
+          "title": "Bjo\u0142o farba",
+          "badges": [],
+          "url": "https://szl.wikipedia.org/wiki/Bjo%C5%82o_farba"
+        },
+        "tawiki": {
+          "site": "tawiki",
+          "title": "\u0bb5\u0bc6\u0bb3\u0bcd\u0bb3\u0bc8",
+          "badges": [],
+          "url": "https://ta.wikipedia.org/wiki/%E0%AE%B5%E0%AF%86%E0%AE%B3%E0%AF%8D%E0%AE%B3%E0%AF%88"
+        },
+        "tewiki": {
+          "site": "tewiki",
+          "title": "\u0c24\u0c46\u0c32\u0c41\u0c2a\u0c41",
+          "badges": [],
+          "url": "https://te.wikipedia.org/wiki/%E0%B0%A4%E0%B1%86%E0%B0%B2%E0%B1%81%E0%B0%AA%E0%B1%81"
+        },
+        "tgwiki": {
+          "site": "tgwiki",
+          "title": "\u0421\u0430\u0444\u0435\u0434",
+          "badges": [],
+          "url": "https://tg.wikipedia.org/wiki/%D0%A1%D0%B0%D1%84%D0%B5%D0%B4"
+        },
+        "thwiki": {
+          "site": "thwiki",
+          "title": "\u0e2a\u0e35\u0e02\u0e32\u0e27",
+          "badges": [],
+          "url": "https://th.wikipedia.org/wiki/%E0%B8%AA%E0%B8%B5%E0%B8%82%E0%B8%B2%E0%B8%A7"
+        },
+        "tlwiki": {
+          "site": "tlwiki",
+          "title": "Puti",
+          "badges": [],
+          "url": "https://tl.wikipedia.org/wiki/Puti"
+        },
+        "trwiki": {
+          "site": "trwiki",
+          "title": "Beyaz",
+          "badges": [],
+          "url": "https://tr.wikipedia.org/wiki/Beyaz"
+        },
+        "tswiki": {
+          "site": "tswiki",
+          "title": "Basa",
+          "badges": [],
+          "url": "https://ts.wikipedia.org/wiki/Basa"
+        },
+        "ttwiki": {
+          "site": "ttwiki",
+          "title": "\u0410\u043a \u0442\u04e9\u0441",
+          "badges": [],
+          "url": "https://tt.wikipedia.org/wiki/%D0%90%D0%BA_%D1%82%D3%A9%D1%81"
+        },
+        "ukwiki": {
+          "site": "ukwiki",
+          "title": "\u0411\u0456\u043b\u0438\u0439 \u043a\u043e\u043b\u0456\u0440",
+          "badges": [],
+          "url": "https://uk.wikipedia.org/wiki/%D0%91%D1%96%D0%BB%D0%B8%D0%B9_%D0%BA%D0%BE%D0%BB%D1%96%D1%80"
+        },
+        "urwiki": {
+          "site": "urwiki",
+          "title": "\u0633\u0641\u06cc\u062f",
+          "badges": [],
+          "url": "https://ur.wikipedia.org/wiki/%D8%B3%D9%81%DB%8C%D8%AF"
+        },
+        "vecwiki": {
+          "site": "vecwiki",
+          "title": "Bianco",
+          "badges": [],
+          "url": "https://vec.wikipedia.org/wiki/Bianco"
+        },
+        "vepwiki": {
+          "site": "vepwiki",
+          "title": "Vauged muju",
+          "badges": [],
+          "url": "https://vep.wikipedia.org/wiki/Vauged_muju"
+        },
+        "viwiki": {
+          "site": "viwiki",
+          "title": "Tr\u1eafng",
+          "badges": [],
+          "url": "https://vi.wikipedia.org/wiki/Tr%E1%BA%AFng"
+        },
+        "warwiki": {
+          "site": "warwiki",
+          "title": "Busag",
+          "badges": [],
+          "url": "https://war.wikipedia.org/wiki/Busag"
+        },
+        "yiwiki": {
+          "site": "yiwiki",
+          "title": "\u05d5\u05d5\u05d9\u05d9\u05e1",
+          "badges": [],
+          "url": "https://yi.wikipedia.org/wiki/%D7%95%D7%95%D7%99%D7%99%D7%A1"
+        },
+        "zawiki": {
+          "site": "zawiki",
+          "title": "Saekbieg",
+          "badges": [],
+          "url": "https://za.wikipedia.org/wiki/Saekbieg"
+        },
+        "zh_classicalwiki": {
+          "site": "zh_classicalwiki",
+          "title": "\u767d",
+          "badges": [],
+          "url": "https://zh-classical.wikipedia.org/wiki/%E7%99%BD"
+        },
+        "zh_min_nanwiki": {
+          "site": "zh_min_nanwiki",
+          "title": "Pe\u030dh-sek",
+          "badges": [],
+          "url": "https://zh-min-nan.wikipedia.org/wiki/Pe%CC%8Dh-sek"
+        },
+        "zh_yuewiki": {
+          "site": "zh_yuewiki",
+          "title": "\u767d",
+          "badges": [],
+          "url": "https://zh-yue.wikipedia.org/wiki/%E7%99%BD"
+        },
+        "zhwiki": {
+          "site": "zhwiki",
+          "title": "\u767d\u8272",
+          "badges": [],
+          "url": "https://zh.wikipedia.org/wiki/%E7%99%BD%E8%89%B2"
+        }
+      }
+    }
+  }
+}

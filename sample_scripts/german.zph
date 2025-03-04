@@ -1,0 +1,68 @@
+X ist ein Y => X ~ Y
+X ist eine Y => X ist ein Y
+
+"hat die Eigenschaft" ist ein ->
+"hat den Bestandteil" ist ein ->
+"ist Gegenteil von"   ist ein ->
+"ist eine"            ist ein ->
+
+"ist Eigenschaft von" ist Gegenteil von "hat die Eigenschaft"
+"ist Teil von"        ist Gegenteil von "hat den Bestandteil"
+"ist zum Beispiel"    ist Gegenteil von "ist ein"
+
+"hat den Bestandteil" hat die Eigenschaft transitiv
+"hat die Eigenschaft" hat die Eigenschaft transitiv
+~                     hat die Eigenschaft transitiv
+
+R hat die Eigenschaft transitiv, X R Y, Y R Z => X R Z
+X hat die Eigenschaft E, E ist ein K          => X hat die Eigenschaft K
+X hat den Bestandteil P, P ist ein K          => X hat den Bestandteil K
+K hat die Eigenschaft E, X ist ein K          => X hat die Eigenschaft E
+K hat den Bestandteil P, X ist ein K          => X hat den Bestandteil P
+X ist Gegenteil von Y,   X ist ein K          => Y ist ein K
+X ist Gegenteil von Y                         => Y ist Gegenteil von X
+R ist Gegenteil von S,   X R Y                => Y S X
+
+X ist Gegenteil von Y,   A hat die Eigenschaft X, A hat die Eigenschaft Y => !
+X ist Gegenteil von Y,   A hat den Bestandteil X, A hat den Bestandteil Y => !
+X ist Gegenteil von Y,   A ist ein X,             A ist ein Y             => !
+X hat die Eigenschaft E, X ist ein E                                      => !
+X hat die Eigenschaft E, E ist ein X                                      => !
+X hat die Eigenschaft E, E hat den Bestandteil X                          => !
+
+X ist ein Ding                                => X hat die Eigenschaft Farbe
+X ist ein Ding                                => X hat die Eigenschaft Gewicht
+X hat den Bestandteil Y, X != Ding            => X ist ein Ding
+X hat den Bestandteil Y, Y != Ding            => X ist ein Ding
+
+erzeugt ist ein ->
+benötigt ist ein ->
+
+"wird benötigt von" ist Gegenteil von benötigt
+"wird erzeugt von" ist Gegenteil von erzeugt
+
+wird benötigt von ist Gegenteil von benötigt
+wird erzeugt von  ist Gegenteil von erzeugt
+
+X erzeugt Energie          => X ist eine Energiequelle
+A hat die Eigenschaft heiß => A erzeugt Wärme
+A erzeugt Sauerstoff       => A hat die Eigenschaft lebendig
+
+
+Schimpanse ist ein Affe
+Affe hat die Eigenschaft lebendig
+
+Schimpanse hat den Bestandteil Hand
+Hand hat den Bestandteil Finger
+
+"Grüne Minze" ist eine Minze
+
+Wasserminze ist eine Minze
+
+Pfefferminze ist eine Minze
+
+Minze ist ein Lippenblütler
+
+Katzenminze ist ein Lippenblütler
+
+"Grüne Minze" hat die Eigenschaft süßlich

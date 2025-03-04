@@ -1,0 +1,49 @@
+site_name: zelph - A Sophisticated Semantic Network System
+theme:
+  name: material
+  features:
+    - navigation.expand
+    - content.code.annotate
+nav:
+  - Home: index.md
+  - Use Case - Wikidata:
+      - Overview: wikidata.md
+      - Tree Explanation: tree-explanation.md
+      - General Knowledge Domains:
+          - Geographic Entities: tree/Q27096213.md
+          - Physical Substances: tree/Q28732711.md
+          - Information Resources: tree/Q37866906.md
+          - Organizations: tree/Q43229.md
+          - Human Activities: tree/Q61788060.md
+          - The Earth: tree/Q2.md
+          - The Universe: tree/Q1.md
+          - Water: tree/Q283.md
+          - Natural Phenomena: tree/Q1322005.md
+      - Semantics:
+          - Logical Contradictions: tree/Q363948.md
+          - Properties (->): tree/Q18616576.md
+          - Subclasses: tree/P279.md
+          - Instances ("is a" relations): tree/P31.md
+          - Examples (inverse "is a" relations): tree/Q21514624.md
+          #          - Facets: tree/P1269.md
+          - Part relations ("is part of"): tree/P361.md
+          - Part relations ("has part"): tree/P527.md
+          - Opposites: tree/P461.md
+          - Inverses: tree/P1696.md
+          - Qualities: tree/P1552.md
+          - Transitive Relations: tree/Q18647515.md
+          - Constraints: tree/Q21502838.md
+          - Symmetric Properties: tree/Q18647518.md
+#          - Entailment: tree/Q3149445.md
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+extra_javascript:
+  - https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js
+extra:
+  mermaid:
+    version: 11.4.1
