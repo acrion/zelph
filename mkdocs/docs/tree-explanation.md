@@ -35,7 +35,7 @@ This knowledge tree was created through the following process:
 
 ## Why Only 4,580 Pages?
 
-Although over 1.3 million Wikidata entities were imported into zelph, the resulting tree contains only 4,580 pages due to two factors:
+Although over 115 million Wikidata entities were imported into zelph, the resulting tree contains only 4,580 pages due to two factors:
 
 1. Selective page generation: Pages were only created for entities where zelph could make meaningful deductions beyond what's explicitly stated in Wikidata, or where it detected logical contradictions when applying its rule system.
 2. Non-exhaustive processing: The generation process was not exhaustive. Each run of `.run-md` builds upon previous runs by leveraging newly established facts and relations. While additional runs could potentially discover more deductions and contradictions, the current tree represents a substantial but non-exhaustive analysis of the knowledge graph.
