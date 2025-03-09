@@ -31,7 +31,7 @@ This knowledge tree was created through the following process:
    cd mkdocs
    ./replace_invalid_mkdocs_links.raku
    ```
-   This Raku script (installable via `pacman -S rakudo-bin` on [Ditana](https://ditana.org)) replaces links to non-existent pages with direct links to Wikidata.
+   This Raku script replaces links to non-existent pages with direct links to Wikidata. Raku installable via `pacman -S rakudo-bin` on [Ditana](https://ditana.org).
 
 ## Why Only 4,580 Pages?
 
