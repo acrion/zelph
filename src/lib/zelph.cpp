@@ -35,7 +35,7 @@ using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.5.2";
+    return "0.5.3";
 }
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
