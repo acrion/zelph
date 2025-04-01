@@ -25,6 +25,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#if defined(__APPLE__) && defined(__clang__)
+// TODO Workaround to build boost 1.71 boost with AppleClang 15
+namespace std {
+    template <typename Arg, typename Result>
+    struct unary_function {
+        typedef Arg argument_type;
+        typedef Result result_type;
+    };
+}
+#endif
+
 #include <zelph_export.h>
 
 #include <map>
@@ -44,8 +55,8 @@ namespace zelph
                       "bit-shift operations and other bit-specific logic that requires exactly "
                       "64 bits. Please modify the implementation for different bit sizes.");
 
-        static_assert(std::is_same_v<Node, std::size_t>,
-                      "Node and size_t must be identical. On this platform, they differ in size. "
+        static_assert(sizeof(Node) == sizeof(std::size_t),
+                      "Node and size_t must have the same size. "
                       "This implementation requires a 64-bit architecture where size_t is also 64 bits. "
                       "Compilation has been halted to prevent undefined behavior.");
 
