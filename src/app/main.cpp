@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
+#include "utils.hpp"
 
 #include <codecvt>
 #include <fstream>
@@ -40,7 +41,7 @@ int main(int argc, char** argv)
 
         for (int i = 1; i < argc; ++i)
         {
-            std::cout << "Importing file " << argv[i] << "..." << std::endl;
+            std::wcout << L"Importing file " << zelph::network::utils::wstr(argv[i]) << L"..." << std::endl;
             std::wifstream stream(argv[i]);
 
             if (stream.fail()) throw std::runtime_error(std::string("Could not open file '") + argv[i] + "'");
@@ -52,12 +53,12 @@ int main(int argc, char** argv)
             interactive.run(true, false);
         }
 
-        if (argc > 1) std::cout << "Ready." << std::endl;
-        std::cout << "zelph " << Interactive::get_version() << std::endl;
-        std::cout << std::endl;
-        if (argc == 1) std::cout << "You may specify script files that will be processed prior interactive mode." << std::endl;
+        if (argc > 1) std::wcout << L"Ready." << std::endl;
+        std::wcout << "zelph " << zelph::network::utils::wstr(Interactive::get_version()) << std::endl;
+        std::wcout << std::endl;
+        if (argc == 1) std::wcout << "You may specify script files that will be processed prior interactive mode." << std::endl;
         std::wcout << L" -- interactive mode - type " << exit_command << L" to exit --" << std::endl;
-        std::cout << std::endl;
+        std::wcout << std::endl;
         for (std::wstring line; std::getline(std::wcin, line) && line != exit_command;)
         {
             if (line.empty())
@@ -69,7 +70,7 @@ int main(int argc, char** argv)
                 }
                 catch (const std::exception& e)
                 {
-                    std::cerr << e.what() << std::endl;
+                    std::wcerr << zelph::network::utils::wstr(e.what()) << std::endl;
                 }
         }
 
@@ -103,12 +104,12 @@ int main(int argc, char** argv)
     n.gen_dot(n.core.RelationTypeCategory, "test.dot");
 
     n.run();
-    std::cout << "Ready." << std::endl;
+    std::wcout << L"Ready." << std::endl;
     n.debug();
 #endif
     }
     catch (std::exception& ex)
     {
-        std::cout << ex.what() << std::endl;
+        std::wcout << zelph::network::utils::wstr(ex.what()) << std::endl;
     }
 }

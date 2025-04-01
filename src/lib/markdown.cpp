@@ -87,9 +87,9 @@ namespace zelph::wikidata
     std::string Markdown::get_wikidata_id(const std::wstring& token, const std::string& lang) const
     {
         // Get node for this token
-        uint64_t node = _zelph->get_node(token, "en");
+        uint64_t node = _zelph->get_node(token, lang);
 
-        if (node == 0)
+        if (node == 0 && lang != "zelph")
         {
             node = _zelph->get_node(token, "zelph"); // fallback
         }
@@ -122,7 +122,7 @@ namespace zelph::wikidata
             const std::string wikiDataId = get_wikidata_id(token, "en");
             if (wikiDataId.empty())
             {
-                std::cout << "-------- Could not find wikidata ID of '" << network::utils::str(token) << "'" << std::endl;
+                std::wcout << L"-------- Could not find wikidata ID of '" << token << L"'" << std::endl;
             }
             else
             {
