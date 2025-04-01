@@ -22,7 +22,7 @@ cd zelph
 # Configure the build (Release mode)
 cmake -D CMAKE_BUILD_TYPE=Release -B build src
 
-# Build the project
+# Build the project. For MSVC, add `--config Release`.
 cmake --build build
 ```
 
