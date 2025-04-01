@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "utils.hpp"
 
 #include <codecvt>
+#include <cwctype>
 #include <iostream>
 #include <locale>
 #include <regex>

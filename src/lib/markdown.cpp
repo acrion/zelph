@@ -103,7 +103,7 @@ namespace zelph::wikidata
         std::wstring           markdownContent = message;
 
         // Find the position of the '⇐' character
-        size_t       cutoffPos    = *message.begin() == '!' ? std::wstring::npos : message.find(L'⇐');
+        size_t       cutoffPos    = *message.begin() == '!' ? std::wstring::npos : message.find(L"⇐");
         std::wstring processRange = (cutoffPos != std::wstring::npos) ? message.substr(0, cutoffPos) : message;
 
         // Regular expression to find tokens enclosed in «» characters

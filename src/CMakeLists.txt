@@ -21,7 +21,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
-cmake_minimum_required (VERSION 3.12.2)
+cmake_minimum_required(VERSION 3.25.2)
+cmake_policy(VERSION 3.25.2)
 
 project (zelph)
 include(GenerateExportHeader)
@@ -35,11 +36,11 @@ if (WIN32)
       else()
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
       endif()
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4251 /wd4275")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4251 /wd4275 /utf-8")
   else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -Wall -pedantic")
-    message(STATUS "${CMAKE_CXX_FLAGS}")
   endif()
+  message(STATUS "${CMAKE_CXX_FLAGS}")
 else()
   message(STATUS "CMake platform: NOT WIN32")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++1z -Wall -pedantic")

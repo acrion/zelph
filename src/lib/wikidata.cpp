@@ -48,7 +48,7 @@ using boost::tokenizer;
 class Wikidata::Impl
 {
 public:
-    Impl(network::Zelph* n, const fs::path& file_name)
+    Impl(network::Zelph* n, const std::filesystem::path& file_name)
         : _n(n)
         , _file_name(file_name)
     {
@@ -56,17 +56,17 @@ public:
 
     bool     read_index_file();
     void     write_index_file() const;
-    fs::path index_file_name() const;
+    std::filesystem::path index_file_name() const;
 
     network::Zelph*                       _n{nullptr};
-    fs::path                              _file_name;
+    std::filesystem::path                              _file_name;
     std::map<std::string, std::streamoff> _index;
     std::mutex                            _mtx;
     std::string                           _last_entry;
     std::streamoff                        _last_index{0};
 };
 
-Wikidata::Wikidata(Zelph* n, const fs::path& file_name)
+Wikidata::Wikidata(Zelph* n, const std::filesystem::path& file_name)
     : _pImpl(new Impl(n, file_name))
 {
     n->set_process_node([this](const Node node, const std::string& lang)
@@ -377,7 +377,7 @@ void Wikidata::process_node(const Node node, const std::string& lang)
 
 bool Wikidata::Impl::read_index_file()
 {
-    if (!fs::exists(index_file_name()) || fs::last_write_time(_file_name) > fs::last_write_time(index_file_name()))
+    if (!std::filesystem::exists(index_file_name()) || std::filesystem::last_write_time(_file_name) > std::filesystem::last_write_time(index_file_name()))
     {
         return false;
     }
@@ -400,7 +400,7 @@ void Wikidata::Impl::write_index_file() const
     _n->print(L"Finished writing", true);
 }
 
-fs::path Wikidata::Impl::index_file_name() const
+std::filesystem::path Wikidata::Impl::index_file_name() const
 {
     return _file_name.parent_path() / (_file_name.stem().string() + ".index");
 }

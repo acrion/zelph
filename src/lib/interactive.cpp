@@ -36,6 +36,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iostream>
 
+#ifdef _WIN32
+    #include <io.h>    // for _setmode
+    #include <fcntl.h> // for _O_U16TEXT
+    #include <stdio.h> // for _fileno
+#endif
+
 using namespace zelph;
 using boost::escaped_list_separator;
 using boost::tokenizer;
@@ -45,8 +51,18 @@ class console::Interactive::Impl
 public:
     Impl()
         : _n(new network::Reasoning([](const std::wstring& str, const bool)
-                                    { std::cout << network::utils::str(str) << std::endl; }))
+        {
+#ifdef _WIN32
+            std::wcout << str << std::endl;
+#else
+            std::cout << network::utils::str(str) << std::endl;
+#endif
+        }))
     {
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_U16TEXT);
+#endif
+
         _n->set_lang("zelph");
     }
 
@@ -179,7 +195,13 @@ void console::Interactive::process(std::wstring line) const
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
 {
     _n->set_print([](const std::wstring& str, bool)
-                  { std::cout << network::utils::str(str) << std::endl; });
+    {
+#ifdef _WIN32
+        std::wcout << str << std::endl;
+#else
+        std::cout << network::utils::str(str) << std::endl;
+#endif
+    });
 
     if (cmd[0] == L".lang")
     {

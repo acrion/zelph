@@ -35,16 +35,10 @@ namespace zelph
 {
     namespace console
     {
-#if __cplusplus > 201402L
-        namespace fs = std::filesystem;
-#else
-        namespace fs = std::experimental::filesystem;
-#endif
-
         class Wikidata
         {
         public:
-            Wikidata(network::Zelph* n, const fs::path& file_name);
+            Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
             ~Wikidata();
 
             void import_all();

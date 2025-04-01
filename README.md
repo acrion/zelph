@@ -1,5 +1,85 @@
 # zelph: A Sophisticated Semantic Network System
 
+## Quick Start Guide
+
+### Prerequisites
+
+zelph can be used on Linux, macOS, and Windows platforms.
+
+### Building zelph
+
+You need:
+
+- C++ compiler (supporting at least C++17)
+- CMake 3.25.2+
+- Git 
+
+```bash
+# Clone the repository with all submodules
+git clone --recurse-submodules https://github.com/acrion/zelph
+cd zelph
+
+# Configure the build (Release mode)
+cmake -D CMAKE_BUILD_TYPE=Release -B build src
+
+# Build the project
+cmake --build build
+```
+
+### Basic Usage
+
+Once built, you can run zelph in interactive mode:
+
+```bash
+./build/bin/zelph_app
+```
+
+Let’s try a basic example:
+
+```
+Berlin "is capital of" Germany
+Germany "is located in" Europe
+X is capital of Y, Y is located in Z => X is located in Z
+```
+
+After entering these statements, zelph will automatically infer that Berlin is located in Europe:
+
+```
+«Berlin» «is located in» «Europe» ⇐ («Germany» «is located in» «Europe»), («Berlin» «is capital of» «Germany»)
+```
+
+Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
+In section [Semantic Network Structure](#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.  
+
+### Using Sample Scripts
+
+zelph comes with sample scripts to demonstrate its capabilities:
+
+```bash
+# Run with the English examples script
+./build/bin/zelph_app sample_scripts/english.zph
+
+# Or try the Wikidata integration script
+./build/bin/zelph_app sample_scripts/wikidata.zph
+```
+
+### Importing Wikidata
+
+zelph can import and process data from Wikidata:
+
+```
+# Within the zelph CLI
+.wikidata path/to/wikidata-dump.json
+```
+
+For more details on Wikidata integration, see the [Working with Wikidata](#zelph-and-wikidata-finding-logical-connections-and-contradictions) section below.
+
+### What’s Next?
+
+- Explore the [Core Concepts](#core-concepts) to understand how zelph represents knowledge
+- Learn about [Rules and Inference](#rules-and-inference) to leverage zelph’s reasoning capabilities
+- Check out the [Example Script](#example-script) for a comprehensive demonstration
+ 
 ## Introduction
 
 zelph is an innovative semantic network system that allows inference rules to be defined within the network itself.
@@ -428,48 +508,6 @@ The project is currently in alpha status. Core functionality is operational, but
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
 Regarding potential Wikidata integration and the enhancement of `wikidata.zph`, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
-
-## Building zelph
-
-### Prerequisites
-
-- C++ compiler
-- CMake
-- Git
-
-### Build Instructions
-
-1. Clone the repository with all submodules:
-
-```bash
-git clone --recurse-submodules https://github.com/acrion/zelph.git
-```
-
-2. Configure the build (Release mode):
-
-```bash
-cmake -D CMAKE_BUILD_TYPE=Release -B build src
-```
-
-3. Build the project:
-
-```bash
-cmake --build build
-```
-
-### Verifying the Build
-
-Test your installation by running the CLI:
-
-```bash
-./build/bin/zelph_app
-```
-
-or
-
-```bash
-./build/bin/zelph_app sample_scripts/english.zph
-```
 
 ## Licensing
 

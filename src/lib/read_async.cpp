@@ -43,7 +43,7 @@ struct Entry
 class ReadAsync::Impl
 {
 public:
-    Impl(fs::path file_name, size_t sufficient_size)
+    Impl(std::filesystem::path file_name, size_t sufficient_size)
         : _sufficient_size(sufficient_size)
         , _t(std::thread(&Impl::read_thread, this, file_name))
     {
@@ -54,7 +54,7 @@ public:
         if (_t.joinable()) _t.join();
     }
 
-    void read_thread(fs::path file_name);
+    void read_thread(std::filesystem::path file_name);
     void put_line(const Entry& entry);
 
     size_t                  _sufficient_size;
@@ -66,7 +66,7 @@ public:
     std::condition_variable _cv, _cv2;
 };
 
-ReadAsync::ReadAsync(const fs::path& file_name, size_t sufficient_size)
+ReadAsync::ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size)
     : _pImpl(new Impl(file_name, sufficient_size))
 {
 }
@@ -127,7 +127,7 @@ void ReadAsync::Impl::put_line(const Entry& entry)
     _cv.notify_one();
 }
 
-void ReadAsync::Impl::read_thread(fs::path file_name)
+void ReadAsync::Impl::read_thread(std::filesystem::path file_name)
 {
     std::wifstream stream(file_name.string());
 

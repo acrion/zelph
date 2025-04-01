@@ -33,16 +33,10 @@ namespace zelph
 {
     namespace console
     {
-#if __cplusplus > 201402L
-        namespace fs = std::filesystem;
-#else
-        namespace fs = std::experimental::filesystem;
-#endif
-
         class ReadAsync
         {
         public:
-            ReadAsync(const fs::path& file_name, size_t sufficient_size = 2);
+            ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 2);
             ~ReadAsync();
             bool        get_line(std::wstring& line, std::streamoff& streampos) const;
             std::string error_text() const;
