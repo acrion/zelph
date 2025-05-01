@@ -55,7 +55,7 @@ public:
 #ifdef _WIN32
             std::wcout << str << std::endl;
 #else
-            std::cout << network::utils::str(str) << std::endl;
+            std::clog << network::utils::str(str) << std::endl;
 #endif
         }))
     {
