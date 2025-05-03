@@ -102,6 +102,15 @@ std::string console::Interactive::get_version()
 
 void console::Interactive::process(std::wstring line) const
 {
+    _pImpl->_n->set_print([](const std::wstring& str, bool)
+                          {
+#ifdef _WIN32
+                              std::wcout << str << std::endl;
+#else
+                              std::clog << network::utils::str(str) << std::endl;
+#endif
+                          });
+
     try
     {
         if (boost::starts_with(line, "#")) return; // comment
@@ -194,15 +203,6 @@ void console::Interactive::process(std::wstring line) const
 
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
 {
-    _n->set_print([](const std::wstring& str, bool)
-                  {
-#ifdef _WIN32
-                      std::wcout << str << std::endl;
-#else
-                      std::clog << network::utils::str(str) << std::endl;
-#endif
-                  });
-
     if (cmd[0] == L".lang")
     {
         if (cmd.size() < 2)
