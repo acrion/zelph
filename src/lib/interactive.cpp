@@ -37,8 +37,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iostream>
 
 #ifdef _WIN32
-    #include <io.h>    // for _setmode
     #include <fcntl.h> // for _O_U16TEXT
+    #include <io.h>    // for _setmode
     #include <stdio.h> // for _fileno
 #endif
 
@@ -51,13 +51,13 @@ class console::Interactive::Impl
 public:
     Impl()
         : _n(new network::Reasoning([](const std::wstring& str, const bool)
-        {
+                                    {
 #ifdef _WIN32
-            std::wcout << str << std::endl;
+                                        std::wcout << str << std::endl;
 #else
-            std::clog << network::utils::str(str) << std::endl;
+                                        std::clog << network::utils::str(str) << std::endl;
 #endif
-        }))
+                                    }))
     {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_U16TEXT);
@@ -195,13 +195,13 @@ void console::Interactive::process(std::wstring line) const
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
 {
     _n->set_print([](const std::wstring& str, bool)
-    {
+                  {
 #ifdef _WIN32
-        std::wcout << str << std::endl;
+                      std::wcout << str << std::endl;
 #else
-        std::clog << network::utils::str(str) << std::endl;
+                      std::clog << network::utils::str(str) << std::endl;
 #endif
-    });
+                  });
 
     if (cmd[0] == L".lang")
     {
@@ -225,14 +225,19 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     {
         if (cmd.size() == 1) throw std::runtime_error("Command .node: Missing node name or ID");
         network::Node nd = _n->get_node(cmd[1]);
-        if (nd == 0) {
-            try {
+        if (nd == 0)
+        {
+            try
+            {
                 size_t pos = 0;
-                nd = std::stoull(cmd[1], &pos);
-                if (pos != cmd[1].length()) {
+                nd         = std::stoull(cmd[1], &pos);
+                if (pos != cmd[1].length())
+                {
                     throw std::runtime_error("Command .node: Invalid node ID format '" + network::utils::str(cmd[1]) + "'");
                 }
-            } catch (const std::exception&) {
+            }
+            catch (const std::exception&)
+            {
                 throw std::runtime_error("Command .node: Unknown node '" + network::utils::str(cmd[1]) + "'");
             }
         }
@@ -240,7 +245,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {
             std::clog << "ID of node: " << nd << std::endl;
         }
-        for (const auto& lang : _n->get_languages()) {
+        for (const auto& lang : _n->get_languages())
+        {
             std::clog << "Name of node in language '" << lang << "': '"
                       << network::utils::str(_n->get_name(nd, lang, false)) << "'" << std::endl;
         }
@@ -250,13 +256,17 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() == 1) throw std::runtime_error("Command .nodes: Missing count parameter");
 
         size_t count;
-        try {
+        try
+        {
             size_t pos = 0;
-            count = std::stoull(cmd[1], &pos);
-            if (pos != cmd[1].length()) {
+            count      = std::stoull(cmd[1], &pos);
+            if (pos != cmd[1].length())
+            {
                 throw std::runtime_error("Command .nodes: Invalid count format '" + network::utils::str(cmd[1]) + "'");
             }
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&)
+        {
             throw std::runtime_error("Command .nodes: Invalid count '" + network::utils::str(cmd[1]) + "'");
         }
 
@@ -266,10 +276,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         std::clog << "------------------------" << std::endl;
 
         size_t displayed = 0;
-        for (const auto& node : _n->get_all_nodes()) {
+        for (const auto& node : _n->get_all_nodes())
+        {
             std::clog << "Node ID: " << node << std::endl;
 
-            for (const auto& lang : _n->get_languages()) {
+            for (const auto& lang : _n->get_languages())
+            {
                 std::clog << "  Name in language '" << lang << "': '"
                           << network::utils::str(_n->get_name(node, lang, false)) << "'" << std::endl;
             }
@@ -354,21 +366,24 @@ void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens
     {
         std::wstring current;
 
-        if (boost::algorithm::starts_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the following token
+        if (!And.empty())
         {
-            current = token.substr(And.size());
-            tokens.push_back(And);
-            tokens.push_back(current);
-        }
-
-        if (boost::algorithm::ends_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the preceding token
-        {
-            if (current.empty())
+            if (boost::algorithm::starts_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the following token
             {
-                current = token.substr(0, token.size() - And.size());
+                current = token.substr(And.size());
+                tokens.push_back(And);
                 tokens.push_back(current);
             }
-            tokens.push_back(And);
+
+            if (boost::algorithm::ends_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the preceding token
+            {
+                if (current.empty())
+                {
+                    current = token.substr(0, token.size() - And.size());
+                    tokens.push_back(current);
+                }
+                tokens.push_back(And);
+            }
         }
 
         if (current.empty())
