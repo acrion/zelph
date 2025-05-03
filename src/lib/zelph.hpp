@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "answer.hpp"
+#include "node_view.hpp"
 
 #include <zelph_export.h>
 
@@ -48,6 +49,7 @@ namespace zelph
             Node var() const;
 
             void                         set_lang(const std::string& lang) { _lang = lang; }
+            std::string                  get_lang() { return _lang; }
             void                         set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
             void                         set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }
             std::string                  lang() { return _lang; }
@@ -55,6 +57,7 @@ namespace zelph
             bool                         has_name(Node node, const std::string& lang) const;
             std::wstring                 get_name(const Node node, std::string lang = "", const bool fallback = false) const;
             std::map<Node, std::wstring> get_nodes_in_language(const std::string& lang) const;
+            std::vector<std::string>     get_languages() const;
             Node                         get_node(const std::wstring& name, std::string lang = "") const;
             std::string                  get_name_hex(Node node, bool prepend_num = true);
             void                         set_name(Node node, const std::wstring& name, std::string lang = "") const;
@@ -72,6 +75,8 @@ namespace zelph
             void                            gen_dot(Node start, std::string file_name, int max_depth);
             void                            print(const std::wstring&, const bool) const;
             static std::string              get_version();
+
+            NodeView get_all_nodes() const;
 
             // member list
             class Impl;

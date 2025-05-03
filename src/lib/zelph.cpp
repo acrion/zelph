@@ -160,6 +160,16 @@ std::map<Node, std::wstring> Zelph::get_nodes_in_language(const std::string& lan
 {
     return _pImpl->_name_of_node[lang];
 }
+std::vector<std::string> Zelph::get_languages() const
+{
+    std::vector<std::string> result;
+
+    for (const auto& outer_pair : _pImpl->_node_of_name) {
+        result.push_back(outer_pair.first);
+    }
+
+    return result;
+}
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num)
 {
@@ -533,6 +543,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");
     boost::trim(result);
+}
+
+NodeView Zelph::get_all_nodes() const
+{
+    return NodeView(_pImpl->_name_of_node);
 }
 
 void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth)

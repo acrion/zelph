@@ -199,14 +199,20 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 #ifdef _WIN32
         std::wcout << str << std::endl;
 #else
-        std::cout << network::utils::str(str) << std::endl;
+        std::clog << network::utils::str(str) << std::endl;
 #endif
     });
 
     if (cmd[0] == L".lang")
     {
-        if (cmd.size() < 2) throw std::runtime_error("Command .lang: Missing language identifier");
-        _n->set_lang(network::utils::str(cmd[1]));
+        if (cmd.size() < 2)
+        {
+            std::clog << "The current language is '" << _n->get_lang() << "'" << std::endl;
+        }
+        else
+        {
+            _n->set_lang(network::utils::str(cmd[1]));
+        }
     }
     else if (cmd[0] == L".name")
     {
@@ -214,6 +220,67 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() == 2) throw std::runtime_error("Command .name: Missing language identifier. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
         if (cmd.size() == 3) throw std::runtime_error("Command .name: Missing " + network::utils::str(cmd[2]) + " name of " + network::utils::str(cmd[1]) + ". Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
         _n->set_name(_n->node(cmd[1]), cmd[3], network::utils::str(cmd[2]));
+    }
+    else if (cmd[0] == L".node")
+    {
+        if (cmd.size() == 1) throw std::runtime_error("Command .node: Missing node name or ID");
+        network::Node nd = _n->get_node(cmd[1]);
+        if (nd == 0) {
+            try {
+                size_t pos = 0;
+                nd = std::stoull(cmd[1], &pos);
+                if (pos != cmd[1].length()) {
+                    throw std::runtime_error("Command .node: Invalid node ID format '" + network::utils::str(cmd[1]) + "'");
+                }
+            } catch (const std::exception&) {
+                throw std::runtime_error("Command .node: Unknown node '" + network::utils::str(cmd[1]) + "'");
+            }
+        }
+        else
+        {
+            std::clog << "ID of node: " << nd << std::endl;
+        }
+        for (const auto& lang : _n->get_languages()) {
+            std::clog << "Name of node in language '" << lang << "': '"
+                      << network::utils::str(_n->get_name(nd, lang, false)) << "'" << std::endl;
+        }
+    }
+    else if (cmd[0] == L".nodes")
+    {
+        if (cmd.size() == 1) throw std::runtime_error("Command .nodes: Missing count parameter");
+
+        size_t count;
+        try {
+            size_t pos = 0;
+            count = std::stoull(cmd[1], &pos);
+            if (pos != cmd[1].length()) {
+                throw std::runtime_error("Command .nodes: Invalid count format '" + network::utils::str(cmd[1]) + "'");
+            }
+        } catch (const std::exception&) {
+            throw std::runtime_error("Command .nodes: Invalid count '" + network::utils::str(cmd[1]) + "'");
+        }
+
+        if (count <= 0) throw std::runtime_error("Command .nodes: Count must be greater than 0");
+
+        std::clog << "Listing first " << count << " nodes:" << std::endl;
+        std::clog << "------------------------" << std::endl;
+
+        size_t displayed = 0;
+        for (const auto& node : _n->get_all_nodes()) {
+            std::clog << "Node ID: " << node << std::endl;
+
+            for (const auto& lang : _n->get_languages()) {
+                std::clog << "  Name in language '" << lang << "': '"
+                          << network::utils::str(_n->get_name(node, lang, false)) << "'" << std::endl;
+            }
+
+            std::clog << "------------------------" << std::endl;
+
+            displayed++;
+            if (displayed >= count) break;
+        }
+
+        std::clog << "Displayed " << displayed << " of " << count << " requested nodes." << std::endl;
     }
     else if (cmd[0] == L".dot")
     {
@@ -348,7 +415,23 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
             while (i <= max_index && !list[i]._node)
             {
                 if (!result._token.empty()) result._token += L" ";
-                result._token += list[i++]._token;
+
+                if (list[i]._token.find(L' ') != std::wstring::npos)
+                {
+                    if (result._token.empty())
+                    {
+                        result._token += list[i++]._token;
+                        break;
+                    }
+                    else
+                    {
+                        throw std::runtime_error("Could not parse this line");
+                    }
+                }
+                else
+                {
+                    result._token += list[i++]._token;
+                }
             }
             return result;
         }
@@ -406,6 +489,11 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
             {
                 combined.emplace_back(this, var->second, token);
             }
+        }
+        else if (token.find(L' ') != std::wstring::npos)
+        {
+            network::Node node = _n->get_node(token, _n->lang());
+            combined.emplace_back(this, node, token);
         }
         else
         {
