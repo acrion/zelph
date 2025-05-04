@@ -54,12 +54,12 @@ public:
     {
     }
 
-    bool     read_index_file();
-    void     write_index_file() const;
+    bool                  read_index_file();
+    void                  write_index_file() const;
     std::filesystem::path index_file_name() const;
 
     network::Zelph*                       _n{nullptr};
-    std::filesystem::path                              _file_name;
+    std::filesystem::path                 _file_name;
     std::map<std::string, std::streamoff> _index;
     std::mutex                            _mtx;
     std::string                           _last_entry;
@@ -83,39 +83,64 @@ void Wikidata::import_all()
     _pImpl->_n->print(L"Importing file " + _pImpl->_file_name.wstring(), true);
 
     ReadAsync read_async(_pImpl->_file_name);
-    // std::wifstream stream(_pImpl->_file_name.string());
+    if (!read_async.error_text().empty())
+    {
+        throw std::runtime_error(read_async.error_text());
+    }
 
-    std::vector<std::thread> threads;
+    const std::streamsize total_size = read_async.get_total_size();
 
-    // for (std::wstring line; std::getline(stream, line); )
-    std::wstring   line;
-    std::streamoff streampos;
+    std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_update_time = start_time;
+    std::wstring                          line;
+    std::streamoff                        streampos;
+    const int                             decimal_places = 2;
     while (read_async.get_line(line, streampos))
     {
         process_entry(line);
-        //    size_t i = 0;
-        //    for (i = 0; i < threads.size(); ++i)
-        //      if (!(_running & 1ull<<i))
-        //        break;
+        auto current_time           = std::chrono::steady_clock::now();
+        auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count() / 1000.0;
+        if (time_since_last_update >= 1.0)
+        {
+            double current_percentage = (static_cast<double>(streampos) / total_size) * 100.0;
+            auto   elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+            double speed              = 0;
+            int    eta_seconds        = 0;
+            if (elapsed_seconds > 0 && streampos > 0)
+            {
+                speed       = static_cast<double>(streampos) / elapsed_seconds;
+                eta_seconds = static_cast<int>((total_size - streampos) / speed);
+            }
 
-        //    _running = _running | 1ull<<i;
-        //    std::thread t(&Wikidata::process_command, this, line, i);
-        //    if (i < threads.size())
-        //    {
-        //      if (threads[i].joinable()) threads[i].join();
-        //      threads[i] = std::move(t);
-        //    }
-        //    else
-        //    {
-        //      threads.emplace_back(std::move(t));
-        //      _pImpl->_n->print(L"Running " + std::to_wstring(threads.size()) + L" threads for reading wikidata file...", true);
-        //    }
+            int eta_minutes = eta_seconds / 60;
+            eta_seconds %= 60;
+            int eta_hours = eta_minutes / 60;
+            eta_minutes %= 60;
+
+            std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
+                      << current_percentage << "% " << streampos << "/" << total_size << " bytes";
+
+            if (eta_seconds > 0 || eta_minutes > 0 || eta_hours > 0)
+            {
+                std::clog << " | ETA: ";
+                if (eta_hours > 0) std::clog << eta_hours << "h ";
+                if (eta_minutes > 0) std::clog << eta_minutes << "m ";
+                std::clog << eta_seconds << "s";
+            }
+            std::clog << std::endl;
+
+            last_update_time = current_time;
+        }
     }
 
-    for (std::thread& t : threads)
-        if (t.joinable()) t.join();
-
-    if (!read_async.error_text().empty()) throw std::runtime_error(read_async.error_text());
+    if (read_async.error_text().empty())
+    {
+        std::clog << "Import completed successfully!" << std::endl;
+    }
+    else
+    {
+        throw std::runtime_error(read_async.error_text());
+    }
 }
 
 void Wikidata::process_entry(const std::wstring& line, const bool log, const size_t thread_index)

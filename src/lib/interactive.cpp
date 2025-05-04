@@ -326,19 +326,29 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
           if (o)
           {
-            std::wcout << str << std::endl;
+#ifdef _WIN32
+              std::wcout << str << std::endl;
+#else
+            std::clog << network::utils::str(str) << std::endl;
+#endif
           } });
 
         if (cmd.size() == 2)
         {
             network::StopWatch watch;
             watch.start();
-            // _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            // _wikidata->import_all();
-
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
             _wikidata->generate_index();
-            _wikidata->traverse();
+            if (_n->has_language("wikidata"))
+            {
+                std::clog << "Warning: Found existing wikidata nodes prior import => Only importing nodes that are connected with the existing ones." << std::endl;
+                _wikidata->traverse();
+            }
+            else
+            {
+                std::clog << "Warning: No existing wikidata nodes => Importing the complete file (no filter)." << std::endl;
+                _wikidata->import_all();
+            }
             _n->print(L" Time needed for importing: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
         }
         else if (cmd.size() == 3)
@@ -351,7 +361,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         else
         {
-            throw std::runtime_error("Command .wikidata: You need to specify the json file to import and optionally add the maximum link distance and the start entry to be imported");
+            throw std::runtime_error("Command .wikidata: You need to specify the json file to import and optionally add the start entry to be imported");
         }
     }
     else

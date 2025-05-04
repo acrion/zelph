@@ -45,8 +45,19 @@ class ReadAsync::Impl
 public:
     Impl(std::filesystem::path file_name, size_t sufficient_size)
         : _sufficient_size(sufficient_size)
-        , _t(std::thread(&Impl::read_thread, this, file_name))
     {
+        std::ifstream file(file_name, std::ifstream::ate | std::ifstream::binary);
+        if (file.is_open())
+        {
+            _total_size = file.tellg();
+            file.close();
+            _t = std::thread(&Impl::read_thread, this, file_name);
+        }
+        else
+        {
+            _error_text = std::string("Could not open file '") + file_name.string() + "' to get size";
+            _EOF        = true;
+        }
     }
 
     ~Impl()
@@ -64,7 +75,13 @@ public:
     std::string             _error_text;
     std::mutex              _mtx, _mtx2;
     std::condition_variable _cv, _cv2;
+    std::streamsize         _total_size{0};
 };
+
+std::streamsize ReadAsync::get_total_size() const
+{
+    return _pImpl->_total_size;
+}
 
 ReadAsync::ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size)
     : _pImpl(new Impl(file_name, sufficient_size))
@@ -129,7 +146,7 @@ void ReadAsync::Impl::put_line(const Entry& entry)
 
 void ReadAsync::Impl::read_thread(std::filesystem::path file_name)
 {
-    std::wifstream stream(file_name.string());
+    std::wifstream stream(file_name);
 
     if (stream.fail())
     {

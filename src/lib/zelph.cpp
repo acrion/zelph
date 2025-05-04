@@ -164,11 +164,18 @@ std::vector<std::string> Zelph::get_languages() const
 {
     std::vector<std::string> result;
 
-    for (const auto& outer_pair : _pImpl->_node_of_name) {
+    for (const auto& outer_pair : _pImpl->_node_of_name)
+    {
         result.push_back(outer_pair.first);
     }
 
     return result;
+}
+
+bool Zelph::has_language(const std::string& language) const
+{
+    const auto& languages = get_languages();
+    return std::find(languages.begin(), languages.end(), language) != languages.end();
 }
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num)
@@ -381,7 +388,7 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
 
         if (_pImpl->exists(answer.relation()))
         {
-            // check_fact can return !answer.is_known() though answer.relation exists, which should not happen. Indicates corrupt database or hash collision.
+            // TODO check_fact returns !answer.is_known() though answer.relation exists, which should not happen. Indicates corrupt database or hash collision.
             assert(false);
         }
         else

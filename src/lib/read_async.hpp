@@ -38,8 +38,9 @@ namespace zelph
         public:
             ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 2);
             ~ReadAsync();
-            bool        get_line(std::wstring& line, std::streamoff& streampos) const;
-            std::string error_text() const;
+            std::streamsize get_total_size() const;
+            bool            get_line(std::wstring& line, std::streamoff& streampos) const;
+            std::string     error_text() const;
 
         private:
             class Impl;
