@@ -97,11 +97,11 @@ bool Zelph::has_name(const Node node, const std::string& lang) const
     return it != name_of_node.end();
 }
 
-std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback) const
+std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback, const bool process_node) const
 {
     if (lang.empty()) lang = _lang;
 
-    if (_process_node)
+    if (_process_node && process_node)
     {
         _process_node(node, lang);
     }

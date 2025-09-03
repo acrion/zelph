@@ -55,7 +55,7 @@ namespace zelph
             std::string                  lang() { return _lang; }
             Node                         node(const std::wstring& name, std::string lang = "") const;
             bool                         has_name(Node node, const std::string& lang) const;
-            std::wstring                 get_name(const Node node, std::string lang = "", const bool fallback = false) const;
+            std::wstring                 get_name(const Node node, std::string lang = "", const bool fallback = false, const bool process_node = true) const;
             std::map<Node, std::wstring> get_nodes_in_language(const std::string& lang) const;
             std::vector<std::string>     get_languages() const;
             bool                         has_language(const std::string& language) const;

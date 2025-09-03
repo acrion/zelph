@@ -177,7 +177,7 @@ void Wikidata::process_entry(const std::wstring& line, const bool log, const siz
             if (language == "en") // currently we only include the languages "en" and "wikidata", which is the id (see above comment).
             {
                 _pImpl->_n->set_name(current, value, language);
-                _pImpl->_n->print(id + L": " + utils::wstr(language) + L": " + value, false);
+                //_pImpl->_n->print(id + L": " + utils::wstr(language) + L": " + value, false);
             }
         }
 
@@ -385,15 +385,12 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
 void Wikidata::process_node(const Node node, const std::string& lang)
 {
-    if (lang != "wikidata")
+    if (!_pImpl->_n->has_name(node, "en"))
     {
-        if (!_pImpl->_n->has_name(node, "en"))
+        const std::wstring name = _pImpl->_n->get_name(node, "wikidata", false, false);
+        if (!name.empty())
         {
-            const std::wstring name = _pImpl->_n->get_name(node, "wikidata");
-            if (!name.empty())
-            {
-                process_name(name);
-            }
+            process_name(name);
         }
     }
 }

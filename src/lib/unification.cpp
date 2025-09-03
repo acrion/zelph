@@ -101,7 +101,7 @@ std::shared_ptr<Variables> Unification::Next()
             || !_variables
             || utils::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
         {
-            while (increment_fact_index())
+            while (increment_fact_index()) // iterate over all matching facts
             {
                 std::unordered_set<Node> objects;
                 Node                     subject = _n->parse_fact(*_fact_index, objects, *_relation_index); // todo: use _parent instead of *_relation_index!? or both?!
@@ -109,11 +109,11 @@ std::shared_ptr<Variables> Unification::Next()
                 if (objects.size() > 0
                     && !_n->_pImpl->is_var(subject)
                     && !_n->_pImpl->is_var(*objects.begin())
-                    && utils::get(*_variables, _subject, subject) == subject
+                    && utils::get(*_variables, _subject, subject) == subject // either the variable is unbound, or it already points to subject
                     && utils::get(*_variables, *_objects.begin(), *objects.begin()) == *objects.begin() // todo: what if more than one?
-                    && (_n->_pImpl->is_var(_subject)
+                    && (_n->_pImpl->is_var(_subject) // either _subject is a variable, or it is identical to subject
                         || _subject == subject)
-                    && (_n->_pImpl->is_var(*_objects.begin())
+                    && (_n->_pImpl->is_var(*_objects.begin()) // either _object is variable, or it is identical to object
                         || *_objects.begin() == *objects.begin() // todo: what if more than one?
                         ))
                 {
