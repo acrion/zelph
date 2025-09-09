@@ -97,7 +97,7 @@ namespace zelph
             std::string _lang{"en"};
 
         private:
-            void add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth);
+            void add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges);
 
             std::function<void(std::wstring, bool)> _print;
             std::function<void(Node, std::string)>  _process_node;

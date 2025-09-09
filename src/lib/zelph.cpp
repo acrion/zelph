@@ -35,8 +35,9 @@ using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.5.3";
+    return "0.5.4";
 }
+
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
@@ -557,7 +558,7 @@ NodeView Zelph::get_all_nodes() const
     return NodeView(_pImpl->_name_of_node);
 }
 
-void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth)
+void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
 {
     if (--max_depth > 0 && touched.count(current) == 0)
     {
@@ -584,16 +585,34 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
             {
                 touched.insert(hash);
                 std::string left_name = get_name_hex(left);
-                dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
 
-                if (_pImpl->find_left(left)->second.count(current) == 1)
+                std::string key;
+                bool is_bidirectional = (_pImpl->find_left(left)->second.count(current) == 1);
+
+                if (is_bidirectional)
                 {
-                    dot << R"( [dir="both"])";
+                    if (left_name < current_name)
+                        key = left_name + "<->" + current_name;
+                    else
+                        key = current_name + "<->" + left_name;
+                }
+                else
+                {
+                    key = left_name + "->" + current_name;
                 }
 
-                dot << ";" << std::endl;
+                if (written_edges.find(key) == written_edges.end())
+                {
+                    written_edges.insert(key);
+                    dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
+                    if (is_bidirectional)
+                    {
+                        dot << R"( [dir="both"])";
+                    }
+                    dot << ";" << std::endl;
+                }
             }
-            add_nodes(left, touched, conditions, deductions, dot, max_depth);
+            add_nodes(left, touched, conditions, deductions, dot, max_depth, written_edges);
         }
 
         for (const Node& right : _pImpl->get_right(current))
@@ -603,16 +622,34 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
             {
                 touched.insert(hash);
                 std::string right_name = get_name_hex(right);
-                dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
 
-                if (_pImpl->find_right(right)->second.count(current) == 1)
+                std::string key;
+                bool is_bidirectional = (_pImpl->find_right(right)->second.count(current) == 1);
+
+                if (is_bidirectional)
                 {
-                    dot << R"( [dir="both"])";
+                    if (current_name < right_name)
+                        key = current_name + "<->" + right_name;
+                    else
+                        key = right_name + "<->" + current_name;
+                }
+                else
+                {
+                    key = current_name + "->" + right_name;
                 }
 
-                dot << ";" << std::endl;
+                if (written_edges.find(key) == written_edges.end())
+                {
+                    written_edges.insert(key);
+                    dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
+                    if (is_bidirectional)
+                    {
+                        dot << R"( [dir="both"])";
+                    }
+                    dot << ";" << std::endl;
+                }
             }
-            add_nodes(right, touched, conditions, deductions, dot, max_depth);
+            add_nodes(right, touched, conditions, deductions, dot, max_depth, written_edges);
         }
     }
 }
@@ -636,12 +673,13 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    std::unordered_set<Node> touched;
-    std::ofstream            dot(file_name, std::ios_base::out);
+    std::unordered_set<Node>    touched;
+    std::unordered_set<std::string> written_edges;
+    std::ofstream               dot(file_name, std::ios_base::out);
 
     dot << "digraph graphname{" << std::endl;
 
-    add_nodes(start, touched, conditions, deductions, dot, max_depth);
+    add_nodes(start, touched, conditions, deductions, dot, max_depth, written_edges);
 
     dot << "}" << std::endl;
 }
