@@ -191,8 +191,6 @@ void console::Interactive::process(std::wstring line) const
                     _pImpl->_n->apply_rule(0, fact, 0); // query
                 }
             }
-
-            run(true, false);
         }
     }
     catch (std::exception& ex)
@@ -247,8 +245,26 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         for (const auto& lang : _n->get_languages())
         {
+            std::wstring name = _n->get_name(nd, lang, false);
             std::clog << "Name of node in language '" << lang << "': '"
-                      << network::utils::str(_n->get_name(nd, lang, false)) << "'" << std::endl;
+                      << network::utils::str(name) << "'" << std::endl;
+
+            if (lang == "wikidata" && !name.empty())
+            {
+                std::string url = "https://www.wikidata.org/wiki/";
+
+                if (name[0] == L'P')
+                {
+                    url += "Property:"; // Wikidata properties have a special URL format.
+                }
+                url += network::utils::str(name);
+                const std::string OSC_START = "\033]8;;";
+                const char        OSC_SEP   = '\a'; // Use the BEL character as a separator
+                const std::string OSC_END   = "\033]8;;\a";
+
+                // We display the URL as the link text itself.
+                std::clog << "Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
+            }
         }
     }
     else if (cmd[0] == L".nodes")
