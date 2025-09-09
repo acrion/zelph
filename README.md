@@ -239,7 +239,7 @@ In this example, `name` refers to the node identifier (in the currently active l
 To convert the DOT file into an actual image, use the GraphViz command-line tool as follows:
 
 ```bash
-dot -Tpng -oname.svg name.dot
+dot -Tsvg -oname.svg name.dot
 ```
 
 ## Rules and Inference
