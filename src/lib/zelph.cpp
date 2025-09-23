@@ -291,6 +291,16 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
+const std::unordered_set<Node>& Zelph::get_left(const Node b)
+{
+    return _pImpl->get_left(b);
+}
+
+const std::unordered_set<Node>& Zelph::get_right(const Node b)
+{
+    return _pImpl->get_right(b);
+}
+
 Answer Zelph::check_fact(const Node source, const Node relationType, const std::unordered_set<Node>& targets)
 {
     bool known = false;
@@ -556,6 +566,12 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 NodeView Zelph::get_all_nodes() const
 {
     return NodeView(_pImpl->_name_of_node);
+}
+
+std::unordered_set<Node> Zelph::get_rules() const
+{
+    // Returns all nodes that are subjects of a core.Causes relation
+    return _pImpl->get_left(core.Causes);
 }
 
 void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)

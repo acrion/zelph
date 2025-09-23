@@ -70,6 +70,8 @@ namespace zelph
             std::unordered_set<Node>        filter(const std::unordered_set<Node>& source, Node target) const;
             std::unordered_set<Node>        filter(Node fact, Node relationType, Node target) const;
             static std::unordered_set<Node> filter(const std::unordered_set<Node>& source, const std::function<bool(const Node nd)>& f);
+            const std::unordered_set<Node>& get_left(const Node b);
+            const std::unordered_set<Node>& get_right(const Node b);
             Answer                          check_fact(Node source, Node relationType, const std::unordered_set<Node>& targets);
             Node                            fact(Node source, Node relationType, const std::unordered_set<Node>& targets, long double probability = 1);
             Node                            condition(Node op, const std::unordered_set<Node>& conditions) const;
@@ -77,7 +79,8 @@ namespace zelph
             void                            print(const std::wstring&, const bool) const;
             static std::string              get_version();
 
-            NodeView get_all_nodes() const;
+            NodeView                 get_all_nodes() const;
+            std::unordered_set<Node> get_rules() const; // New public method to get all rules
 
             // member list
             class Impl;

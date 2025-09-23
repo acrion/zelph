@@ -35,6 +35,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <algorithm>
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT
@@ -71,6 +73,7 @@ public:
     network::Node process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
     void          process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
     static bool   is_var(std::wstring token);
+    void          list_predicate_usage();
 
     std::shared_ptr<Wikidata> _wikidata;
     network::Reasoning* const _n;
@@ -380,11 +383,97 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             throw std::runtime_error("Command .wikidata: You need to specify the json file to import and optionally add the start entry to be imported");
         }
     }
+    else if (cmd[0] == L".list-rules")
+    {
+        // Get all nodes that are subjects of a core.Causes relation
+        std::unordered_set<network::Node> rule_nodes = _n->get_rules();
+        if (rule_nodes.empty())
+        {
+            _n->print(L"No rules found.", true);
+            return;
+        }
+
+        _n->print(L"Listing all rules:", true);
+        _n->print(L"------------------------", true);
+
+        for (const auto& rule : rule_nodes)
+        {
+            std::wstring output;
+            // Format the rule for printing
+            _n->format_fact(output, _n->lang(), rule);
+            _n->print(output, true);
+        }
+        _n->print(L"------------------------", true);
+    }
+    else if (cmd[0] == L".list-predicate-usage") // New command
+    {
+        list_predicate_usage();
+    }
     else
     {
         throw std::runtime_error(network::utils::str(L"Unknown command " + cmd[0]));
     }
 }
+
+// New method implementation
+void console::Interactive::Impl::list_predicate_usage()
+{
+    // Map to store predicate node and its usage count
+    std::map<network::Node, size_t> predicate_usage_counts;
+
+    // Iterate through all nodes in the network
+    for (const auto& node_id : _n->get_all_nodes())
+    {
+        // Check if the node is a relation type (predicate)
+        // A node is a relation type if it has a core.IsA relation to core.RelationTypeCategory
+        if (_n->check_fact(node_id, _n->core.IsA, {_n->core.RelationTypeCategory}).is_correct())
+        {
+            // Get all facts where this node is used as a relation type
+            // This counts how many facts use this predicate
+            const auto& facts_using_predicate = _n->get_left(node_id);
+            predicate_usage_counts[node_id] = facts_using_predicate.size();
+        }
+    }
+
+    // Convert map to vector for sorting
+    std::vector<std::pair<network::Node, size_t>> sorted_predicates(predicate_usage_counts.begin(), predicate_usage_counts.end());
+
+    // Sort the predicates by usage count in descending order
+    std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second; // Sort by count, descending
+    });
+
+    // Determine if wikidata language is available for three-column output
+    bool has_wikidata_lang = _n->has_language("wikidata");
+
+    // Output the results
+    _n->print(L"Predicate Usage:", true);
+    _n->print(L"------------------------", true);
+
+    for (const auto& entry : sorted_predicates)
+    {
+        std::wstring predicate_name = _n->get_name(entry.first, "", true); // Current language, with fallback
+        std::wstring line_output;
+
+        if (has_wikidata_lang && _n->get_lang() != "wikidata")
+        {
+            // Three columns: current lang name \t wikidata name \t count
+            // For the first column, `lang` is an empty string to use the current language.
+            // For the second column (wikidata name), `lang` is "wikidata" and `fallback` is `false`.
+            std::wstring wikidata_name = _n->get_name(entry.first, "wikidata", false);
+            line_output = predicate_name + L"\t" + wikidata_name + L"\t" + std::to_wstring(entry.second);
+        }
+        else
+        {
+            // Two columns: current lang name \t count
+            // `lang` is an empty string to use the current language, `fallback` is `true`.
+            line_output = predicate_name + L"\t" + std::to_wstring(entry.second);
+        }
+        _n->print(line_output, true);
+    }
+    _n->print(L"------------------------", true);
+}
+
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const
 {
@@ -628,7 +717,7 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
     }
 
     if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
-    if (deductions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
+    if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + network::utils::str(line));
 
     std::unordered_set<network::Node> condition_nodes;
     for (const auto& condition : conditions)
