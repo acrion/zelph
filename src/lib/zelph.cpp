@@ -568,10 +568,29 @@ NodeView Zelph::get_all_nodes() const
     return NodeView(_pImpl->_name_of_node);
 }
 
+// Returns all nodes that are subjects of a core.Causes relation
 std::unordered_set<Node> Zelph::get_rules() const
 {
-    // Returns all nodes that are subjects of a core.Causes relation
-    return _pImpl->get_left(core.Causes);
+    const std::unordered_set<Node>& rule_candidates = _pImpl->get_left(core.Causes);
+
+    std::unordered_set<Node> rules;
+
+    for (Node rule_candidate : rule_candidates)
+    {
+        // We filter the rule candidates in the same way as Reasoning::apply_rule() does it.
+        // Note that a rule candidate with empty deductions is interpreted as a question, see Reasoning::evaluate()
+        if (rule_candidate)
+        {
+            std::unordered_set<Node> deductions;
+            Node condition = parse_fact(rule_candidate, deductions);
+            if (condition && condition != core.Causes && !deductions.empty())
+            {
+                rules.insert(rule_candidate);
+            }
+        }
+    }
+
+    return rules;
 }
 
 void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
