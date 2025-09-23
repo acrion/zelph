@@ -297,6 +297,27 @@ This rule states that if X is opposite of Y, then an entity A cannot be both an 
 
 If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
 
+### Termination: Why Reasoning Halts
+
+zelph’s rule language and matcher are intentionally constrained so that inference **always reaches a fixed point**.
+
+**Key constraint.** A rule variable may range over a **subject**, **predicate (relation type)**, or **object**, but it **cannot** unify with an entire _statement node_ (i.e. a complete triple) as a single term. This keeps zelph’s reasoning model aligned with **Datalog-style** evaluation:
+
+- No function symbols or term-forming operators that would create an unbounded domain;
+    
+- Variables range over a **finite set of existing nodes** (entities and relation types);
+    
+- Rules add only **new facts** over that finite domain;
+    
+- The unification engine’s topological filter (see previous section) **excludes** second-order matches that would enable rules to manufacture new statement-as-data terms.
+    
+
+Under these conditions, the standard monotone, fixpoint iteration **must terminate**: each pass can only add facts drawn from a finite Herbrand base, so after finitely many steps no new facts are produced.
+
+This is not just theoretical. In practice, zelph has processed the **complete Wikidata dump** to a fixed point; the resulting **4,580 pages** of deductions and contradictions are published and explorable at [https://zelph.org/tree-explanation](https://zelph.org/tree-explanation). This corpus serves as **empirical evidence** that the system, as designed, halts even on one of the largest public knowledge graphs.
+
+> Practical note. Concerns about non-termination are familiar from powerful logic programming systems (e.g. general Prolog). zelph deliberately adopts the above constraints to guarantee halting while retaining the expressivity needed for its primary use case: **analysing the entirety of Wikidata**.
+
 ### Internal representation of rules
 
 Let’s explain the internal representation of rules based on the example rule above.
@@ -360,6 +381,27 @@ Let’s break it down:
 
 This summarizes the complete diagram shown above. As mentioned earlier, the elegant aspect of this representation method is that the inference system can be applied not only to facts but also to rules.
 Consequently, it becomes possible to formulate rules that generate other rules.
+
+### Facts and Rules in One Network: Unique Identification via Topological Semantics
+
+A distinctive aspect of **zelph** is that **facts and rules live in the same semantic network**. That raises a natural question: how does the unification engine avoid confusing ordinary entities with statement nodes, and how does it keep rule matching unambiguous?
+
+The answer lies in the network’s **strict topological semantics** (see [Internal Representation of facts](#internal-representation-of-facts) and [Internal representation of rules](#internal-representation-of-rules)). In zelph, a _statement node_ is not “just a node with a long label”; it has a **unique structural signature**:
+
+- **Bidirectional** connection to its **subject**
+- **Forward** connection to its **relation type** (a first-class node)
+- **Backward** connection to its **object**
+    
+
+The unification engine is **hard-wired to search only for this pattern** when matching a rule’s conditions. In other words, a variable that ranges over “statements” can only unify with nodes that expose exactly this subject/rel/type/object wiring. Conversely, variables intended to stand for ordinary entities cannot accidentally match a statement node, because ordinary entities **lack** that tri-partite signature.
+
+Two immediate consequences follow:
+
+1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
+2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
+    
+
+These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
 
 ## Example Script
 
@@ -779,4 +821,20 @@ or:
 ```
 
 The latter command generates Markdown files in the `mkdocs/docs/tree` directory, referencing Wikidata entities.
+
+### Reasoner commands and fixpoint behaviour
+
+- **`.run`** and **`.run-md`** execute **full fixpoint evaluation**: they repeatedly apply all rules **until no new facts or contradictions are produced**. Internally, the reasoner loops while a `_done` flag (see `reasoning.cpp`) indicates that at least one new deduction was made in the previous pass.
+    
+- **`.run-once`** executes **exactly one iteration** of rule application (one saturation step over the current fact base). This is useful on very large graphs (e.g. Wikidata) when you want manual control over wall-time and checkpoints.  
+    _The published Wikidata tree was generated via multiple manual invocations of `.run-once` followed by Markdown export._
+    
+- **`.run-md`** behaves like `.run` but additionally writes the per-item **Markdown** summaries under `mkdocs/docs/tree` while it saturates to a fixed point.
+    
+In short:
+
+- Use **`.run`** for an interactive, complete fixpoint in the terminal.    
+- Use **`.run-md`** when you also want the Markdown output generated during the run.
+- Use **`.run-once`** to step the reasoner manually on huge inputs (repeat as needed).
+
 You can run these commands multiple times to perform additional inference passes, which can discover more facts and contradictions based on the knowledge already inferred.
