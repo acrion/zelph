@@ -40,7 +40,7 @@ Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>&
 
 // #define PARALLEL_REASONING
 
-void Reasoning::run(const bool print_deductions, const bool generate_markdown)
+void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
 {
     _print_deductions  = print_deductions;
     _generate_markdown = generate_markdown;
@@ -84,7 +84,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown)
         for (std::thread& t : threads)
             if (t.joinable()) t.join();
 
-    } while (_done);
+    } while (_done && !suppress_repetition);
 
     _stop_watch.stop();
     if (_skipped > 0) print(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
@@ -92,6 +92,11 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown)
     if (_contradiction)
     {
         print(L"Found one or more contradictions!", true);
+    }
+
+    if (_done && suppress_repetition)
+    {
+        print(L"Warning: Additional reasoning iterations are required, but have been suppressed.", true);
     }
 }
 

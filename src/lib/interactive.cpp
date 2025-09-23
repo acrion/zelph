@@ -325,13 +325,18 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else if (cmd[0] == L".run")
     {
-        _n->run(true, false);
+        _n->run(true, false, false);
+        _n->print(L"> Ready.", true);
+    }
+    else if (cmd[0] == L".run-once")
+    {
+        _n->run(true, false, true);
         _n->print(L"> Ready.", true);
     }
     else if (cmd[0] == L".run-md")
     {
         network::StopWatch watch;
-        _n->run(true, true);
+        _n->run(true, true, false);
         _n->print(L" Time needed: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     else if (cmd[0] == L".wikidata")
@@ -738,9 +743,9 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
     return _n->fact(combined_condition, _n->core.Causes, deduction_list);
 }
 
-void console::Interactive::run(const bool print_deductions, const bool generate_markdown) const
+void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const
 {
-    _pImpl->_n->run(print_deductions, generate_markdown);
+    _pImpl->_n->run(print_deductions, generate_markdown, suppress_repetition);
 }
 
 bool console::Interactive::Impl::is_var(std::wstring token)

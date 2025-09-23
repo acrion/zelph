@@ -40,7 +40,7 @@ namespace zelph
             Interactive();
             ~Interactive();
             void               process(std::wstring line) const;
-            void               run(const bool print_deductions, const bool generate_markdown) const;
+            void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
             static std::string get_version();
 
             Interactive(const Interactive&)            = delete;

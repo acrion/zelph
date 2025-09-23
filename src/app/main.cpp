@@ -50,7 +50,7 @@ int main(int argc, char** argv)
             {
                 interactive.process(line);
             }
-            interactive.run(true, false);
+            interactive.run(true, false, false);
         }
 
         if (argc > 1) std::wcout << L"Ready." << std::endl;
