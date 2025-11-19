@@ -30,8 +30,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
-#include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>

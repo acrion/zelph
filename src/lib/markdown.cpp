@@ -24,7 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "markdown.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "zelph.hpp"
 
 #include <fstream>

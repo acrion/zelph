@@ -24,7 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 
 #include <codecvt>
 #include <fstream>

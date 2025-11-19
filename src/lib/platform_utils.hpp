@@ -25,34 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "string_utils.hpp"
-#include "zelph.hpp"
-
-#include <filesystem>
-#include <iosfwd>
+#include <cstddef>
 
 namespace zelph
 {
-    namespace console
+    namespace platform
     {
-        class Wikidata
-        {
-        public:
-            Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
-            ~Wikidata();
-
-            void import_all();
-            void generate_index() const;
-            void traverse(std::wstring start_entry = L"");
-            void process_node(network::Node node, const std::string& lang);
-
-        private:
-            void process_entry(const std::wstring& line, const bool import_english, const bool log);
-            void process_name(const std::wstring& wikidata_name);
-            void index_entry(const std::wstring& line, const std::streamoff streampos) const;
-
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
+        size_t get_process_memory_usage();
     }
 }

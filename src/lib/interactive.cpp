@@ -26,17 +26,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "reasoning.hpp"
 #include "stopwatch.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "wikidata.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/bimap.hpp>
 #include <boost/tokenizer.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <algorithm>
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT
@@ -436,7 +436,7 @@ void console::Interactive::Impl::list_predicate_usage()
             // Get all facts where this node is used as a relation type
             // This counts how many facts use this predicate
             const auto& facts_using_predicate = _n->get_left(node_id);
-            predicate_usage_counts[node_id] = facts_using_predicate.size();
+            predicate_usage_counts[node_id]   = facts_using_predicate.size();
         }
     }
 
@@ -444,9 +444,10 @@ void console::Interactive::Impl::list_predicate_usage()
     std::vector<std::pair<network::Node, size_t>> sorted_predicates(predicate_usage_counts.begin(), predicate_usage_counts.end());
 
     // Sort the predicates by usage count in descending order
-    std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b) {
-        return a.second > b.second; // Sort by count, descending
-    });
+    std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b)
+              {
+                  return a.second > b.second; // Sort by count, descending
+              });
 
     // Determine if wikidata language is available for three-column output
     bool has_wikidata_lang = _n->has_language("wikidata");
@@ -466,7 +467,7 @@ void console::Interactive::Impl::list_predicate_usage()
             // For the first column, `lang` is an empty string to use the current language.
             // For the second column (wikidata name), `lang` is "wikidata" and `fallback` is `false`.
             std::wstring wikidata_name = _n->get_name(entry.first, "wikidata", false);
-            line_output = predicate_name + L"\t" + wikidata_name + L"\t" + std::to_wstring(entry.second);
+            line_output                = predicate_name + L"\t" + wikidata_name + L"\t" + std::to_wstring(entry.second);
         }
         else
         {
@@ -478,7 +479,6 @@ void console::Interactive::Impl::list_predicate_usage()
     }
     _n->print(L"------------------------", true);
 }
-
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const
 {

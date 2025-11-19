@@ -23,36 +23,39 @@ You should have received a copy of the GNU Affero General Public License
 along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#pragma once
+#include "platform_utils.hpp"
 
-#include "string_utils.hpp"
-#include "zelph.hpp"
-
-#include <filesystem>
-#include <iosfwd>
+#ifdef __linux__
+    #include <fstream>
+    #include <sstream>
+    #include <string>
+#endif
 
 namespace zelph
 {
-    namespace console
+    namespace platform
     {
-        class Wikidata
+        size_t get_process_memory_usage()
         {
-        public:
-            Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
-            ~Wikidata();
-
-            void import_all();
-            void generate_index() const;
-            void traverse(std::wstring start_entry = L"");
-            void process_node(network::Node node, const std::string& lang);
-
-        private:
-            void process_entry(const std::wstring& line, const bool import_english, const bool log);
-            void process_name(const std::wstring& wikidata_name);
-            void index_entry(const std::wstring& line, const std::streamoff streampos) const;
-
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
+#ifdef __linux__
+            std::ifstream status("/proc/self/status");
+            if (!status.is_open())
+            {
+                return 0; // Fallback if file not accessible
+            }
+            std::string line;
+            while (std::getline(status, line))
+            {
+                if (line.compare(0, 6, "VmRSS:") == 0)
+                {
+                    std::istringstream iss(line.substr(6));
+                    size_t             rss_kb;
+                    iss >> rss_kb;
+                    return rss_kb * 1024; // Convert kB to Bytes
+                }
+            }
+#endif
+            return 0; // Non-Linux
+        }
     }
 }

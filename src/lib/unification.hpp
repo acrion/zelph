@@ -25,7 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "zelph.hpp"
 
 #include <map>

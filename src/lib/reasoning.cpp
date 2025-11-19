@@ -183,8 +183,8 @@ void Reasoning::evaluate(RulePos rule)
 
         while (std::shared_ptr<Variables> match = u.Next())
         {
-            std::shared_ptr<Variables> joined          = utils::join(*rule.variables, *match);
-            std::shared_ptr<Variables> joined_unequals = utils::join(*rule.unequals, *u.Unequals());
+            std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
+            std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u.Unequals());
 
             RulePos next({rule.node, rule.end, rule.index, joined, joined_unequals});
             if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
@@ -303,7 +303,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent)
                                 throw contradiction_error(_current_condition, variables, parent);
                             }
                             else if (!answer.is_known()
-                                     && targets.count(rel) == 0 // ignore deductions with same relation and target type as we do not support these
+                                     && targets.count(rel) == 0     // ignore deductions with same relation and target type as we do not support these
                                      && targets.count(source) == 0) // ignore deductions with the same subject and object as we do not support these
                             {
                                 try

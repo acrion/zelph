@@ -24,9 +24,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "wikidata.hpp"
+
+#include "platform_utils.hpp"
 #include "read_async.hpp"
 #include "stopwatch.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/archive/text_iarchive.hpp>
@@ -41,11 +43,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 using namespace zelph::console;
 using namespace zelph::network;
 using boost::escaped_list_separator;
 using boost::tokenizer;
+
+const size_t memory_window_size = 10;
 
 class Wikidata::Impl
 {
@@ -92,6 +97,11 @@ void Wikidata::import_all()
 
     const std::streamsize total_size = read_async.get_total_size();
 
+    size_t baseline_memory = zelph::platform::get_process_memory_usage(); // Baseline before import starts
+
+    std::vector<double> history_p;
+    std::vector<size_t> history_m;
+
     // Atomic counters for thread coordination and progress tracking
     std::atomic<std::streamoff> bytes_read{0};
     const unsigned int          num_threads = std::thread::hardware_concurrency() * 500;
@@ -99,14 +109,14 @@ void Wikidata::import_all()
     std::vector<std::thread>    workers;
 
     // Worker function: each thread processes lines from ReadAsync
-    auto worker_func = [&](size_t thread_idx)
+    auto worker_func = [&]()
     {
         std::wstring   line;
         std::streamoff streampos;
         while (read_async.get_line(line, streampos))
         {
             bytes_read.store(streampos, std::memory_order_relaxed);
-            process_entry(line, false, thread_idx);
+            process_entry(line, false, false);
         }
         active_threads.fetch_sub(1, std::memory_order_relaxed);
     };
@@ -114,13 +124,12 @@ void Wikidata::import_all()
     // Start worker threads
     for (unsigned int i = 0; i < num_threads; ++i)
     {
-        workers.emplace_back(worker_func, i);
+        workers.emplace_back(worker_func);
     }
 
     // Progress reporting in main thread
     std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point last_update_time = start_time;
-    const int                             decimal_places   = 2;
 
     while (active_threads.load(std::memory_order_relaxed) > 0)
     {
@@ -136,6 +145,7 @@ void Wikidata::import_all()
         {
             std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
             double         current_percentage = (static_cast<double>(current_bytes) / total_size) * 100.0;
+            double         progress_fraction  = static_cast<double>(current_bytes) / total_size;
             auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
                                        current_time - start_time)
                                        .count();
@@ -148,10 +158,45 @@ void Wikidata::import_all()
                 eta_seconds = static_cast<int>((total_size - current_bytes) / speed);
             }
 
+            size_t current_memory = zelph::platform::get_process_memory_usage();
+            size_t memory_used    = (current_memory > baseline_memory) ? current_memory - baseline_memory : 0;
+
+            if (progress_fraction > 0.0 && memory_used > 0)
+            {
+                history_p.push_back(progress_fraction);
+                history_m.push_back(memory_used);
+            }
+
+            size_t estimated_memory = 0;
+            size_t history_size     = history_p.size();
+
+            if (history_size >= memory_window_size)
+            {
+                size_t idx_start = history_size - memory_window_size;
+                double dp        = history_p.back() - history_p[idx_start];
+                size_t dm        = history_m.back() - history_m[idx_start];
+                if (dp > 0.0)
+                {
+                    double v           = static_cast<double>(dm) / dp;
+                    double remaining_p = 1.0 - progress_fraction;
+                    size_t remaining   = static_cast<size_t>(v * remaining_p);
+                    estimated_memory   = memory_used + remaining;
+                }
+                else
+                {
+                    estimated_memory = memory_used / progress_fraction;
+                }
+            }
+            else if (progress_fraction > 0.0)
+            {
+                estimated_memory = memory_used / progress_fraction;
+            }
+
             int eta_minutes = eta_seconds / 60;
             eta_seconds %= 60;
             int eta_hours = eta_minutes / 60;
             eta_minutes %= 60;
+            const int decimal_places = 2;
 
             std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
                       << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
@@ -163,7 +208,9 @@ void Wikidata::import_all()
                 if (eta_minutes > 0) std::clog << eta_minutes << "m ";
                 std::clog << eta_seconds << "s";
             }
-            std::clog << " | Threads: " << num_threads << std::endl;
+            std::clog << " | Memory Used: " << std::fixed << std::setprecision(1) << (static_cast<double>(memory_used) / (1024 * 1024 * 1024)) << " GiB"
+                      << " | Estimated Total Memory: " << std::fixed << std::setprecision(1) << (static_cast<double>(estimated_memory) / (1024 * 1024 * 1024)) << " GiB"
+                      << std::endl;
 
             last_update_time = current_time;
         }
@@ -188,7 +235,7 @@ void Wikidata::import_all()
     }
 }
 
-void Wikidata::process_entry(const std::wstring& line, const bool log, const size_t thread_index)
+void Wikidata::process_entry(const std::wstring& line, const bool import_english, const bool log)
 {
     static const std::wstring id_tag(L"\"id\":\"");
     size_t                    id0 = line.find(id_tag);
@@ -198,7 +245,7 @@ void Wikidata::process_entry(const std::wstring& line, const bool log, const siz
         size_t       id1 = line.find(L"\"", id0 + id_tag.size() + 1);
         std::wstring id(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
 
-        Node current = _pImpl->_n->node(id, "wikidata"); // we treat the id as an additional language named "wikidata"
+        Node subject = _pImpl->_n->node(id, "wikidata"); // we treat the id as an additional language named "wikidata"
 
         size_t                    language0;
         static const std::wstring language_tag(L"{\"language\":\"");
@@ -219,9 +266,10 @@ void Wikidata::process_entry(const std::wstring& line, const bool log, const siz
             id1 = line.find(L"\"", id0 + value_tag.size() + 1);
             std::wstring value(line.substr(id0 + value_tag.size(), id1 - id0 - value_tag.size()));
 
-            if (language == "en") // currently we only include the languages "en" and "wikidata", which is the id (see above comment).
+            // currently we optionally import English, in addition to the default language "wikidata" (which is the id, see above comment).
+            if (import_english && language == "en")
             {
-                _pImpl->_n->set_name(current, value, language);
+                _pImpl->_n->set_name(subject, value, language);
                 //_pImpl->_n->print(id + L": " + utils::wstr(language) + L": " + value, false);
             }
         }
@@ -261,7 +309,10 @@ void Wikidata::process_entry(const std::wstring& line, const bool log, const siz
 
                         try
                         {
-                            auto fact = _pImpl->_n->fact(current, _pImpl->_n->node(property, "wikidata"), {_pImpl->_n->node(object, "wikidata")});
+                            auto fact = _pImpl->_n->fact(
+                                subject,
+                                _pImpl->_n->node(property, "wikidata"),
+                                {_pImpl->_n->node(object, "wikidata")});
                             if (log)
                             {
                                 std::wstring output;
@@ -292,8 +343,6 @@ void Wikidata::process_entry(const std::wstring& line, const bool log, const siz
             }
         }
     }
-
-    _running = _running & ~(1ull << thread_index);
 }
 
 void Wikidata::generate_index() const
@@ -316,23 +365,6 @@ void Wikidata::generate_index() const
         while (read_async.get_line(line, streampos))
         {
             index_entry(line, streampos);
-            //    size_t i = 0;
-            //    for (i = 0; i < threads.size(); ++i)
-            //      if (!(_running & 1ull<<i))
-            //        break;
-
-            //    _running = _running | 1ull<<i;
-            //    std::thread t(&Wikidata::process_command, this, line, i);
-            //    if (i < threads.size())
-            //    {
-            //      if (threads[i].joinable()) threads[i].join();
-            //      threads[i] = std::move(t);
-            //    }
-            //    else
-            //    {
-            //      threads.emplace_back(std::move(t));
-            //      _pImpl->_n->print(L"Running " + std::to_wstring(threads.size()) + L" threads for reading wikidata file...", true);
-            //    }
 
             if (watch.duration() >= 1000)
             {
@@ -399,7 +431,7 @@ void Wikidata::traverse(std::wstring start_entry)
 
                         std::wstring line;
                         std::getline(stream, line);
-                        process_entry(line);
+                        process_entry(line, true, true);
                     }
                 }
                 else
@@ -424,7 +456,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
         std::wstring line;
         std::getline(stream, line);
-        process_entry(line, false);
+        process_entry(line, true, false);
     }
 }
 

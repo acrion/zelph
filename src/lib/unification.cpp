@@ -24,7 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "unification.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "zelph_impl.hpp"
 
 using namespace zelph::network;
@@ -109,11 +109,11 @@ std::shared_ptr<Variables> Unification::Next()
                 if (objects.size() > 0
                     && !_n->_pImpl->is_var(subject)
                     && !_n->_pImpl->is_var(*objects.begin())
-                    && utils::get(*_variables, _subject, subject) == subject // either the variable is unbound, or it already points to subject
+                    && utils::get(*_variables, _subject, subject) == subject                            // either the variable is unbound, or it already points to subject
                     && utils::get(*_variables, *_objects.begin(), *objects.begin()) == *objects.begin() // todo: what if more than one?
-                    && (_n->_pImpl->is_var(_subject) // either _subject is a variable, or it is identical to subject
+                    && (_n->_pImpl->is_var(_subject)                                                    // either _subject is a variable, or it is identical to subject
                         || _subject == subject)
-                    && (_n->_pImpl->is_var(*_objects.begin()) // either _object is variable, or it is identical to object
+                    && (_n->_pImpl->is_var(*_objects.begin())    // either _object is variable, or it is identical to object
                         || *_objects.begin() == *objects.begin() // todo: what if more than one?
                         ))
                 {
