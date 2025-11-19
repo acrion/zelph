@@ -34,7 +34,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <boost/serialization/map.hpp>
 #include <boost/tokenizer.hpp>
 
+#include <atomic>
 #include <fstream>
+#include <iomanip> // for std::setprecision
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -82,7 +84,7 @@ void Wikidata::import_all()
 {
     _pImpl->_n->print(L"Importing file " + _pImpl->_file_name.wstring(), true);
 
-    ReadAsync read_async(_pImpl->_file_name);
+    ReadAsync read_async(_pImpl->_file_name, 100000);
     if (!read_async.error_text().empty())
     {
         throw std::runtime_error(read_async.error_text());
@@ -90,26 +92,60 @@ void Wikidata::import_all()
 
     const std::streamsize total_size = read_async.get_total_size();
 
+    // Atomic counters for thread coordination and progress tracking
+    std::atomic<std::streamoff> bytes_read{0};
+    const unsigned int          num_threads = std::thread::hardware_concurrency() * 500;
+    std::atomic<unsigned int>   active_threads{num_threads};
+    std::vector<std::thread>    workers;
+
+    // Worker function: each thread processes lines from ReadAsync
+    auto worker_func = [&](size_t thread_idx)
+    {
+        std::wstring   line;
+        std::streamoff streampos;
+        while (read_async.get_line(line, streampos))
+        {
+            bytes_read.store(streampos, std::memory_order_relaxed);
+            process_entry(line, false, thread_idx);
+        }
+        active_threads.fetch_sub(1, std::memory_order_relaxed);
+    };
+
+    // Start worker threads
+    for (unsigned int i = 0; i < num_threads; ++i)
+    {
+        workers.emplace_back(worker_func, i);
+    }
+
+    // Progress reporting in main thread
     std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point last_update_time = start_time;
-    std::wstring                          line;
-    std::streamoff                        streampos;
-    const int                             decimal_places = 2;
-    while (read_async.get_line(line, streampos))
+    const int                             decimal_places   = 2;
+
+    while (active_threads.load(std::memory_order_relaxed) > 0)
     {
-        process_entry(line);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
         auto current_time           = std::chrono::steady_clock::now();
-        auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count() / 1000.0;
+        auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          current_time - last_update_time)
+                                          .count()
+                                    / 1000.0;
+
         if (time_since_last_update >= 1.0)
         {
-            double current_percentage = (static_cast<double>(streampos) / total_size) * 100.0;
-            auto   elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
-            double speed              = 0;
-            int    eta_seconds        = 0;
-            if (elapsed_seconds > 0 && streampos > 0)
+            std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
+            double         current_percentage = (static_cast<double>(current_bytes) / total_size) * 100.0;
+            auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
+                                       current_time - start_time)
+                                       .count();
+            double speed       = 0;
+            int    eta_seconds = 0;
+
+            if (elapsed_seconds > 0 && current_bytes > 0)
             {
-                speed       = static_cast<double>(streampos) / elapsed_seconds;
-                eta_seconds = static_cast<int>((total_size - streampos) / speed);
+                speed       = static_cast<double>(current_bytes) / elapsed_seconds;
+                eta_seconds = static_cast<int>((total_size - current_bytes) / speed);
             }
 
             int eta_minutes = eta_seconds / 60;
@@ -118,7 +154,7 @@ void Wikidata::import_all()
             eta_minutes %= 60;
 
             std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
-                      << current_percentage << "% " << streampos << "/" << total_size << " bytes";
+                      << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
 
             if (eta_seconds > 0 || eta_minutes > 0 || eta_hours > 0)
             {
@@ -127,9 +163,18 @@ void Wikidata::import_all()
                 if (eta_minutes > 0) std::clog << eta_minutes << "m ";
                 std::clog << eta_seconds << "s";
             }
-            std::clog << std::endl;
+            std::clog << " | Threads: " << num_threads << std::endl;
 
             last_update_time = current_time;
+        }
+    }
+
+    // Wait for all workers to complete
+    for (auto& worker : workers)
+    {
+        if (worker.joinable())
+        {
+            worker.join();
         }
     }
 
@@ -385,12 +430,24 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
 void Wikidata::process_node(const Node node, const std::string& lang)
 {
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx);
+
     if (!_pImpl->_n->has_name(node, "en"))
     {
         const std::wstring name = _pImpl->_n->get_name(node, "wikidata", false, false);
         if (!name.empty())
         {
             process_name(name);
+            const std::wstring english_name = _pImpl->_n->get_name(node, "en", false, false);
+            if (english_name.empty())
+            {
+                _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L")", true);
+                _pImpl->_n->set_name(node, name, "en"); // In case a node has no name in Wikidata (like e.g. Q3071250) we want to avoid trying multiple times to find one.
+            }
+            else
+            {
+                _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L") --> '" + english_name + L"'", true);
+            }
         }
     }
 }

@@ -157,6 +157,8 @@ void ReadAsync::Impl::read_thread(std::filesystem::path file_name)
         return;
     }
 
+    stream.rdbuf()->pubsetbuf(nullptr, 1024 * 1024);
+
     // ReSharper disable once CppDFAUnreadVariable
     std::streamoff streampos = 0;
 

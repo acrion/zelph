@@ -12,16 +12,17 @@
 .name "is inverse of"  wikidata P1696
 .name "has quality"    wikidata P1552
 .name "is for example" wikidata Q21514624
-.name "transitive relation" wikidata Q64861
+.name "transitive relation" wikidata Q18647515
 
 # The following facts are part of wikidata:
 #"is subclass of" ~ transitive relation
 #"has part"       ~ transitive relation
+#"is facet of"    ~ transitive relation
+#"is part of"     ~ transitive relation
 #"is part of"     is inverse of "has part"
 
 # The following facts are not part of wikidata:
 "has quality" ~ transitive relation
-"is facet of" ~ transitive relation
 
 X is facet of Y, Y ~ C => X ~ C
 X is facet of Y, Y is subclass of C => X is subclass of C

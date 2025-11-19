@@ -93,6 +93,8 @@ Node Zelph::node(const std::wstring& name, std::string lang) const
 
 bool Zelph::has_name(const Node node, const std::string& lang) const
 {
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+
     auto& name_of_node = _pImpl->_name_of_node[lang];
     auto  it           = name_of_node.find(node);
     return it != name_of_node.end();
