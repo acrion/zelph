@@ -56,9 +56,9 @@ namespace zelph
             std::unordered_set<Node>           _objects;
 
         private:
-            bool                                               increment_fact_index();
-            std::map<Node, std::unordered_set<Node>>::iterator _facts_of_current_relation;
-            bool                                               _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
+            bool                                                         increment_fact_index();
+            std::unordered_map<Node, std::unordered_set<Node>>::iterator _facts_of_current_relation;
+            bool                                                         _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
         };
     }
 }

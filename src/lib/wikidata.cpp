@@ -50,7 +50,7 @@ using namespace zelph::network;
 using boost::escaped_list_separator;
 using boost::tokenizer;
 
-const size_t memory_window_size = 10;
+const size_t memory_window_size = 64;
 
 class Wikidata::Impl
 {

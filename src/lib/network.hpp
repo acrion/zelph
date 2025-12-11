@@ -259,22 +259,22 @@ namespace zelph
                      & mask_node;
             }
 
-            std::map<Node, std::unordered_set<Node>>::iterator find_right(const Node a)
+            std::unordered_map<Node, std::unordered_set<Node>>::iterator find_right(const Node a)
             {
                 std::lock_guard<std::mutex> lock(_mtx_left);
                 return _left.find(a);
             }
-            std::map<Node, std::unordered_set<Node>>::iterator find_left(const Node b)
+            std::unordered_map<Node, std::unordered_set<Node>>::iterator find_left(const Node b)
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
                 return _right.find(b);
             }
-            std::map<Node, std::unordered_set<Node>>::iterator left_end()
+            std::unordered_map<Node, std::unordered_set<Node>>::iterator left_end()
             {
                 std::lock_guard<std::mutex> lock(_mtx_left);
                 return _left.end();
             }
-            std::map<Node, std::unordered_set<Node>>::iterator right_end()
+            std::unordered_map<Node, std::unordered_set<Node>>::iterator right_end()
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
                 return _right.end();
@@ -301,15 +301,17 @@ namespace zelph
             static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
             static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
 
-            std::map<Node, std::unordered_set<Node>> _left;
-            std::map<Node, std::unordered_set<Node>> _right;
-            std::map<Node, long double>              _probabilities;
-            const std::unordered_set<Node>           _empty{std::unordered_set<Node>()};
-            Node                                     _last{Node()};
-            Node                                     _last_var{Node()};
-            std::mutex                               _mtx_prob;
-            std::mutex                               _mtx_left;
-            std::mutex                               _mtx_right;
+            // Based on tests, using std::map here instead of std::unordered_map slightly increases memory
+            // footprint (for large amounts of nodes). Moreover, it more than doubles execution time.
+            std::unordered_map<Node, std::unordered_set<Node>> _left;
+            std::unordered_map<Node, std::unordered_set<Node>> _right;
+            std::map<Node, long double>                        _probabilities;
+            const std::unordered_set<Node>                     _empty{std::unordered_set<Node>()};
+            Node                                               _last{Node()};
+            Node                                               _last_var{Node()};
+            std::mutex                                         _mtx_prob;
+            std::mutex                                         _mtx_left;
+            std::mutex                                         _mtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {
