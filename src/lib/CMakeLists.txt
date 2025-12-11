@@ -144,6 +144,7 @@ include_directories(
     "../boost/bind/include"
     "../boost/concept_check/include"
     "../boost/config_boost/include"
+    "../boost/container/include"
     "../boost/container_hash/include"
     "../boost/core/include"
     "../boost/detail/include"

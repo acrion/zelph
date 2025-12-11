@@ -77,11 +77,12 @@ bool Unification::increment_fact_index()
                 return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
             else
             {
-                _fact_index             = _facts_of_current_relation->second.begin(); // used to iterate over all facts that have relation type *_relation_index
+                _facts_snapshot         = _facts_of_current_relation->second;
+                _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
                 _fact_index_initialized = true;
             }
         }
-        else if (++_fact_index == _facts_of_current_relation->second.end()) // increment and return false if we reached the end, so _relation_index will be incremented
+        else if (++_fact_index == _facts_snapshot.end()) // increment and return false if we reached the end, so _relation_index will be incremented
         {
             return false;
         }
@@ -101,10 +102,10 @@ std::shared_ptr<Variables> Unification::Next()
             || !_variables
             || utils::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
         {
-            while (increment_fact_index()) // iterate over all matching facts
+            while (increment_fact_index()) // iterate over all matching facts (in snapshot)
             {
                 std::unordered_set<Node> objects;
-                Node                     subject = _n->parse_fact(*_fact_index, objects, *_relation_index); // todo: use _parent instead of *_relation_index!? or both?!
+                Node                     subject = _n->parse_fact(*_fact_index, objects, *_relation_index);
 
                 if (objects.size() > 0
                     && !_n->_pImpl->is_var(subject)

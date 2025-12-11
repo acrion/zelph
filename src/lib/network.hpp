@@ -226,14 +226,17 @@ namespace zelph
 
             static Node create_hash(const std::unordered_set<Node>& vec)
             {
-                Node     result = mark_hash ^ rol(vec.size(), 56);
+                std::vector<Node> sorted_vec(vec.begin(), vec.end());
+                std::sort(sorted_vec.begin(), sorted_vec.end());
+
+                Node     result = mark_hash ^ rol(sorted_vec.size(), 56);
                 uint64_t c      = 48;
-                for (Node node : vec)
+                for (Node node : sorted_vec)
                 {
                     // cppcheck-suppress useStlAlgorithm
                     result ^= mod(rol(node, c++ % 64)); // avoid hash collisions if vec contains identical nodes (with other vecs also having identical nodes) by incrementing c
                 }
-                return result & mask_node; // exclude values that denote variables
+                return result & mask_node;
             }
 
             static Node create_hash(const Node head, const std::unordered_set<Node>& vec)

@@ -50,13 +50,14 @@ namespace zelph
             std::shared_ptr<Variables>         _unequals;
             std::unordered_set<Node>           _relation_list;
             Node                               _relation_variable{0};
-            std::unordered_set<Node>::iterator _fact_index{decltype(_facts_of_current_relation->second)::iterator()};
+            std::unordered_set<Node>::iterator _fact_index;
             std::unordered_set<Node>::iterator _relation_index;
             Node                               _subject;
             std::unordered_set<Node>           _objects;
 
         private:
             bool                                                         increment_fact_index();
+            std::unordered_set<Node>                                     _facts_snapshot;
             std::unordered_map<Node, std::unordered_set<Node>>::iterator _facts_of_current_relation;
             bool                                                         _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
         };
