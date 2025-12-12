@@ -68,7 +68,7 @@ public:
     network::Zelph*                       _n{nullptr};
     std::filesystem::path                 _file_name;
     std::map<std::string, std::streamoff> _index;
-    std::mutex                            _mtx;
+    std::recursive_mutex                  _mtx;
     std::string                           _last_entry;
     std::streamoff                        _last_index{0};
 };
@@ -369,7 +369,7 @@ void Wikidata::generate_index() const
             if (watch.duration() >= 1000)
             {
                 {
-                    std::lock_guard<std::mutex> lock(_pImpl->_mtx);
+                    std::lock_guard lock(_pImpl->_mtx);
                     _pImpl->_n->print(L"Indexed " + std::to_wstring(_pImpl->_index.size()) + L" wikidata entries, latest is '" + utils::wstr(_pImpl->_last_entry) + L"' at position " + std::to_wstring(_pImpl->_last_index) + L" (" + std::to_wstring(_pImpl->_last_index / 1024.0 / 1024 / 1024) + L" GB)", true);
                 }
                 watch.start();
@@ -400,7 +400,7 @@ void Wikidata::index_entry(const std::wstring& line, const std::streamoff stream
         std::wstring idw(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
         std::string  id = utils::str(idw);
 
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx);
+        std::lock_guard lock(_pImpl->_mtx);
         _pImpl->_index[id]  = streampos;
         _pImpl->_last_entry = id;
         _pImpl->_last_index = streampos;
@@ -414,6 +414,7 @@ void Wikidata::traverse(std::wstring start_entry)
         std::wifstream stream(_pImpl->_file_name);
         for (int i = 0; i < 4; ++i) // TODO: workaround!
         {
+            std::clog << "Doing pass " << (i + 1) << std::endl;
             for (const auto& it : _pImpl->_n->get_nodes_in_language("wikidata"))
             {
                 const Node         node  = it.first;
@@ -439,12 +440,16 @@ void Wikidata::traverse(std::wstring start_entry)
                     //_pImpl->_n->print(name + L" (" + entry + L") is already known.", true);
                 }
             }
+
+            std::clog << "Completed pass " << (i + 1) << std::endl;
         }
     }
     else
     {
         process_name(start_entry); // TODO this causes a segmentation fault!
     }
+
+    std::clog << "Import completed successfully!" << std::endl;
 }
 
 void Wikidata::process_name(const std::wstring& wikidata_name)
@@ -462,7 +467,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
 void Wikidata::process_node(const Node node, const std::string& lang)
 {
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx);
+    std::lock_guard lock(_pImpl->_mtx);
 
     if (!_pImpl->_n->has_name(node, "en"))
     {
