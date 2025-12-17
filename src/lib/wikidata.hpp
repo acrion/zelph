@@ -41,13 +41,12 @@ namespace zelph
             Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
             ~Wikidata();
 
-            void import_all();
+            void import_all(bool filter_existing_only = false);
             void generate_index() const;
-            void traverse(std::wstring start_entry = L"");
             void process_node(network::Node node, const std::string& lang);
 
         private:
-            void process_entry(const std::wstring& line, const bool import_english, const bool log);
+            void process_entry(const std::wstring& line, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter);
             void process_name(const std::wstring& wikidata_name);
             void index_entry(const std::wstring& line, const std::streamoff streampos) const;
 

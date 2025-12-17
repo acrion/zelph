@@ -343,6 +343,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".wikidata")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .wikidata: Missing json file name");
+        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata: Unknown argument after json file name");
 
         std::ofstream log("wikidata.log");
         _n->set_print([&](const std::wstring& str, bool o)
@@ -364,29 +365,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             watch.start();
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
             _wikidata->generate_index();
-            if (_n->has_language("wikidata"))
-            {
-                std::clog << "Warning: Found existing wikidata nodes prior import => Only importing nodes that are connected with the existing ones." << std::endl;
-                _wikidata->traverse();
-            }
-            else
-            {
-                std::clog << "Warning: No existing wikidata nodes => Importing the complete file (no filter)." << std::endl;
-                _wikidata->import_all();
-            }
+            _wikidata->import_all(_n->has_language("wikidata"));
             _n->print(L" Time needed for importing: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
-        }
-        else if (cmd.size() == 3)
-        {
-            const std::wstring& start_entry = cmd[2];
-            _n->print(L"start entry='" + start_entry + L"'", true);
-            _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            _wikidata->generate_index();
-            _wikidata->traverse(start_entry);
         }
         else
         {
-            throw std::runtime_error("Command .wikidata: You need to specify the json file to import and optionally add the start entry to be imported");
+            throw std::runtime_error("Command .wikidata: You need to specify one argument: the json file to import");
         }
     }
     else if (cmd[0] == L".list-rules")

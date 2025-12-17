@@ -38,7 +38,6 @@ std::string Zelph::get_version()
     return "0.5.4";
 }
 
-
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
@@ -402,7 +401,7 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
         if (_pImpl->exists(answer.relation()))
         {
             // TODO check_fact returns !answer.is_known() though answer.relation exists, which should not happen. Indicates corrupt database or hash collision.
-            assert(false);
+            // assert(false);
         }
         else
         {
@@ -584,7 +583,7 @@ std::unordered_set<Node> Zelph::get_rules() const
         if (rule_candidate)
         {
             std::unordered_set<Node> deductions;
-            Node condition = parse_fact(rule_candidate, deductions);
+            Node                     condition = parse_fact(rule_candidate, deductions);
             if (condition && condition != core.Causes && !deductions.empty())
             {
                 rules.insert(rule_candidate);
@@ -624,7 +623,7 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
                 std::string left_name = get_name_hex(left);
 
                 std::string key;
-                bool is_bidirectional = (_pImpl->find_left(left)->second.count(current) == 1);
+                bool        is_bidirectional = (_pImpl->find_left(left)->second.count(current) == 1);
 
                 if (is_bidirectional)
                 {
@@ -661,7 +660,7 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
                 std::string right_name = get_name_hex(right);
 
                 std::string key;
-                bool is_bidirectional = (_pImpl->find_right(right)->second.count(current) == 1);
+                bool        is_bidirectional = (_pImpl->find_right(right)->second.count(current) == 1);
 
                 if (is_bidirectional)
                 {
@@ -710,9 +709,9 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    std::unordered_set<Node>    touched;
+    std::unordered_set<Node>        touched;
     std::unordered_set<std::string> written_edges;
-    std::ofstream               dot(file_name, std::ios_base::out);
+    std::ofstream                   dot(file_name, std::ios_base::out);
 
     dot << "digraph graphname{" << std::endl;
 

@@ -85,7 +85,7 @@ Wikidata::~Wikidata()
     delete _pImpl;
 }
 
-void Wikidata::import_all()
+void Wikidata::import_all(bool filter_existing_only)
 {
     _pImpl->_n->print(L"Importing file " + _pImpl->_file_name.wstring(), true);
 
@@ -98,9 +98,6 @@ void Wikidata::import_all()
     const std::streamsize total_size = read_async.get_total_size();
 
     size_t baseline_memory = zelph::platform::get_process_memory_usage(); // Baseline before import starts
-
-    std::vector<double> history_p;
-    std::vector<size_t> history_m;
 
     // Atomic counters for thread coordination and progress tracking
     std::atomic<std::streamoff> bytes_read{0};
@@ -116,7 +113,7 @@ void Wikidata::import_all()
         while (read_async.get_line(line, streampos))
         {
             bytes_read.store(streampos, std::memory_order_relaxed);
-            process_entry(line, false, false);
+            process_entry(line, true, false, filter_existing_only, filter_existing_only);
         }
         active_threads.fetch_sub(1, std::memory_order_relaxed);
     };
@@ -161,35 +158,11 @@ void Wikidata::import_all()
             size_t current_memory = zelph::platform::get_process_memory_usage();
             size_t memory_used    = (current_memory > baseline_memory) ? current_memory - baseline_memory : 0;
 
-            if (progress_fraction > 0.0 && memory_used > 0)
-            {
-                history_p.push_back(progress_fraction);
-                history_m.push_back(memory_used);
-            }
-
             size_t estimated_memory = 0;
-            size_t history_size     = history_p.size();
-
-            if (history_size >= memory_window_size)
+            if (progress_fraction > 0.0)
             {
-                size_t idx_start = history_size - memory_window_size;
-                double dp        = history_p.back() - history_p[idx_start];
-                size_t dm        = history_m.back() - history_m[idx_start];
-                if (dp > 0.0)
-                {
-                    double v           = static_cast<double>(dm) / dp;
-                    double remaining_p = 1.0 - progress_fraction;
-                    size_t remaining   = static_cast<size_t>(v * remaining_p);
-                    estimated_memory   = memory_used + remaining;
-                }
-                else
-                {
-                    estimated_memory = memory_used / progress_fraction;
-                }
-            }
-            else if (progress_fraction > 0.0)
-            {
-                estimated_memory = memory_used / progress_fraction;
+                estimated_memory = static_cast<size_t>(
+                    static_cast<double>(memory_used) / progress_fraction);
             }
 
             int eta_minutes = eta_seconds / 60;
@@ -235,7 +208,7 @@ void Wikidata::import_all()
     }
 }
 
-void Wikidata::process_entry(const std::wstring& line, const bool import_english, const bool log)
+void Wikidata::process_entry(const std::wstring& line, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter)
 {
     static const std::wstring id_tag(L"\"id\":\"");
     size_t                    id0 = line.find(id_tag);
@@ -243,47 +216,65 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
     if (id0 != std::wstring::npos)
     {
         size_t       id1 = line.find(L"\"", id0 + id_tag.size() + 1);
-        std::wstring id(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
+        std::wstring id_str(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
 
-        Node subject = _pImpl->_n->node(id, "wikidata"); // we treat the id as an additional language named "wikidata"
+        Node subject        = _pImpl->_n->get_node(id_str, "wikidata");
+        bool subject_exists = (subject != 0);
 
-        size_t                    language0;
-        static const std::wstring language_tag(L"{\"language\":\"");
-        size_t                    labels       = line.find(L"\"labels\":{");
-        size_t                    aliases      = line.find(L"\"aliases\":{", id1 + 7);
-        size_t                    descriptions = line.find(L"\"descriptions\":{", id1 + 7);
-
-        while ((language0 = line.find(language_tag, id1 + 7)) != std::wstring::npos
-               && language0 > labels
-               && (aliases == std::wstring::npos || language0 < aliases)
-               && (descriptions == std::wstring::npos || language0 < descriptions))
+        if (!filter_existing_nodes && subject == 0)
         {
-            size_t      language1 = line.find(L"\"", language0 + language_tag.size());
-            std::string language  = utils::str(line.substr(language0 + language_tag.size(), language1 - language0 - language_tag.size()));
+            subject        = _pImpl->_n->node(id_str, "wikidata");
+            subject_exists = true;
+        }
 
-            static const std::wstring value_tag(L"\"value\":\"");
-            id0 = line.find(value_tag, language1 + 1);
-            id1 = line.find(L"\"", id0 + value_tag.size() + 1);
-            std::wstring value(line.substr(id0 + value_tag.size(), id1 - id0 - value_tag.size()));
+        if (subject_exists)
+        {
+            size_t                    language0;
+            static const std::wstring language_tag(L"{\"language\":\"");
+            size_t                    labels       = line.find(L"\"labels\":{");
+            size_t                    aliases      = line.find(L"\"aliases\":{", id1 + 7);
+            size_t                    descriptions = line.find(L"\"descriptions\":{", id1 + 7);
 
-            // currently we optionally import English, in addition to the default language "wikidata" (which is the id, see above comment).
-            if (import_english && language == "en")
+            while ((language0 = line.find(language_tag, id1 + 7)) != std::wstring::npos
+                   && language0 > labels
+                   && (aliases == std::wstring::npos || language0 < aliases)
+                   && (descriptions == std::wstring::npos || language0 < descriptions))
             {
-                _pImpl->_n->set_name(subject, value, language);
-                //_pImpl->_n->print(id + L": " + utils::wstr(language) + L": " + value, false);
+                size_t      language1 = line.find(L"\"", language0 + language_tag.size());
+                std::string language  = utils::str(line.substr(language0 + language_tag.size(), language1 - language0 - language_tag.size()));
+
+                static const std::wstring value_tag(L"\"value\":\"");
+                id0 = line.find(value_tag, language1 + 1);
+                id1 = line.find(L"\"", id0 + value_tag.size() + 1);
+                std::wstring value(line.substr(id0 + value_tag.size(), id1 - id0 - value_tag.size()));
+
+                if (import_english && language == "en")
+                {
+                    _pImpl->_n->set_name(subject, value, language);
+                }
             }
         }
 
         size_t                    property0;
         static const std::wstring property_tag(LR"(":[{"mainsnak":{"snaktype":"value","property":")");
+
         while ((property0 = line.find(property_tag, id1 + 1)) != std::wstring::npos)
         {
-            size_t       property1 = line.find(L"\"", property0 + property_tag.size());
-            std::wstring property  = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
+            size_t       property1    = line.find(L"\"", property0 + property_tag.size());
+            std::wstring property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
+
+            bool process_this_property = true;
+            if (restrictive_property_filter)
+            {
+                if (_pImpl->_n->get_node(property_str, "wikidata") == 0)
+                {
+                    process_this_property = false;
+                }
+            }
 
             static const std::wstring numeric_id_tag(LR"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
 
-            if (line.substr(property1, numeric_id_tag.size()) == numeric_id_tag)
+            if (process_this_property && line.substr(property1, numeric_id_tag.size()) == numeric_id_tag)
             {
                 id0 = property1 + numeric_id_tag.size();
 
@@ -303,28 +294,54 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
                     if (line.substr(id0 + 1, object_tag.size()) == object_tag)
                     {
                         id0 += object_tag.size() + 1;
-                        id1                 = line.find(L"\"", id0);
-                        std::wstring object = line.substr(id0, id1 - id0);
-                        // std::wcout << L" ---> " << property << L" " << object << std::endl;
+                        id1                     = line.find(L"\"", id0);
+                        std::wstring object_str = line.substr(id0, id1 - id0);
 
-                        try
+                        bool should_import      = !filter_existing_nodes;
+                        Node object_node_handle = 0;
+
+                        if (filter_existing_nodes)
                         {
-                            auto fact = _pImpl->_n->fact(
-                                subject,
-                                _pImpl->_n->node(property, "wikidata"),
-                                {_pImpl->_n->node(object, "wikidata")});
-                            if (log)
+                            object_node_handle = _pImpl->_n->get_node(object_str, "wikidata");
+                            if (subject_exists || object_node_handle != 0)
                             {
-                                std::wstring output;
-                                _pImpl->_n->format_fact(output, "en", fact);
-                                _pImpl->_n->print(id + L":       en> " + output, false);
-                                _pImpl->_n->format_fact(output, "wikidata", fact);
-                                _pImpl->_n->print(id + L": wikidata> " + output, false);
+                                should_import = true;
                             }
                         }
-                        catch (std::exception& ex)
+
+                        if (should_import)
                         {
-                            _pImpl->_n->print(utils::wstr(ex.what()), true);
+                            try
+                            {
+                                if (subject == 0)
+                                {
+                                    subject        = _pImpl->_n->node(id_str, "wikidata");
+                                    subject_exists = true;
+                                }
+
+                                if (object_node_handle == 0)
+                                {
+                                    object_node_handle = _pImpl->_n->node(object_str, "wikidata");
+                                }
+
+                                auto fact = _pImpl->_n->fact(
+                                    subject,
+                                    _pImpl->_n->node(property_str, "wikidata"),
+                                    {object_node_handle});
+
+                                if (log)
+                                {
+                                    std::wstring output;
+                                    _pImpl->_n->format_fact(output, "en", fact);
+                                    _pImpl->_n->print(id_str + L":       en> " + output, false);
+                                    _pImpl->_n->format_fact(output, "wikidata", fact);
+                                    _pImpl->_n->print(id_str + L": wikidata> " + output, false);
+                                }
+                            }
+                            catch (std::exception& ex)
+                            {
+                                _pImpl->_n->print(utils::wstr(ex.what()), true);
+                            }
                         }
                     }
                     else
@@ -407,51 +424,6 @@ void Wikidata::index_entry(const std::wstring& line, const std::streamoff stream
     }
 }
 
-void Wikidata::traverse(std::wstring start_entry)
-{
-    if (start_entry.empty())
-    {
-        std::wifstream stream(_pImpl->_file_name);
-        for (int i = 0; i < 4; ++i) // TODO: workaround!
-        {
-            std::clog << "Doing pass " << (i + 1) << std::endl;
-            for (const auto& it : _pImpl->_n->get_nodes_in_language("wikidata"))
-            {
-                const Node         node  = it.first;
-                const std::wstring entry = it.second;
-                std::wstring       name  = _pImpl->_n->get_name(node, "en");
-                if (name.empty())
-                {
-                    if (_pImpl->_index.count(utils::str(entry)) == 0)
-                    {
-                        _pImpl->_n->print(L"Cannot find wikidata entry '" + entry + L"' in " + _pImpl->_file_name.wstring(), true);
-                    }
-                    else
-                    {
-                        stream.seekg(_pImpl->_index[utils::str(entry)]);
-
-                        std::wstring line;
-                        std::getline(stream, line);
-                        process_entry(line, true, true);
-                    }
-                }
-                else
-                {
-                    //_pImpl->_n->print(name + L" (" + entry + L") is already known.", true);
-                }
-            }
-
-            std::clog << "Completed pass " << (i + 1) << std::endl;
-        }
-    }
-    else
-    {
-        process_name(start_entry); // TODO this causes a segmentation fault!
-    }
-
-    std::clog << "Import completed successfully!" << std::endl;
-}
-
 void Wikidata::process_name(const std::wstring& wikidata_name)
 {
     if (_pImpl->_index.count(utils::str(wikidata_name)) != 0)
@@ -461,7 +433,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
         std::wstring line;
         std::getline(stream, line);
-        process_entry(line, true, false);
+        process_entry(line, true, false, false, false);
     }
 }
 
