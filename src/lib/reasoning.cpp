@@ -199,32 +199,56 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
         while (std::shared_ptr<Variables> match = u.Next())
         {
-            std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
-            std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u.Unequals());
+            try
+            {
+                std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
+                std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u.Unequals());
 
-            RulePos next({rule.node, rule.end, rule.index, joined, joined_unequals});
-            if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
-            {
-                evaluate(next, ctx);
-            }
-            else if (!ctx.next.empty())
-            {
-                next = RulePos(ctx.next.back());
-                ctx.next.pop_back();
-                evaluate(next, ctx);
-            }
-            else if (!contradicts(*joined, *joined_unequals) && !joined->empty())
-            {
-                if (!ctx.rule_deductions.empty())
+                RulePos next({rule.node, rule.end, rule.index, joined, joined_unequals});
+                if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
                 {
-                    deduce(*joined, rule.node, ctx);
+                    evaluate(next, ctx);
                 }
-                else
+                else if (!ctx.next.empty())
                 {
-                    std::lock_guard<std::mutex> lock(_mtx_output);
-                    std::wstring                output;
-                    format_fact(output, _lang, ctx.current_condition, *joined, rule.node);
-                    print(L"Answer: " + output, true);
+                    next = RulePos(ctx.next.back());
+                    ctx.next.pop_back();
+                    evaluate(next, ctx);
+                }
+                else if (!contradicts(*joined, *joined_unequals) && !joined->empty())
+                {
+                    if (!ctx.rule_deductions.empty())
+                    {
+                        deduce(*joined, rule.node, ctx);
+                    }
+                    else
+                    {
+                        std::lock_guard<std::mutex> lock(_mtx_output);
+                        std::wstring                output;
+                        format_fact(output, _lang, ctx.current_condition, *joined, rule.node);
+                        print(L"Answer: " + output, true);
+                    }
+                }
+            }
+            catch (const contradiction_error& error)
+            {
+                std::lock_guard<std::mutex> lock(_mtx_output);
+                _contradiction = true;
+
+                if (_print_deductions || _generate_markdown)
+                {
+                    std::wstring output;
+                    format_fact(output, _lang, error.get_fact(), error.get_variables(), error.get_parent());
+                    std::wstring message = L"«!» ⇐ " + output;
+
+                    if (_print_deductions)
+                    {
+                        print(message, true);
+                    }
+                    if (_generate_markdown)
+                    {
+                        _markdown->add(L"Contradictions", message);
+                    }
                 }
             }
         }
