@@ -25,7 +25,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 #include "zelph_impl.hpp"
+
 #include <boost/algorithm/string.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
 
 #include <fstream>
 #include <iomanip>
@@ -58,35 +61,41 @@ Node Zelph::var() const
     return _pImpl->var();
 }
 
-void Zelph::set_name(const Node node, const std::wstring& name, std::string lang) const
+void Zelph::set_name(const Node node, const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
 #if _DEBUG
     // std::wcout << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
 #endif
 
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_node_of_name);
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
     _pImpl->_node_of_name[lang][name] = node;
     _pImpl->_name_of_node[lang][node] = name;
 }
 
-Node Zelph::node(const std::wstring& name, std::string lang) const
+Node Zelph::node(const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
-
+    if (name.empty())
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
-        auto&                       node_of_name = _pImpl->_node_of_name[lang];
-        auto                        it           = node_of_name.find(name);
-        if (it != node_of_name.end())
-        {
-            return it->second;
-        }
+        throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
-    Node new_node = _pImpl->create();
-    set_name(new_node, name, lang);
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+
+    auto& node_of_name = _pImpl->_node_of_name[lang];
+    auto  it           = node_of_name.find(name);
+    if (it != node_of_name.end())
+    {
+        return it->second;
+    }
+
+    Node                        new_node = _pImpl->create();
+    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+    node_of_name[name]                    = new_node;
+    _pImpl->_name_of_node[lang][new_node] = name;
+
     return new_node;
 }
 
@@ -147,7 +156,7 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     if (fallback)
     {
         std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-        for (auto l : _pImpl->_name_of_node)
+        for (const auto& l : _pImpl->_name_of_node)
         {
             auto it2 = l.second.find(node);
             if (it2 != l.second.end())
@@ -160,10 +169,12 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
 
 std::map<Node, std::wstring> Zelph::get_nodes_in_language(const std::string& lang) const
 {
+    std::lock_guard lock(_pImpl->_mtx_name_of_node);
     return _pImpl->_name_of_node[lang];
 }
 std::vector<std::string> Zelph::get_languages() const
 {
+    std::lock_guard          lock(_pImpl->_mtx_node_of_name);
     std::vector<std::string> result;
 
     for (const auto& outer_pair : _pImpl->_node_of_name)
@@ -292,12 +303,12 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
-const std::unordered_set<Node>& Zelph::get_left(const Node b)
+std::unordered_set<Node> Zelph::get_left(const Node b)
 {
     return _pImpl->get_left(b);
 }
 
-const std::unordered_set<Node>& Zelph::get_right(const Node b)
+std::unordered_set<Node> Zelph::get_right(const Node b)
 {
     return _pImpl->get_right(b);
 }
@@ -400,8 +411,8 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
 
         if (_pImpl->exists(answer.relation()))
         {
-            // TODO check_fact returns !answer.is_known() though answer.relation exists, which should not happen. Indicates corrupt database or hash collision.
-            // assert(false);
+            // check_fact returns !answer.is_known() though answer.relation exists, which must not happen. Indicates corrupt database or hash collision.
+            assert(false);
         }
         else
         {
@@ -419,8 +430,8 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
                 // or
                 // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                const std::wstring name_subject_object = get_name(source, _lang, true);
-                const std::wstring name_relationType   = get_name(relationType, _lang, true);
+                const std::wstring name_subject_object = get_name(source, _lang, true, false);
+                const std::wstring name_relationType   = get_name(relationType, _lang, true, false);
 
                 throw std::runtime_error("fact(): facts with same subject and object are not supported: " + utils::str(name_subject_object) + " " + utils::str(name_relationType) + " " + utils::str(name_subject_object));
             }
@@ -564,6 +575,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     boost::trim(result);
 }
 
+Node Zelph::count() const
+{
+    return _pImpl->count();
+}
+
 NodeView Zelph::get_all_nodes() const
 {
     return NodeView(_pImpl->_name_of_node);
@@ -623,7 +639,7 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
                 std::string left_name = get_name_hex(left);
 
                 std::string key;
-                bool        is_bidirectional = (_pImpl->find_left(left)->second.count(current) == 1);
+                bool        is_bidirectional = _pImpl->has_left_edge(left, current);
 
                 if (is_bidirectional)
                 {
@@ -660,7 +676,7 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
                 std::string right_name = get_name_hex(right);
 
                 std::string key;
-                bool        is_bidirectional = (_pImpl->find_right(right)->second.count(current) == 1);
+                bool        is_bidirectional = _pImpl->has_left_edge(right, current);
 
                 if (is_bidirectional)
                 {
@@ -724,4 +740,18 @@ void Zelph::print(const std::wstring& msg, const bool o) const
 {
     std::lock_guard<std::mutex> lock(_pImpl->_mtx_print);
     _print(msg, o);
+}
+
+void Zelph::save_to_file(const std::string& filename)
+{
+    std::ofstream                   ofs(filename, std::ios::binary);
+    boost::archive::binary_oarchive oa(ofs);
+    oa << *_pImpl;
+}
+
+void Zelph::load_from_file(const std::string& filename)
+{
+    std::ifstream                   ifs(filename, std::ios::binary);
+    boost::archive::binary_iarchive ia(ifs);
+    ia >> *_pImpl;
 }

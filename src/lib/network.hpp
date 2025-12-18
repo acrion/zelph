@@ -28,6 +28,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network_types.hpp"
 #include "string_utils.hpp"
 
+#include <boost/serialization/map.hpp>
+#include <boost/serialization/unordered_map.hpp>
+#include <boost/serialization/unordered_set.hpp>
+#include <boost/serialization/vector.hpp>
+
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -68,6 +74,18 @@ namespace zelph
         class Network
         {
         public:
+            friend class boost::serialization::access;
+
+            template <class Archive>
+            void serialize(Archive& ar, const unsigned int version)
+            {
+                ar & _left;
+                ar & _right;
+                ar & _probabilities;
+                ar & _last;
+                ar & _last_var;
+            }
+
             void connect(Node a, Node b, long double probability = 1)
             {
                 std::lock_guard<std::mutex> lock(_mtx_left);
@@ -161,7 +179,13 @@ namespace zelph
 
                 _left[_last]  = std::unordered_set<Node>();
                 _right[_last] = std::unordered_set<Node>();
+                _node_count.fetch_add(1, std::memory_order_relaxed);
                 return _last;
+            }
+
+            Node count() const
+            {
+                return _node_count.load(std::memory_order_relaxed);
             }
 
             Node var()
@@ -214,14 +238,28 @@ namespace zelph
                 _right[a] = std::unordered_set<Node>();
             }
 
+            static inline uint64_t mix_bits(uint64_t seed, uint64_t value)
+            {
+                seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 12) + (seed >> 4);
+                return seed;
+            }
+
             static Node create_hash(const Node a, const Node b)
             {
-                return mask_node & (mark_hash ^ mod(a) ^ rol(mod(b), shift_inc));
+                uint64_t h = 0;
+                h          = mix_bits(h, mod(a));
+                h          = mix_bits(h, mod(b));
+
+                return (h & mask_node) | mark_hash;
             }
 
             static Node create_hash(const Node a, const Node b, const Node c)
             {
-                return mask_node & (mark_hash ^ mod(a) ^ rol(mod(b), shift_inc) ^ rol(mod(c), 2 * shift_inc));
+                uint64_t h = 0;
+                h          = mix_bits(h, mod(a));
+                h          = mix_bits(h, mod(b));
+                h          = mix_bits(h, mod(c));
+                return (h & mask_node) | mark_hash;
             }
 
             static Node create_hash(const std::unordered_set<Node>& vec)
@@ -229,48 +267,52 @@ namespace zelph
                 std::vector<Node> sorted_vec(vec.begin(), vec.end());
                 std::sort(sorted_vec.begin(), sorted_vec.end());
 
-                Node     result = mark_hash ^ rol(sorted_vec.size(), 56);
-                uint64_t c      = 48;
+                uint64_t h = 0;
+                h          = mix_bits(h, sorted_vec.size());
+
                 for (Node node : sorted_vec)
                 {
-                    // cppcheck-suppress useStlAlgorithm
-                    result ^= mod(rol(node, c++ % 64)); // avoid hash collisions if vec contains identical nodes (with other vecs also having identical nodes) by incrementing c
+                    h = mix_bits(h, mod(node));
                 }
-                return result & mask_node;
+                return (h & mask_node) | mark_hash;
             }
 
             static Node create_hash(const Node head, const std::unordered_set<Node>& vec)
             {
-                return (create_hash(vec)
-                        ^ rol(mod(head), 32))
-                     & mask_node;
+                Node     vec_hash = create_hash(vec);
+                uint64_t h        = mix_bits(vec_hash, mod(head));
+
+                return (h & mask_node) | mark_hash;
             }
 
             static Node create_hash(const Node head1, const Node head2, const std::unordered_set<Node>& vec)
             {
-                //        Node c1  = create_hash(vec);
-                //        Node c2b = mod(head1);
-                //        Node c2  = rol(mod(head1), 20);
-                //        Node c3b = mod(head2);
-                //        Node c3  = rol(mod(head2), 32);
-                //        Node result = (c1^c2^c3) & mask_node;
-
-                //        return result;
-                return (create_hash(vec)
-                        ^ rol(mod(head1), 20)
-                        ^ rol(mod(head2), 32))
-                     & mask_node;
+                Node current_hash = create_hash(vec);
+                current_hash      = mix_bits(current_hash, mod(head1));
+                current_hash      = mix_bits(current_hash, mod(head2));
+                return (current_hash & mask_node) | mark_hash;
             }
 
-            std::unordered_map<Node, std::unordered_set<Node>>::iterator find_right(const Node a)
-            {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                return _left.find(a);
-            }
-            std::unordered_map<Node, std::unordered_set<Node>>::iterator find_left(const Node b)
+            bool has_left_edge(Node b, Node a) const
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
-                return _right.find(b);
+                auto                        it = _right.find(b);
+                return it != _right.end() && it->second.count(a) == 1;
+            }
+
+            bool has_right_edge(Node a, Node b) const
+            {
+                std::lock_guard<std::mutex> lock(_mtx_left);
+                auto                        it = _left.find(a);
+                return it != _left.end() && it->second.count(b) == 1;
+            }
+            bool snapshot_left_of(Node b, std::unordered_set<Node>& out) const
+            {
+                std::lock_guard<std::mutex> lock(_mtx_right);
+                auto                        it = _right.find(b);
+                if (it == _right.end()) return false;
+                out = it->second; // Kopie unter Lock
+                return true;
             }
             std::unordered_map<Node, std::unordered_set<Node>>::iterator left_end()
             {
@@ -283,17 +325,28 @@ namespace zelph
                 return _right.end();
             }
 
-            const std::unordered_set<Node>& get_left(const Node b)
-            {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                auto                        it = _right.find(b);
-                return it == _right.end() ? _empty : it->second;
-            }
-            const std::unordered_set<Node>& get_right(const Node b)
+            // get predecessors / incoming edges
+            std::unordered_set<Node> get_left(const Node b)
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
+                auto                        it = _right.find(b);
+                if (it == _right.end())
+                {
+                    return {};
+                }
+                return it->second;
+            }
+
+            // get successors / outgoing edges
+            std::unordered_set<Node> get_right(const Node b)
+            {
+                std::lock_guard<std::mutex> lock(_mtx_left);
                 auto                        it = _left.find(b);
-                return it == _left.end() ? _empty : it->second;
+                if (it == _left.end())
+                {
+                    return {};
+                }
+                return it->second;
             }
 
 #ifndef _DEBUG
@@ -309,12 +362,12 @@ namespace zelph
             std::unordered_map<Node, std::unordered_set<Node>> _left;
             std::unordered_map<Node, std::unordered_set<Node>> _right;
             std::map<Node, long double>                        _probabilities;
-            const std::unordered_set<Node>                     _empty{std::unordered_set<Node>()};
             Node                                               _last{Node()};
             Node                                               _last_var{Node()};
-            std::mutex                                         _mtx_prob;
-            std::mutex                                         _mtx_left;
-            std::mutex                                         _mtx_right;
+            std::atomic<Node>                                  _node_count{0};
+            mutable std::mutex                                 _mtx_prob;
+            mutable std::mutex                                 _mtx_left;
+            mutable std::mutex                                 _mtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {

@@ -110,6 +110,8 @@ add_library(zelph SHARED
     # boost/serialization. We compile it ourselves. The configurations are (Mac, Linux, Windows) x (CMake, go). In addition we need to match the boost build with our build (e. g. regarding use of C++14).
     ../boost/serialization/src/archive_exception.cpp
     ../boost/serialization/src/basic_archive.cpp
+    ../boost/serialization/src/binary_iarchive.cpp
+    ../boost/serialization/src/binary_oarchive.cpp
     ../boost/serialization/src/basic_iarchive.cpp
     ../boost/serialization/src/basic_iserializer.cpp
     ../boost/serialization/src/basic_oarchive.cpp

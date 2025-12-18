@@ -31,6 +31,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/serialization/map.hpp>
@@ -49,8 +51,6 @@ using namespace zelph::console;
 using namespace zelph::network;
 using boost::escaped_list_separator;
 using boost::tokenizer;
-
-const size_t memory_window_size = 64;
 
 class Wikidata::Impl
 {
@@ -87,124 +87,177 @@ Wikidata::~Wikidata()
 
 void Wikidata::import_all(bool filter_existing_only)
 {
-    _pImpl->_n->print(L"Importing file " + _pImpl->_file_name.wstring(), true);
+    std::clog << "Number of nodes prior import: " << _pImpl->_n->count() << std::endl;
 
-    ReadAsync read_async(_pImpl->_file_name, 100000);
-    if (!read_async.error_text().empty())
+    std::filesystem::path cache_file = _pImpl->_file_name;
+    cache_file.replace_extension(".bin");
+
+    bool cache_loaded = false;
+    if (std::filesystem::exists(cache_file))
     {
-        throw std::runtime_error(read_async.error_text());
-    }
-
-    const std::streamsize total_size = read_async.get_total_size();
-
-    size_t baseline_memory = zelph::platform::get_process_memory_usage(); // Baseline before import starts
-
-    // Atomic counters for thread coordination and progress tracking
-    std::atomic<std::streamoff> bytes_read{0};
-    const unsigned int          num_threads = std::thread::hardware_concurrency() * 500;
-    std::atomic<unsigned int>   active_threads{num_threads};
-    std::vector<std::thread>    workers;
-
-    // Worker function: each thread processes lines from ReadAsync
-    auto worker_func = [&]()
-    {
-        std::wstring   line;
-        std::streamoff streampos;
-        while (read_async.get_line(line, streampos))
+        if (std::filesystem::last_write_time(cache_file) > std::filesystem::last_write_time(_pImpl->_file_name))
         {
-            bytes_read.store(streampos, std::memory_order_relaxed);
-            process_entry(line, true, false, filter_existing_only, filter_existing_only);
+            try
+            {
+                _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
+                std::ifstream                   ifs(cache_file, std::ios::binary);
+                boost::archive::binary_iarchive ia(ifs);
+
+                _pImpl->_n->load_from_file(cache_file.string());
+
+                _pImpl->_n->print(L"Cache loaded successfully (" + std::to_wstring(_pImpl->_n->count()) + L" nodes).", true);
+                cache_loaded = true;
+            }
+            catch (std::exception& ex)
+            {
+                _pImpl->_n->print(L"Failed to load cache: " + utils::wstr(ex.what()), true);
+            }
         }
-        active_threads.fetch_sub(1, std::memory_order_relaxed);
-    };
-
-    // Start worker threads
-    for (unsigned int i = 0; i < num_threads; ++i)
-    {
-        workers.emplace_back(worker_func);
     }
 
-    // Progress reporting in main thread
-    std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
-    std::chrono::steady_clock::time_point last_update_time = start_time;
-
-    while (active_threads.load(std::memory_order_relaxed) > 0)
+    if (!cache_loaded)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        _pImpl->_n->print(L"Importing file " + _pImpl->_file_name.wstring(), true);
 
-        auto current_time           = std::chrono::steady_clock::now();
-        auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                          current_time - last_update_time)
-                                          .count()
-                                    / 1000.0;
-
-        if (time_since_last_update >= 1.0)
+        ReadAsync read_async(_pImpl->_file_name, 100000);
+        if (!read_async.error_text().empty())
         {
-            std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
-            double         current_percentage = (static_cast<double>(current_bytes) / total_size) * 100.0;
-            double         progress_fraction  = static_cast<double>(current_bytes) / total_size;
-            auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
-                                       current_time - start_time)
-                                       .count();
-            double speed       = 0;
-            int    eta_seconds = 0;
+            throw std::runtime_error(read_async.error_text());
+        }
 
-            if (elapsed_seconds > 0 && current_bytes > 0)
+        const std::streamsize total_size = read_async.get_total_size();
+
+        size_t baseline_memory = zelph::platform::get_process_memory_usage(); // Baseline before import starts
+
+        // Atomic counters for thread coordination and progress tracking
+        std::atomic<std::streamoff> bytes_read{0};
+        const unsigned int          num_threads = std::thread::hardware_concurrency();
+        std::atomic<unsigned int>   active_threads{num_threads};
+        std::vector<std::thread>    workers;
+
+        // Worker function: each thread processes lines from ReadAsync
+        std::mutex read_mtx;
+
+        auto worker_func = [&]()
+        {
+            for (;;)
             {
-                speed       = static_cast<double>(current_bytes) / elapsed_seconds;
-                eta_seconds = static_cast<int>((total_size - current_bytes) / speed);
+                std::wstring   line;
+                std::streamoff streampos;
+
+                {
+                    std::lock_guard<std::mutex> lk(read_mtx);
+
+                    if (!read_async.get_line(line, streampos))
+                        break;
+                }
+
+                bytes_read.store(streampos, std::memory_order_relaxed);
+                process_entry(line, true, false, filter_existing_only, filter_existing_only);
             }
 
-            size_t current_memory = zelph::platform::get_process_memory_usage();
-            size_t memory_used    = (current_memory > baseline_memory) ? current_memory - baseline_memory : 0;
+            active_threads.fetch_sub(1, std::memory_order_relaxed);
+        };
 
-            size_t estimated_memory = 0;
-            if (progress_fraction > 0.0)
+        // Start worker threads
+        for (unsigned int i = 0; i < num_threads; ++i)
+        {
+            workers.emplace_back(worker_func);
+        }
+
+        // Progress reporting in main thread
+        std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point last_update_time = start_time;
+
+        while (active_threads.load(std::memory_order_relaxed) > 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+            auto current_time           = std::chrono::steady_clock::now();
+            auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              current_time - last_update_time)
+                                              .count()
+                                        / 1000.0;
+
+            if (time_since_last_update >= 1.0)
             {
-                estimated_memory = static_cast<size_t>(
-                    static_cast<double>(memory_used) / progress_fraction);
-            }
+                std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
+                double         current_percentage = (static_cast<double>(current_bytes) / total_size) * 100.0;
+                double         progress_fraction  = static_cast<double>(current_bytes) / total_size;
+                auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
+                                           current_time - start_time)
+                                           .count();
+                double speed       = 0;
+                int    eta_seconds = 0;
 
-            int eta_minutes = eta_seconds / 60;
-            eta_seconds %= 60;
-            int eta_hours = eta_minutes / 60;
-            eta_minutes %= 60;
-            const int decimal_places = 2;
+                if (elapsed_seconds > 0 && current_bytes > 0)
+                {
+                    speed       = static_cast<double>(current_bytes) / elapsed_seconds;
+                    eta_seconds = static_cast<int>((total_size - current_bytes) / speed);
+                }
 
-            std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
-                      << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
+                size_t current_memory = zelph::platform::get_process_memory_usage();
+                size_t memory_used    = (current_memory > baseline_memory) ? current_memory - baseline_memory : 0;
 
-            if (eta_seconds > 0 || eta_minutes > 0 || eta_hours > 0)
-            {
+                size_t estimated_memory = 0;
+                if (progress_fraction > 0.0)
+                {
+                    estimated_memory = static_cast<size_t>(
+                        static_cast<double>(memory_used) / progress_fraction);
+                }
+
+                int eta_minutes = eta_seconds / 60;
+                eta_seconds %= 60;
+                int eta_hours = eta_minutes / 60;
+                eta_minutes %= 60;
+                const int decimal_places = 2;
+
+                std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
+                          << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
+
+                std::clog << " | Nodes: " << _pImpl->_n->count();
+
                 std::clog << " | ETA: ";
                 if (eta_hours > 0) std::clog << eta_hours << "h ";
                 if (eta_minutes > 0) std::clog << eta_minutes << "m ";
                 std::clog << eta_seconds << "s";
+
+                std::clog << " | Memory Used: " << std::fixed << std::setprecision(1) << (static_cast<double>(memory_used) / (1024 * 1024 * 1024)) << " GiB"
+                          << " | Estimated Total Memory: " << std::fixed << std::setprecision(1) << (static_cast<double>(estimated_memory) / (1024 * 1024 * 1024)) << " GiB"
+                          << std::endl;
+
+                last_update_time = current_time;
             }
-            std::clog << " | Memory Used: " << std::fixed << std::setprecision(1) << (static_cast<double>(memory_used) / (1024 * 1024 * 1024)) << " GiB"
-                      << " | Estimated Total Memory: " << std::fixed << std::setprecision(1) << (static_cast<double>(estimated_memory) / (1024 * 1024 * 1024)) << " GiB"
-                      << std::endl;
-
-            last_update_time = current_time;
         }
-    }
 
-    // Wait for all workers to complete
-    for (auto& worker : workers)
-    {
-        if (worker.joinable())
+        // Wait for all workers to complete
+        for (auto& worker : workers)
         {
-            worker.join();
+            if (worker.joinable())
+            {
+                worker.join();
+            }
         }
-    }
 
-    if (read_async.error_text().empty())
-    {
-        std::clog << "Import completed successfully!" << std::endl;
-    }
-    else
-    {
-        throw std::runtime_error(read_async.error_text());
+        if (read_async.error_text().empty())
+        {
+            std::clog << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
+
+            try
+            {
+                _pImpl->_n->print(L"Saving network to cache " + cache_file.wstring() + L"...", true);
+                _pImpl->_n->save_to_file(cache_file.string());
+                _pImpl->_n->print(L"Cache saved.", true);
+            }
+            catch (std::exception& ex)
+            {
+                _pImpl->_n->print(L"Failed to save cache: " + utils::wstr(ex.what()), true);
+            }
+        }
+        else
+        {
+            throw std::runtime_error(read_async.error_text());
+        }
     }
 }
 
@@ -263,6 +316,11 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
             size_t       property1    = line.find(L"\"", property0 + property_tag.size());
             std::wstring property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
 
+            if (property_str.empty() || property_str[0] != L'P')
+            {
+                throw std::runtime_error("Invalid property '" + utils::str(property_str) + "' in " + utils::str(line));
+            }
+
             bool process_this_property = true;
             if (restrictive_property_filter)
             {
@@ -279,7 +337,7 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
                 id0 = property1 + numeric_id_tag.size();
 
                 bool success = true;
-                while (line[++id0] != L',')
+                while (++id0 < line.size() && line[id0] != L',')
                 {
                     if (line[id0] < L'0' || line[id0] > L'9')
                     {
@@ -302,10 +360,17 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
 
                         if (filter_existing_nodes)
                         {
-                            object_node_handle = _pImpl->_n->get_node(object_str, "wikidata");
-                            if (subject_exists || object_node_handle != 0)
+                            if (restrictive_property_filter)
                             {
                                 should_import = true;
+                            }
+                            else
+                            {
+                                object_node_handle = _pImpl->_n->get_node(object_str, "wikidata");
+                                if (subject_exists || object_node_handle != 0)
+                                {
+                                    should_import = true;
+                                }
                             }
                         }
 

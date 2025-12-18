@@ -31,8 +31,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -48,6 +50,13 @@ namespace zelph::network
         std::shared_ptr<Variables>         unequals{std::make_shared<Variables>()};
     };
 
+    struct ReasoningContext
+    {
+        Node                     current_condition{0};
+        std::vector<RulePos>     next;
+        std::unordered_set<Node> rule_deductions;
+    };
+
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
@@ -56,20 +65,18 @@ namespace zelph::network
         void apply_rule(const network::Node& rule, network::Node condition, size_t thread_index);
 
     private:
-        void evaluate(RulePos rule);
+        void evaluate(RulePos rule, ReasoningContext& ctx);
         bool contradicts(const Variables& variables, const Variables& unequals) const;
-        void deduce(const Variables& variables, Node parent);
+        void deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
 
-        bool                                _done{false};
-        Node                                _current_condition{0};
-        std::unordered_set<Node>            _deductions;
-        std::vector<RulePos>                _next;
+        std::atomic<bool>                   _done{false};
         std::unique_ptr<wikidata::Markdown> _markdown;
-        size_t                              _running{0};
+        std::atomic<uint64_t>               _running{0};
         bool                                _print_deductions{true};
         bool                                _generate_markdown{true};
-        bool                                _contradiction{false};
+        std::atomic<bool>                   _contradiction{false};
         StopWatch                           _stop_watch;
-        size_t                              _skipped{0};
+        std::atomic<size_t>                 _skipped{0};
+        std::mutex                          _mtx_output;
     };
 }

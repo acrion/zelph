@@ -33,18 +33,20 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
+#define PARALLEL_REASONING
+
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(print)
 {
 }
-
-// #define PARALLEL_REASONING
 
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
 {
     _print_deductions  = print_deductions;
     _generate_markdown = generate_markdown;
     _skipped           = 0;
+    _running           = 0;
+    _contradiction     = false;
 
     if (_generate_markdown)
     {
@@ -55,6 +57,9 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     {
         std::vector<std::thread> threads;
 
+        const size_t max_threads = std::min<size_t>(64, std::thread::hardware_concurrency());
+        threads.resize(max_threads);
+
         _done = false;
         for (Node rule : _pImpl->get_left(core.Causes))
         {
@@ -62,22 +67,30 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
             apply_rule(rule, 0, 0);
 #else
             size_t i = 0;
-            for (i = 0; i < threads.size(); ++i)
-                if (!(_running & 1ull << i))
-                    break;
+            while (true)
+            {
+                for (i = 0; i < max_threads; ++i)
+                {
+                    uint64_t mask = 1ULL << i;
+                    if (!(_running.load(std::memory_order_relaxed) & mask))
+                    {
+                        uint64_t current = _running.load();
+                        if (!(current & mask))
+                        {
+                            _running.fetch_or(mask);
 
-            _running = _running | 1ull << i;
-            std::thread t(&Reasoning::process_rule, this, rule, 0, i);
-            if (i < threads.size())
-            {
-                if (threads[i].joinable()) threads[i].join();
-                threads[i] = std::move(t);
+                            if (threads[i].joinable()) threads[i].join();
+
+                            threads[i] = std::thread(&Reasoning::apply_rule, this, rule, 0, i);
+                            goto rule_scheduled;
+                        }
+                    }
+                }
+
+                std::this_thread::yield();
             }
-            else
-            {
-                threads.emplace_back(std::move(t));
-                print(L"Running " + std::to_wstring(threads.size()) + L" threads for applying rules...", true);
-            }
+
+        rule_scheduled:;
 #endif
         }
 
@@ -102,14 +115,15 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
 void Reasoning::apply_rule(const Node& rule, Node condition, size_t thread_index)
 {
+    ReasoningContext ctx;
+
     if (rule == 0)
     {
-        _deductions.clear();
         assert(condition != 0);
     }
     else
     {
-        condition = parse_fact(rule, _deductions);
+        condition = parse_fact(rule, ctx.rule_deductions);
     }
 
     if (condition && condition != core.Causes)
@@ -117,15 +131,17 @@ void Reasoning::apply_rule(const Node& rule, Node condition, size_t thread_index
         std::unordered_set<Node> conditions;
         conditions.insert(condition);
 
-        _current_condition = condition;
-        _next.clear();
+        ctx.current_condition = condition;
+        ctx.next.clear();
 
         try
         {
-            evaluate(RulePos({rule, conditions.end(), conditions.begin()}));
+            evaluate(RulePos({rule, conditions.end(), conditions.begin()}), ctx);
         }
         catch (const contradiction_error& error)
         {
+            std::lock_guard<std::mutex> lock(_mtx_output);
+
             _contradiction = true;
             if (_print_deductions || _generate_markdown)
             {
@@ -146,10 +162,10 @@ void Reasoning::apply_rule(const Node& rule, Node condition, size_t thread_index
         }
     }
 
-    _running = _running & ~(1ull << thread_index);
+    _running.fetch_and(~(1ULL << thread_index));
 }
 
-void Reasoning::evaluate(RulePos rule)
+void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 {
     Node condition  = *rule.index;                  // points to the relation: normally 'and', connecting several conditions, or the relation of a fact (which may consist of variables)
     auto current_op = _pImpl->get_right(condition); // get the set of Nodes the relation points to, which is its type. Empty if the relation is a variable.
@@ -170,10 +186,10 @@ void Reasoning::evaluate(RulePos rule)
             RulePos next(rule);
             if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
             {
-                _next.push_back(next);
+                ctx.next.push_back(next);
             }
 
-            evaluate(RulePos({condition, condition_back_link.end(), condition_back_link.begin(), rule.variables, rule.unequals}));
+            evaluate(RulePos({condition, condition_back_link.end(), condition_back_link.begin(), rule.variables, rule.unequals}), ctx);
         }
     }
     else
@@ -189,24 +205,25 @@ void Reasoning::evaluate(RulePos rule)
             RulePos next({rule.node, rule.end, rule.index, joined, joined_unequals});
             if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
             {
-                evaluate(next);
+                evaluate(next, ctx);
             }
-            else if (!_next.empty())
+            else if (!ctx.next.empty())
             {
-                next = RulePos(_next.back());
-                _next.pop_back();
-                evaluate(next);
+                next = RulePos(ctx.next.back());
+                ctx.next.pop_back();
+                evaluate(next, ctx);
             }
             else if (!contradicts(*joined, *joined_unequals) && !joined->empty())
             {
-                if (!_deductions.empty())
+                if (!ctx.rule_deductions.empty())
                 {
-                    deduce(*joined, rule.node);
+                    deduce(*joined, rule.node, ctx);
                 }
                 else
                 {
-                    std::wstring output;
-                    format_fact(output, _lang, _current_condition, *joined, rule.node);
+                    std::lock_guard<std::mutex> lock(_mtx_output);
+                    std::wstring                output;
+                    format_fact(output, _lang, ctx.current_condition, *joined, rule.node);
                     print(L"Answer: " + output, true);
                 }
             }
@@ -245,13 +262,13 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
     return false; // no contradiction
 }
 
-void Reasoning::deduce(const Variables& variables, const Node parent)
+void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningContext& ctx)
 {
-    for (const Node deduction : _deductions)
+    for (const Node deduction : ctx.rule_deductions)
     {
         if (deduction == core.Contradiction)
         {
-            throw contradiction_error(_current_condition, variables, parent);
+            throw contradiction_error(ctx.current_condition, variables, parent);
         }
 
         std::unordered_set<Node> relations = filter(deduction, core.IsA, core.RelationTypeCategory);
@@ -300,7 +317,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent)
 
                             if (answer.is_wrong())
                             {
-                                throw contradiction_error(_current_condition, variables, parent);
+                                throw contradiction_error(ctx.current_condition, variables, parent);
                             }
                             else if (!answer.is_known()
                                      && targets.count(rel) == 0     // ignore deductions with same relation and target type as we do not support these
@@ -310,55 +327,60 @@ void Reasoning::deduce(const Variables& variables, const Node parent)
                                 {
                                     const Node d = fact(source, rel, targets);
 
-                                    bool do_print = _print_deductions;
-                                    if (!do_print)
                                     {
-                                        if (_stop_watch.is_running())
+                                        std::lock_guard<std::mutex> lock(_mtx_output);
+
+                                        bool do_print = _print_deductions;
+                                        if (!do_print)
                                         {
-                                            if (_stop_watch.duration() >= 1000)
+                                            if (_stop_watch.is_running())
+                                            {
+                                                if (_stop_watch.duration() >= 1000)
+                                                {
+                                                    do_print = true;
+                                                    _stop_watch.start();
+                                                }
+                                                else
+                                                {
+                                                    ++_skipped;
+                                                }
+                                            }
+                                            else
                                             {
                                                 do_print = true;
                                                 _stop_watch.start();
                                             }
-                                            else
+                                        }
+
+                                        if (do_print || _generate_markdown)
+                                        {
+                                            size_t skipped_val = _skipped.exchange(0);
+                                            if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
+
+                                            _stop_watch.start();
+                                            std::wstring input, output;
+                                            format_fact(input, _lang, ctx.current_condition, variables, parent);
+                                            format_fact(output, _lang, d, {}, parent);
+
+                                            std::wstring message = output + L" ⇐ " + input;
+
+                                            if (do_print)
                                             {
-                                                ++_skipped;
+                                                print(message, true);
+                                            }
+
+                                            if (_generate_markdown)
+                                            {
+                                                _markdown->add(L"Deductions", message);
                                             }
                                         }
-                                        else
-                                        {
-                                            do_print = true;
-                                            _stop_watch.start();
-                                        }
+
+                                        _done = true;
                                     }
-
-                                    if (do_print || _generate_markdown)
-                                    {
-                                        if (_skipped > 0) print(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
-                                        _skipped = 0;
-                                        _stop_watch.start();
-                                        std::wstring input, output;
-                                        format_fact(input, _lang, _current_condition, variables, parent);
-                                        format_fact(output, _lang, d, {}, parent);
-
-                                        std::wstring message = output + L" ⇐ " + input;
-
-                                        if (do_print)
-                                        {
-                                            print(message, true);
-                                        }
-
-                                        if (_generate_markdown)
-                                        {
-                                            _markdown->add(L"Deductions", message);
-                                        }
-                                    }
-
-                                    _done = true;
                                 }
                                 catch (const std::exception&)
                                 {
-                                    throw contradiction_error(_current_condition, variables, parent);
+                                    throw contradiction_error(ctx.current_condition, variables, parent);
                                 }
                             }
                         }

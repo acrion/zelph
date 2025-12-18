@@ -71,13 +71,12 @@ bool Unification::increment_fact_index()
     {
         if (!_fact_index_initialized)
         {
-            _facts_of_current_relation = _n->_pImpl->find_left(*_relation_index);
-
-            if (_facts_of_current_relation == _n->_pImpl->right_end())
+            if (!_n->_pImpl->snapshot_left_of(*_relation_index, _facts_snapshot))
+            {
                 return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
+            }
             else
             {
-                _facts_snapshot         = _facts_of_current_relation->second;
                 _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
                 _fact_index_initialized = true;
             }

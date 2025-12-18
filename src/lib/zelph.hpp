@@ -53,7 +53,7 @@ namespace zelph
             void                         set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
             void                         set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }
             std::string                  lang() { return _lang; }
-            Node                         node(const std::wstring& name, std::string lang = "") const;
+            Node                         node(const std::wstring& name, std::string lang = "");
             bool                         has_name(Node node, const std::string& lang) const;
             std::wstring                 get_name(const Node node, std::string lang = "", const bool fallback = false, const bool process_node = true) const;
             std::map<Node, std::wstring> get_nodes_in_language(const std::string& lang) const;
@@ -61,7 +61,7 @@ namespace zelph
             bool                         has_language(const std::string& language) const;
             Node                         get_node(const std::wstring& name, std::string lang = "") const;
             std::string                  get_name_hex(Node node, bool prepend_num = true);
-            void                         set_name(Node node, const std::wstring& name, std::string lang = "") const;
+            void                         set_name(Node node, const std::wstring& name, std::string lang = "");
 
             std::unordered_set<Node>        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                            parse_fact(Node rule, std::unordered_set<Node>& deductions, Node parent = 0) const;
@@ -70,15 +70,18 @@ namespace zelph
             std::unordered_set<Node>        filter(const std::unordered_set<Node>& source, Node target) const;
             std::unordered_set<Node>        filter(Node fact, Node relationType, Node target) const;
             static std::unordered_set<Node> filter(const std::unordered_set<Node>& source, const std::function<bool(const Node nd)>& f);
-            const std::unordered_set<Node>& get_left(const Node b);
-            const std::unordered_set<Node>& get_right(const Node b);
+            std::unordered_set<Node>        get_left(const Node b);
+            std::unordered_set<Node>        get_right(const Node b);
             Answer                          check_fact(Node source, Node relationType, const std::unordered_set<Node>& targets);
             Node                            fact(Node source, Node relationType, const std::unordered_set<Node>& targets, long double probability = 1);
             Node                            condition(Node op, const std::unordered_set<Node>& conditions) const;
             void                            gen_dot(Node start, std::string file_name, int max_depth);
             void                            print(const std::wstring&, const bool) const;
             static std::string              get_version();
+            void                            save_to_file(const std::string& filename);
+            void                            load_from_file(const std::string& filename);
 
+            Node                     count() const;
             NodeView                 get_all_nodes() const;
             std::unordered_set<Node> get_rules() const; // New public method to get all rules
 

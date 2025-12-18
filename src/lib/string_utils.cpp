@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string_utils.hpp"
 
+#include <boost/locale/encoding_utf.hpp>
+
 #include <codecvt>
 #include <cwctype>
 #include <iostream>
@@ -42,10 +44,9 @@ namespace zelph
             {
                 try
                 {
-                    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-                    return converter.to_bytes(wstr);
+                    return boost::locale::conv::utf_to_utf<char>(wstr);
                 }
-                catch (const std::range_error& e)
+                catch (const boost::locale::conv::conversion_error& e)
                 {
                     std::wcerr << L"Error converting wstring to UTF-8 string: " << e.what() << std::endl;
 
@@ -80,7 +81,7 @@ namespace zelph
 
             std::wstring wstr(std::string str)
             {
-                return std::wstring(str.begin(), str.end());
+                return boost::locale::conv::utf_to_utf<wchar_t>(str);
             }
 
             std::wstring convert_unicode_escapes(const std::wstring& input)
