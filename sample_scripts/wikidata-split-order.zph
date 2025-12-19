@@ -8,4 +8,4 @@
 # R is instance of Q18647515, X R Y, Y R Z => X R Z
 # I is instance of S, S is subclass of C => I is instance of C
 
-I is instance of C, I is subclass of C => !
+I is subclass of C, I is instance of C => !
