@@ -128,7 +128,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition, size_t thread_index
 
     if (condition && condition != core.Causes)
     {
-        std::unordered_set<Node> conditions;
+        adjacency_set conditions;
         conditions.insert(condition);
 
         ctx.current_condition = condition;
@@ -295,7 +295,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
             throw contradiction_error(ctx.current_condition, variables, parent);
         }
 
-        std::unordered_set<Node> relations = filter(deduction, core.IsA, core.RelationTypeCategory);
+        adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
 
         if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
         {
@@ -305,8 +305,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
             if (rel)
             {
-                std::unordered_set<Node> var_targets;
-                Node                     var_source = parse_fact(deduction, var_targets, parent);
+                adjacency_set var_targets;
+                Node          var_source = parse_fact(deduction, var_targets, parent);
 
                 if (!var_targets.empty())
                 {
@@ -316,8 +316,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
                     if (source)
                     {
-                        std::unordered_set<Node> targets;
-                        bool                     done = true;
+                        adjacency_set targets;
+                        bool          done = true;
                         for (Node var_t : var_targets)
                         {
                             Node t = _pImpl->is_var(var_t)

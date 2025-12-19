@@ -376,7 +376,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".list-rules")
     {
         // Get all nodes that are subjects of a core.Causes relation
-        std::unordered_set<network::Node> rule_nodes = _n->get_rules();
+        network::adjacency_set rule_nodes = _n->get_rules();
         if (rule_nodes.empty())
         {
             _n->print(L"No rules found.", true);
@@ -675,7 +675,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
         combined = std::move(temp);
     }
 
-    std::unordered_set<network::Node> objects;
+    network::adjacency_set objects;
     for (size_t i = 2; i < combined.size(); ++i)
         objects.insert(combined[i]);
 
@@ -709,7 +709,7 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
     if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
     if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + network::utils::str(line));
 
-    std::unordered_set<network::Node> condition_nodes;
+    network::adjacency_set condition_nodes;
     for (const auto& condition : conditions)
     {
         condition_nodes.insert(process_fact(condition, variables));
@@ -719,7 +719,7 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
                                                ? *condition_nodes.begin()
                                                : _n->condition(_n->core.And, condition_nodes);
 
-    std::unordered_set<network::Node> deduction_list;
+    network::adjacency_set deduction_list;
     for (const auto& deduction : deductions)
     {
         deduction_list.insert(process_fact(deduction, variables));

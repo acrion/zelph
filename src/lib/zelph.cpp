@@ -167,11 +167,19 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     return L""; // return empty string if this node has no name (which can happen for internally generated nodes, see Interactive::Impl::process_fact and Interactive::Impl::process_rule)
 }
 
-std::map<Node, std::wstring> Zelph::get_nodes_in_language(const std::string& lang) const
+name_of_node_map Zelph::get_nodes_in_language(const std::string& lang) const
 {
     std::lock_guard lock(_pImpl->_mtx_name_of_node);
-    return _pImpl->_name_of_node[lang];
+
+    const auto& outer = _pImpl->_name_of_node;
+    auto        it    = outer.find(lang);
+    if (it == outer.end())
+    {
+        return name_of_node_map{};
+    }
+    return it->second;
 }
+
 std::vector<std::string> Zelph::get_languages() const
 {
     std::lock_guard          lock(_pImpl->_mtx_node_of_name);
@@ -241,9 +249,9 @@ Node Zelph::get_node(const std::wstring& name, std::string lang) const
     }
 }
 
-std::unordered_set<Node> Zelph::get_sources(const Node relationType, const Node target, const bool exclude_vars) const
+adjacency_set Zelph::get_sources(const Node relationType, const Node target, const bool exclude_vars) const
 {
-    std::unordered_set<Node> sources;
+    adjacency_set sources;
 
     for (Node relation : _pImpl->get_right(target))
         if (_pImpl->get_right(relation).count(relationType) == 1)
@@ -254,9 +262,9 @@ std::unordered_set<Node> Zelph::get_sources(const Node relationType, const Node 
     return sources;
 }
 
-std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, const Node target) const
+adjacency_set Zelph::filter(const adjacency_set& source, const Node target) const
 {
-    std::unordered_set<Node> result;
+    adjacency_set result;
 
     for (Node nd : source)
     {
@@ -269,15 +277,15 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
-std::unordered_set<Node> Zelph::filter(const Node fact, const Node relationType, const Node target) const
+adjacency_set Zelph::filter(const Node fact, const Node relationType, const Node target) const
 {
-    std::unordered_set<Node> source     = _pImpl->get_right(fact);
-    std::unordered_set<Node> left_nodes = _pImpl->get_left(fact);
-    std::unordered_set<Node> result;
+    adjacency_set source     = _pImpl->get_right(fact);
+    adjacency_set left_nodes = _pImpl->get_left(fact);
+    adjacency_set result;
 
     for (Node nd : source)
     {
-        std::unordered_set<Node> possible_relations = _pImpl->get_right(nd);
+        adjacency_set possible_relations = _pImpl->get_right(nd);
         for (Node relation : filter(possible_relations, relationType))
         {
             if (_pImpl->get_left(relation).count(target) == 1
@@ -291,9 +299,9 @@ std::unordered_set<Node> Zelph::filter(const Node fact, const Node relationType,
     return result;
 }
 
-std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, const std::function<bool(const Node nd)>& f)
+adjacency_set Zelph::filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f)
 {
-    std::unordered_set<Node> result;
+    adjacency_set result;
 
     for (const Node nd : source)
     {
@@ -303,17 +311,17 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
-std::unordered_set<Node> Zelph::get_left(const Node b)
+adjacency_set Zelph::get_left(const Node b)
 {
     return _pImpl->get_left(b);
 }
 
-std::unordered_set<Node> Zelph::get_right(const Node b)
+adjacency_set Zelph::get_right(const Node b)
 {
     return _pImpl->get_right(b);
 }
 
-Answer Zelph::check_fact(const Node source, const Node relationType, const std::unordered_set<Node>& targets)
+Answer Zelph::check_fact(const Node source, const Node relationType, const adjacency_set& targets)
 {
     bool known = false;
 
@@ -321,8 +329,8 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const std::
 
     if (_pImpl->exists(relation))
     {
-        const std::unordered_set<Node>& connectedFromRelationType = _pImpl->get_right(relation);
-        const std::unordered_set<Node>& connectedToRelationType   = _pImpl->get_left(relation);
+        const adjacency_set& connectedFromRelationType = _pImpl->get_right(relation);
+        const adjacency_set& connectedToRelationType   = _pImpl->get_left(relation);
 
         known = connectedFromRelationType.count(source) == 1
              && connectedToRelationType.count(source) == 1 // source must be connected with and from <--> relation (i.e. bidirectional, to distinguish it from targets)
@@ -380,7 +388,7 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const std::
     }
 }
 
-Node Zelph::fact(const Node source, const Node relationType, const std::unordered_set<Node>& targets, const long double probability)
+Node Zelph::fact(const Node source, const Node relationType, const adjacency_set& targets, const long double probability)
 {
     const Answer answer = check_fact(source, relationType, targets);
 
@@ -444,7 +452,7 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
     return answer.relation();
 }
 
-Node Zelph::condition(Node op, const std::unordered_set<Node>& conditions) const
+Node Zelph::condition(Node op, const adjacency_set& conditions) const
 {
     Node relation = _pImpl->create_hash(op, conditions);
     _pImpl->create(relation);
@@ -454,7 +462,7 @@ Node Zelph::condition(Node op, const std::unordered_set<Node>& conditions) const
     return relation;
 }
 
-Node Zelph::parse_fact(Node rule, std::unordered_set<Node>& deductions, Node parent) const
+Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
 {
     Node subject = 0; // 0 means failure
     deductions.clear();
@@ -520,8 +528,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
-    std::unordered_set<Node> objects;
-    Node                     subject = parse_fact(fact, objects, parent);
+    adjacency_set objects;
+    Node          subject = parse_fact(fact, objects, parent);
 
     bool is_condition = _pImpl->get_right(fact).count(core.And) == 1; // if fact is a condition node (having relation type core.And), there is no subject
     if (subject == 0 && !is_condition)
@@ -586,11 +594,11 @@ NodeView Zelph::get_all_nodes() const
 }
 
 // Returns all nodes that are subjects of a core.Causes relation
-std::unordered_set<Node> Zelph::get_rules() const
+adjacency_set Zelph::get_rules() const
 {
-    const std::unordered_set<Node>& rule_candidates = _pImpl->get_left(core.Causes);
+    const adjacency_set& rule_candidates = _pImpl->get_left(core.Causes);
 
-    std::unordered_set<Node> rules;
+    adjacency_set rules;
 
     for (Node rule_candidate : rule_candidates)
     {
@@ -598,8 +606,8 @@ std::unordered_set<Node> Zelph::get_rules() const
         // Note that a rule candidate with empty deductions is interpreted as a question, see Reasoning::evaluate()
         if (rule_candidate)
         {
-            std::unordered_set<Node> deductions;
-            Node                     condition = parse_fact(rule_candidate, deductions);
+            adjacency_set deductions;
+            Node          condition = parse_fact(rule_candidate, deductions);
             if (condition && condition != core.Causes && !deductions.empty())
             {
                 rules.insert(rule_candidate);
@@ -610,7 +618,7 @@ std::unordered_set<Node> Zelph::get_rules() const
     return rules;
 }
 
-void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
+void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
 {
     if (--max_depth > 0 && touched.count(current) == 0)
     {
@@ -708,12 +716,12 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
 
 void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
 {
-    std::unordered_set<Node> conditions, deductions;
+    adjacency_set conditions, deductions;
 
     for (Node rule : _pImpl->get_left(core.Causes))
     {
-        std::unordered_set<Node> current_deductions;
-        Node                     condition = parse_fact(rule, current_deductions);
+        adjacency_set current_deductions;
+        Node          condition = parse_fact(rule, current_deductions);
 
         if (condition && condition != core.Causes)
         {
@@ -725,7 +733,7 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    std::unordered_set<Node>        touched;
+    adjacency_set                   touched;
     std::unordered_set<std::string> written_edges;
     std::ofstream                   dot(file_name, std::ios_base::out);
 

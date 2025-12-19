@@ -28,8 +28,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network.hpp"
 #include "zelph.hpp"
 
-#include <boost/serialization/map.hpp>
-#include <boost/serialization/string.hpp>
+#include <ankerl/unordered_dense.h>
+
+#include <boost/serialization/vector.hpp>
 
 #include <cstdint>
 #include <map>
@@ -40,7 +41,6 @@ namespace zelph
 {
     namespace network
     {
-        // cppcheck-suppress noConstructor
         class ZELPH_EXPORT Zelph::Impl : public Network
         {
             friend class Zelph;
@@ -52,13 +52,91 @@ namespace zelph
             void serialize(Archive& ar, const unsigned int version)
             {
                 ar& boost::serialization::base_object<Network>(*this);
-                ar & _name_of_node;
-                ar & _node_of_name;
+
+                std::size_t outer_size = _name_of_node.size();
+                ar & outer_size;
+                if constexpr (Archive::is_loading::value)
+                {
+                    _name_of_node.clear();
+                    for (std::size_t i = 0; i < outer_size; ++i)
+                    {
+                        std::string lang;
+                        ar & lang;
+                        name_of_node_map inner;
+                        std::size_t      inner_size;
+                        ar & inner_size;
+                        inner.reserve(inner_size);
+                        for (std::size_t j = 0; j < inner_size; ++j)
+                        {
+                            Node         key;
+                            std::wstring value;
+                            ar & key;
+                            ar & value;
+                            inner[key] = value;
+                        }
+                        _name_of_node[lang] = std::move(inner);
+                    }
+                }
+                else
+                {
+                    for (const auto& p : _name_of_node)
+                    {
+                        ar & p.first;
+                        std::size_t inner_size = p.second.size();
+                        ar & inner_size;
+                        for (const auto& ip : p.second)
+                        {
+                            ar & ip.first;
+                            ar & ip.second;
+                        }
+                    }
+                }
+
+                outer_size = _node_of_name.size();
+                ar & outer_size;
+                if constexpr (Archive::is_loading::value)
+                {
+                    _node_of_name.clear();
+                    for (std::size_t i = 0; i < outer_size; ++i)
+                    {
+                        std::string lang;
+                        ar & lang;
+                        node_of_name_map inner;
+                        std::size_t      inner_size;
+                        ar & inner_size;
+                        inner.reserve(inner_size);
+                        for (std::size_t j = 0; j < inner_size; ++j)
+                        {
+                            std::wstring key;
+                            Node         value;
+                            ar & key;
+                            ar & value;
+                            inner[key] = value;
+                        }
+                        _node_of_name[lang] = std::move(inner);
+                    }
+                }
+                else
+                {
+                    for (const auto& p : _node_of_name)
+                    {
+                        ar & p.first;
+                        std::size_t inner_size = p.second.size();
+                        ar & inner_size;
+                        for (const auto& ip : p.second)
+                        {
+                            ar & ip.first;
+                            ar & ip.second;
+                        }
+                    }
+                }
             }
 
-            // cannot use boost:bitmap because we have to support nodes having the same name (within one language). In this case, _node_of_name has no entries for all of these names.
-            std::map<std::string, std::map<Node, std::wstring>> _name_of_node; // key is language identifier
-            std::map<std::string, std::map<std::wstring, Node>> _node_of_name; // key is language identifier
+            using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
+            using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
+
+            ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node;
+            ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name;
 
             mutable std::mutex _mtx_node_of_name;
             mutable std::mutex _mtx_name_of_node;

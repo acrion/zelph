@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+
 #include <cstdint>
 #include <map>
 
@@ -32,8 +34,9 @@ namespace zelph
 {
     namespace network
     {
-        using Node      = uint64_t;
-        using Variables = std::map<Node, Node>;
+        using Node          = uint64_t;
+        using Variables     = std::map<Node, Node>;
+        using adjacency_set = ankerl::unordered_dense::set<Node>;
 
         static_assert(sizeof(Node) == 8,
                       "Node must be exactly 64 bits (8 bytes) in size. This implementation uses "

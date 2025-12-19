@@ -37,7 +37,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
 {
     // "condition" means here one of the predicates that form a list of conditions (which are connected by "and")
 
-    std::unordered_set<Node> relations = _n->filter(condition, _n->core.IsA, _n->core.RelationTypeCategory);
+    adjacency_set relations = _n->filter(condition, _n->core.IsA, _n->core.RelationTypeCategory);
 
     if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
     {
@@ -103,8 +103,8 @@ std::shared_ptr<Variables> Unification::Next()
         {
             while (increment_fact_index()) // iterate over all matching facts (in snapshot)
             {
-                std::unordered_set<Node> objects;
-                Node                     subject = _n->parse_fact(*_fact_index, objects, *_relation_index);
+                adjacency_set objects;
+                Node          subject = _n->parse_fact(*_fact_index, objects, *_relation_index);
 
                 if (objects.size() > 0
                     && !_n->_pImpl->is_var(subject)

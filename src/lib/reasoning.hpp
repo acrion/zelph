@@ -43,18 +43,18 @@ namespace zelph::network
 {
     struct RulePos
     {
-        Node                               node;
-        std::unordered_set<Node>::iterator end;
-        std::unordered_set<Node>::iterator index;
-        std::shared_ptr<Variables>         variables{std::make_shared<Variables>()};
-        std::shared_ptr<Variables>         unequals{std::make_shared<Variables>()};
+        Node                       node;
+        adjacency_set::iterator    end;
+        adjacency_set::iterator    index;
+        std::shared_ptr<Variables> variables{std::make_shared<Variables>()};
+        std::shared_ptr<Variables> unequals{std::make_shared<Variables>()};
     };
 
     struct ReasoningContext
     {
-        Node                     current_condition{0};
-        std::vector<RulePos>     next;
-        std::unordered_set<Node> rule_deductions;
+        Node                 current_condition{0};
+        std::vector<RulePos> next;
+        adjacency_set        rule_deductions;
     };
 
     class ZELPH_EXPORT Reasoning : public Zelph

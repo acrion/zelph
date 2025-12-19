@@ -28,9 +28,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network_types.hpp"
 #include "string_utils.hpp"
 
+#include <ankerl/unordered_dense.h>
+
 #include <boost/serialization/map.hpp>
-#include <boost/serialization/unordered_map.hpp>
-#include <boost/serialization/unordered_set.hpp>
 #include <boost/serialization/vector.hpp>
 
 #include <atomic>
@@ -40,13 +40,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <memory>
 #include <mutex>
 #include <stdexcept>
-#include <unordered_set>
 #include <vector>
 
 namespace zelph
 {
     namespace network
     {
+        using adjacency_map = ankerl::unordered_dense::map<Node, adjacency_set>;
+
         inline std::shared_ptr<Variables> join(const Variables& v1, const Variables& v2)
         {
             std::shared_ptr<Variables> result = std::make_shared<Variables>(v1);
@@ -77,13 +78,83 @@ namespace zelph
             friend class boost::serialization::access;
 
             template <class Archive>
-            void serialize(Archive& ar, const unsigned int version)
+            void serialize(Archive& ar, const unsigned int /*version*/)
             {
-                ar & _left;
-                ar & _right;
                 ar & _probabilities;
                 ar & _last;
                 ar & _last_var;
+
+                std::size_t left_size = _left.size();
+                ar & left_size;
+                if constexpr (Archive::is_loading::value)
+                {
+                    _left.clear();
+                    for (std::size_t i = 0; i < left_size; ++i)
+                    {
+                        Node key;
+                        ar & key;
+                        adjacency_set value;
+                        std::size_t   value_size;
+                        ar & value_size;
+                        value.reserve(value_size);
+                        for (std::size_t j = 0; j < value_size; ++j)
+                        {
+                            Node n;
+                            ar & n;
+                            value.insert(n);
+                        }
+                        _left[key] = std::move(value);
+                    }
+                }
+                else
+                {
+                    for (const auto& p : _left)
+                    {
+                        ar & p.first;
+                        std::size_t value_size = p.second.size();
+                        ar & value_size;
+                        for (const Node n : p.second)
+                        {
+                            ar & n;
+                        }
+                    }
+                }
+
+                std::size_t right_size = _right.size();
+                ar & right_size;
+                if constexpr (Archive::is_loading::value)
+                {
+                    _right.clear();
+                    for (std::size_t i = 0; i < right_size; ++i)
+                    {
+                        Node key;
+                        ar & key;
+                        adjacency_set value;
+                        std::size_t   value_size;
+                        ar & value_size;
+                        value.reserve(value_size);
+                        for (std::size_t j = 0; j < value_size; ++j)
+                        {
+                            Node n;
+                            ar & n;
+                            value.insert(n);
+                        }
+                        _right[key] = std::move(value);
+                    }
+                }
+                else
+                {
+                    for (const auto& p : _right)
+                    {
+                        ar & p.first;
+                        std::size_t value_size = p.second.size();
+                        ar & value_size;
+                        for (const Node n : p.second)
+                        {
+                            ar & n;
+                        }
+                    }
+                }
             }
 
             void connect(Node a, Node b, long double probability = 1)
@@ -177,8 +248,8 @@ namespace zelph
                     throw std::logic_error("Network::var: Exceeded maximum number of " + std::to_string(_last - 1) + " nodes.");
                 }
 
-                _left[_last]  = std::unordered_set<Node>();
-                _right[_last] = std::unordered_set<Node>();
+                _left[_last]  = adjacency_set{};
+                _right[_last] = adjacency_set{};
                 _node_count.fetch_add(1, std::memory_order_relaxed);
                 return _last;
             }
@@ -203,8 +274,8 @@ namespace zelph
                     throw std::logic_error("Network::var: Exceeded maximum number of " + std::to_string(std::numeric_limits<Node>::max() - _last_var) + " variables.");
                 }
 
-                _left[_last_var]  = std::unordered_set<Node>();
-                _right[_last_var] = std::unordered_set<Node>();
+                _left[_last_var]  = adjacency_set{};
+                _right[_last_var] = adjacency_set{};
 
                 return _last_var;
             }
@@ -234,8 +305,8 @@ namespace zelph
                     throw std::runtime_error("Network::create: requested node " + std::to_string(a) + " conflicts with variable values");
                 }
 
-                _left[a]  = std::unordered_set<Node>();
-                _right[a] = std::unordered_set<Node>();
+                _left[a]  = adjacency_set{};
+                _right[a] = adjacency_set{};
             }
 
             static inline uint64_t mix_bits(uint64_t seed, uint64_t value)
@@ -262,7 +333,7 @@ namespace zelph
                 return (h & mask_node) | mark_hash;
             }
 
-            static Node create_hash(const std::unordered_set<Node>& vec)
+            static Node create_hash(const adjacency_set& vec)
             {
                 std::vector<Node> sorted_vec(vec.begin(), vec.end());
                 std::sort(sorted_vec.begin(), sorted_vec.end());
@@ -277,7 +348,7 @@ namespace zelph
                 return (h & mask_node) | mark_hash;
             }
 
-            static Node create_hash(const Node head, const std::unordered_set<Node>& vec)
+            static Node create_hash(const Node head, const adjacency_set& vec)
             {
                 Node     vec_hash = create_hash(vec);
                 uint64_t h        = mix_bits(vec_hash, mod(head));
@@ -285,7 +356,7 @@ namespace zelph
                 return (h & mask_node) | mark_hash;
             }
 
-            static Node create_hash(const Node head1, const Node head2, const std::unordered_set<Node>& vec)
+            static Node create_hash(const Node head1, const Node head2, const adjacency_set& vec)
             {
                 Node current_hash = create_hash(vec);
                 current_hash      = mix_bits(current_hash, mod(head1));
@@ -306,7 +377,8 @@ namespace zelph
                 auto                        it = _left.find(a);
                 return it != _left.end() && it->second.count(b) == 1;
             }
-            bool snapshot_left_of(Node b, std::unordered_set<Node>& out) const
+
+            bool snapshot_left_of(Node b, adjacency_set& out) const
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
                 auto                        it = _right.find(b);
@@ -314,19 +386,20 @@ namespace zelph
                 out = it->second; // Kopie unter Lock
                 return true;
             }
-            std::unordered_map<Node, std::unordered_set<Node>>::iterator left_end()
+
+            adjacency_map::iterator left_end()
             {
                 std::lock_guard<std::mutex> lock(_mtx_left);
                 return _left.end();
             }
-            std::unordered_map<Node, std::unordered_set<Node>>::iterator right_end()
+            adjacency_map::iterator right_end()
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
                 return _right.end();
             }
 
             // get predecessors / incoming edges
-            std::unordered_set<Node> get_left(const Node b)
+            adjacency_set get_left(const Node b)
             {
                 std::lock_guard<std::mutex> lock(_mtx_right);
                 auto                        it = _right.find(b);
@@ -338,7 +411,7 @@ namespace zelph
             }
 
             // get successors / outgoing edges
-            std::unordered_set<Node> get_right(const Node b)
+            adjacency_set get_right(const Node b)
             {
                 std::lock_guard<std::mutex> lock(_mtx_left);
                 auto                        it = _left.find(b);
@@ -357,17 +430,16 @@ namespace zelph
             static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
             static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
 
-            // Based on tests, using std::map here instead of std::unordered_map slightly increases memory
-            // footprint (for large amounts of nodes). Moreover, it more than doubles execution time.
-            std::unordered_map<Node, std::unordered_set<Node>> _left;
-            std::unordered_map<Node, std::unordered_set<Node>> _right;
-            std::map<Node, long double>                        _probabilities;
-            Node                                               _last{Node()};
-            Node                                               _last_var{Node()};
-            std::atomic<Node>                                  _node_count{0};
-            mutable std::mutex                                 _mtx_prob;
-            mutable std::mutex                                 _mtx_left;
-            mutable std::mutex                                 _mtx_right;
+            adjacency_map _left;
+            adjacency_map _right;
+
+            std::map<Node, long double> _probabilities;
+            Node                        _last{Node()};
+            Node                        _last_var{Node()};
+            std::atomic<Node>           _node_count{0};
+            mutable std::mutex          _mtx_prob;
+            mutable std::mutex          _mtx_left;
+            mutable std::mutex          _mtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {

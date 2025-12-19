@@ -68,7 +68,15 @@ elseif (MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
 endif ()
 
-#include(FetchContent)
+include(FetchContent)
+FetchContent_Declare(
+    unordered_dense
+    GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
+    GIT_TAG v4.8.1
+)
+
+FetchContent_MakeAvailable(unordered_dense)
+
 #FetchContent_Declare(
 #    acrion_cmake
 #    GIT_REPOSITORY git@github.com:acrion/cmake.git
@@ -124,6 +132,8 @@ add_library(zelph SHARED
     ../boost/serialization/src/text_iarchive.cpp
     ../boost/serialization/src/text_oarchive.cpp
 )
+
+target_link_libraries(zelph PRIVATE unordered_dense::unordered_dense)
 
 # Enable IPO/LTO if available
 include(CheckIPOSupported)

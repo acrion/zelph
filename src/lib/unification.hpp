@@ -44,21 +44,21 @@ namespace zelph
             std::shared_ptr<Variables> Unequals();
 
         protected:
-            Zelph* const                       _n;
-            Node                               _parent;
-            std::shared_ptr<Variables>         _variables;
-            std::shared_ptr<Variables>         _unequals;
-            std::unordered_set<Node>           _relation_list;
-            Node                               _relation_variable{0};
-            std::unordered_set<Node>::iterator _fact_index;
-            std::unordered_set<Node>::iterator _relation_index;
-            Node                               _subject;
-            std::unordered_set<Node>           _objects;
+            Zelph* const               _n;
+            Node                       _parent;
+            std::shared_ptr<Variables> _variables;
+            std::shared_ptr<Variables> _unequals;
+            adjacency_set              _relation_list;
+            Node                       _relation_variable{0};
+            adjacency_set::iterator    _fact_index;
+            adjacency_set::iterator    _relation_index;
+            Node                       _subject;
+            adjacency_set              _objects;
 
         private:
-            bool                     increment_fact_index();
-            std::unordered_set<Node> _facts_snapshot;
-            bool                     _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
+            bool          increment_fact_index();
+            adjacency_set _facts_snapshot;
+            bool          _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
         };
     }
 }
