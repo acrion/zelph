@@ -135,8 +135,8 @@ namespace zelph
             using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
             using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 
-            ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node;
-            ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name;
+            ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node; // key is language identifier
+            ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
 
             mutable std::mutex _mtx_node_of_name;
             mutable std::mutex _mtx_name_of_node;
