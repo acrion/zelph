@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "markdown.hpp"
 #include "stopwatch.hpp"
+#include "thread_pool.hpp"
 #include "zelph.hpp"
 
 #include <zelph_export.h>
@@ -62,7 +63,7 @@ namespace zelph::network
     public:
         explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
-        void apply_rule(const network::Node& rule, network::Node condition, size_t thread_index);
+        void apply_rule(const network::Node& rule, network::Node condition);
 
     private:
         void evaluate(RulePos rule, ReasoningContext& ctx);
@@ -78,5 +79,9 @@ namespace zelph::network
         StopWatch                           _stop_watch;
         std::atomic<size_t>                 _skipped{0};
         std::mutex                          _mtx_output;
+        std::mutex                          _mtx_network;
+        int                                 _total_matches{0};
+        int                                 _total_contradictions{0};
+        std::unique_ptr<ThreadPool>         _pool;
     };
 }

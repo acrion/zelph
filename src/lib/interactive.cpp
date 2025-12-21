@@ -191,7 +191,7 @@ void console::Interactive::process(std::wstring line) const
 
                 if (contains_variable)
                 {
-                    _pImpl->_n->apply_rule(0, fact, 0); // query
+                    _pImpl->_n->apply_rule(0, fact); // query
                 }
             }
         }

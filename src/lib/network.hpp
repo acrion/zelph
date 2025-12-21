@@ -39,6 +39,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -159,10 +160,10 @@ namespace zelph
 
             void connect(Node a, Node b, long double probability = 1)
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                std::lock_guard<std::mutex> lock2(_mtx_right);
-                auto                        leftIt  = _left.find(a);
-                auto                        rightIt = _right.find(b);
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+                auto                                leftIt  = _left.find(a);
+                auto                                rightIt = _right.find(b);
 
                 if (leftIt == _left.end())
                 {
@@ -209,7 +210,7 @@ namespace zelph
 
             bool exists(Node a)
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
                 return _left.find(a) != _left.end();
             }
 
@@ -220,8 +221,8 @@ namespace zelph
                     return 1;
                 }
 
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                auto                        itLeft = _left.find(a);
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                auto                                itLeft = _left.find(a);
                 if (itLeft != _left.end() && itLeft->second.count(b) == 1)
                 {
                     Node                        hash;
@@ -237,8 +238,8 @@ namespace zelph
 
             Node create()
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                std::lock_guard<std::mutex> lock2(_mtx_right);
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
                 while (_left.find(++_last) != _left.end())
                     ;
@@ -261,8 +262,8 @@ namespace zelph
 
             Node var()
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                std::lock_guard<std::mutex> lock2(_mtx_right);
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
                 if (_left.find(--_last_var) != _left.end())
                 {
@@ -292,8 +293,8 @@ namespace zelph
 
             void create(const Node a)
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                std::lock_guard<std::mutex> lock2(_mtx_right);
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
                 if (_left.find(a) != _left.end())
                 {
@@ -366,43 +367,32 @@ namespace zelph
 
             bool has_left_edge(Node b, Node a) const
             {
-                std::lock_guard<std::mutex> lock(_mtx_right);
-                auto                        it = _right.find(b);
+                std::shared_lock<std::shared_mutex> lock(_smtx_right);
+                auto                                it = _right.find(b);
                 return it != _right.end() && it->second.count(a) == 1;
             }
 
             bool has_right_edge(Node a, Node b) const
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                auto                        it = _left.find(a);
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                auto                                it = _left.find(a);
                 return it != _left.end() && it->second.count(b) == 1;
             }
 
             bool snapshot_left_of(Node b, adjacency_set& out) const
             {
-                std::lock_guard<std::mutex> lock(_mtx_right);
-                auto                        it = _right.find(b);
+                std::shared_lock<std::shared_mutex> lock(_smtx_right);
+                auto                                it = _right.find(b);
                 if (it == _right.end()) return false;
-                out = it->second; // Kopie unter Lock
+                out = it->second;
                 return true;
-            }
-
-            adjacency_map::iterator left_end()
-            {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                return _left.end();
-            }
-            adjacency_map::iterator right_end()
-            {
-                std::lock_guard<std::mutex> lock(_mtx_right);
-                return _right.end();
             }
 
             // get predecessors / incoming edges
             adjacency_set get_left(const Node b)
             {
-                std::lock_guard<std::mutex> lock(_mtx_right);
-                auto                        it = _right.find(b);
+                std::shared_lock<std::shared_mutex> lock(_smtx_right);
+                auto                                it = _right.find(b);
                 if (it == _right.end())
                 {
                     return {};
@@ -413,8 +403,8 @@ namespace zelph
             // get successors / outgoing edges
             adjacency_set get_right(const Node b)
             {
-                std::lock_guard<std::mutex> lock(_mtx_left);
-                auto                        it = _left.find(b);
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                auto                                it = _left.find(b);
                 if (it == _left.end())
                 {
                     return {};
@@ -438,8 +428,8 @@ namespace zelph
             Node                        _last_var{Node()};
             std::atomic<Node>           _node_count{0};
             mutable std::mutex          _mtx_prob;
-            mutable std::mutex          _mtx_left;
-            mutable std::mutex          _mtx_right;
+            mutable std::shared_mutex   _smtx_left;
+            mutable std::shared_mutex   _smtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {

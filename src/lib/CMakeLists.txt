@@ -113,6 +113,7 @@ add_library(zelph SHARED
     interactive.hpp
     read_async.cpp
     read_async.hpp
+    thread_pool.hpp
     wikidata.cpp
     wikidata.hpp
     # boost/serialization. We compile it ourselves. The configurations are (Mac, Linux, Windows) x (CMake, go). In addition we need to match the boost build with our build (e. g. regarding use of C++14).
