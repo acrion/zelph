@@ -237,6 +237,7 @@ std::shared_ptr<Variables> Unification::Next()
 std::shared_ptr<Variables> Unification::extract_bindings(Node subject, const adjacency_set& objects, Node current_relation) const
 {
     if (objects.size() > 0
+        && subject != 0
         && !_n->_pImpl->is_var(subject)
         && !_n->_pImpl->is_var(*objects.begin())
         && utils::get(*_variables, _subject, subject) == subject                            // either the variable is unbound, or it already points to subject
@@ -251,7 +252,6 @@ std::shared_ptr<Variables> Unification::extract_bindings(Node subject, const adj
         if (_n->_pImpl->is_var(_subject)) (*result)[_subject] = subject;
         if (_n->_pImpl->is_var(*_objects.begin()) && _variables->count(*_objects.begin()) == 0) (*result)[*_objects.begin()] = *objects.begin();
         if (_relation_variable != 0 && _variables->count(_relation_variable) == 0) (*result)[_relation_variable] = current_relation;
-
         return result;
     }
     return nullptr;

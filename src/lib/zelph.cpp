@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 using namespace zelph::network;
@@ -521,63 +522,77 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 {
     utils::IncDec incDec(_pImpl->_format_fact_level);
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
-
     if (history->find(fact) != history->end())
     {
         result = L"?";
         return;
     }
-
     adjacency_set objects;
-    Node          subject = parse_fact(fact, objects, parent);
+    Node          subject      = parse_fact(fact, objects, parent);
+    bool          is_condition = _pImpl->get_right(fact).count(core.And) == 1;
 
-    bool is_condition = _pImpl->get_right(fact).count(core.And) == 1; // if fact is a condition node (having relation type core.And), there is no subject
     if (subject == 0 && !is_condition)
     {
         result = L"??";
         return;
     }
-
     history->insert(fact);
     std::wstring subject_name, relation_name;
-
     if (!is_condition || subject)
     {
-        subject      = utils::get(variables, subject);
-        subject_name = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+        Node subject_before = subject;
+        subject             = utils::get(variables, subject);
+        subject_name        = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+
+        if (subject_name == L"?")
+        {
+            std::clog << "[DEBUG format_fact] subject_name='?' for fact=" << fact
+                      << ", subject_before_subst=" << subject_before
+                      << ", is_var=" << _pImpl->is_var(subject_before)
+                      << ", subject_after_subst=" << subject
+                      << ", variables.size()=" << variables.size();
+            // Show all variables
+            std::clog << ", variables={";
+            for (const auto& v : variables)
+            {
+                std::clog << v.first << "->" << v.second << " ";
+            }
+            std::clog << "}" << std::endl;
+        }
         if (subject_name.empty())
         {
             format_fact(subject_name, lang, subject, variables, fact, history);
             subject_name = L"(" + subject_name + L")";
         }
-
         Node relation = parse_relation(fact);
         relation      = utils::get(variables, relation);
         relation_name = relation ? get_name(relation, lang, true) : L"?";
+
         if (relation_name.empty())
         {
             format_fact(relation_name, lang, relation, variables, fact, history);
             relation_name = L"(" + relation_name + L")";
         }
     }
-
     std::wstring objects_name;
     for (Node object : objects)
     {
         object = utils::get(variables, object);
         if (!objects_name.empty()) objects_name += get_name(core.And, lang, true) + L" ";
         std::wstring object_name = object ? get_name(object, lang, true) : L"?";
+
         if (object_name.empty())
         {
+            std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
+                      << ", is_hash=" << _pImpl->is_hash(object)
+                      << ", will recurse" << std::endl;
             format_fact(object_name, lang, object, variables, fact, history);
             object_name = L"(" + object_name + L")";
         }
         objects_name += object_name;
     }
     if (objects_name.empty()) objects_name = L"?";
-
     result = utils::mark_identifier(subject_name) + L" " + utils::mark_identifier(relation_name) + L" " + utils::mark_identifier(objects_name);
-
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");
     boost::trim(result);
