@@ -95,23 +95,20 @@ void Wikidata::import_all(bool filter_existing_only)
     bool cache_loaded = false;
     if (std::filesystem::exists(cache_file))
     {
-        if (std::filesystem::last_write_time(cache_file) > std::filesystem::last_write_time(_pImpl->_file_name))
+        try
         {
-            try
-            {
-                _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
-                std::ifstream                   ifs(cache_file, std::ios::binary);
-                boost::archive::binary_iarchive ia(ifs);
+            _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
+            std::ifstream                   ifs(cache_file, std::ios::binary);
+            boost::archive::binary_iarchive ia(ifs);
 
-                _pImpl->_n->load_from_file(cache_file.string());
+            _pImpl->_n->load_from_file(cache_file.string());
 
-                _pImpl->_n->print(L"Cache loaded successfully (" + std::to_wstring(_pImpl->_n->count()) + L" nodes).", true);
-                cache_loaded = true;
-            }
-            catch (std::exception& ex)
-            {
-                _pImpl->_n->print(L"Failed to load cache: " + utils::wstr(ex.what()), true);
-            }
+            _pImpl->_n->print(L"Cache loaded successfully (" + std::to_wstring(_pImpl->_n->count()) + L" nodes).", true);
+            cache_loaded = true;
+        }
+        catch (std::exception& ex)
+        {
+            _pImpl->_n->print(L"Failed to load cache: " + utils::wstr(ex.what()), true);
         }
     }
 
@@ -530,7 +527,7 @@ void Wikidata::process_node(const Node node, const std::string& lang)
 
 bool Wikidata::Impl::read_index_file()
 {
-    if (!std::filesystem::exists(index_file_name()) || std::filesystem::last_write_time(_file_name) > std::filesystem::last_write_time(index_file_name()))
+    if (!std::filesystem::exists(index_file_name()))
     {
         return false;
     }
