@@ -25,9 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "network_types.hpp"
 #include "string_utils.hpp"
 
+#include <cstdlib>
 #include <exception>
+#include <iostream>
 
 namespace zelph::network
 {
@@ -41,6 +44,21 @@ namespace zelph::network
             , _variables(variables)
             , _parent(parent)
         {
+            for (const auto& var : _variables)
+            {
+                if (var.second == 0)
+                {
+                    std::clog << "Error: Variable with key " << var.first << " has invalid value 0." << std::endl;
+                    std::clog << "Associated fact: " << _fact << std::endl;
+                    std::clog << "Associated parent: " << _parent << std::endl;
+                    std::clog << "Variables map contents:" << std::endl;
+                    for (const auto& v : _variables)
+                    {
+                        std::clog << "  Key: " << v.first << ", Value: " << v.second << std::endl;
+                    }
+                    std::abort();
+                }
+            }
         }
 
         Node get_fact() const

@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 using namespace zelph::network;
@@ -524,7 +525,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (history->find(fact) != history->end())
     {
-        result = L"?";
+        result = L"?1";
         return;
     }
 
@@ -543,8 +544,20 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (!is_condition || subject)
     {
-        subject      = utils::get(variables, subject);
-        subject_name = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+        auto subject_backup = subject;
+        subject             = utils::get(variables, subject);
+        subject_name        = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?2");
+
+        if (subject_name == L"?2")
+        {
+            std::clog << "subject: '" << subject << "'" << std::endl;
+            std::clog << "subject_backup: '" << subject_backup << "'" << std::endl;
+            std::clog << "variables count: " << variables.size() << std::endl;
+            std::clog << "lang: '" << lang << "'" << std::endl;
+            std::clog << "is-var: '" << Network::is_var(subject_backup) << "'" << std::endl;
+            std::abort();
+        }
+
         if (subject_name.empty())
         {
             format_fact(subject_name, lang, subject, variables, fact, history);
@@ -553,7 +566,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
         Node relation = parse_relation(fact);
         relation      = utils::get(variables, relation);
-        relation_name = relation ? get_name(relation, lang, true) : L"?";
+        relation_name = relation ? get_name(relation, lang, true) : L"?3";
         if (relation_name.empty())
         {
             format_fact(relation_name, lang, relation, variables, fact, history);
@@ -566,7 +579,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     {
         object = utils::get(variables, object);
         if (!objects_name.empty()) objects_name += get_name(core.And, lang, true) + L" ";
-        std::wstring object_name = object ? get_name(object, lang, true) : L"?";
+        std::wstring object_name = object ? get_name(object, lang, true) : L"?4";
         if (object_name.empty())
         {
             format_fact(object_name, lang, object, variables, fact, history);
@@ -574,7 +587,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         }
         objects_name += object_name;
     }
-    if (objects_name.empty()) objects_name = L"?";
+    if (objects_name.empty()) objects_name = L"?5";
 
     result = utils::mark_identifier(subject_name) + L" " + utils::mark_identifier(relation_name) + L" " + utils::mark_identifier(objects_name);
 
