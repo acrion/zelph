@@ -69,6 +69,7 @@ public:
     std::filesystem::path                 _file_name;
     std::map<std::string, std::streamoff> _index;
     std::recursive_mutex                  _mtx;
+    bool                                  _logging{true};
     std::string                           _last_entry;
     std::streamoff                        _last_index{0};
 };
@@ -512,15 +513,22 @@ void Wikidata::process_node(const Node node, const std::string& lang)
             const std::wstring english_name = _pImpl->_n->get_name(node, "en", false, false);
             if (english_name.empty())
             {
-                _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L")", true);
+                if (_pImpl->_logging)
+                {
+                    _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L")", true);
+                }
                 _pImpl->_n->set_name(node, name, "en"); // In case a node has no name in Wikidata (like e.g. Q3071250) we want to avoid trying multiple times to find one.
             }
-            else
+            else if (_pImpl->_logging)
             {
                 _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L") --> '" + english_name + L"'", true);
             }
         }
     }
+}
+void Wikidata::set_logging(bool do_log)
+{
+    _pImpl->_logging = do_log;
 }
 
 // ------------------------------------------------- Wikidata::Impl

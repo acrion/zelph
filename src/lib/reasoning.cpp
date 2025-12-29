@@ -275,7 +275,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
         u->wait_for_completion();
 
-        if (local_match_count > 0)
+        if (!_generate_markdown && local_match_count > 0)
         {
             std::clog << "Condition processed: " << local_match_count << " raw matches." << std::endl;
         }

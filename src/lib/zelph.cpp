@@ -546,7 +546,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         Node subject_before = subject;
         subject             = utils::get(variables, subject);
         subject_name        = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
-
+#if _DEBUG
         if (subject_name == L"?")
         {
             std::clog << "[DEBUG format_fact] subject_name='?' for fact=" << fact
@@ -562,6 +562,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             }
             std::clog << "}" << std::endl;
         }
+#endif
         if (subject_name.empty())
         {
             format_fact(subject_name, lang, subject, variables, fact, history);
@@ -586,9 +587,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         std::wstring object_name = object ? get_name(object, lang, true) : L"?";
         if (object_name.empty())
         {
+#ifdef _DEBUG
             std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
                       << ", is_hash=" << _pImpl->is_hash(object)
                       << ", will recurse" << std::endl;
+#endif
             format_fact(object_name, lang, object, variables, fact, history);
             object_name = L"(" + object_name + L")";
         }

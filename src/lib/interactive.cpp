@@ -336,8 +336,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".run-md")
     {
         _n->print(L"> Running with markdown export...", true);
+        if (_wikidata)
+        {
+            _wikidata->set_logging(false);
+        }
         network::StopWatch watch;
-        _n->run(true, true, false);
+        _n->run(false, true, false);
         _n->print(L" Time needed: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     else if (cmd[0] == L".wikidata")
