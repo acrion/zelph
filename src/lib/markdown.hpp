@@ -50,6 +50,7 @@ namespace zelph
         {
         public:
             Markdown(const std::filesystem::path& base_directory, network::Zelph* zelph);
+            ~Markdown();
 
             Markdown(const Markdown&)            = delete;
             Markdown& operator=(const Markdown&) = delete;
@@ -57,8 +58,6 @@ namespace zelph
             Markdown& operator=(Markdown&&)      = delete;
 
             void add(const std::wstring& heading, const std::wstring& message) const;
-
-            ~Markdown();
 
         private:
             void writer_loop() const;

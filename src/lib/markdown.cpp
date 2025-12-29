@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <ankerl/unordered_dense.h>
 
 #include <condition_variable>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -228,6 +229,7 @@ namespace zelph::wikidata
             for (auto& [id, adds] : current_batch)
             {
                 std::filesystem::path file_path = _base_directory / (id + ".md");
+                std::filesystem::path temp_path = file_path.string() + ".tmp";
                 FileState&            state     = file_states[id];
 
                 // Load file if not in memory yet (first time)
@@ -272,6 +274,7 @@ namespace zelph::wikidata
                 }
 
                 // Process all pending adds for this file
+                bool changed = false;
                 for (auto& [heading, markdown_code] : adds)
                 {
                     std::vector<std::wstring> markdown_lines;
@@ -314,19 +317,32 @@ namespace zelph::wikidata
                     }
 
                     state.block_hashes.insert(block_hash);
+                    changed = true;
                 }
 
                 // Write back only if something changed
-                if (!adds.empty())
+                if (changed)
                 {
-                    std::ofstream out(file_path);
+                    std::ofstream out(temp_path);
                     if (!out.is_open())
                     {
-                        std::cerr << "Failed to write " << file_path << "\n";
+                        std::cerr << "Failed to write temp " << temp_path << "\n";
                         continue;
                     }
                     for (const auto& l : state.lines)
                         out << network::utils::str(l) << "\n";
+
+                    out.close();
+
+                    try
+                    {
+                        std::filesystem::rename(temp_path, file_path);
+                    }
+                    catch (const std::filesystem::filesystem_error& e)
+                    {
+                        std::cerr << "Failed to rename temp to " << file_path << ": " << e.what() << "\n";
+                        std::filesystem::remove(temp_path); // Cleanup
+                    }
                 }
             }
         }
