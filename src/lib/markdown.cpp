@@ -27,61 +27,78 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 #include "zelph.hpp"
 
+#include <ankerl/unordered_dense.h>
+
+#include <condition_variable>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace zelph::wikidata
 {
-    static std::unordered_map<std::string, std::mutex> file_mutexes;
-    static std::mutex                                  mutexes_mutex;
-
     static std::string get_wikidata_url(const std::string& id)
     {
         return "https://www.wikidata.org/wiki/" + ((*id.begin() == 'P') ? "Property:" + id : id);
     }
 
-    Markdown::Markdown(const std::filesystem::path& base_directory, network::Zelph* const zelph)
+    Markdown::Markdown(const std::filesystem::path& base_directory, network::Zelph* zelph)
         : _base_directory(base_directory)
         , _zelph(zelph)
     {
         if (!std::filesystem::exists(_base_directory))
-        {
-            throw std::runtime_error("The base directory does not exist: " + _base_directory.string());
-        }
-
+            throw std::runtime_error("Base directory does not exist: " + _base_directory.string());
         if (!std::filesystem::is_directory(_base_directory))
+            throw std::runtime_error("Base path is not a directory: " + _base_directory.string());
+
+        writer_thread = std::thread(&Markdown::writer_loop, this);
+    }
+
+    Markdown::~Markdown()
+    {
         {
-            throw std::runtime_error("The given base directory path exists but is not a directory: " + _base_directory.string());
+            std::lock_guard<std::mutex> lock(add_mutex);
+            shutdown = true;
         }
+        add_cv.notify_all();
+        if (writer_thread.joinable())
+            writer_thread.join();
     }
 
     std::string Markdown::get_template(const std::string& id) const
     {
         std::string         name;
         const network::Node node = _zelph->get_node(network::utils::wstr(id), "wikidata");
-
         if (node != 0)
         {
             const std::wstring w_name = _zelph->get_name(node, "en", true);
             name                      = network::utils::str(network::utils::convert_unicode_escapes(w_name));
         }
+        if (name.empty()) name = id;
 
-        if (name.empty())
+        std::stringstream ss;
+        ss << "# [" << name << "](" << get_wikidata_url(id) << ")\n\n";
+        return ss.str();
+    }
+
+    // Simple but sufficient 64-bit hash for block content
+    uint64_t Markdown::hash_block(const std::vector<std::wstring>& block_lines)
+    {
+        uint64_t h = 0xcbf29ce484222325ULL;
+        for (const auto& line : block_lines)
         {
-            name = id;
+            std::string utf8 = network::utils::str(line);
+            for (char c : utf8)
+            {
+                h ^= static_cast<uint64_t>(c);
+                h *= 0x100000001b3ULL;
+            }
+            h ^= 0x9e3779b97f4a7c15ULL; // separate lines
+            h *= 0x100000001b3ULL;
         }
-
-        std::stringstream template_stream;
-        template_stream << "# [" << name << "]("
-                        << get_wikidata_url(id) << ")\n\n";
-        return template_stream.str();
+        return h;
     }
 
     std::string Markdown::get_wikidata_id(const std::wstring& token, const std::string& lang) const
@@ -182,147 +199,136 @@ namespace zelph::wikidata
     {
         auto [ids, markdown_code] = convert_to_md(message);
 
-        for (const auto& id : ids)
         {
-            std::filesystem::path file_path = _base_directory / (id + ".md");
-
-            std::mutex* file_mutex;
+            std::lock_guard<std::mutex> lock(add_mutex);
+            for (const auto& id : ids)
             {
-                std::lock_guard<std::mutex> lock(mutexes_mutex);
-                file_mutex = &file_mutexes[file_path.string()];
+                pending_adds[id].emplace_back(heading, markdown_code);
             }
+        }
+        add_cv.notify_one(); // only one needed, even for multiple files
+    }
 
-            std::lock_guard<std::mutex> file_lock(*file_mutex);
+    void Markdown::writer_loop() const
+    {
+        for (;;)
+        {
+            std::unique_lock<std::mutex> lock(add_mutex);
+            add_cv.wait(lock, [this]
+                        { return shutdown || !pending_adds.empty(); });
 
-            std::wstring formatted_heading = L"## " + heading;
+            if (shutdown && pending_adds.empty())
+                return;
 
-            if (!std::filesystem::exists(file_path))
+            // Process all pending files in one go
+            decltype(pending_adds) current_batch;
+            current_batch.swap(pending_adds);
+            lock.unlock();
+
+            for (auto& [id, adds] : current_batch)
             {
-                std::ofstream new_file(file_path);
-                if (!new_file.is_open())
+                std::filesystem::path file_path = _base_directory / (id + ".md");
+                FileState&            state     = file_states[id];
+
+                // Load file if not in memory yet (first time)
+                if (state.lines.empty())
                 {
-                    throw std::runtime_error("Failed to create file: " + file_path.string());
-                }
-                new_file << get_template(id);
-                new_file.close();
-            }
-
-            std::wifstream file(file_path, std::ios::binary);
-            file.imbue(std::locale(""));
-            if (!file.is_open())
-            {
-                throw std::runtime_error("Failed to open file for reading: " + file_path.string());
-            }
-
-            std::vector<std::wstring> lines;
-            std::wstring              line;
-            while (std::getline(file, line))
-            {
-                lines.push_back(line);
-            }
-            file.close();
-
-            std::vector<std::wstring> markdown_lines;
-            std::wistringstream       markdown_stream(markdown_code);
-            markdown_stream.imbue(std::locale(""));
-            std::wstring markdown_line;
-            while (std::getline(markdown_stream, markdown_line))
-            {
-                markdown_lines.push_back(markdown_line);
-            }
-
-            bool markdown_exists = false;
-            if (!markdown_lines.empty())
-            {
-                for (int i = 0; i <= static_cast<int>(lines.size()) - static_cast<int>(markdown_lines.size()); ++i)
-                {
-                    bool match = true;
-                    for (size_t j = 0; j < markdown_lines.size(); ++j)
+                    if (std::filesystem::exists(file_path))
                     {
-                        if (lines[i + j] != markdown_lines[j])
+                        std::wifstream file(file_path, std::ios::binary);
+                        file.imbue(std::locale(""));
+                        std::wstring line;
+                        while (std::getline(file, line))
+                            state.lines.push_back(line);
+                    }
+                    else
+                    {
+                        std::string         templ = get_template(id);
+                        std::wistringstream ss(network::utils::wstr(templ));
+                        ss.imbue(std::locale(""));
+                        std::wstring line;
+                        while (std::getline(ss, line))
+                            state.lines.push_back(line);
+                    }
+
+                    // Build initial hash set
+                    size_t i = 0;
+                    while (i < state.lines.size())
+                    {
+                        if (state.lines[i].starts_with(L"## "))
                         {
-                            match = false;
-                            break;
+                            size_t start = i;
+                            ++i;
+                            while (i < state.lines.size() && !state.lines[i].starts_with(L"## "))
+                                ++i;
+                            std::vector<std::wstring> block(state.lines.begin() + start, state.lines.begin() + i);
+                            state.block_hashes.insert(hash_block(block));
+                        }
+                        else
+                        {
+                            ++i;
                         }
                     }
-                    if (match)
+                }
+
+                // Process all pending adds for this file
+                for (auto& [heading, markdown_code] : adds)
+                {
+                    std::vector<std::wstring> markdown_lines;
+                    std::wistringstream       mstream(markdown_code);
+                    mstream.imbue(std::locale(""));
+                    std::wstring ml;
+                    while (std::getline(mstream, ml))
+                        markdown_lines.push_back(ml);
+
+                    if (markdown_lines.empty())
+                        continue;
+
+                    // Build full block: heading + empty line + markdown lines
+                    std::vector<std::wstring> new_block;
+                    new_block.push_back(L"## " + heading);
+                    new_block.push_back(L"");
+                    new_block.insert(new_block.end(), markdown_lines.begin(), markdown_lines.end());
+
+                    uint64_t block_hash = hash_block(new_block);
+                    if (state.block_hashes.contains(block_hash))
+                        continue; // duplicate → skip
+
+                    // Insert into content
+                    std::wstring formatted_heading = new_block[0];
+                    auto         it                = std::find(state.lines.begin(), state.lines.end(), formatted_heading);
+                    if (it == state.lines.end())
                     {
-                        markdown_exists = true;
-                        break;
+                        // New heading → append at end
+                        if (!state.lines.empty() && !state.lines.back().empty())
+                            state.lines.push_back(L"");
+                        state.lines.insert(state.lines.end(), new_block.begin(), new_block.end());
                     }
-                }
-            }
-
-            if (markdown_exists)
-            {
-                return;
-            }
-
-            int heading_index = -1;
-            for (size_t i = 0; i < lines.size(); ++i)
-            {
-                if (lines[i] == formatted_heading)
-                {
-                    heading_index = static_cast<int>(i);
-                    break;
-                }
-            }
-
-            std::ofstream output_file(file_path);
-            if (!output_file.is_open())
-            {
-                throw std::runtime_error("Failed to open file for writing: " + file_path.string());
-            }
-
-            if (heading_index == -1)
-            {
-                for (const auto& l : lines)
-                {
-                    output_file << network::utils::str(l) << "\n";
-                }
-
-                if (!lines.empty() && !lines.back().empty())
-                {
-                    output_file << "\n";
-                }
-
-                output_file << network::utils::str(formatted_heading) << "\n\n";
-                output_file << network::utils::str(markdown_code) << "\n";
-            }
-            else
-            {
-                for (int i = 0; i <= heading_index; ++i)
-                {
-                    output_file << network::utils::str(lines[i]) << "\n";
-                }
-
-                bool has_blank_line = (heading_index + 1 < static_cast<int>(lines.size()) && lines[heading_index + 1].empty());
-
-                if (has_blank_line)
-                {
-                    output_file << "\n";
-
-                    output_file << network::utils::str(markdown_code) << "\n";
-
-                    for (size_t i = heading_index + 2; i < lines.size(); ++i)
+                    else
                     {
-                        output_file << network::utils::str(lines[i]) << "\n";
+                        // Existing heading → insert after heading + empty line
+                        auto insert_pos = std::next(it);
+                        while (insert_pos != state.lines.end() && insert_pos->empty())
+                            ++insert_pos;
+                        state.lines.insert(insert_pos, new_block.begin() + 2, new_block.end()); // skip heading & empty
                     }
+
+                    state.block_hashes.insert(block_hash);
                 }
-                else
+
+                // Write back only if something changed
+                if (!adds.empty())
                 {
-                    output_file << "\n";
-
-                    output_file << network::utils::str(markdown_code) << "\n";
-
-                    for (size_t i = heading_index + 1; i < lines.size(); ++i)
+                    std::ofstream out(file_path);
+                    if (!out.is_open())
                     {
-                        output_file << network::utils::str(lines[i]) << "\n";
+                        std::cerr << "Failed to write " << file_path << "\n";
+                        continue;
                     }
+                    for (const auto& l : state.lines)
+                        out << network::utils::str(l) << "\n";
                 }
             }
-
-            output_file.close();
         }
     }
 }
