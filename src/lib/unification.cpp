@@ -262,7 +262,7 @@ bool Unification::increment_fact_index()
             _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
             _fact_index_initialized = true;
         }
-        else if (++_fact_index == _facts_snapshot.end())
+        else if (++_fact_index == _facts_snapshot.end()) // increment and return false if we reached the end, so _relation_index will be incremented
         {
             return false;
         }
