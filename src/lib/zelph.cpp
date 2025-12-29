@@ -522,15 +522,17 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 {
     utils::IncDec incDec(_pImpl->_format_fact_level);
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
+
     if (history->find(fact) != history->end())
     {
         result = L"?";
         return;
     }
-    adjacency_set objects;
-    Node          subject      = parse_fact(fact, objects, parent);
-    bool          is_condition = _pImpl->get_right(fact).count(core.And) == 1;
 
+    adjacency_set objects;
+    Node          subject = parse_fact(fact, objects, parent);
+
+    bool is_condition = _pImpl->get_right(fact).count(core.And) == 1; // if fact is a condition node (having relation type core.And), there is no subject
     if (subject == 0 && !is_condition)
     {
         result = L"??";
@@ -538,6 +540,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     }
     history->insert(fact);
     std::wstring subject_name, relation_name;
+
     if (!is_condition || subject)
     {
         Node subject_before = subject;
@@ -551,7 +554,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                       << ", is_var=" << _pImpl->is_var(subject_before)
                       << ", subject_after_subst=" << subject
                       << ", variables.size()=" << variables.size();
-            // Show all variables
+
             std::clog << ", variables={";
             for (const auto& v : variables)
             {
@@ -564,23 +567,23 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             format_fact(subject_name, lang, subject, variables, fact, history);
             subject_name = L"(" + subject_name + L")";
         }
+
         Node relation = parse_relation(fact);
         relation      = utils::get(variables, relation);
         relation_name = relation ? get_name(relation, lang, true) : L"?";
-
         if (relation_name.empty())
         {
             format_fact(relation_name, lang, relation, variables, fact, history);
             relation_name = L"(" + relation_name + L")";
         }
     }
+
     std::wstring objects_name;
     for (Node object : objects)
     {
         object = utils::get(variables, object);
         if (!objects_name.empty()) objects_name += get_name(core.And, lang, true) + L" ";
         std::wstring object_name = object ? get_name(object, lang, true) : L"?";
-
         if (object_name.empty())
         {
             std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
@@ -592,7 +595,9 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         objects_name += object_name;
     }
     if (objects_name.empty()) objects_name = L"?";
+
     result = utils::mark_identifier(subject_name) + L" " + utils::mark_identifier(relation_name) + L" " + utils::mark_identifier(objects_name);
+
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");
     boost::trim(result);
