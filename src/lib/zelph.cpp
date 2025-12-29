@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 using namespace zelph::network;
@@ -537,14 +538,30 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         result = L"??";
         return;
     }
-
     history->insert(fact);
     std::wstring subject_name, relation_name;
 
     if (!is_condition || subject)
     {
-        subject      = utils::get(variables, subject);
-        subject_name = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+        Node subject_before = subject;
+        subject             = utils::get(variables, subject);
+        subject_name        = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+
+        if (subject_name == L"?")
+        {
+            std::clog << "[DEBUG format_fact] subject_name='?' for fact=" << fact
+                      << ", subject_before_subst=" << subject_before
+                      << ", is_var=" << _pImpl->is_var(subject_before)
+                      << ", subject_after_subst=" << subject
+                      << ", variables.size()=" << variables.size();
+
+            std::clog << ", variables={";
+            for (const auto& v : variables)
+            {
+                std::clog << v.first << "->" << v.second << " ";
+            }
+            std::clog << "}" << std::endl;
+        }
         if (subject_name.empty())
         {
             format_fact(subject_name, lang, subject, variables, fact, history);
@@ -569,6 +586,9 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         std::wstring object_name = object ? get_name(object, lang, true) : L"?";
         if (object_name.empty())
         {
+            std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
+                      << ", is_hash=" << _pImpl->is_hash(object)
+                      << ", will recurse" << std::endl;
             format_fact(object_name, lang, object, variables, fact, history);
             object_name = L"(" + object_name + L")";
         }
