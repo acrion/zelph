@@ -1,0 +1,2 @@
+#!/usr/bin/env elvish
+time { put '.wikidata download/wikidata-test-5gb.json' '.run-md' '.exit' | each $echo~ | src/cmake-build-relwithdebinfo/bin/zelph_app sample_scripts/wikidata-split-order.zph }

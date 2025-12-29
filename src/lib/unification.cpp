@@ -90,7 +90,16 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     static std::unordered_set<Node> logged_relations;
 
     // parallel only with fixed relation
-    if (_pool && _relation_variable == 0)
+    // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
+    bool subject_is_bound = false;
+    if (_subject != 0)
+    {
+        Node s = _subject;
+        if (_n->_pImpl->is_var(s)) s = utils::get(*_variables, s, s);
+        if (!_n->_pImpl->is_var(s)) subject_is_bound = true;
+    }
+
+    if (_pool && _relation_variable == 0 && !subject_is_bound)
     {
         Node fixed_rel = *_relation_list.begin();
 
@@ -180,14 +189,80 @@ bool Unification::increment_fact_index()
     {
         if (!_fact_index_initialized)
         {
-            if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(*_relation_index, _facts_snapshot))
+            // Check if the Subject or Object is already bound. If so, iterate only their connections.
+
+            bool optimized_snapshot = false;
+            Node current_rel        = *_relation_index;
+
+            // Check if Subject is bound
+            Node s = _subject;
+            if (_n->_pImpl->is_var(s)) s = utils::get(*_variables, s, s);
+
+            if (s != 0 && !_n->_pImpl->is_var(s))
             {
-                return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
+                // Strategy: Subject Driven
+                // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
+                // So get_right(Subject) contains the Facts involving this subject.
+                adjacency_set candidates = _n->get_right(s);
+
+                _facts_snapshot.clear();
+                // Filter candidates: we only want facts that are of type 'current_rel'
+                for (Node fact : candidates)
+                {
+                    // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
+                    // So get_right(Fact) contains RelationType.
+                    if (_n->get_right(fact).count(current_rel) == 1)
+                    {
+                        _facts_snapshot.insert(fact);
+                    }
+                }
+                optimized_snapshot = true;
             }
+            // Check if Object is bound (if Subject wasn't)
+            else if (!_objects.empty())
+            {
+                Node o = *_objects.begin(); // Assuming single object for optimization
+                if (_n->_pImpl->is_var(o)) o = utils::get(*_variables, o, o);
+
+                if (o != 0 && !_n->_pImpl->is_var(o))
+                {
+                    // Strategy: Object Driven
+                    // Zelph::fact -> connect(Object, Fact). Object points to Fact.
+                    adjacency_set candidates = _n->get_right(o);
+
+                    _facts_snapshot.clear();
+                    for (Node fact : candidates)
+                    {
+                        if (_n->get_right(fact).count(current_rel) == 1)
+                        {
+                            _facts_snapshot.insert(fact);
+                        }
+                    }
+                    optimized_snapshot = true;
+                }
+            }
+
+            if (!optimized_snapshot)
+            {
+                // Fallback: Snapshot entire relation extent (slow for huge relations)
+                if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
+                {
+                    return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
+                }
+            }
+
+            // If the snapshot is empty,
+            // we must not initialize the iterator to begin() and then check *_fact_index,
+            // because begin() == end(), and dereferencing end() crashes.
+            if (_facts_snapshot.empty())
+            {
+                return false;
+            }
+
             _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
             _fact_index_initialized = true;
         }
-        else if (++_fact_index == _facts_snapshot.end()) // increment and return false if we reached the end, so _relation_index will be incremented
+        else if (++_fact_index == _facts_snapshot.end())
         {
             return false;
         }
