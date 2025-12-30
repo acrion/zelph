@@ -60,7 +60,7 @@ namespace zelph
 
         private:
             bool                       increment_fact_index();
-            std::shared_ptr<Variables> extract_bindings(Node subject, const adjacency_set& objects, Node current_relation) const;
+            std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const;
 
             Zelph* const               _n;
             Node                       _parent;

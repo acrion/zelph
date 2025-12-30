@@ -221,7 +221,7 @@ bool Unification::increment_fact_index()
             // Check if Object is bound (if Subject wasn't)
             else if (!_objects.empty())
             {
-                Node o = *_objects.begin(); // Assuming single object for optimization
+                Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
                 if (_n->_pImpl->is_var(o)) o = utils::get(*_variables, o, o);
 
                 if (o != 0 && !_n->_pImpl->is_var(o))
@@ -309,24 +309,90 @@ std::shared_ptr<Variables> Unification::Next()
     }
 }
 
-std::shared_ptr<Variables> Unification::extract_bindings(Node subject, const adjacency_set& objects, Node current_relation) const
+// extract_bindings is passed a fact (statement) and tries to match it to the rule (which is defined in the Unification constructor)
+// The rule is contained in the member variables _subject and _object.
+// The relation (predicate) of the rule is either a variable _relation_variable, or it matches the given fact’s relation.
+// Both a rule and a fact can have only a single subject, but multiple objects.
+// In a rule, these objects are interpreted as alternatives.
+// In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
+std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const
 {
-    if (objects.size() > 0
-        && subject != 0
-        && !_n->_pImpl->is_var(subject)
-        && !_n->_pImpl->is_var(*objects.begin())
-        && utils::get(*_variables, _subject, subject) == subject                            // either the variable is unbound, or it already points to subject
-        && utils::get(*_variables, *_objects.begin(), *objects.begin()) == *objects.begin() // todo: what if more than one?
-        && (_n->_pImpl->is_var(_subject)                                                    // either _subject is a variable, or it is identical to subject
-            || _subject == subject)
-        && (_n->_pImpl->is_var(*_objects.begin())    // either _object is variable, or it is identical to object
-            || *_objects.begin() == *objects.begin() // todo: what if more than one?
-            ))
+    if (objects.empty() // a fact requires at least one object
+        || subject == 0
+        || _n->_pImpl->is_var(subject)                            // the given "fact" is not a fact, but a rule, because it contains a variable as subject
+        || (!_n->_pImpl->is_var(_subject) && _subject != subject) // the rule _subject is not a variable and differs from the given subject
+        || utils::get(*_variables, _subject, subject) != subject) // The rule _subject is a bound variable that does not point to the given subject (no unification possible)
+    {
+        return nullptr;
+    }
+
+    for (auto o : objects)
+    {
+        if (_n->_pImpl->is_var(o))
+        {
+            // the given "fact" is not a fact, but a rule, because it contains a variable in at least one of its objects
+            return nullptr;
+        }
+    }
+
+    // Check if the object matches the bound rule variable (if-clause)
+    // or one of the objects matches the fixed object from the rule (else-clause).
+    bool object_matches   = false;
+    Node rule_object_node = *_objects.begin();
+    Node matched_object   = 0;
+
+    bool rule_has_var_in_objects = false;
+    for (auto o : _objects)
+    {
+        if (_n->_pImpl->is_var(o))
+        {
+            // TODO There are several cases here. The current implementation
+            // treats the presence of a variable in the list of rule objects
+            // like as if the variable was the only object.
+            rule_has_var_in_objects = true;
+            rule_object_node        = o;
+            break;
+        }
+    }
+
+    if (rule_has_var_in_objects) // either the object used in the rule is a variable...
+    {
+        // check if variable is already bound
+        auto it = _variables->find(rule_object_node);
+        if (it != _variables->end())
+        {
+            matched_object = it->second;
+            // variable is bound, check if this bound value exists in the facts objects
+            if (objects.count(matched_object) == 1)
+            {
+                object_matches = true;
+            }
+        }
+        else
+        {
+            // variable is unbound, we pick the first one (standard behavior for binary logic)
+            // TODO: for full n-ary support, this logic would need to fork/iterate, but we assume binary matching logic here.
+            matched_object = *objects.begin();
+            object_matches = true;
+        }
+    }
+    else // ... or the object used in the rule is a fixed object (e.g. "human" in "S R human")
+    {
+        // We support several objects in a fact (arity > 1), e.g. car (S) has-color (P) { red, black } (O).
+        // Therefore, we check if rule_object_node is anywhere in objects (using `count`).
+        if (objects.count(rule_object_node) == 1)
+        {
+            matched_object = rule_object_node;
+            object_matches = true;
+        }
+    }
+
+    if (object_matches)
     {
         auto result = std::make_shared<Variables>();
         if (_n->_pImpl->is_var(_subject)) (*result)[_subject] = subject;
-        if (_n->_pImpl->is_var(*_objects.begin()) && _variables->count(*_objects.begin()) == 0) (*result)[*_objects.begin()] = *objects.begin();
-        if (_relation_variable != 0 && _variables->count(_relation_variable) == 0) (*result)[_relation_variable] = current_relation;
+        if (rule_has_var_in_objects && _variables->count(rule_object_node) == 0) (*result)[rule_object_node] = matched_object;
+        if (_relation_variable != 0 && _variables->count(_relation_variable) == 0) (*result)[_relation_variable] = relation;
         return result;
     }
     return nullptr;
