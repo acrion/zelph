@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -518,8 +518,60 @@ Node Zelph::parse_relation(const Node rule)
     return relation;
 }
 
+// If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
+// for nodes that have both a name in the requested language and a Wikidata ID. This allows Markdown::convert_to_md to parse
+// and create appropriate links using the ID for the URL and the name for display text.
+std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang) const
+{
+    const bool is_wikidata_mode = has_language("wikidata") && lang != "wikidata";
+    if (!is_wikidata_mode)
+    {
+        return get_name(node, lang, true);
+    }
+
+    std::wstring wikidata_name = get_name(node, "wikidata", false);
+
+    std::wstring name;
+    if (lang == "zelph")
+    {
+        // In Wikidata mode, the output of get_formatted_name may be used by the Markdown export (command `.run-md`).
+        // In this case, we want to use a natural language as the primary language.
+        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for the Markdown export.
+        // So in case lang is not a natural language, we fall back to English.
+        name = get_name(node, "en", false);
+    }
+
+    if (name.empty() || name == wikidata_name)
+    {
+        // either lang != "zelph", or there is no English name of `node`, or its English nam is identical with the Wikidata name
+        name = get_name(node, lang, false);
+    }
+
+    if (name.empty())
+    {
+        if (wikidata_name.empty())
+        {
+            return get_name(node, lang, true); // Fallback, no prepend
+        }
+        else
+        {
+            return wikidata_name; // No prepend since lang name was empty
+        }
+    }
+    else
+    {
+        if (!wikidata_name.empty() && wikidata_name != name)
+        {
+            name = wikidata_name + L" - " + name;
+        }
+        return name;
+    }
+}
+
 void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
 {
+    // Formats a fact into a string representation.
+
     utils::IncDec incDec(_pImpl->_format_fact_level);
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
 
@@ -543,9 +595,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (!is_condition || subject)
     {
+#if _DEBUG
         Node subject_before = subject;
-        subject             = utils::get(variables, subject);
-        subject_name        = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+#endif
+        subject      = utils::get(variables, subject);
+        subject_name = subject ? get_formatted_name(subject, lang) : (is_condition ? L"" : L"?");
 #if _DEBUG
         if (subject_name == L"?")
         {
@@ -571,7 +625,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
         Node relation = parse_relation(fact);
         relation      = utils::get(variables, relation);
-        relation_name = relation ? get_name(relation, lang, true) : L"?";
+        relation_name = relation ? get_formatted_name(relation, lang) : L"?";
         if (relation_name.empty())
         {
             format_fact(relation_name, lang, relation, variables, fact, history);
@@ -583,8 +637,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     for (Node object : objects)
     {
         object = utils::get(variables, object);
-        if (!objects_name.empty()) objects_name += get_name(core.And, lang, true) + L" ";
-        std::wstring object_name = object ? get_name(object, lang, true) : L"?";
+        if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
+        std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
         if (object_name.empty())
         {
 #ifdef _DEBUG

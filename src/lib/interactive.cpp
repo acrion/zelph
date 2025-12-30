@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -335,6 +335,9 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else if (cmd[0] == L".run-md")
     {
+        if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
+        std::string subdir = network::utils::str(cmd[1]);
+        _n->set_markdown_subdir(subdir);
         _n->print(L"> Running with markdown export...", true);
         if (_wikidata)
         {
@@ -369,7 +372,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             watch.start();
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
             _wikidata->generate_index();
-            _wikidata->import_all(_n->has_language("wikidata"));
+            _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
             _n->print(L" Time needed for importing: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
         }
         else

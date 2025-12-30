@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -38,7 +38,13 @@ using adjacency_set = std::unordered_set<Node>;
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
+    , _markdown_subdir("")
 {
+}
+
+void Reasoning::set_markdown_subdir(const std::string& subdir)
+{
+    _markdown_subdir = subdir;
 }
 
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
@@ -54,7 +60,11 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
     if (_generate_markdown)
     {
-        _markdown = std::make_unique<wikidata::Markdown>(std::filesystem::path("mkdocs") / "docs" / "tree", this);
+        if (_markdown_subdir.empty())
+        {
+            throw std::runtime_error("Markdown subdirectory not set for .run-md command");
+        }
+        _markdown = std::make_unique<wikidata::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
     }
 
     std::clog << "Starting reasoning with " << _pool->count() << " worker threads." << std::endl;

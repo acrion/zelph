@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -64,6 +64,7 @@ namespace zelph::network
         explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
         void apply_rule(const network::Node& rule, network::Node condition);
+        void set_markdown_subdir(const std::string& subdir);
 
     private:
         void evaluate(RulePos rule, ReasoningContext& ctx);
@@ -83,5 +84,6 @@ namespace zelph::network
         int                                 _total_matches{0};
         int                                 _total_contradictions{0};
         std::unique_ptr<ThreadPool>         _pool;
+        std::string                         _markdown_subdir;
     };
 }

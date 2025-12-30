@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -117,6 +117,10 @@ namespace zelph::wikidata
 
     std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message) const
     {
+        // Converts the formatted fact string (from format_fact) to Markdown.
+        // Parses tokens within « », extracts ID and text if " - " present (Wikidata mode), else assumes token is the Wikidata ID or fallback name.
+        // Creates links like [text](ID.md), italicizing if property (P...). Uses the pre-formatted ID from format_fact for accurate linking.
+
         std::list<std::string> wikidataIds;
         std::wstring           markdownContent = message;
 
@@ -131,24 +135,25 @@ namespace zelph::wikidata
         std::wsregex_iterator tokensBegin(processRange.begin(), processRange.end(), tokenRegex);
         std::wsregex_iterator tokensEnd;
 
-        // Process each token
+        // Process each token to collect IDs
         for (std::wsregex_iterator i = tokensBegin; i != tokensEnd; ++i)
         {
             const std::wsmatch& match = *i;
             std::wstring        token = match[1].str();
 
-            const std::string wikiDataId = get_wikidata_id(token, "en");
-            if (wikiDataId.empty())
+            size_t sep_pos = token.find(L" - ");
+            if (sep_pos != std::wstring::npos)
             {
-                std::wcout << L"-------- Could not find wikidata ID of '" << token << L"'" << std::endl;
+                std::wstring id_part = token.substr(0, sep_pos);
+                wikidataIds.push_back(network::utils::str(id_part));
             }
             else
             {
-                wikidataIds.push_back(wikiDataId);
+                wikidataIds.push_back(network::utils::str(token)); // Assume token is ID
             }
         }
 
-        // Replace all «token» with [token](token.md) in the markdown content
+        // Replace all «token» with [token](token.md) in the Markdown content
         std::wstring::const_iterator contentStart = markdownContent.begin();
         std::wstring::const_iterator contentEnd   = markdownContent.end();
         std::wsmatch                 contentMatch;
@@ -163,23 +168,28 @@ namespace zelph::wikidata
             result += std::wstring(contentStart, contentMatch[0].first);
 
             // Get the token without «»
-            std::wstring tokenText = contentMatch[1].str();
+            std::wstring token = contentMatch[1].str();
 
-            const std::string wikiDataId = get_wikidata_id(tokenText, "en");
-            std::string       url;
-
-            if (wikiDataId.empty())
+            size_t       sep_pos = token.find(L" - ");
+            std::wstring tokenText;
+            std::string  id_str;
+            if (sep_pos != std::wstring::npos)
             {
-                url = get_wikidata_url(network::utils::str(tokenText));
+                std::wstring id_part = token.substr(0, sep_pos);
+                tokenText            = token.substr(sep_pos + 3);
+                id_str               = network::utils::str(id_part);
             }
             else
             {
-                url = wikiDataId + ".md";
+                tokenText = token;
+                id_str    = network::utils::str(token);
+            }
 
-                if (wikiDataId[0] == 'P')
-                {
-                    tokenText = L"*" + tokenText + L"*";
-                }
+            std::string url = id_str + ".md";
+
+            if (!id_str.empty() && id_str[0] == 'P')
+            {
+                tokenText = L"*" + tokenText + L"*";
             }
 
             // Add the formatted Markdown link

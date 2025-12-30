@@ -9,6 +9,7 @@ nav:
   - Use Case - Wikidata:
       - Overview: wikidata.md
       - Tree Explanation: tree-explanation.md
+      - test: tree/!.md
       - General Knowledge Domains:
           - Geographic Entities: tree/Q27096213.md
           - Physical Substances: tree/Q28732711.md

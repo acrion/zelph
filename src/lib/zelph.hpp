@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -68,6 +68,7 @@ namespace zelph
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
             Node                 parse_relation(const Node rule);
+            std::wstring         get_formatted_name(Node node, const std::string& lang) const;
             void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr);
             adjacency_set        filter(const adjacency_set& source, Node target) const;
             adjacency_set        filter(Node fact, Node relationType, Node target) const;

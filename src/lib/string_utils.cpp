@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -122,6 +122,9 @@ namespace zelph
                 return result;
             }
 
+            // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
+            // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
+            // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
             std::wstring mark_identifier(const std::wstring& str)
             {
                 if (str.empty()
