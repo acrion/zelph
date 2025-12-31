@@ -380,6 +380,19 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             throw std::runtime_error("Command .wikidata: You need to specify one argument: the json file to import");
         }
     }
+    else if (cmd[0] == L".wikidata-constraints")
+    {
+        if (cmd.size() < 3) throw std::runtime_error("Command .wikidata-constraints: Missing json file name or directory name");
+        if (cmd.size() > 3) throw std::runtime_error("Command .wikidata-constraints: Unknown argument after directory name");
+
+        network::StopWatch watch;
+        watch.start();
+        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
+        _wikidata->generate_index();
+        std::string dir = network::utils::str(cmd[2]);
+        _wikidata->import_all(false, dir);
+        _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+    }
     else if (cmd[0] == L".list-rules")
     {
         // Get all nodes that are subjects of a core.Causes relation
@@ -428,7 +441,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".wikidata-export")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-export: Missing Wikidata ID (e.g., P31 or Q42)");
-        if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata <file> first.");
+        if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata-index <file> first.");
 
         std::wstring wid = cmd[1];
         std::string  id  = network::utils::str(wid);

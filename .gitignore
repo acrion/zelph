@@ -60,3 +60,4 @@ mkdocs/site
 /*.svg
 /*.dot
 perf.data
+constraints*/
