@@ -50,7 +50,7 @@ namespace zelph
 
             Node var() const;
 
-            void                     set_lang(const std::string& lang) { _lang = lang; }
+            void                     set_lang(const std::string& lang);
             std::string              get_lang() { return _lang; }
             void                     set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
             void                     set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }

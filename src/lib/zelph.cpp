@@ -62,6 +62,34 @@ Node Zelph::var() const
     return _pImpl->var();
 }
 
+void Zelph::set_lang(const std::string& lang)
+{
+    if (lang != _lang)
+    {
+        _lang = lang;
+
+        const std::vector<Node> cores = {
+            core.RelationTypeCategory,
+            core.Causes,
+            core.And,
+            core.IsA,
+            core.Unequal,
+            core.Contradiction};
+
+        for (Node c : cores)
+        {
+            if (!has_name(c, lang))
+            {
+                std::wstring name = get_name(c, "zelph", false);
+                if (!name.empty())
+                {
+                    set_name(c, name, lang);
+                }
+            }
+        }
+    }
+}
+
 void Zelph::set_name(const Node node, const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
