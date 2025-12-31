@@ -402,9 +402,40 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         _n->print(L"------------------------", true);
     }
-    else if (cmd[0] == L".list-predicate-usage") // New command
+    else if (cmd[0] == L".list-predicate-usage")
     {
         list_predicate_usage();
+    }
+    else if (cmd[0] == L".wikidata-index")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-index: Missing json file name");
+        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata-index: Unknown argument after json file name");
+
+        _n->set_print([&](const std::wstring& str, bool o)
+                      {
+          if (o)
+          {
+#ifdef _WIN32
+              std::wcout << str << std::endl;
+#else
+            std::clog << network::utils::str(str) << std::endl;
+#endif
+          } });
+
+        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
+        _wikidata->generate_index();
+    }
+    else if (cmd[0] == L".wikidata-export")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-export: Missing Wikidata ID (e.g., P31 or Q42)");
+        if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata <file> first.");
+
+        std::wstring wid = cmd[1];
+        std::string  id  = network::utils::str(wid);
+
+        _wikidata->export_entry(wid);
+
+        _n->print(L"Exported '" + wid + L"' to '" + network::utils::wstr(id + ".json") + L"'", true);
     }
     else
     {

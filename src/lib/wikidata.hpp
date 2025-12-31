@@ -44,6 +44,7 @@ namespace zelph
             void import_all(bool filter_existing_only = false);
             void generate_index() const;
             void process_node(network::Node node, const std::string& lang);
+            void export_entry(const std::wstring& wid) const;
             void set_logging(bool do_log);
 
         private:

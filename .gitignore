@@ -55,7 +55,7 @@ log.txt
 xcode/*
 *.crdownload
 latest-all*.json
-mkdocs/docs/tree
+mkdocs/docs/*/
 mkdocs/site
 /*.svg
 /*.dot

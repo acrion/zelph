@@ -526,6 +526,32 @@ void Wikidata::process_node(const Node node, const std::string& lang)
         }
     }
 }
+
+void Wikidata::export_entry(const std::wstring& wid) const
+{
+    std::string id = network::utils::str(wid);
+
+    auto it = _pImpl->_index.find(id);
+    if (it == _pImpl->_index.end())
+        throw std::runtime_error("Command .wikidata-export: ID '" + id + "' not found in index.");
+
+    std::streamoff pos = it->second;
+
+    std::ifstream in(_pImpl->_file_name.string(), std::ios::binary);
+    if (!in) throw std::runtime_error("Command .wikidata-export: Could not open Wikidata file '" + _pImpl->_file_name.string() + "'");
+
+    in.seekg(pos);
+
+    std::string line;
+    std::getline(in, line);
+
+    std::string   out_file = id + ".json";
+    std::ofstream out(out_file, std::ios::binary);
+    if (!out) throw std::runtime_error("Command .wikidata-export: Could not create output file '" + out_file + "'");
+
+    out << line;
+}
+
 void Wikidata::set_logging(bool do_log)
 {
     _pImpl->_logging = do_log;
