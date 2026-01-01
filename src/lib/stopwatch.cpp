@@ -59,7 +59,7 @@ StopWatch::~StopWatch()
     delete _pImpl;
 }
 
-bool StopWatch::is_running()
+bool StopWatch::is_running() const
 {
     return _pImpl->_stop == chrono::time_point<chrono::high_resolution_clock>::min();
 }
@@ -75,8 +75,23 @@ void StopWatch::stop()
     _pImpl->_stop = std::chrono::high_resolution_clock::now();
 }
 
-uint64_t StopWatch::duration()
+uint64_t StopWatch::duration() const
 {
     auto currentTime = is_running() ? chrono::high_resolution_clock::now() : _pImpl->_stop;
     return chrono::duration_cast<chrono::milliseconds>(currentTime - _pImpl->_start).count();
+}
+
+std::string StopWatch::format() const
+{
+    double total_seconds = static_cast<double>(duration()) / 1000.0;
+
+    long   hours             = static_cast<long>(total_seconds / 3600);
+    double remaining_seconds = total_seconds - hours * 3600.0;
+    long   minutes           = static_cast<long>(remaining_seconds / 60);
+    double seconds           = remaining_seconds - minutes * 60.0;
+
+    std::ostringstream oss;
+    oss << hours << "h" << minutes << "m"
+        << std::fixed << std::setprecision(5) << seconds << "s";
+    return oss.str();
 }

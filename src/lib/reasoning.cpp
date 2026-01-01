@@ -49,7 +49,8 @@ void Reasoning::set_markdown_subdir(const std::string& subdir)
 
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
 {
-    auto reasoning_start = std::chrono::steady_clock::now();
+    StopWatch watch;
+    watch.start();
 
     _print_deductions     = print_deductions;
     _generate_markdown    = generate_markdown;
@@ -105,12 +106,11 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
                   << " distinct fixed relations." << std::endl;
     }
 
-    logged_relations.clear(); // Für nächsten Run
+    logged_relations.clear();
 
-    auto   reasoning_end = std::chrono::steady_clock::now();
-    double total_ms      = std::chrono::duration<double, std::milli>(reasoning_end - reasoning_start).count();
+    watch.stop();
 
-    std::clog << "Reasoning complete in " << total_ms << " ms – "
+    std::clog << "Reasoning complete in " << watch.format() << " – "
               << _total_matches << " matches processed, "
               << _total_contradictions << " contradictions found." << std::endl;
 }

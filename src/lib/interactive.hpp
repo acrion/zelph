@@ -39,6 +39,7 @@ namespace zelph
         public:
             Interactive();
             ~Interactive();
+            void               import_file(const std::wstring& file) const;
             void               process(std::wstring line) const;
             void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
             static std::string get_version();

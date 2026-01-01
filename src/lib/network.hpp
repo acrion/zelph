@@ -208,6 +208,60 @@ namespace zelph
                 rightIt->second.insert(a);
             }
 
+            void disconnect(Node a, Node b)
+            {
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+                auto leftIt = _left.find(a);
+                if (leftIt != _left.end())
+                {
+                    leftIt->second.erase(b);
+                }
+
+                auto rightIt = _right.find(b);
+                if (rightIt != _right.end())
+                {
+                    rightIt->second.erase(a);
+                }
+
+                // Remove probability if exists
+                {
+                    std::lock_guard<std::mutex> lock_prob(_mtx_prob);
+                    Node                        hash;
+                    auto                        it = find_probability(a, b, hash);
+                    if (it != _probabilities.end())
+                    {
+                        _probabilities.erase(it);
+                    }
+                }
+            }
+
+            void remove(Node node)
+            {
+                // Disconnect all incoming and outgoing edges
+                {
+                    adjacency_set incoming = get_left(node);
+                    for (Node from : incoming)
+                    {
+                        disconnect(from, node);
+                    }
+
+                    adjacency_set outgoing = get_right(node);
+                    for (Node to : outgoing)
+                    {
+                        disconnect(node, to);
+                    }
+                }
+
+                // Remove the node itself
+                std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+                std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+                _left.erase(node);
+                _right.erase(node);
+                _node_count.fetch_sub(1, std::memory_order_relaxed);
+            }
+
             bool exists(Node a)
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_left);

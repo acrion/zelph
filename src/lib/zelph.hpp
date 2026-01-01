@@ -86,7 +86,8 @@ namespace zelph
 
             Node          count() const;
             NodeView      get_all_nodes() const;
-            adjacency_set get_rules() const; // New public method to get all rules
+            adjacency_set get_rules() const;
+            void          remove_rules();
 
             // member list
             class Impl;

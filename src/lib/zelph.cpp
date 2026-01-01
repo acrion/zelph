@@ -723,6 +723,34 @@ adjacency_set Zelph::get_rules() const
     return rules;
 }
 
+void Zelph::remove_rules()
+{
+    adjacency_set rules = get_rules();
+    for (Node rule : rules)
+    {
+        _pImpl->remove(rule);
+        // Clean up names
+        for (auto& lang_map : _pImpl->_name_of_node)
+        {
+            lang_map.second.erase(rule);
+        }
+        for (auto& lang_map : _pImpl->_node_of_name)
+        {
+            for (auto it = lang_map.second.begin(); it != lang_map.second.end();)
+            {
+                if (it->second == rule)
+                {
+                    it = lang_map.second.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+    }
+}
+
 void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
 {
     if (--max_depth > 0 && touched.count(current) == 0)

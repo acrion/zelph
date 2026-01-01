@@ -41,16 +41,7 @@ int main(int argc, char** argv)
 
         for (int i = 1; i < argc; ++i)
         {
-            std::wcout << L"Importing file " << zelph::network::utils::wstr(argv[i]) << L"..." << std::endl;
-            std::wifstream stream(argv[i]);
-
-            if (stream.fail()) throw std::runtime_error(std::string("Could not open file '") + argv[i] + "'");
-
-            for (std::wstring line; std::getline(stream, line);)
-            {
-                interactive.process(line);
-            }
-            interactive.run(true, false, false);
+            interactive.import_file(zelph::network::utils::wstr(argv[i]));
         }
 
         if (argc > 1) std::wcout << L"Ready." << std::endl;

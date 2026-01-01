@@ -39,10 +39,11 @@ namespace zelph::network
         StopWatch(const StopWatch& stopWatch);
         StopWatch& operator=(const StopWatch&);
 
-        bool     is_running();
-        void     stop();
-        void     start();
-        uint64_t duration();
+        bool        is_running() const;
+        void        stop();
+        void        start();
+        uint64_t    duration() const;
+        std::string format() const;
 
     private:
         class CImpl;

@@ -51,7 +51,7 @@ using boost::tokenizer;
 class console::Interactive::Impl
 {
 public:
-    Impl()
+    Impl(Interactive* enclosing)
         : _n(new network::Reasoning([](const std::wstring& str, const bool)
                                     {
 #ifdef _WIN32
@@ -60,6 +60,7 @@ public:
                                         std::clog << network::utils::str(str) << std::endl;
 #endif
                                     }))
+        , _interactive(enclosing)
     {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_U16TEXT);
@@ -68,6 +69,7 @@ public:
         _n->set_lang("zelph");
     }
 
+    void          import_file(const std::wstring& file) const;
     void          process_command(const std::vector<std::wstring>& cmd);
     network::Node process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
     network::Node process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
@@ -80,10 +82,13 @@ public:
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
+
+private:
+    const Interactive* _interactive;
 };
 
 console::Interactive::Interactive()
-    : _pImpl(new Impl)
+    : _pImpl(new Impl(this))
 {
     _pImpl->_n->set_name(_pImpl->_n->core.RelationTypeCategory, L"->", "zelph");
     _pImpl->_n->set_name(_pImpl->_n->core.Causes, L"=>", "zelph");
@@ -96,6 +101,19 @@ console::Interactive::Interactive()
 console::Interactive::~Interactive()
 {
     delete _pImpl;
+}
+
+void console::Interactive::Impl::import_file(const std::wstring& file) const
+{
+    std::clog << "Importing file " << network::utils::str(file) << "..." << std::endl;
+    std::wifstream stream(network::utils::str(file));
+
+    if (stream.fail()) throw std::runtime_error("Could not open file '" + network::utils::str(file) + "'");
+
+    for (std::wstring line; std::getline(stream, line);)
+    {
+        _interactive->process(line);
+    }
 }
 
 std::string console::Interactive::get_version()
@@ -200,6 +218,11 @@ void console::Interactive::process(std::wstring line) const
     {
         throw std::runtime_error("Error in line \"" + network::utils::str(line) + "\": " + ex.what());
     }
+}
+
+void console::Interactive::import_file(const std::wstring& file) const
+{
+    _pImpl->import_file(file);
 }
 
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
@@ -343,9 +366,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {
             _wikidata->set_logging(false);
         }
-        network::StopWatch watch;
         _n->run(false, true, false);
-        _n->print(L" Time needed: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     else if (cmd[0] == L".wikidata")
     {
@@ -373,7 +394,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
             _wikidata->generate_index();
             _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
-            _n->print(L" Time needed for importing: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+            watch.stop();
+            _n->print(L" Time needed for importing: " + network::utils::wstr(watch.format()), true);
         }
         else
         {
@@ -449,6 +471,18 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _wikidata->export_entry(wid);
 
         _n->print(L"Exported '" + wid + L"' to '" + network::utils::wstr(id + ".json") + L"'", true);
+    }
+    else if (cmd[0] == L".remove-rules")
+    {
+        _n->remove_rules();
+        _n->print(L"All rules removed.", true);
+    }
+    else if (cmd[0] == L".load")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing script path");
+        std::wstring path = cmd[1];
+        if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .load: Script must end with .zph");
+        import_file(path);
     }
     else
     {
