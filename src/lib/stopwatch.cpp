@@ -92,6 +92,6 @@ std::string StopWatch::format() const
 
     std::ostringstream oss;
     oss << hours << "h" << minutes << "m"
-        << std::fixed << std::setprecision(5) << seconds << "s";
+        << std::fixed << std::setprecision(3) << seconds << "s";
     return oss.str();
 }
