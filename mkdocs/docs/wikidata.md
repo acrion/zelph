@@ -9,9 +9,9 @@ This complex web of knowledge presents two key opportunities for zelph:
 1. **Finding contradictions**: Identifying logical inconsistencies in the data
 2. **Making deductions**: Deriving new facts through logical inference
 
-For example, if class `A` is the opposite of class `B` (such as [successor](tree/Q106110771.md) and [predecessor](tree/Q106110777.md)), then no entity `X` can belong to both classes (like [replacing entity](tree/Q45025415.md)).
+For example, if class `A` is the opposite of class `B` (such as [successor](https://www.wikidata.org/wiki/Q106110771) and [predecessor](https://www.wikidata.org/wiki/Q106110777)), then no entity `X` can belong to both classes (like [replacing entity](https://www.wikidata.org/wiki/Q45025415)).
 
-Similarly, inferences can be made. Example: If X is related to Y and Y is related to Z through the same relation (e.g., X=[Canada](tree/Q16.md), Y=[American continent](tree/Q828.md), Z=[Earth's surface](tree/Q1349417.md), relation=[is part of](tree/P361.md)), and the relation is [transitive](tree/Q64861.md), then X must also be related to Z in the same way.
+Similarly, inferences can be made. Example: If X is related to Y and Y is related to Z through the same relation (e.g., X=[Canada](https://www.wikidata.org/wiki/Q16), Y=[American continent](https://www.wikidata.org/wiki/Q828), Z=[Earth's surface](https://www.wikidata.org/wiki/Q1349417), relation=[is part of](https://www.wikidata.org/wiki/Property:P361)), and the relation is [transitive](https://www.wikidata.org/wiki/Q64861), then X must also be related to Z in the same way.
 
 ### Architectural Synergy with Wikidata
 
@@ -27,44 +27,23 @@ This fundamental similarity enables zelph to:
 
 This structural compatibility makes zelph well-suited for analyzing and enriching Wikidata’s knowledge graph while maintaining its semantic integrity.
 
-### Navigating the Generated Knowledge Tree
-
-zelph has processed Wikidata’s vast knowledge graph and generated a [tree of 4,580 pages](tree-explanation.md) representing entities and properties where meaningful deductions or contradictions were found.
-This represents the practical application of zelph’s semantic inference capabilities to real-world data.
-
-The navigation menu provides entry points to explore various branches of this knowledge tree, organized by knowledge domains and semantic relation types.
-Particularly noteworthy is the [Logical Contradictions](tree/Q363948.md) page, which highlights inconsistencies in Wikidata’s knowledge structure that could be valuable for Wikidata curators.
-
-For a detailed explanation of how this tree was generated and what it represents, see the [Tree Explanation](tree-explanation.md) page.
-
 ## Technical Implementation
 
 ### Memory Efficiency
 
-The complete Wikidata in JSON format is approximately 1.4 TB, containing over 113 million entries.
-After processing by zelph, the data occupies only 9.2 GB in memory.
-This reduction is achieved through two factors: a [bit-optimized data structure](https://github.com/acrion/zelph/blob/main/src/lib/network.hpp) and selective data inclusion.
+The scale of Wikidata is massive: the JSON dump is approximately 1.7 TB in size, containing over 113 million entries. zelph has been optimized to handle this scale effectively.
 
-On average, zelph requires only 80 bytes per Wikidata item, which includes:
+The system is capable of importing the **entire** Wikidata graph into memory, a significant achievement that enables non-iterative, complete contradiction detection. After processing, the complete semantic network is serialized to disk in a highly efficient format (~100 GB).
 
-1. All relations to other items (i.e., connections via Wikidata properties, which define the relationships between items in the Wikidata structure)
-2. The English names of the items
-3. The Wikidata IDs of the items
-
-In a semantic network like zelph, properties represent the labels that appear above the connection arrows between two items.
-While Wikidata refers to these as "properties," zelph uses the term "relation names" for the same concept.
-
-Items in zelph can be assigned names in any number of languages, with Wikidata IDs handled as a specific language ("wikidata").
-There is also a language "zelph" that is used by default in zelph scripts, but this is configurable (via the `.lang` command).
+While the serialized footprint is compact given the data volume (99 GB), loading the graph for active reasoning (where all relationships and structures must be accessible) requires significant memory. In practice, a system with **256 GB of RAM** is recommended for full-speed operation. Systems with 128 GB can process the graph by utilizing aggressive swap and compression (ZRAM), though at reduced performance.
 
 ### Processing Performance
 
-Running the inference process on Wikidata data requires significant computational resources:
+Running the inference process on Wikidata data is computationally intensive but highly optimized:
 
-- A complete inference pass takes approximately 2.5 hours on an Intel Core i9-12900T
-- Processing time varies depending on the number of applicable rules
-- The current implementation does not yet utilize multi-threading
-- Additional inference passes can be run using the `.run` or `.run-md` commands to discover more facts and contradictions
+- **Parallel Processing:** Both the data import and the unification/reasoning engine are multi-threaded, utilizing all available CPU cores to speed up processing.
+- **Performance:** A complete inference pass on the full dataset takes approximately 2.5 hours on high-end hardware (e.g., Intel Core i9 with 24 cores), though this depends heavily on available RAM and the specific rules being applied.
+- **Workflow:** Users can run targeted scripts to find specific classes of contradictions (see [Grant Report](grant-report.md) for examples like Split Order Violations).
 
 ## Wikidata Integration Script
 
@@ -85,16 +64,17 @@ The following script demonstrates how zelph connects with Wikidata data:
 .name "is inverse of"  wikidata P1696
 .name "has quality"    wikidata P1552
 .name "is for example" wikidata Q21514624
-.name "transitive relation" wikidata Q64861
+.name "transitive relation" wikidata Q18647515
 
 # The following facts are part of wikidata:
 #"is subclass of" ~ transitive relation
 #"has part"       ~ transitive relation
+#"is facet of"    ~ transitive relation
+#"is part of"     ~ transitive relation
 #"is part of"     is inverse of "has part"
 
 # The following facts are not part of wikidata:
 "has quality" ~ transitive relation
-"is facet of" ~ transitive relation
 
 X is facet of Y, Y ~ C => X ~ C
 X is facet of Y, Y is subclass of C => X is subclass of C
@@ -110,16 +90,16 @@ P ~ transitive relation, P is inverse of Q => Q ~ transitive relation
 X ~ K, K is subclass of U => X ~ U
 
 X has quality E,   E ~ K                => X has quality K
-X has quality E,   E is subclass of K   => X has quality K
+X has quality E,   E is subclass of K  => X has quality K
 K has quality E,   X ~ K                => X has quality E
-K has quality E,   X is subclass of K   => X has quality E
+K has quality E,   X is subclass of K  => X has quality E
 X has part P,      P ~ K                => X has part K
-K has part P,      X is subclass of K   => X has part P
+K has part P,      X is subclass of K  => X has part P
 
-X is opposite of Y, X ~ K               => Y ~ K
-X is opposite of Y, X is subclass of K  => Y is subclass of K
-X is inverse of Y,  X ~ K               => Y ~ K
-X is inverse of Y,  X is subclass of K  => Y is subclass of K
+X is opposite of Y, X ~ K              => Y ~ K
+X is opposite of Y, X is subclass of K => Y is subclass of K
+X is inverse of Y,  X ~ K              => Y ~ K
+X is inverse of Y,  X is subclass of K => Y is subclass of K
 
 X is opposite of Y        => Y is opposite of X
 X is inverse of Y         => Y is inverse of X
@@ -176,9 +156,9 @@ This careful mapping ensures that zelph can interpret Wikidata’s relational st
 
 Wikidata makes a granular distinction between different types of category relations:
 
-1. [instance of (P31)](tree/P31.md)
-2. [subclass of (P279)](tree/P279.md)
-3. [facet of (P1269)](tree/P1269.md)
+1. [instance of (P31)](https://www.wikidata.org/wiki/Property:P31)
+2. [subclass of (P279)](https://www.wikidata.org/wiki/Property:P279)
+3. [facet of (P1269)](https://www.wikidata.org/wiki/Property:P1269)
 
 zelph’s flexible design accommodates these distinctions.
 The idea of the script is to follow the [Wikidata usage guidelines](https://www.wikidata.org/wiki/Property:P2559).
@@ -190,42 +170,29 @@ if X is a "facet of" Y, then X inherits all properties of Y.
 
 For this case, the following rules are included in the script:
 
-- If `Y` is an [instance of](tree/P31.md) `C`, then `X` must also be an [instance of](tree/P31.md) `C`.
-- If `Y` is a [subclass of](tree/P279.md) `C`, then `X` must also be a [subclass of](tree/P279.md) `C`.
-- If `Y` [has part](tree/P527.md) `P`, then `X` must also [have part](tree/P527.md) `P`.
-- If `Y` is [part of](tree/P361.md) `P`, then `X` must also be [part of](tree/P361.md) `P`.
-- If `Y` has a [characteristic](tree/P1552.md) `Q`, then `X` must also have a [characteristic](tree/P1552.md) `Q`.
+- If `Y` is an [instance of](https://www.wikidata.org/wiki/Property:P31) `C`, then `X` must also be an [instance of](https://www.wikidata.org/wiki/Property:P31) `C`.
+- If `Y` is a [subclass of](https://www.wikidata.org/wiki/Property:P279) `C`, then `X` must also be a [subclass of](https://www.wikidata.org/wiki/Property:P279) `C`.
+- If `Y` [has part](https://www.wikidata.org/wiki/Property:P527) `P`, then `X` must also [have part](https://www.wikidata.org/wiki/Property:P527) `P`.
+- If `Y` is [part of](https://www.wikidata.org/wiki/Property:P361) `P`, then `X` must also be [part of](https://www.wikidata.org/wiki/Property:P361) `P`.
+- If `Y` has a [characteristic](https://www.wikidata.org/wiki/Property:P1552) `Q`, then `X` must also have a [characteristic](https://www.wikidata.org/wiki/Property:P1552) `Q`.
 
 ### Example Inference Process
 
 Here’s a step-by-step example of zelph’s inference process when working with Wikidata:
 
-1. According to Wikidata, the property [greater than (P5135)](tree/P5135.md) is an instance of [transitive Wikidata property (Q18647515)](tree/Q18647515.md).
-2. Wikidata also states that [transitive Wikidata property (Q18647515)](tree/Q18647515.md) is a [facet of (P1269)](tree/P1269.md) [transitive relation (Q64861)](tree/Q64861.md).
+1. According to Wikidata, the property [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is an instance of [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515).
+2. Wikidata also states that [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515) is a [facet of (P1269)](https://www.wikidata.org/wiki/Property:P1269) [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
 3. The script contains the rule: `X is facet of Y, Y ~ C => X ~ C`
-4. Therefore, zelph infers that [greater than (P5135)](tree/P5135.md) is also an instance of [transitive relation (Q64861)](tree/Q64861.md).
+4. Therefore, zelph infers that [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is also an instance of [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
 
 ## Rules in the Semantic Network
 
 Rules in zelph are encoded in the same semantic network as facts, using the special relation `=>` (which corresponds to [logical consequence (Q374182)](https://www.wikidata.org/wiki/Q374182) in Wikidata).
 
 This innovative approach enables tight integration between the fact base and the rules, allowing rules to be reasoned about in the same way as facts.
-This makes zelph particularly powerful for applications like Wikidata, where the knowledge base itself contains statements about relations, including properties like [transitivity](tree/Q18647515.md).
+This makes zelph particularly powerful for applications like Wikidata, where the knowledge base itself contains statements about relations, including properties like [transitivity](https://www.wikidata.org/wiki/Q18647515).
 
-A rule is just a special case of a fact that uses the relation `=>`. In the case of the application of zelph to Wikidata data, this relation corresponds to [logical consequence](tree/Q374182.md).
-
-## Publishing Results
-
-The results of zelph’s analysis are published as a tree of pages, where each page corresponds to a Wikidata item. Pages can contain two sections:
-
-1. **Deductions**: New facts derived about the item through logical inference
-2. **Contradictions**: Logical inconsistencies involving the item
-
-Example of a deduction:
-
-- [natural physical object](tree/Q16686022.md) [is for example](tree/Q21514624.md) [Universe](tree/Q1.md) ⇐ ([Universe](tree/Q1.md) [*is a*](tree/P31.md) [natural physical object](tree/Q16686022.md)), ([*is a*](tree/P31.md) [*is inverse of*](tree/P1696.md) [is for example](tree/Q21514624.md))
-
-The part before `⇐` is the conclusion, derived from the facts listed after `⇐` using the applicable rules.
+A rule is just a special case of a fact that uses the relation `=>`. In the case of the application of zelph to Wikidata data, this relation corresponds to [logical consequence](https://www.wikidata.org/wiki/Q374182).
 
 ## Loading and Processing Wikidata
 
@@ -238,23 +205,44 @@ After uncompression, you may start zelph with the provided `wikidata.zph` script
 zelph_app sample_scripts/wikidata.zph
 ```
 
+### Basic Import
 To import Wikidata data, use the `.wikidata` command:
 
 ```
 .wikidata download/wikidata-20250127-all.json
 ```
 
-This creates an `.index` file in the same directory to accelerate future loading. Then, the inference mechanism can be started with either:
+This creates an `.index` file in the same directory to accelerate future loading.
+
+### Advanced Commands
+
+zelph provides several additional commands for working with Wikidata:
+
+*   **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
+    ```
+    .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
+    ```
+*   **Generate Index Only:** If you only want to build the index without importing data:
+    ```
+    .wikidata-index download/wikidata-20250127-all.json
+    ```
+*   **Export Item:** Export a specific item as a JSON snippet (requires index):
+    ```
+    .wikidata-export Q42
+    ```
+
+### Running Inference
+
+Once data is loaded, the inference mechanism can be started with:
 
 ```
 .run
 ```
 
-or:
+Or, to generate Markdown reports of deductions and contradictions:
 
 ```
-.run-md
+.run-md subdirectory_name
 ```
 
-The latter command generates Markdown files in the `mkdocs/docs/tree` directory, referencing Wikidata entities.
-You can run these commands multiple times to perform additional inference passes, which can discover more facts and contradictions based on the knowledge already inferred.
+The `.run-md` command requires a subdirectory argument. It will generate Markdown files in `mkdocs/docs/subdirectory_name`, creating a tree of pages that report findings.

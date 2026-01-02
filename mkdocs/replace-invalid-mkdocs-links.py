@@ -30,83 +30,95 @@ def process_subdirectory(subdir_path):
             print(f"... processed {files_processed} files so far in {subdir_path}")
 
         file_path = os.path.join(subdir_path, filename)
+        temp_file_path = file_path + '.tmp'  # Temporary file for writing changes
 
-        # Read the file content
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        original = content
         changes = 0
+        line_count = 0
 
-        # Regex to match markdown links: [text](file.md)
-        md_link_regex = re.compile(r'\[(.*?)\]\((.*?)\.md\)', re.DOTALL)
+        # Regex to match markdown links: [text](file.md) - no DOTALL needed since links don't span lines
+        md_link_regex = re.compile(r'\[(.*?)\]\((.*?)\.md\)')
 
-        # Find all matches
-        matches = md_link_regex.finditer(content)
+        with open(file_path, 'r', encoding='utf-8') as f_in, open(temp_file_path, 'w', encoding='utf-8') as f_out:
+            for line in f_in:
+                line_count += 1
+                new_line = line
 
-        # We need to replace in reverse order to avoid offset issues
-        replacements = []
+                # Special replacements as workarounds (applied to all lines)
+                temp_line = new_line
+                new_line = new_line.replace('[!](!.md)', '!')
+                if new_line != temp_line:
+                    changes += 1
 
-        for match in matches:
-            full_match = match.group(0)
-            link_text = match.group(1)
-            file = match.group(2) + '.md'  # Reconstruct the file part
+                # Apply regex to the line
+                matches = list(md_link_regex.finditer(new_line))
 
-            # Skip if it's an external link (contains ://)
-            if '://' in file:
-                continue
+                # Build new line by collecting parts
+                new_line_parts = []
+                last_end = 0
 
-            # Check if the referenced file exists in this subdirectory's md_files set
-            if file not in md_files:
-                # Extract the base ID (without .md)
-                base_id = file[:-3]  # Remove .md
+                for match in matches:
+                    # Always append the part before this match
+                    new_line_parts.append(new_line[last_end:match.start()])
 
-                # Determine Wikidata URL
-                if base_id.startswith('P'):
-                    wikidata_url = f"https://www.wikidata.org/wiki/Property:{base_id}"
-                else:
-                    wikidata_url = f"https://www.wikidata.org/wiki/{base_id}"
+                    link_text = match.group(1)
+                    file_base = match.group(2)
+                    file = file_base + '.md'
+                    full_match = match.group(0)
 
-                # Construct replacement: [link_text](wikidata_url)
-                replacement = f"[{link_text}]({wikidata_url})"
+                    # Skip if it's an external link (contains ://)
+                    if '://' in file_base:
+                        # Append original match
+                        new_line_parts.append(full_match)
+                    else:
+                        # Check if the referenced file exists in this subdirectory's md_files set
+                        if file in md_files:
+                            # Append original match
+                            new_line_parts.append(full_match)
+                        else:
+                            # Extract the base ID
+                            base_id = file_base
 
-                # Record the replacement (start, end, replacement text)
-                replacements.append((match.start(), match.end(), replacement))
-                changes += 1
+                            # Determine Wikidata URL
+                            if base_id.startswith('P'):
+                                wikidata_url = f"https://www.wikidata.org/wiki/Property:{base_id}"
+                            else:
+                                wikidata_url = f"https://www.wikidata.org/wiki/{base_id}"
 
-        # Apply replacements in reverse order to preserve positions
+                            # Construct replacement: [link_text](wikidata_url)
+                            replacement = f"[{link_text}]({wikidata_url})"
+
+                            # Append the replacement
+                            new_line_parts.append(replacement)
+                            changes += 1
+
+                    last_end = match.end()
+
+                # Append the remaining part of the line after all matches
+                new_line_parts.append(new_line[last_end:])
+
+                # Join parts for the new line
+                new_line = ''.join(new_line_parts)
+
+                # Write the (possibly changed) line to temp file
+                f_out.write(new_line)
+
+                # Progress indicator every 10000 lines
+                if line_count % 10000 == 0:
+                    print(f"Processed {line_count} lines in {filename}")
+
+        # If changes were made, replace original with temp; else delete temp
         if changes > 0:
-            new_content = list(content)
-            for start, end, repl in reversed(replacements):
-                new_content[start:end] = repl
-            content = ''.join(new_content)
+            os.replace(temp_file_path, file_path)
+            files_changed += 1
+            links_changed += changes
+            print(f"Modified {changes} items in {filename}")
+        else:
+            os.remove(temp_file_path)
 
-        # Special replacements as workarounds
-        temp_content = content
-        content = content.replace('[!](https://www.wikidata.org/wiki/!)',
-                                  '[Q363948](https://www.wikidata.org/wiki/Q363948)')
-        if content != temp_content:
-            changes += 1
-
-        temp_content = content
-        content = content.replace('(!.md)', '(https://www.wikidata.org/wiki/Q363948)')
-        if content != temp_content:
-            changes += 1
-
-        # Save changes if any (including specials)
-        if changes > 0:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-        files_changed += 1
-        links_changed += changes
-
-        print(f"Modified {changes} items in {filename}")
-
-        print(f"\nSubdirectory Summary for {subdir_path}:")
-        print(f"Total files processed: {files_processed}")
-        print(f"Files changed: {files_changed}")
-        print(f"Total items modified: {links_changed}")
+    print(f"\nSubdirectory Summary for {subdir_path}:")
+    print(f"Total files processed: {files_processed}")
+    print(f"Files changed: {files_changed}")
+    print(f"Total items modified: {links_changed}")
 
 
 def main():
