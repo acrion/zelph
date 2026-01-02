@@ -128,6 +128,7 @@ add_library(zelph SHARED
     ../boost/serialization/src/basic_serializer_map.cpp
     ../boost/serialization/src/basic_text_iprimitive.cpp
     ../boost/serialization/src/basic_text_oprimitive.cpp
+    ../boost/serialization/src/codecvt_null.cpp
     ../boost/serialization/src/extended_type_info.cpp
     ../boost/serialization/src/extended_type_info_typeid.cpp
     ../boost/serialization/src/text_iarchive.cpp
