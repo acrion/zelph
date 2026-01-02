@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -27,12 +27,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "markdown.hpp"
 #include "stopwatch.hpp"
+#include "thread_pool.hpp"
 #include "zelph.hpp"
 
 #include <zelph_export.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -41,35 +44,46 @@ namespace zelph::network
 {
     struct RulePos
     {
-        Node                               node;
-        std::unordered_set<Node>::iterator end;
-        std::unordered_set<Node>::iterator index;
-        std::shared_ptr<Variables>         variables{std::make_shared<Variables>()};
-        std::shared_ptr<Variables>         unequals{std::make_shared<Variables>()};
+        Node                       node;
+        adjacency_set::iterator    end;
+        adjacency_set::iterator    index;
+        std::shared_ptr<Variables> variables{std::make_shared<Variables>()};
+        std::shared_ptr<Variables> unequals{std::make_shared<Variables>()};
+    };
+
+    struct ReasoningContext
+    {
+        Node                 current_condition{0};
+        std::vector<RulePos> next;
+        adjacency_set        rule_deductions;
     };
 
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
         explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
-        void run(const bool print_deductions, const bool generate_markdown);
-        void apply_rule(const network::Node& rule, network::Node condition, size_t thread_index);
+        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
+        void apply_rule(const network::Node& rule, network::Node condition);
+        void set_markdown_subdir(const std::string& subdir);
 
     private:
-        void evaluate(RulePos rule);
+        void evaluate(RulePos rule, ReasoningContext& ctx);
         bool contradicts(const Variables& variables, const Variables& unequals) const;
-        void deduce(const Variables& variables, Node parent);
+        void deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
 
-        bool                                _done{false};
-        Node                                _current_condition{0};
-        std::unordered_set<Node>            _deductions;
-        std::vector<RulePos>                _next;
+        std::atomic<bool>                   _done{false};
         std::unique_ptr<wikidata::Markdown> _markdown;
-        size_t                              _running{0};
+        std::atomic<uint64_t>               _running{0};
         bool                                _print_deductions{true};
         bool                                _generate_markdown{true};
-        bool                                _contradiction{false};
+        std::atomic<bool>                   _contradiction{false};
         StopWatch                           _stop_watch;
-        size_t                              _skipped{0};
+        std::atomic<size_t>                 _skipped{0};
+        std::mutex                          _mtx_output;
+        std::mutex                          _mtx_network;
+        int                                 _total_matches{0};
+        int                                 _total_contradictions{0};
+        std::unique_ptr<ThreadPool>         _pool;
+        std::string                         _markdown_subdir;
     };
 }

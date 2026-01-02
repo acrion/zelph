@@ -1,4 +1,33 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #pragma once
+
+#include <ankerl/unordered_dense.h>
+
+#include "network_types.hpp"
 
 namespace zelph
 {
@@ -7,24 +36,27 @@ namespace zelph
         class NodeView
         {
         private:
-            const std::map<std::string, std::map<Node, std::wstring>>& _map_ref;
+            const ankerl::unordered_dense::map<std::string,
+                                               ankerl::unordered_dense::map<Node, std::wstring>>& _map_ref;
 
         public:
-            explicit NodeView(const std::map<std::string, std::map<Node, std::wstring>>& map_ref)
+            explicit NodeView(const ankerl::unordered_dense::map<std::string,
+                                                                 ankerl::unordered_dense::map<Node, std::wstring>>& map_ref)
                 : _map_ref(map_ref) {}
 
             class iterator
             {
             private:
-                std::string                                                                  _current_lang;
-                typename std::map<Node, std::wstring>::const_iterator                        _inner_it;
-                const std::map<std::string, std::map<Node, std::wstring>>*                   _map_ptr;
-                typename std::map<std::string, std::map<Node, std::wstring>>::const_iterator _outer_it;
-                bool                                                                         _is_end;
+                std::string                                                                                    _current_lang;
+                ankerl::unordered_dense::map<Node, std::wstring>::const_iterator                               _inner_it;
+                const ankerl::unordered_dense::map<std::string,
+                                                   ankerl::unordered_dense::map<Node, std::wstring>>*          _map_ptr;
+                ankerl::unordered_dense::map<std::string,
+                                             ankerl::unordered_dense::map<Node, std::wstring>>::const_iterator _outer_it;
+                bool                                                                                           _is_end;
 
                 void find_next_valid()
                 {
-                    // If we're at the end of an inner map, move to the next outer map
                     while (_outer_it != _map_ptr->end() && _inner_it == _outer_it->second.end())
                     {
                         ++_outer_it;
@@ -35,7 +67,6 @@ namespace zelph
                         }
                     }
 
-                    // If we've reached the end of all maps, mark as end
                     if (_outer_it == _map_ptr->end())
                     {
                         _is_end = true;
@@ -49,7 +80,9 @@ namespace zelph
                 using pointer           = const Node*;
                 using reference         = const Node&;
 
-                iterator(const std::map<std::string, std::map<Node, std::wstring>>* map_ptr, bool is_end)
+                iterator(const ankerl::unordered_dense::map<std::string,
+                                                            ankerl::unordered_dense::map<Node, std::wstring>>* map_ptr,
+                         bool                                                                                  is_end)
                     : _map_ptr(map_ptr), _is_end(is_end)
                 {
                     if (!is_end && !map_ptr->empty())

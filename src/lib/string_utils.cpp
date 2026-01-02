@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -23,7 +23,9 @@ You should have received a copy of the GNU Affero General Public License
 along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "utils.hpp"
+#include "string_utils.hpp"
+
+#include <boost/locale/encoding_utf.hpp>
 
 #include <codecvt>
 #include <cwctype>
@@ -38,38 +40,13 @@ namespace zelph
     {
         namespace utils
         {
-            std::shared_ptr<Variables> join(const Variables& v1, const Variables& v2)
-            {
-                std::shared_ptr<Variables> result = std::make_shared<Variables>(v1);
-
-                for (auto& var : v2)
-                {
-                    auto it = result->find(var.first);
-
-                    if (it != result->end())
-                    {
-                        if (it->second != var.second)
-                        {
-                            throw std::runtime_error("Variable sets to be merged do conflict");
-                        }
-                    }
-                    else
-                    {
-                        (*result)[var.first] = var.second;
-                    }
-                }
-
-                return result;
-            }
-
             std::string str(const std::wstring& wstr)
             {
                 try
                 {
-                    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-                    return converter.to_bytes(wstr);
+                    return boost::locale::conv::utf_to_utf<char>(wstr);
                 }
-                catch (const std::range_error& e)
+                catch (const boost::locale::conv::conversion_error& e)
                 {
                     std::wcerr << L"Error converting wstring to UTF-8 string: " << e.what() << std::endl;
 
@@ -104,7 +81,7 @@ namespace zelph
 
             std::wstring wstr(std::string str)
             {
-                return std::wstring(str.begin(), str.end());
+                return boost::locale::conv::utf_to_utf<wchar_t>(str);
             }
 
             std::wstring convert_unicode_escapes(const std::wstring& input)
@@ -145,6 +122,9 @@ namespace zelph
                 return result;
             }
 
+            // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
+            // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
+            // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
             std::wstring mark_identifier(const std::wstring& str)
             {
                 if (str.empty()

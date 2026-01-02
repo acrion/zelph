@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -25,11 +25,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "utils.hpp"
+#include "string_utils.hpp"
+#include "thread_pool.hpp"
 #include "zelph.hpp"
 
+#include <atomic>
+#include <condition_variable>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <unordered_set>
 
 namespace zelph
@@ -39,26 +44,47 @@ namespace zelph
         class Unification
         {
         public:
-            Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals);
+            Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool = nullptr);
             std::shared_ptr<Variables> Next();
             std::shared_ptr<Variables> Unequals();
+            bool                       uses_parallel() const { return _use_parallel; }
 
-        protected:
-            Zelph* const                       _n;
-            Node                               _parent;
-            std::shared_ptr<Variables>         _variables;
-            std::shared_ptr<Variables>         _unequals;
-            std::unordered_set<Node>           _relation_list;
-            Node                               _relation_variable{0};
-            std::unordered_set<Node>::iterator _fact_index{decltype(_facts_of_current_relation->second)::iterator()};
-            std::unordered_set<Node>::iterator _relation_index;
-            Node                               _subject;
-            std::unordered_set<Node>           _objects;
+            void wait_for_completion()
+            {
+                if (!_use_parallel) return;
+
+                std::unique_lock<std::mutex> lock(_queue_mtx);
+                _queue_cv.wait(lock, [this]
+                               { return _active_tasks.load() == 0; });
+            }
 
         private:
-            bool                                               increment_fact_index();
-            std::map<Node, std::unordered_set<Node>>::iterator _facts_of_current_relation;
-            bool                                               _fact_index_initialized{false}; // required because condition (_fact_index == decltype(_facts_of_current_relation->second)::iterator()) causes _DEBUG_ERROR("map/set iterators incompatible") if false
+            bool                       increment_fact_index();
+            std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const;
+
+            Zelph* const               _n;
+            Node                       _parent;
+            std::shared_ptr<Variables> _variables;
+            std::shared_ptr<Variables> _unequals;
+            adjacency_set              _relation_list;
+            Node                       _relation_variable{0};
+            Node                       _subject{0};
+            adjacency_set              _objects;
+
+            // Parallel mode
+            ThreadPool*                            _pool{nullptr};
+            bool                                   _use_parallel{false};
+            std::queue<std::shared_ptr<Variables>> _match_queue;
+            std::mutex                             _queue_mtx;
+            std::condition_variable                _queue_cv;
+            std::atomic<size_t>                    _active_tasks{0};
+            std::vector<Node>                      _snapshot_vec;
+
+            // Sequential fallback
+            adjacency_set::iterator _relation_index;
+            adjacency_set::iterator _fact_index;
+            adjacency_set           _facts_snapshot;
+            bool                    _fact_index_initialized{false};
         };
     }
 }

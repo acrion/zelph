@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -25,7 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "zelph.hpp"
 
 #include <filesystem>
@@ -41,20 +41,21 @@ namespace zelph
             Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
             ~Wikidata();
 
-            void import_all();
+            void import_all(bool filter_existing_only = false, const std::string& constraints_dir = "");
             void generate_index() const;
-            void traverse(std::wstring start_entry = L"");
             void process_node(network::Node node, const std::string& lang);
+            void export_entry(const std::wstring& wid) const;
+            void set_logging(bool do_log);
 
         private:
-            void process_entry(const std::wstring& line, const bool log = true, const size_t thread_index = 0);
+            void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
+            void process_entry(const std::wstring& line, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, const std::string& constraints_dir);
+            void process_import(const std::wstring& line, const std::wstring& id_str, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, size_t id1);
             void process_name(const std::wstring& wikidata_name);
             void index_entry(const std::wstring& line, const std::streamoff streampos) const;
 
             class Impl;
             Impl* const _pImpl; // must stay at top of members list because of initialization order
-
-            size_t _running{0};
         };
     }
 }

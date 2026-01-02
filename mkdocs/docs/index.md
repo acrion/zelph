@@ -3,9 +3,17 @@
 ## Introduction
 
 zelph is an innovative semantic network system that allows inference rules to be defined within the network itself.
-This project provides a powerful foundation for knowledge representation and automated reasoning, with a special focus on efficient memory usage and logical inference capabilities.
+This project provides a powerful foundation for knowledge representation and automated reasoning, with a special focus on efficiency and logical inference capabilities.
 With dedicated import functions and specialized semantic scripts (like [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph)),
 zelph offers powerful analysis capabilities for the complete Wikidata knowledge graph while remaining adaptable for any semantic domain.
+
+### Community and Support
+
+Development of zelph is supported by the [Wikimedia Community Fund](https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Wikidata_Contradiction_Detection_and_Constraint_Integration_(ID:_23553409)).
+
+The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
+
+### Components
 
 The zelph ecosystem includes:
 
@@ -271,7 +279,7 @@ Let’s break it down:
         n1["((Y R Z), (X R Y), (R «~» «transitive relation»)) «=>» (X R Z)"] --> n2["=>"]
         n12["(Y R Z), (X R Y), (R «~» «transitive relation»)"] <--> n1
         n16["X R Z"] --> n1
-       
+        
         style n12 fill:#87CEFA
         style n16 fill:#B3EE3A
     ```
@@ -280,6 +288,25 @@ Let’s break it down:
 
 This summarizes the complete diagram shown above. As mentioned earlier, the elegant aspect of this representation method is that the inference system can be applied not only to facts but also to rules.
 Consequently, it becomes possible to formulate rules that generate other rules.
+
+### Facts and Rules in One Network: Unique Identification via Topological Semantics
+
+A distinctive aspect of **zelph** is that **facts and rules live in the same semantic network**. That raises a natural question: how does the unification engine avoid confusing ordinary entities with statement nodes, and how does it keep rule matching unambiguous?
+
+The answer lies in the network’s **strict topological semantics** (see [Internal Representation of facts](#internal-representation-of-facts) and [Internal representation of rules](#internal-representation-of-rules)). In zelph, a _statement node_ is not “just a node with a long label”; it has a **unique structural signature**:
+
+- **Bidirectional** connection to its **subject**
+- **Forward** connection to its **relation type** (a first-class node)
+- **Backward** connection to its **object**
+
+The unification engine is **hard-wired to search only for this pattern** when matching a rule’s conditions. In other words, a variable that ranges over “statements” can only unify with nodes that expose exactly this subject/rel/type/object wiring. Conversely, variables intended to stand for ordinary entities cannot accidentally match a statement node, because ordinary entities **lack** that tri-partite signature.
+
+Two immediate consequences follow:
+
+1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
+2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
+
+These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
 
 ## Example Script
 
@@ -419,15 +446,14 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 ## Project Status
 
-The project is currently in alpha status. Core functionality is operational, but several key areas remain to be addressed:
+The project is currently in **Version 0.9 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
 
-- **Stability improvements**: While the system has successfully processed Wikidata’s 1.4 TB database multiple times, specific scenarios still trigger crashes (see code sections marked with TODO)
-- **Dependency modernization**: The project currently relies on an outdated version of the Boost library. Rather than a direct update, replacing Boost with [Cbeam](https://github.com/acrion/cbeam) represents a more strategic approach. This would also facilitate robust implementation of multithreading support, critical for performance optimization.
+Current focus areas include:
 - **REPL and parser refinement**: The REPL interface and the zelph language parser require architectural improvements.
-- **Enhancement of semantic rules**: The [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph) script offers significant room for enhancement. Note that the node tree published on this site was generated using an earlier version of this script, [wikidata-var.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata-var.zph).
+- **Enhancement of semantic rules**: The [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph) script serves as a base, but the strategy has shifted from generic deductions to targeted contradiction detection. See the [Grant Report](grant-report.md) for details on this approach.
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
-Regarding potential Wikidata integration and the enhancement of `wikidata.zph`, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
+Regarding potential Wikidata integration and the enhancement of semantic scripts, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
 
 ## Building zelph
 

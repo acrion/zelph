@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -45,8 +45,20 @@ class ReadAsync::Impl
 public:
     Impl(std::filesystem::path file_name, size_t sufficient_size)
         : _sufficient_size(sufficient_size)
-        , _t(std::thread(&Impl::read_thread, this, file_name))
     {
+        std::ifstream file(file_name, std::ifstream::ate | std::ifstream::binary);
+        if (file.is_open())
+        {
+            _total_size = file.tellg();
+            file.close();
+            _t = std::thread(&Impl::read_thread, this, file_name);
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lck(_mtx);
+            _error_text = std::string("Could not open file '") + file_name.string() + "' to get size";
+            _EOF        = true;
+        }
     }
 
     ~Impl()
@@ -55,16 +67,23 @@ public:
     }
 
     void read_thread(std::filesystem::path file_name);
-    void put_line(const Entry& entry);
+    void put_line(Entry entry);
 
     size_t                  _sufficient_size;
     std::thread             _t;
     std::queue<Entry>       _lines;
-    std::atomic<bool>       _EOF{false};
+    bool                    _EOF{false};
     std::string             _error_text;
-    std::mutex              _mtx, _mtx2;
-    std::condition_variable _cv, _cv2;
+    std::mutex              _mtx;
+    std::condition_variable _cv_not_empty;
+    std::condition_variable _cv_not_full;
+    std::streamsize         _total_size{0};
 };
+
+std::streamsize ReadAsync::get_total_size() const
+{
+    return _pImpl->_total_size;
+}
 
 ReadAsync::ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size)
     : _pImpl(new Impl(file_name, sufficient_size))
@@ -85,72 +104,63 @@ std::string ReadAsync::error_text() const
 bool ReadAsync::get_line(std::wstring& line, std::streamoff& streampos) const
 {
     std::unique_lock<std::mutex> lock(_pImpl->_mtx);
-    _pImpl->_cv.wait(lock, [&]
-                     { return _pImpl->_lines.size() > 0 || _pImpl->_EOF; });
+    _pImpl->_cv_not_empty.wait(lock, [&]
+                               { return !_pImpl->_lines.empty() || _pImpl->_EOF; });
 
-    if (_pImpl->_lines.size() == 0)
-    {
+    if (_pImpl->_lines.empty())
         return false;
-    }
-    line      = _pImpl->_lines.front()._line;
-    streampos = _pImpl->_lines.front()._streampos;
-    std::lock_guard<std::mutex> lck(_pImpl->_mtx2);
+
+    Entry e = std::move(_pImpl->_lines.front());
     _pImpl->_lines.pop();
-    _pImpl->_cv2.notify_one();
+
+    lock.unlock();
+    _pImpl->_cv_not_full.notify_one();
+
+    line      = std::move(e._line);
+    streampos = e._streampos;
     return true;
 }
 
-void ReadAsync::Impl::put_line(const Entry& entry)
+void ReadAsync::Impl::put_line(Entry entry)
 {
-    bool done = false;
+    std::unique_lock<std::mutex> lock(_mtx);
+    _cv_not_full.wait(lock, [&]
+                      { return _lines.size() < _sufficient_size || _EOF; });
 
-    do
-    {
-        {
-            std::lock_guard<std::mutex> lck(_mtx);
+    if (_EOF) return;
 
-            if (_lines.size() < _sufficient_size)
-            {
-                _lines.push(entry);
-                done = true;
-            }
-        }
-
-        if (!done)
-        {
-            std::unique_lock<std::mutex> lock(_mtx2);
-            _cv2.wait(lock, [&]
-                      { return _lines.size() < _sufficient_size; });
-        }
-    } while (!done);
-
-    _cv.notify_one();
+    _lines.push(std::move(entry));
+    lock.unlock();
+    _cv_not_empty.notify_one();
 }
 
 void ReadAsync::Impl::read_thread(std::filesystem::path file_name)
 {
-    std::wifstream stream(file_name.string());
-
+    std::wifstream stream(file_name);
     if (stream.fail())
     {
         std::lock_guard<std::mutex> lck(_mtx);
         _error_text = std::string("Could not open file '") + file_name.string() + "'";
         _EOF        = true;
-        _cv.notify_one();
+        _cv_not_empty.notify_all();
+        _cv_not_full.notify_all();
         return;
     }
 
-    // ReSharper disable once CppDFAUnreadVariable
+    stream.rdbuf()->pubsetbuf(nullptr, 1024 * 1024);
+
     std::streamoff streampos = 0;
 
     for (std::wstring line; std::getline(stream, line);)
     {
-        put_line({line, streampos});
-        // ReSharper disable once CppDFAUnusedValue
+        put_line(Entry{std::move(line), streampos});
         streampos = stream.tellg();
     }
 
-    std::lock_guard<std::mutex> lck(_mtx);
-    _EOF = true;
-    _cv.notify_one();
+    {
+        std::lock_guard<std::mutex> lck(_mtx);
+        _EOF = true;
+    }
+    _cv_not_empty.notify_all();
+    _cv_not_full.notify_all();
 }

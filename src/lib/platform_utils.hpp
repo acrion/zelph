@@ -25,31 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include <zelph_export.h>
-
-#include <map>
-#include <string>
+#include <cstddef>
 
 namespace zelph
 {
-    namespace console
+    namespace platform
     {
-        class ZELPH_EXPORT Interactive
-        {
-        public:
-            Interactive();
-            ~Interactive();
-            void               import_file(const std::wstring& file) const;
-            void               process(std::wstring line) const;
-            void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
-            static std::string get_version();
-
-            Interactive(const Interactive&)            = delete;
-            Interactive& operator=(const Interactive&) = delete;
-
-        private:
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
+        size_t get_process_memory_usage();
     }
 }

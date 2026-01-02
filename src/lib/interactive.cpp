@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -26,15 +26,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "reasoning.hpp"
 #include "stopwatch.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 #include "wikidata.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/bimap.hpp>
 #include <boost/tokenizer.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT
@@ -49,7 +51,7 @@ using boost::tokenizer;
 class console::Interactive::Impl
 {
 public:
-    Impl()
+    Impl(Interactive* enclosing)
         : _n(new network::Reasoning([](const std::wstring& str, const bool)
                                     {
 #ifdef _WIN32
@@ -58,6 +60,7 @@ public:
                                         std::clog << network::utils::str(str) << std::endl;
 #endif
                                     }))
+        , _interactive(enclosing)
     {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_U16TEXT);
@@ -66,21 +69,26 @@ public:
         _n->set_lang("zelph");
     }
 
+    void          import_file(const std::wstring& file) const;
     void          process_command(const std::vector<std::wstring>& cmd);
     network::Node process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
     network::Node process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
     void          process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
     static bool   is_var(std::wstring token);
+    void          list_predicate_usage();
 
     std::shared_ptr<Wikidata> _wikidata;
     network::Reasoning* const _n;
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
+
+private:
+    const Interactive* _interactive;
 };
 
 console::Interactive::Interactive()
-    : _pImpl(new Impl)
+    : _pImpl(new Impl(this))
 {
     _pImpl->_n->set_name(_pImpl->_n->core.RelationTypeCategory, L"->", "zelph");
     _pImpl->_n->set_name(_pImpl->_n->core.Causes, L"=>", "zelph");
@@ -93,6 +101,19 @@ console::Interactive::Interactive()
 console::Interactive::~Interactive()
 {
     delete _pImpl;
+}
+
+void console::Interactive::Impl::import_file(const std::wstring& file) const
+{
+    std::clog << "Importing file " << network::utils::str(file) << "..." << std::endl;
+    std::wifstream stream(network::utils::str(file));
+
+    if (stream.fail()) throw std::runtime_error("Could not open file '" + network::utils::str(file) + "'");
+
+    for (std::wstring line; std::getline(stream, line);)
+    {
+        _interactive->process(line);
+    }
 }
 
 std::string console::Interactive::get_version()
@@ -188,17 +209,20 @@ void console::Interactive::process(std::wstring line) const
 
                 if (contains_variable)
                 {
-                    _pImpl->_n->apply_rule(0, fact, 0); // query
+                    _pImpl->_n->apply_rule(0, fact); // query
                 }
             }
-
-            run(true, false);
         }
     }
     catch (std::exception& ex)
     {
         throw std::runtime_error("Error in line \"" + network::utils::str(line) + "\": " + ex.what());
     }
+}
+
+void console::Interactive::import_file(const std::wstring& file) const
+{
+    _pImpl->import_file(file);
 }
 
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
@@ -247,8 +271,26 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         for (const auto& lang : _n->get_languages())
         {
+            std::wstring name = _n->get_name(nd, lang, false);
             std::clog << "Name of node in language '" << lang << "': '"
-                      << network::utils::str(_n->get_name(nd, lang, false)) << "'" << std::endl;
+                      << network::utils::str(name) << "'" << std::endl;
+
+            if (lang == "wikidata" && !name.empty())
+            {
+                std::string url = "https://www.wikidata.org/wiki/";
+
+                if (name[0] == L'P')
+                {
+                    url += "Property:"; // Wikidata properties have a special URL format.
+                }
+                url += network::utils::str(name);
+                const std::string OSC_START = "\033]8;;";
+                const char        OSC_SEP   = '\a'; // Use the BEL character as a separator
+                const std::string OSC_END   = "\033]8;;\a";
+
+                // We display the URL as the link text itself.
+                std::clog << "Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
+            }
         }
     }
     else if (cmd[0] == L".nodes")
@@ -306,18 +348,30 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else if (cmd[0] == L".run")
     {
-        _n->run(true, false);
+        _n->run(true, false, false);
+        _n->print(L"> Ready.", true);
+    }
+    else if (cmd[0] == L".run-once")
+    {
+        _n->run(true, false, true);
         _n->print(L"> Ready.", true);
     }
     else if (cmd[0] == L".run-md")
     {
-        network::StopWatch watch;
-        _n->run(true, true);
-        _n->print(L" Time needed: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+        if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
+        std::string subdir = network::utils::str(cmd[1]);
+        _n->set_markdown_subdir(subdir);
+        _n->print(L"> Running with markdown export...", true);
+        if (_wikidata)
+        {
+            _wikidata->set_logging(false);
+        }
+        _n->run(false, true, false);
     }
     else if (cmd[0] == L".wikidata")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .wikidata: Missing json file name");
+        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata: Unknown argument after json file name");
 
         std::ofstream log("wikidata.log");
         _n->set_print([&](const std::wstring& str, bool o)
@@ -326,38 +380,174 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
           if (o)
           {
-            std::wcout << str << std::endl;
+#ifdef _WIN32
+              std::wcout << str << std::endl;
+#else
+            std::clog << network::utils::str(str) << std::endl;
+#endif
           } });
 
         if (cmd.size() == 2)
         {
             network::StopWatch watch;
             watch.start();
-            // _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            // _wikidata->import_all();
-
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
             _wikidata->generate_index();
-            _wikidata->traverse();
-            _n->print(L" Time needed for importing: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
-        }
-        else if (cmd.size() == 3)
-        {
-            const std::wstring& start_entry = cmd[2];
-            _n->print(L"start entry='" + start_entry + L"'", true);
-            _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            _wikidata->generate_index();
-            _wikidata->traverse(start_entry);
+            _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
+            watch.stop();
+            _n->print(L" Time needed for importing: " + network::utils::wstr(watch.format()), true);
         }
         else
         {
-            throw std::runtime_error("Command .wikidata: You need to specify the json file to import and optionally add the maximum link distance and the start entry to be imported");
+            throw std::runtime_error("Command .wikidata: You need to specify one argument: the json file to import");
         }
+    }
+    else if (cmd[0] == L".wikidata-constraints")
+    {
+        if (cmd.size() < 3) throw std::runtime_error("Command .wikidata-constraints: Missing json file name or directory name");
+        if (cmd.size() > 3) throw std::runtime_error("Command .wikidata-constraints: Unknown argument after directory name");
+
+        network::StopWatch watch;
+        watch.start();
+        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
+        _wikidata->generate_index();
+        std::string dir = network::utils::str(cmd[2]);
+        _wikidata->import_all(false, dir);
+        _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+    }
+    else if (cmd[0] == L".list-rules")
+    {
+        // Get all nodes that are subjects of a core.Causes relation
+        network::adjacency_set rule_nodes = _n->get_rules();
+        if (rule_nodes.empty())
+        {
+            _n->print(L"No rules found.", true);
+            return;
+        }
+
+        _n->print(L"Listing all rules:", true);
+        _n->print(L"------------------------", true);
+
+        for (const auto& rule : rule_nodes)
+        {
+            std::wstring output;
+            // Format the rule for printing
+            _n->format_fact(output, _n->lang(), rule);
+            _n->print(output, true);
+        }
+        _n->print(L"------------------------", true);
+    }
+    else if (cmd[0] == L".list-predicate-usage")
+    {
+        list_predicate_usage();
+    }
+    else if (cmd[0] == L".wikidata-index")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-index: Missing json file name");
+        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata-index: Unknown argument after json file name");
+
+        _n->set_print([&](const std::wstring& str, bool o)
+                      {
+          if (o)
+          {
+#ifdef _WIN32
+              std::wcout << str << std::endl;
+#else
+            std::clog << network::utils::str(str) << std::endl;
+#endif
+          } });
+
+        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
+        _wikidata->generate_index();
+    }
+    else if (cmd[0] == L".wikidata-export")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-export: Missing Wikidata ID (e.g., P31 or Q42)");
+        if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata-index <file> first.");
+
+        std::wstring wid = cmd[1];
+        std::string  id  = network::utils::str(wid);
+
+        _wikidata->export_entry(wid);
+
+        _n->print(L"Exported '" + wid + L"' to '" + network::utils::wstr(id + ".json") + L"'", true);
+    }
+    else if (cmd[0] == L".remove-rules")
+    {
+        _n->remove_rules();
+        _n->print(L"All rules removed.", true);
+    }
+    else if (cmd[0] == L".load")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing script path");
+        std::wstring path = cmd[1];
+        if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .load: Script must end with .zph");
+        import_file(path);
     }
     else
     {
         throw std::runtime_error(network::utils::str(L"Unknown command " + cmd[0]));
     }
+}
+
+// New method implementation
+void console::Interactive::Impl::list_predicate_usage()
+{
+    // Map to store predicate node and its usage count
+    std::map<network::Node, size_t> predicate_usage_counts;
+
+    // Iterate through all nodes in the network
+    for (const auto& node_id : _n->get_all_nodes())
+    {
+        // Check if the node is a relation type (predicate)
+        // A node is a relation type if it has a core.IsA relation to core.RelationTypeCategory
+        if (_n->check_fact(node_id, _n->core.IsA, {_n->core.RelationTypeCategory}).is_correct())
+        {
+            // Get all facts where this node is used as a relation type
+            // This counts how many facts use this predicate
+            const auto& facts_using_predicate = _n->get_left(node_id);
+            predicate_usage_counts[node_id]   = facts_using_predicate.size();
+        }
+    }
+
+    // Convert map to vector for sorting
+    std::vector<std::pair<network::Node, size_t>> sorted_predicates(predicate_usage_counts.begin(), predicate_usage_counts.end());
+
+    // Sort the predicates by usage count in descending order
+    std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b)
+              {
+                  return a.second > b.second; // Sort by count, descending
+              });
+
+    // Determine if wikidata language is available for three-column output
+    bool has_wikidata_lang = _n->has_language("wikidata");
+
+    // Output the results
+    _n->print(L"Predicate Usage:", true);
+    _n->print(L"------------------------", true);
+
+    for (const auto& entry : sorted_predicates)
+    {
+        std::wstring predicate_name = _n->get_name(entry.first, "", true); // Current language, with fallback
+        std::wstring line_output;
+
+        if (has_wikidata_lang && _n->get_lang() != "wikidata")
+        {
+            // Three columns: current lang name \t wikidata name \t count
+            // For the first column, `lang` is an empty string to use the current language.
+            // For the second column (wikidata name), `lang` is "wikidata" and `fallback` is `false`.
+            std::wstring wikidata_name = _n->get_name(entry.first, "wikidata", false);
+            line_output                = predicate_name + L"\t" + wikidata_name + L"\t" + std::to_wstring(entry.second);
+        }
+        else
+        {
+            // Two columns: current lang name \t count
+            // `lang` is an empty string to use the current language, `fallback` is `true`.
+            line_output = predicate_name + L"\t" + std::to_wstring(entry.second);
+        }
+        _n->print(line_output, true);
+    }
+    _n->print(L"------------------------", true);
 }
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const
@@ -570,7 +760,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
         combined = std::move(temp);
     }
 
-    std::unordered_set<network::Node> objects;
+    network::adjacency_set objects;
     for (size_t i = 2; i < combined.size(); ++i)
         objects.insert(combined[i]);
 
@@ -602,9 +792,9 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
     }
 
     if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
-    if (deductions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
+    if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + network::utils::str(line));
 
-    std::unordered_set<network::Node> condition_nodes;
+    network::adjacency_set condition_nodes;
     for (const auto& condition : conditions)
     {
         condition_nodes.insert(process_fact(condition, variables));
@@ -614,7 +804,7 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
                                                ? *condition_nodes.begin()
                                                : _n->condition(_n->core.And, condition_nodes);
 
-    std::unordered_set<network::Node> deduction_list;
+    network::adjacency_set deduction_list;
     for (const auto& deduction : deductions)
     {
         deduction_list.insert(process_fact(deduction, variables));
@@ -623,9 +813,9 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
     return _n->fact(combined_condition, _n->core.Causes, deduction_list);
 }
 
-void console::Interactive::run(const bool print_deductions, const bool generate_markdown) const
+void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const
 {
-    _pImpl->_n->run(print_deductions, generate_markdown);
+    _pImpl->_n->run(print_deductions, generate_markdown, suppress_repetition);
 }
 
 bool console::Interactive::Impl::is_var(std::wstring token)

@@ -25,31 +25,28 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include <zelph_export.h>
+#include <ankerl/unordered_dense.h>
 
+#include <cstdint>
 #include <map>
-#include <string>
 
 namespace zelph
 {
-    namespace console
+    namespace network
     {
-        class ZELPH_EXPORT Interactive
-        {
-        public:
-            Interactive();
-            ~Interactive();
-            void               import_file(const std::wstring& file) const;
-            void               process(std::wstring line) const;
-            void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
-            static std::string get_version();
+        using Node          = uint64_t;
+        using Variables     = std::map<Node, Node>;
+        using adjacency_set = ankerl::unordered_dense::set<Node>;
 
-            Interactive(const Interactive&)            = delete;
-            Interactive& operator=(const Interactive&) = delete;
+        static_assert(sizeof(Node) == 8,
+                      "Node must be exactly 64 bits (8 bytes) in size. This implementation uses "
+                      "bit-shift operations and other bit-specific logic that requires exactly "
+                      "64 bits. Please modify the implementation for different bit sizes.");
 
-        private:
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
+        static_assert(sizeof(Node) == sizeof(std::size_t),
+                      "Node and size_t must have the same size. "
+                      "This implementation requires a 64-bit architecture where size_t is also 64 bits. "
+                      "Compilation has been halted to prevent undefined behavior.");
+
     }
 }

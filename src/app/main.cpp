@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -24,7 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
-#include "utils.hpp"
+#include "string_utils.hpp"
 
 #include <codecvt>
 #include <fstream>
@@ -41,16 +41,7 @@ int main(int argc, char** argv)
 
         for (int i = 1; i < argc; ++i)
         {
-            std::wcout << L"Importing file " << zelph::network::utils::wstr(argv[i]) << L"..." << std::endl;
-            std::wifstream stream(argv[i]);
-
-            if (stream.fail()) throw std::runtime_error(std::string("Could not open file '") + argv[i] + "'");
-
-            for (std::wstring line; std::getline(stream, line);)
-            {
-                interactive.process(line);
-            }
-            interactive.run(true, false);
+            interactive.import_file(zelph::network::utils::wstr(argv[i]));
         }
 
         if (argc > 1) std::wcout << L"Ready." << std::endl;

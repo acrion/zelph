@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025 acrion innovations GmbH
+Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
 
 This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
@@ -25,17 +25,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 #include "zelph_impl.hpp"
+
 #include <boost/algorithm/string.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
 
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.5.3";
+    return "0.9";
 }
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
@@ -58,50 +62,86 @@ Node Zelph::var() const
     return _pImpl->var();
 }
 
-void Zelph::set_name(const Node node, const std::wstring& name, std::string lang) const
+void Zelph::set_lang(const std::string& lang)
+{
+    if (lang != _lang)
+    {
+        _lang = lang;
+
+        const std::vector<Node> cores = {
+            core.RelationTypeCategory,
+            core.Causes,
+            core.And,
+            core.IsA,
+            core.Unequal,
+            core.Contradiction};
+
+        for (Node c : cores)
+        {
+            if (!has_name(c, lang))
+            {
+                std::wstring name = get_name(c, "zelph", false);
+                if (!name.empty())
+                {
+                    set_name(c, name, lang);
+                }
+            }
+        }
+    }
+}
+
+void Zelph::set_name(const Node node, const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
 #if _DEBUG
     // std::wcout << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
 #endif
 
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_node_of_name);
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
     _pImpl->_node_of_name[lang][name] = node;
     _pImpl->_name_of_node[lang][node] = name;
 }
 
-Node Zelph::node(const std::wstring& name, std::string lang) const
+Node Zelph::node(const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
-
+    if (name.empty())
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
-        auto&                       node_of_name = _pImpl->_node_of_name[lang];
-        auto                        it           = node_of_name.find(name);
-        if (it != node_of_name.end())
-        {
-            return it->second;
-        }
+        throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
-    Node new_node = _pImpl->create();
-    set_name(new_node, name, lang);
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+
+    auto& node_of_name = _pImpl->_node_of_name[lang];
+    auto  it           = node_of_name.find(name);
+    if (it != node_of_name.end())
+    {
+        return it->second;
+    }
+
+    Node                        new_node = _pImpl->create();
+    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+    node_of_name[name]                    = new_node;
+    _pImpl->_name_of_node[lang][new_node] = name;
+
     return new_node;
 }
 
 bool Zelph::has_name(const Node node, const std::string& lang) const
 {
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+
     auto& name_of_node = _pImpl->_name_of_node[lang];
     auto  it           = name_of_node.find(node);
     return it != name_of_node.end();
 }
 
-std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback) const
+std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback, const bool process_node) const
 {
     if (lang.empty()) lang = _lang;
 
-    if (_process_node)
+    if (_process_node && process_node)
     {
         _process_node(node, lang);
     }
@@ -145,7 +185,7 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     if (fallback)
     {
         std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-        for (auto l : _pImpl->_name_of_node)
+        for (const auto& l : _pImpl->_name_of_node)
         {
             auto it2 = l.second.find(node);
             if (it2 != l.second.end())
@@ -156,19 +196,36 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     return L""; // return empty string if this node has no name (which can happen for internally generated nodes, see Interactive::Impl::process_fact and Interactive::Impl::process_rule)
 }
 
-std::map<Node, std::wstring> Zelph::get_nodes_in_language(const std::string& lang) const
+name_of_node_map Zelph::get_nodes_in_language(const std::string& lang) const
 {
-    return _pImpl->_name_of_node[lang];
+    std::lock_guard lock(_pImpl->_mtx_name_of_node);
+
+    const auto& outer = _pImpl->_name_of_node;
+    auto        it    = outer.find(lang);
+    if (it == outer.end())
+    {
+        return name_of_node_map{};
+    }
+    return it->second;
 }
+
 std::vector<std::string> Zelph::get_languages() const
 {
+    std::lock_guard          lock(_pImpl->_mtx_node_of_name);
     std::vector<std::string> result;
 
-    for (const auto& outer_pair : _pImpl->_node_of_name) {
+    for (const auto& outer_pair : _pImpl->_node_of_name)
+    {
         result.push_back(outer_pair.first);
     }
 
     return result;
+}
+
+bool Zelph::has_language(const std::string& language) const
+{
+    const auto& languages = get_languages();
+    return std::find(languages.begin(), languages.end(), language) != languages.end();
 }
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num)
@@ -221,9 +278,9 @@ Node Zelph::get_node(const std::wstring& name, std::string lang) const
     }
 }
 
-std::unordered_set<Node> Zelph::get_sources(const Node relationType, const Node target, const bool exclude_vars) const
+adjacency_set Zelph::get_sources(const Node relationType, const Node target, const bool exclude_vars) const
 {
-    std::unordered_set<Node> sources;
+    adjacency_set sources;
 
     for (Node relation : _pImpl->get_right(target))
         if (_pImpl->get_right(relation).count(relationType) == 1)
@@ -234,9 +291,9 @@ std::unordered_set<Node> Zelph::get_sources(const Node relationType, const Node 
     return sources;
 }
 
-std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, const Node target) const
+adjacency_set Zelph::filter(const adjacency_set& source, const Node target) const
 {
-    std::unordered_set<Node> result;
+    adjacency_set result;
 
     for (Node nd : source)
     {
@@ -249,15 +306,15 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
-std::unordered_set<Node> Zelph::filter(const Node fact, const Node relationType, const Node target) const
+adjacency_set Zelph::filter(const Node fact, const Node relationType, const Node target) const
 {
-    std::unordered_set<Node> source     = _pImpl->get_right(fact);
-    std::unordered_set<Node> left_nodes = _pImpl->get_left(fact);
-    std::unordered_set<Node> result;
+    adjacency_set source     = _pImpl->get_right(fact);
+    adjacency_set left_nodes = _pImpl->get_left(fact);
+    adjacency_set result;
 
     for (Node nd : source)
     {
-        std::unordered_set<Node> possible_relations = _pImpl->get_right(nd);
+        adjacency_set possible_relations = _pImpl->get_right(nd);
         for (Node relation : filter(possible_relations, relationType))
         {
             if (_pImpl->get_left(relation).count(target) == 1
@@ -271,9 +328,9 @@ std::unordered_set<Node> Zelph::filter(const Node fact, const Node relationType,
     return result;
 }
 
-std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, const std::function<bool(const Node nd)>& f)
+adjacency_set Zelph::filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f)
 {
-    std::unordered_set<Node> result;
+    adjacency_set result;
 
     for (const Node nd : source)
     {
@@ -283,7 +340,17 @@ std::unordered_set<Node> Zelph::filter(const std::unordered_set<Node>& source, c
     return result;
 }
 
-Answer Zelph::check_fact(const Node source, const Node relationType, const std::unordered_set<Node>& targets)
+adjacency_set Zelph::get_left(const Node b)
+{
+    return _pImpl->get_left(b);
+}
+
+adjacency_set Zelph::get_right(const Node b)
+{
+    return _pImpl->get_right(b);
+}
+
+Answer Zelph::check_fact(const Node source, const Node relationType, const adjacency_set& targets)
 {
     bool known = false;
 
@@ -291,8 +358,8 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const std::
 
     if (_pImpl->exists(relation))
     {
-        const std::unordered_set<Node>& connectedFromRelationType = _pImpl->get_right(relation);
-        const std::unordered_set<Node>& connectedToRelationType   = _pImpl->get_left(relation);
+        const adjacency_set& connectedFromRelationType = _pImpl->get_right(relation);
+        const adjacency_set& connectedToRelationType   = _pImpl->get_left(relation);
 
         known = connectedFromRelationType.count(source) == 1
              && connectedToRelationType.count(source) == 1 // source must be connected with and from <--> relation (i.e. bidirectional, to distinguish it from targets)
@@ -350,7 +417,7 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const std::
     }
 }
 
-Node Zelph::fact(const Node source, const Node relationType, const std::unordered_set<Node>& targets, const long double probability)
+Node Zelph::fact(const Node source, const Node relationType, const adjacency_set& targets, const long double probability)
 {
     const Answer answer = check_fact(source, relationType, targets);
 
@@ -381,7 +448,7 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
 
         if (_pImpl->exists(answer.relation()))
         {
-            // check_fact can return !answer.is_known() though answer.relation exists, which should not happen. Indicates corrupt database or hash collision.
+            // check_fact returns !answer.is_known() though answer.relation exists, which must not happen. Indicates corrupt database or hash collision.
             assert(false);
         }
         else
@@ -400,8 +467,8 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
                 // or
                 // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                const std::wstring name_subject_object = get_name(source, _lang, true);
-                const std::wstring name_relationType   = get_name(relationType, _lang, true);
+                const std::wstring name_subject_object = get_name(source, _lang, true, false);
+                const std::wstring name_relationType   = get_name(relationType, _lang, true, false);
 
                 throw std::runtime_error("fact(): facts with same subject and object are not supported: " + utils::str(name_subject_object) + " " + utils::str(name_relationType) + " " + utils::str(name_subject_object));
             }
@@ -414,7 +481,7 @@ Node Zelph::fact(const Node source, const Node relationType, const std::unordere
     return answer.relation();
 }
 
-Node Zelph::condition(Node op, const std::unordered_set<Node>& conditions) const
+Node Zelph::condition(Node op, const adjacency_set& conditions) const
 {
     Node relation = _pImpl->create_hash(op, conditions);
     _pImpl->create(relation);
@@ -424,7 +491,7 @@ Node Zelph::condition(Node op, const std::unordered_set<Node>& conditions) const
     return relation;
 }
 
-Node Zelph::parse_fact(Node rule, std::unordered_set<Node>& deductions, Node parent) const
+Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
 {
     Node subject = 0; // 0 means failure
     deductions.clear();
@@ -479,8 +546,60 @@ Node Zelph::parse_relation(const Node rule)
     return relation;
 }
 
+// If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
+// for nodes that have both a name in the requested language and a Wikidata ID. This allows Markdown::convert_to_md to parse
+// and create appropriate links using the ID for the URL and the name for display text.
+std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang) const
+{
+    const bool is_wikidata_mode = has_language("wikidata") && lang != "wikidata";
+    if (!is_wikidata_mode)
+    {
+        return get_name(node, lang, true);
+    }
+
+    std::wstring wikidata_name = get_name(node, "wikidata", false);
+
+    std::wstring name;
+    if (lang == "zelph")
+    {
+        // In Wikidata mode, the output of get_formatted_name may be used by the Markdown export (command `.run-md`).
+        // In this case, we want to use a natural language as the primary language.
+        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for the Markdown export.
+        // So in case lang is not a natural language, we fall back to English.
+        name = get_name(node, "en", false);
+    }
+
+    if (name.empty() || name == wikidata_name)
+    {
+        // either lang != "zelph", or there is no English name of `node`, or its English nam is identical with the Wikidata name
+        name = get_name(node, lang, false);
+    }
+
+    if (name.empty())
+    {
+        if (wikidata_name.empty())
+        {
+            return get_name(node, lang, true); // Fallback, no prepend
+        }
+        else
+        {
+            return wikidata_name; // No prepend since lang name was empty
+        }
+    }
+    else
+    {
+        if (!wikidata_name.empty() && wikidata_name != name)
+        {
+            name = wikidata_name + L" - " + name;
+        }
+        return name;
+    }
+}
+
 void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
 {
+    // Formats a fact into a string representation.
+
     utils::IncDec incDec(_pImpl->_format_fact_level);
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
 
@@ -490,8 +609,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
-    std::unordered_set<Node> objects;
-    Node                     subject = parse_fact(fact, objects, parent);
+    adjacency_set objects;
+    Node          subject = parse_fact(fact, objects, parent);
 
     bool is_condition = _pImpl->get_right(fact).count(core.And) == 1; // if fact is a condition node (having relation type core.And), there is no subject
     if (subject == 0 && !is_condition)
@@ -499,14 +618,33 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         result = L"??";
         return;
     }
-
     history->insert(fact);
     std::wstring subject_name, relation_name;
 
     if (!is_condition || subject)
     {
+#if _DEBUG
+        Node subject_before = subject;
+#endif
         subject      = utils::get(variables, subject);
-        subject_name = subject ? get_name(subject, lang, true) : (is_condition ? L"" : L"?");
+        subject_name = subject ? get_formatted_name(subject, lang) : (is_condition ? L"" : L"?");
+#if _DEBUG
+        if (subject_name == L"?")
+        {
+            std::clog << "[DEBUG format_fact] subject_name='?' for fact=" << fact
+                      << ", subject_before_subst=" << subject_before
+                      << ", is_var=" << _pImpl->is_var(subject_before)
+                      << ", subject_after_subst=" << subject
+                      << ", variables.size()=" << variables.size();
+
+            std::clog << ", variables={";
+            for (const auto& v : variables)
+            {
+                std::clog << v.first << "->" << v.second << " ";
+            }
+            std::clog << "}" << std::endl;
+        }
+#endif
         if (subject_name.empty())
         {
             format_fact(subject_name, lang, subject, variables, fact, history);
@@ -515,7 +653,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
         Node relation = parse_relation(fact);
         relation      = utils::get(variables, relation);
-        relation_name = relation ? get_name(relation, lang, true) : L"?";
+        relation_name = relation ? get_formatted_name(relation, lang) : L"?";
         if (relation_name.empty())
         {
             format_fact(relation_name, lang, relation, variables, fact, history);
@@ -527,10 +665,15 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     for (Node object : objects)
     {
         object = utils::get(variables, object);
-        if (!objects_name.empty()) objects_name += get_name(core.And, lang, true) + L" ";
-        std::wstring object_name = object ? get_name(object, lang, true) : L"?";
+        if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
+        std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
         if (object_name.empty())
         {
+#ifdef _DEBUG
+            std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
+                      << ", is_hash=" << _pImpl->is_hash(object)
+                      << ", will recurse" << std::endl;
+#endif
             format_fact(object_name, lang, object, variables, fact, history);
             object_name = L"(" + object_name + L")";
         }
@@ -545,12 +688,70 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     boost::trim(result);
 }
 
+Node Zelph::count() const
+{
+    return _pImpl->count();
+}
+
 NodeView Zelph::get_all_nodes() const
 {
     return NodeView(_pImpl->_name_of_node);
 }
 
-void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std::unordered_set<Node>& conditions, const std::unordered_set<Node>& deductions, std::ofstream& dot, int max_depth)
+// Returns all nodes that are subjects of a core.Causes relation
+adjacency_set Zelph::get_rules() const
+{
+    const adjacency_set& rule_candidates = _pImpl->get_left(core.Causes);
+
+    adjacency_set rules;
+
+    for (Node rule_candidate : rule_candidates)
+    {
+        // We filter the rule candidates in the same way as Reasoning::apply_rule() does it.
+        // Note that a rule candidate with empty deductions is interpreted as a question, see Reasoning::evaluate()
+        if (rule_candidate)
+        {
+            adjacency_set deductions;
+            Node          condition = parse_fact(rule_candidate, deductions);
+            if (condition && condition != core.Causes && !deductions.empty())
+            {
+                rules.insert(rule_candidate);
+            }
+        }
+    }
+
+    return rules;
+}
+
+void Zelph::remove_rules()
+{
+    adjacency_set rules = get_rules();
+    for (Node rule : rules)
+    {
+        _pImpl->remove(rule);
+        // Clean up names
+        for (auto& lang_map : _pImpl->_name_of_node)
+        {
+            lang_map.second.erase(rule);
+        }
+        for (auto& lang_map : _pImpl->_node_of_name)
+        {
+            for (auto it = lang_map.second.begin(); it != lang_map.second.end();)
+            {
+                if (it->second == rule)
+                {
+                    it = lang_map.second.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+    }
+}
+
+void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
 {
     if (--max_depth > 0 && touched.count(current) == 0)
     {
@@ -577,16 +778,34 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
             {
                 touched.insert(hash);
                 std::string left_name = get_name_hex(left);
-                dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
 
-                if (_pImpl->find_left(left)->second.count(current) == 1)
+                std::string key;
+                bool        is_bidirectional = _pImpl->has_left_edge(left, current);
+
+                if (is_bidirectional)
                 {
-                    dot << R"( [dir="both"])";
+                    if (left_name < current_name)
+                        key = left_name + "<->" + current_name;
+                    else
+                        key = current_name + "<->" + left_name;
+                }
+                else
+                {
+                    key = left_name + "->" + current_name;
                 }
 
-                dot << ";" << std::endl;
+                if (written_edges.find(key) == written_edges.end())
+                {
+                    written_edges.insert(key);
+                    dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
+                    if (is_bidirectional)
+                    {
+                        dot << R"( [dir="both"])";
+                    }
+                    dot << ";" << std::endl;
+                }
             }
-            add_nodes(left, touched, conditions, deductions, dot, max_depth);
+            add_nodes(left, touched, conditions, deductions, dot, max_depth, written_edges);
         }
 
         for (const Node& right : _pImpl->get_right(current))
@@ -596,28 +815,46 @@ void Zelph::add_nodes(Node current, std::unordered_set<Node>& touched, const std
             {
                 touched.insert(hash);
                 std::string right_name = get_name_hex(right);
-                dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
 
-                if (_pImpl->find_right(right)->second.count(current) == 1)
+                std::string key;
+                bool        is_bidirectional = _pImpl->has_left_edge(right, current);
+
+                if (is_bidirectional)
                 {
-                    dot << R"( [dir="both"])";
+                    if (current_name < right_name)
+                        key = current_name + "<->" + right_name;
+                    else
+                        key = right_name + "<->" + current_name;
+                }
+                else
+                {
+                    key = current_name + "->" + right_name;
                 }
 
-                dot << ";" << std::endl;
+                if (written_edges.find(key) == written_edges.end())
+                {
+                    written_edges.insert(key);
+                    dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
+                    if (is_bidirectional)
+                    {
+                        dot << R"( [dir="both"])";
+                    }
+                    dot << ";" << std::endl;
+                }
             }
-            add_nodes(right, touched, conditions, deductions, dot, max_depth);
+            add_nodes(right, touched, conditions, deductions, dot, max_depth, written_edges);
         }
     }
 }
 
 void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
 {
-    std::unordered_set<Node> conditions, deductions;
+    adjacency_set conditions, deductions;
 
     for (Node rule : _pImpl->get_left(core.Causes))
     {
-        std::unordered_set<Node> current_deductions;
-        Node                     condition = parse_fact(rule, current_deductions);
+        adjacency_set current_deductions;
+        Node          condition = parse_fact(rule, current_deductions);
 
         if (condition && condition != core.Causes)
         {
@@ -629,12 +866,13 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    std::unordered_set<Node> touched;
-    std::ofstream            dot(file_name, std::ios_base::out);
+    adjacency_set                   touched;
+    std::unordered_set<std::string> written_edges;
+    std::ofstream                   dot(file_name, std::ios_base::out);
 
     dot << "digraph graphname{" << std::endl;
 
-    add_nodes(start, touched, conditions, deductions, dot, max_depth);
+    add_nodes(start, touched, conditions, deductions, dot, max_depth, written_edges);
 
     dot << "}" << std::endl;
 }
@@ -643,4 +881,18 @@ void Zelph::print(const std::wstring& msg, const bool o) const
 {
     std::lock_guard<std::mutex> lock(_pImpl->_mtx_print);
     _print(msg, o);
+}
+
+void Zelph::save_to_file(const std::string& filename)
+{
+    std::ofstream                   ofs(filename, std::ios::binary);
+    boost::archive::binary_oarchive oa(ofs);
+    oa << *_pImpl;
+}
+
+void Zelph::load_from_file(const std::string& filename)
+{
+    std::ifstream                   ifs(filename, std::ios::binary);
+    boost::archive::binary_iarchive ia(ifs);
+    ia >> *_pImpl;
 }

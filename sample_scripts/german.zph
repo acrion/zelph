@@ -36,17 +36,17 @@ X hat den Bestandteil Y, X != Ding            => X ist ein Ding
 X hat den Bestandteil Y, Y != Ding            => X ist ein Ding
 
 erzeugt ist ein ->
-benötigt ist ein ->
+benoetigt ist ein ->
 
-"wird benötigt von" ist Gegenteil von benötigt
+"wird benoetigt von" ist Gegenteil von benoetigt
 "wird erzeugt von" ist Gegenteil von erzeugt
 
-wird benötigt von ist Gegenteil von benötigt
+wird benoetigt von ist Gegenteil von benoetigt
 wird erzeugt von  ist Gegenteil von erzeugt
 
-X erzeugt Energie          => X ist eine Energiequelle
-A hat die Eigenschaft heiß => A erzeugt Wärme
-A erzeugt Sauerstoff       => A hat die Eigenschaft lebendig
+X erzeugt Energie           => X ist eine Energiequelle
+A hat die Eigenschaft heiss => A erzeugt Waerme
+A erzeugt Sauerstoff        => A hat die Eigenschaft lebendig
 
 
 Schimpanse ist ein Affe
@@ -55,14 +55,14 @@ Affe hat die Eigenschaft lebendig
 Schimpanse hat den Bestandteil Hand
 Hand hat den Bestandteil Finger
 
-"Grüne Minze" ist eine Minze
+"Gruene Minze" ist eine Minze
 
 Wasserminze ist eine Minze
 
 Pfefferminze ist eine Minze
 
-Minze ist ein Lippenblütler
+Minze ist ein Lippenbluetler
 
-Katzenminze ist ein Lippenblütler
+Katzenminze ist ein Lippenbluetler
 
-"Grüne Minze" hat die Eigenschaft süßlich
+"Gruene Minze" hat die Eigenschaft suesslich
