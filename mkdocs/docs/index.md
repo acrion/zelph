@@ -144,11 +144,11 @@ graph TD
 
 The directions of the relations are as follows:
 
-| Element        | Example        | Relation Direction |
-|----------------|----------------|--------------------|
-| Subject        | white          | bidirectional      |
-| Object         | black          | backward           |
-| Relation Type  | is opposite of | forward            |
+| Element       | Example        | Relation Direction |
+|---------------|----------------|--------------------|
+| Subject       | white          | bidirectional      |
+| Object        | black          | backward           |
+| Relation Type | is opposite of | forward            |
 
 This semantics is used by zelph in several contexts, such as rule unification. It’s required because zelph doesn’t encode relation types as labels on arrows but rather as equal nodes. This has the advantage of facilitating statements about statements, for example, the statement that a relation is transitive.
 
@@ -446,9 +446,10 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 ## Project Status
 
-The project is currently in **Version 0.9 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
+The project is currently in **Version 0.9.1 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
 
 Current focus areas include:
+
 - **REPL and parser refinement**: The REPL interface and the zelph language parser require architectural improvements.
 - **Enhancement of semantic rules**: The [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph) script serves as a base, but the strategy has shifted from generic deductions to targeted contradiction detection. See the [Grant Report](grant-report.md) for details on this approach.
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
@@ -488,13 +489,13 @@ cmake --build build
 Test your installation by running the CLI:
 
 ```bash
-./build/bin/zelph_app
+./build/bin/zelph
 ```
 
 or
 
 ```bash
-./build/bin/zelph_app sample_scripts/english.zph
+./build/bin/zelph sample_scripts/english.zph
 ```
 
 ## Licensing

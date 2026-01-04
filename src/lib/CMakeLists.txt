@@ -86,7 +86,7 @@ FetchContent_MakeAvailable(unordered_dense)
 #
 #include(${acrion_cmake_SOURCE_DIR}/set-cpp-version.cmake)
 
-add_library(zelph SHARED
+add_library(zelph_lib SHARED
     # zelph::network
     answer.cpp
     answer.hpp
@@ -135,20 +135,23 @@ add_library(zelph SHARED
     ../boost/serialization/src/text_oarchive.cpp
 )
 
-target_link_libraries(zelph PRIVATE unordered_dense::unordered_dense)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense)
 
 # Enable IPO/LTO if available
 include(CheckIPOSupported)
 check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_OUTPUT)
 if (IPO_SUPPORTED)
     message(STATUS "IPO/LTO enabled")
-    set_property(TARGET zelph PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET zelph_lib PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 else ()
     message(STATUS "IPO/LTO not supported: ${IPO_OUTPUT}")
 endif ()
 
-generate_export_header(zelph)
-target_include_directories(zelph PUBLIC ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE .)
+generate_export_header(zelph_lib
+    BASE_NAME ZELPH
+    EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/zelph_export.h
+)
+target_include_directories(zelph_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE .)
 add_definitions(-DBOOST_ALL_NO_LIB) # disable boost auto linking under MSVC
 include_directories(
     "../boost/algorithm/include"
@@ -188,8 +191,10 @@ include_directories(
 )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    set_target_properties(zelph PROPERTIES MACOSX_RPATH ON)
+    set_target_properties(zelph_lib PROPERTIES MACOSX_RPATH ON)
 endif ()
+
+set_target_properties(zelph_lib PROPERTIES OUTPUT_NAME zelph)
 
 option(ENABLE_PGO "Enable Profile Guided Optimization" OFF)
 if (ENABLE_PGO)

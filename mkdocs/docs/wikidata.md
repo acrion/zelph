@@ -202,10 +202,11 @@ search through the subdirectories to find a download link for `wikidata-*-all.js
 After uncompression, you may start zelph with the provided `wikidata.zph` script:
 
 ```bash
-zelph_app sample_scripts/wikidata.zph
+zelph sample_scripts/wikidata.zph
 ```
 
 ### Basic Import
+
 To import Wikidata data, use the `.wikidata` command:
 
 ```
@@ -218,18 +219,18 @@ This creates an `.index` file in the same directory to accelerate future loading
 
 zelph provides several additional commands for working with Wikidata:
 
-*   **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
-    ```
-    .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
-    ```
-*   **Generate Index Only:** If you only want to build the index without importing data:
-    ```
-    .wikidata-index download/wikidata-20250127-all.json
-    ```
-*   **Export Item:** Export a specific item as a JSON snippet (requires index):
-    ```
-    .wikidata-export Q42
-    ```
+* **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
+  ```
+  .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
+  ```
+* **Generate Index Only:** If you only want to build the index without importing data:
+  ```
+  .wikidata-index download/wikidata-20250127-all.json
+  ```
+* **Export Item:** Export a specific item as a JSON snippet (requires index):
+  ```
+  .wikidata-export Q42
+  ```
 
 ### Running Inference
 

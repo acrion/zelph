@@ -834,20 +834,19 @@ bool console::Interactive::Impl::is_var(std::wstring token)
 }
 
 #ifdef PROVIDE_C_INTERFACE
-Interactive interactive;
+console::Interactive interactive;
 
 extern "C" void zelph_process_c(const char* line, size_t len)
 {
     if (len > 0)
     {
-        std::string  l(line, 0, len);
-        std::wstring wline(l.begin(), l.end());
-        interactive.process(wline);
+        std::string l(line, 0, len);
+        interactive.process(network::utils::wstr(l));
     }
 }
 
 extern "C" void zelph_run()
 {
-    interactive.run(true, false);
+    interactive.run(true, false, false);
 }
 #endif

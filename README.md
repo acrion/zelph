@@ -12,7 +12,7 @@ You need:
 
 - C++ compiler (supporting at least C++20)
 - CMake 3.25.2+
-- Git 
+- Git
 
 ```bash
 # Clone the repository with all submodules
@@ -31,7 +31,7 @@ cmake --build build
 Once built, you can run zelph in interactive mode:
 
 ```bash
-./build/bin/zelph_app
+./build/bin/zelph
 ```
 
 Let’s try a basic example:
@@ -49,7 +49,7 @@ After entering these statements, zelph will automatically infer that Berlin is l
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
-In section [Semantic Network Structure](#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.  
+In section [Semantic Network Structure](#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.
 
 ### Using Sample Scripts
 
@@ -57,10 +57,10 @@ zelph comes with sample scripts to demonstrate its capabilities:
 
 ```bash
 # Run with the English examples script
-./build/bin/zelph_app sample_scripts/english.zph
+./build/bin/zelph sample_scripts/english.zph
 
 # Or try the Wikidata integration script
-./build/bin/zelph_app sample_scripts/wikidata.zph
+./build/bin/zelph sample_scripts/wikidata.zph
 ```
 
 ### Importing Wikidata
@@ -79,7 +79,7 @@ For more details on Wikidata integration, see the [Working with Wikidata](#zelph
 - Explore the [Core Concepts](#core-concepts) to understand how zelph represents knowledge
 - Learn about [Rules and Inference](#rules-and-inference) to leverage zelph’s reasoning capabilities
 - Check out the [Example Script](#example-script) for a comprehensive demonstration
- 
+
 ## Introduction
 
 zelph is an innovative semantic network system that allows inference rules to be defined within the network itself.
@@ -224,11 +224,11 @@ graph TD
 
 The directions of the relations are as follows:
 
-| Element        | Example        | Relation Direction |
-|----------------|----------------|--------------------|
-| Subject        | white          | bidirectional      |
-| Object         | black          | backward           |
-| Relation Type  | is opposite of | forward            |
+| Element       | Example        | Relation Direction |
+|---------------|----------------|--------------------|
+| Subject       | white          | bidirectional      |
+| Object        | black          | backward           |
+| Relation Type | is opposite of | forward            |
 
 This semantics is used by zelph in several contexts, such as rule unification. It’s required because zelph doesn’t encode relation types as labels on arrows but rather as equal nodes. This has the advantage of facilitating statements about statements, for example, the statement that a relation is transitive.
 
@@ -378,7 +378,6 @@ The answer lies in the network’s **strict topological semantics** (see [Intern
 - **Bidirectional** connection to its **subject**
 - **Forward** connection to its **relation type** (a first-class node)
 - **Backward** connection to its **object**
-    
 
 The unification engine is **hard-wired to search only for this pattern** when matching a rule’s conditions. In other words, a variable that ranges over “statements” can only unify with nodes that expose exactly this subject/rel/type/object wiring. Conversely, variables intended to stand for ordinary entities cannot accidentally match a statement node, because ordinary entities **lack** that tri-partite signature.
 
@@ -386,7 +385,6 @@ Two immediate consequences follow:
 
 1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
 2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
-    
 
 These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
 
@@ -528,9 +526,10 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 ## Project Status
 
-The project is currently in **Version 0.9 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
+The project is currently in **Version 0.9.1 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
 
 Current focus areas include:
+
 - **REPL and parser refinement**: The REPL interface and the zelph language parser require architectural improvements.
 - **Enhancement of semantic rules**: The [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph) script serves as a base, but the strategy has shifted from generic deductions to targeted contradiction detection. See the [Grant Report](grant-report.md) for details on this approach.
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
@@ -752,10 +751,11 @@ search through the subdirectories to find a download link for `wikidata-*-all.js
 After uncompression, you may start zelph with the provided `wikidata.zph` script:
 
 ```bash
-zelph_app sample_scripts/wikidata.zph
+zelph sample_scripts/wikidata.zph
 ```
 
 ### Basic Import
+
 To import Wikidata data, use the `.wikidata` command:
 
 ```
@@ -768,18 +768,18 @@ This creates an `.index` file in the same directory to accelerate future loading
 
 zelph provides several additional commands for working with Wikidata:
 
-*   **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
-    ```
-    .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
-    ```
-*   **Generate Index Only:** If you only want to build the index without importing data:
-    ```
-    .wikidata-index download/wikidata-20250127-all.json
-    ```
-*   **Export Item:** Export a specific item as a JSON snippet (requires index):
-    ```
-    .wikidata-export Q42
-    ```
+* **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
+  ```
+  .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
+  ```
+* **Generate Index Only:** If you only want to build the index without importing data:
+  ```
+  .wikidata-index download/wikidata-20250127-all.json
+  ```
+* **Export Item:** Export a specific item as a JSON snippet (requires index):
+  ```
+  .wikidata-export Q42
+  ```
 
 ### Running Inference
 
