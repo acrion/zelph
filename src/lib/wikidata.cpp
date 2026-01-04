@@ -45,6 +45,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <vector>
 

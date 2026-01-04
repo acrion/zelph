@@ -26,6 +26,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "stopwatch.hpp"
 
 #include <chrono>
+#include <iomanip> // for std::setprecision
+#include <sstream>
 
 using namespace zelph::network;
 namespace chrono = std::chrono;
