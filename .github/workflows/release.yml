@@ -1,0 +1,56 @@
+name: Release Build
+
+on:
+  release:
+    types: [ published ]
+
+permissions:
+  contents: write
+
+jobs:
+  release-build:
+    name: Release on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -S src
+
+      - name: Build zelph
+        run: cmake --build build --config Release
+
+      - name: Package build artifacts (Zip)
+        shell: python
+        run: |
+          import shutil
+          import os
+          
+          if os.name == 'nt':
+              source_dir = "build/bin/Release"
+          else:
+              source_dir = "build/bin"
+          
+          output_filename = "zelph-${{ matrix.name }}"
+          shutil.make_archive(output_filename, 'zip', source_dir)
+
+      - name: Upload Release Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} "zelph-${{ matrix.name }}.zip" --clobber

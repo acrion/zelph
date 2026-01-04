@@ -1,0 +1,57 @@
+name: CI Build
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -S src
+
+      - name: Build zelph
+        run: cmake --build build --config Release
+
+      - name: Package build artifacts (Zip)
+        shell: python
+        run: |
+          import shutil
+          import os
+          
+          if os.name == 'nt':
+              source_dir = "build/bin/Release"
+          else:
+              source_dir = "build/bin"
+          
+          output_filename = "zelph-${{ matrix.name }}"
+          
+          print(f"Zipping content of {source_dir} to {output_filename}.zip")
+          
+          shutil.make_archive(output_filename, 'zip', source_dir)
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zelph-${{ matrix.name }}
+          path: zelph-${{ matrix.name }}.zip
