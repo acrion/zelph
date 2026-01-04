@@ -836,7 +836,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
     }
 }
 
-void Wikidata::process_node(const Node node, const std::string& lang)
+void Wikidata::process_node(const Node node, const std::string& /* lang */)
 {
     std::lock_guard lock(_pImpl->_mtx);
 
