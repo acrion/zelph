@@ -2,37 +2,35 @@
 
 ## Quick Start Guide
 
-### Prerequisites
+### Installation
 
-zelph can be used on Linux, macOS, and Windows platforms.
+Choose the method that matches your operating system:
 
-### Building zelph
-
-You need:
-
-- C++ compiler (supporting at least C++20)
-- CMake 3.25.2+
-- Git
-
+#### 🐧 Linux (Arch Linux)
+zelph is available in the [AUR](https://aur.archlinux.org/packages/zelph):
 ```bash
-# Clone the repository with all submodules
-git clone --recurse-submodules https://github.com/acrion/zelph
-cd zelph
+pikaur -S zelph
+```
 
-# Configure the build (Release mode)
-cmake -D CMAKE_BUILD_TYPE=Release -B build src
+#### 🐧 Linux (Other Distributions)
+Download the latest `zelph-linux.zip` from [Releases](https://github.com/acrion/zelph/releases), extract it, and run the binary directly.
+Alternatively, see [Building zelph](#building-zelph) below to compile from source.
 
-# Build the project. For MSVC, add `--config Release`.
-cmake --build build
+#### 🍏 macOS (via Homebrew)
+```bash
+brew tap acrion/zelph
+brew install zelph
+```
+
+#### 🪟 Windows (via Chocolatey)
+```powershell
+choco install zelph
 ```
 
 ### Basic Usage
 
-Once built, you can run zelph in interactive mode:
-
-```bash
-./build/bin/zelph
-```
+Once installed, you can run zelph in interactive mode simply by typing `zelph` in your terminal.
+(If you downloaded a binary manually without installing, run `./zelph` from the extraction directory).
 
 Let’s try a basic example:
 
@@ -65,7 +63,7 @@ zelph comes with sample scripts to demonstrate its capabilities:
 
 ### Importing Wikidata
 
-zelph can import and process data from Wikidata:
+zelph can import and process data [from Wikidata](https://dumps.wikimedia.org/wikidatawiki/entities/):
 
 ```
 # Within the zelph CLI
@@ -535,6 +533,48 @@ Current focus areas include:
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
 Regarding potential Wikidata integration and the enhancement of semantic scripts, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
+
+## Building zelph
+
+You need:
+
+- C++ compiler (supporting at least C++20)
+- CMake 3.25.2+
+- Git
+
+### Build Instructions
+
+1. Clone the repository with all submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/acrion/zelph.git
+```
+
+2. Configure the build (Release mode):
+
+```bash
+cmake -D CMAKE_BUILD_TYPE=Release -B build src
+```
+
+3. Build the project (for MSVC, add `--config Release`):
+
+```bash
+cmake --build build
+```
+
+### Verifying the Build
+
+Test your installation by running the CLI:
+
+```bash
+./build/bin/zelph
+```
+
+or
+
+```bash
+./build/bin/zelph sample_scripts/english.zph
+```
 
 ## Licensing
 
