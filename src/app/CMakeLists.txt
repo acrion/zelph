@@ -23,6 +23,10 @@
 
 add_executable(zelph main.cpp)
 
+install(TARGETS zelph
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 message(STATUS "CMAKE_CXX_COMPILER_ID = ${CMAKE_CXX_COMPILER_ID}")
 
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
