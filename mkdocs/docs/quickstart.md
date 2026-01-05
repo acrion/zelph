@@ -12,7 +12,7 @@ pikaur -S zelph
 
 #### 🐧 Linux (Other Distributions)
 Download the latest `zelph-linux.zip` from [Releases](https://github.com/acrion/zelph/releases), extract it, and run the binary directly.
-Alternatively, see [Building zelph](#building-zelph) below to compile from source.
+Alternatively, see [Building zelph](index.md#building-zelph) to compile from source.
 
 #### 🍏 macOS (via Homebrew)
 ```bash
