@@ -526,7 +526,7 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 ## Project Status
 
-The project is currently in **Version 0.9.1 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
+The project is currently in **Version 0.9.2 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
 
 Current focus areas include:
 
