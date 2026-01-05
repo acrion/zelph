@@ -6,6 +6,7 @@ theme:
     - content.code.annotate
 nav:
   - Home: index.md
+  - Quick Start Guide: quickstart.md
   - Use Case - Wikidata:
       - Overview: wikidata.md
       - Wikimedia Rapid Fund Report: grant-report.md
