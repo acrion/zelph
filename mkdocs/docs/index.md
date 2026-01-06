@@ -229,6 +229,35 @@ This rule states that if X is opposite of Y, then an entity A cannot be both an 
 
 If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
 
+### Performing Inference
+
+Facts and rules are added immediately, but inferences are only performed when you explicitly run `.run`.  
+Queries containing variables (e.g., `A "is capital of" Germany`) are answered immediately without `.run`.
+
+After entering facts and rules (interactively or via script), start the inference engine with:
+
+```
+.run
+```
+
+This performs full inference: rules are applied repeatedly until no new facts can be derived. New deductions are printed as they are found.
+
+For a single inference pass:
+
+```
+.run-once
+```
+
+To export all deductions and contradictions as structured Markdown reports:
+
+```
+.run-md <subdir>
+```
+
+This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the directory `mkdocs/docs/` must already exist in the current working directory).  
+It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
+For normal interactive or script use, `.run` is the standard command.
+
 ### Internal representation of rules
 
 Let’s explain the internal representation of rules based on the example rule above.

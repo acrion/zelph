@@ -26,9 +26,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "string_utils.hpp"
 
-#include <codecvt>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 using namespace zelph::console;
 Interactive interactive;
@@ -37,70 +37,115 @@ int main(int argc, char** argv)
 {
     try
     {
-        std::wstring exit_command = L".exit";
+        std::wstring              exit_command = L".exit";
+        std::vector<std::wstring> script_files;
+        bool                      show_version = false;
 
         for (int i = 1; i < argc; ++i)
         {
-            interactive.import_file(zelph::network::utils::wstr(argv[i]));
-        }
-
-        if (argc > 1) std::wcout << L"Ready." << std::endl;
-        std::wcout << "zelph " << zelph::network::utils::wstr(Interactive::get_version()) << std::endl;
-        std::wcout << std::endl;
-        if (argc == 1) std::wcout << "You may specify script files that will be processed prior interactive mode." << std::endl;
-        std::wcout << L" -- interactive mode - type " << exit_command << L" to exit --" << std::endl;
-        std::wcout << std::endl;
-        for (std::wstring line; std::getline(std::wcin, line) && line != exit_command;)
-        {
-            if (line.empty())
-                std::wcout << "type " << exit_command << L" to exit --" << std::endl;
+            std::string arg = argv[i];
+            if (arg == "-v" || arg == "--version")
+            {
+                show_version = true;
+            }
             else
-                try
-                {
-                    interactive.process(line);
-                }
-                catch (const std::exception& e)
-                {
-                    std::wcerr << zelph::network::utils::wstr(e.what()) << std::endl;
-                }
+            {
+                script_files.push_back(zelph::network::utils::wstr(arg));
+            }
         }
 
+        if (show_version)
+        {
+            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+            return 0;
+        }
+
+        for (const auto& file : script_files)
+        {
+            interactive.import_file(file);
+        }
+
+        if (!script_files.empty())
+            std::wcout << L"Ready." << std::endl;
+
+        std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+        std::wcout << std::endl;
+
+        if (script_files.empty())
+            std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
+
+        std::wcout << L"-- interactive mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
+        std::wcout << std::endl;
+
+        std::wstring line;
+        std::wcout << L"> ";
+        std::wcout.flush();
+
+        while (std::getline(std::wcin, line))
+        {
+            if (line == exit_command)
+                break;
+
+            if (line.empty())
+            {
+                std::wcout << L"type .help for help --" << std::endl;
+                std::wcout << L"> ";
+                std::wcout.flush();
+                continue;
+            }
+
+            try
+            {
+                interactive.process(line);
+            }
+            catch (const std::exception& e)
+            {
+                std::wcerr << zelph::network::utils::wstr(e.what()) << std::endl;
+            }
+
+            std::wcout << L"> ";
+            std::wcout.flush();
+        }
+
+        std::wcout << std::endl;
 #if 0
-    n.set_name(n.core.RelationTypeCategory, L"Relationstyp", "de");
-    n.set_name(n.core.Causes,               L"=>",           "de");
-    n.set_name(n.core.And,                  L",",            "de");
-    n.set_name(n.core.IsA,                  L"ist ein",      "de");
-    n.set_name(n.core.Unequal,              L"ungleich",     "de");
-    n.set_name(n.core.Contradiction,        L"Widerspruch",  "de");
+        n.set_name(n.core.RelationTypeCategory, L"Relationstyp", "de");
+        n.set_name(n.core.Causes,               L"=>",           "de");
+        n.set_name(n.core.And,                  L",",            "de");
+        n.set_name(n.core.IsA,                  L"ist ein",      "de");
+        n.set_name(n.core.Unequal,              L"ungleich",     "de");
+        n.set_name(n.core.Contradiction,        L"Widerspruch",  "de");
 
-    //n.fact(n.node(L"ist Eigenschaft von", "de"), n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat die Eigenschaft", "de") });
-    //n.fact(n.node(L"ist Teil von", "de"),        n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat den Bestandteil", "de") });
-    //n.fact(n.node(L"ist zum Beispiel", "de"),    n.node(L"ist Gegenteil von", "de"),   { n.node(L"ist ein",             "de") });
-    n.fact(n.node(L"hat den Bestandteil", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
-    //n.fact(n.node(L"hat die Eigenschaft", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
-    //n.fact(n.node(L"ist ein", "de"),             n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
+        //n.fact(n.node(L"ist Eigenschaft von", "de"), n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat die Eigenschaft", "de") });
+        //n.fact(n.node(L"ist Teil von", "de"),        n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat den Bestandteil", "de") });
+        //n.fact(n.node(L"ist zum Beispiel", "de"),    n.node(L"ist Gegenteil von", "de"),   { n.node(L"ist ein",             "de") });
+        n.fact(n.node(L"hat den Bestandteil", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
+        //n.fact(n.node(L"hat die Eigenschaft", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
+        //n.fact(n.node(L"ist ein", "de"),             n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
 
-    {
-      Node X = n.var();
-      Node R = n.var();
-      Node Y = n.var();
-      Node Z = n.var();
-      Node R_is_transitive = n.fact(R, n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv", "de") });
-      Node condition = n.condition(n.core.And, { R_is_transitive, n.fact(X, R, {Y}), n.fact(Y, R, {Z}) });
-      n.fact(condition, n.core.Causes, { n.fact(X, R, {Z}) });
-    }
+        {
+            Node X = n.var();
+            Node R = n.var();
+            Node Y = n.var();
+            Node Z = n.var();
+            Node R_is_transitive = n.fact(R, n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv", "de") });
+            Node condition = n.condition(n.core.And, { R_is_transitive, n.fact(X, R, {Y}), n.fact(Y, R, {Z}) });
+            n.fact(condition, n.core.Causes, { n.fact(X, R, {Z}) });
+        }
 
-    n.fact(n.node(L"Haus", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"T\xfcr", "de") });
-    n.fact(n.node(L"T\xfcr", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"Griff", "de") });
-    n.gen_dot(n.core.RelationTypeCategory, "test.dot");
+        n.fact(n.node(L"Haus", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"T\xfcr", "de") });
+        n.fact(n.node(L"T\xfcr", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"Griff", "de") });
+        n.gen_dot(n.core.RelationTypeCategory, "test.dot");
 
-    n.run();
-    std::wcout << L"Ready." << std::endl;
-    n.debug();
+        n.run();
+        std::wcout << L"Ready." << std::endl;
+        n.debug();
 #endif
     }
     catch (std::exception& ex)
     {
         std::wcout << zelph::network::utils::wstr(ex.what()) << std::endl;
     }
+
+    return 0;
 }

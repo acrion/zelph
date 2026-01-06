@@ -232,18 +232,4 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-export Q42
   ```
 
-### Running Inference
-
-Once data is loaded, the inference mechanism can be started with:
-
-```
-.run
-```
-
-Or, to generate Markdown reports of deductions and contradictions:
-
-```
-.run-md subdirectory_name
-```
-
-The `.run-md` command requires a subdirectory argument. It will generate Markdown files in `mkdocs/docs/subdirectory_name`, creating a tree of pages that report findings.
+Inference is performed using the general `.run` and `.run-md` commands (see [Performing Inference](index.md#performing-inference)).

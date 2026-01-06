@@ -7,22 +7,27 @@
 Choose the method that matches your operating system:
 
 #### 🐧 Linux (Arch Linux)
+
 zelph is available in the [AUR](https://aur.archlinux.org/packages/zelph):
+
 ```bash
 pikaur -S zelph
 ```
 
 #### 🐧 Linux (Other Distributions)
+
 Download the latest `zelph-linux.zip` from [Releases](https://github.com/acrion/zelph/releases), extract it, and run the binary directly.
 Alternatively, see [Building zelph](#building-zelph) below to compile from source.
 
 #### 🍏 macOS (via Homebrew)
+
 ```bash
 brew tap acrion/zelph
 brew install zelph
 ```
 
 #### 🪟 Windows (via Chocolatey)
+
 ```powershell
 choco install zelph
 ```
@@ -304,6 +309,35 @@ X "is opposite of" Y, A ~ X, A ~ Y => !
 This rule states that if X is opposite of Y, then an entity A cannot be both an X and a Y, as this would be a contradiction.
 
 If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
+
+### Performing Inference
+
+Facts and rules are added immediately, but inferences are only performed when you explicitly run `.run`.  
+Queries containing variables (e.g., `A "is capital of" Germany`) are answered immediately without `.run`.
+
+After entering facts and rules (interactively or via script), start the inference engine with:
+
+```
+.run
+```
+
+This performs full inference: rules are applied repeatedly until no new facts can be derived. New deductions are printed as they are found.
+
+For a single inference pass:
+
+```
+.run-once
+```
+
+To export all deductions and contradictions as structured Markdown reports:
+
+```
+.run-md <subdir>
+```
+
+This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the directory `mkdocs/docs/` must already exist in the current working directory).  
+It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
+For normal interactive or script use, `.run` is the standard command.
 
 ### Internal representation of rules
 
@@ -823,19 +857,4 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-export Q42
   ```
 
-### Running Inference
-
-Once data is loaded, the inference mechanism can be started with:
-
-```
-.run
-```
-
-Or, to generate Markdown reports of deductions and contradictions:
-
-```
-.run-md subdirectory_name
-```
-
-The `.run-md` command requires a subdirectory argument. It will generate Markdown files in `mkdocs/docs/subdirectory_name`, creating a tree of pages that report findings.
-
+Inference is performed using the general `.run` and `.run-md` commands (see the [Performing Inference](#performing-inference) section above).

@@ -192,7 +192,7 @@ void console::Interactive::process(std::wstring line) const
             std::wstring output;
             //_pImpl->_n->gen_dot(fact, "debug.dot", 5);
             _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact);
-            _pImpl->_n->print(L"> " + output, false);
+            _pImpl->_n->print(output, false);
 
             if (!is_rule)
             {
@@ -227,7 +227,150 @@ void console::Interactive::import_file(const std::wstring& file) const
 
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
 {
-    if (cmd[0] == L".lang")
+    static const std::vector<std::wstring> general_help_lines = {
+        L"zelph Interactive Help",
+        L"",
+        L"Basic Syntax",
+        L"────────────",
+        L"Facts:    <subject> <predicate> <object>",
+        L"          Predicates with spaces must be quoted on first use.",
+        L"          Example: peter \"is father of\" paul",
+        L"          → «peter» «is father of» «paul»",
+        L"          Subsequent use: peter is father of paul",
+        L"          → «peter» «is father of» «paul»",
+        L"",
+        L"Rules:    <condition1>, <condition2>, ... => <deduction1>, <deduction2>, ...",
+        L"          Rules are stored but not automatically applied.",
+        L"          Use .run to perform inference and see deductions.",
+        L"",
+        L"Queries:  Statements containing variables (A-Z or starting with _).",
+        L"          Queries are answered immediately (no .run needed).",
+        L"          Example: A is father of paul",
+        L"          → Answer: «peter» «is father of» «paul»",
+        L"",
+        L"Examples",
+        L"Berlin \"is capital of\" Germany",
+        L"Germany \"is located in\" Europe",
+        L"X is capital of Y, Y is located in Z => X is located in Z",
+        L".run",
+        L"→ «Berlin» «is located in» «Europe» ⇐ («Germany» «is located in» «Europe»), («Berlin» «is capital of» «Germany»)",
+        L"",
+        L"Available Commands",
+        L"──────────────────",
+        L".help [command]             – Show this help or detailed help for a specific command",
+        L".exit                       – Exit interactive mode",
+        L".lang [code]                – Show or set current language",
+        L".name <cur> <lang> <new>    – Set node name in a specific language",
+        L".node <name|id>             – Show node details (names in all languages, Wikidata URL if available)",
+        L".nodes <count>              – List the first N nodes with their names",
+        L".dot <name> <depth>         – Generate GraphViz DOT file for a node",
+        L".run                        – Run full inference",
+        L".run-once                   – Run a single inference pass",
+        L".run-md <subdir>            – Run inference and export results as Markdown",
+        L".list-rules                 – List all defined inference rules",
+        L".list-predicate-usage       – Show predicate usage statistics (sorted by frequency)",
+        L".remove-rules               – Remove all inference rules",
+        L".load <file.zph>            – Load and execute a zelph script file",
+        L".wikidata <json>            – Import full Wikidata dump",
+        L".wikidata-index <json>      – Generate index only (for faster future loads)",
+        L".wikidata-export <wid>      – Export a single Wikidata entry as JSON",
+        L".wikidata-constraints <json> <dir> – Export constraints to a directory",
+        L"",
+        L"Type \".help <command>\" for detailed information about a specific command."};
+
+    static const std::map<std::wstring, std::wstring> detailed_help = {
+        {L".help", L".help [command]\n"
+                   L"Without argument: shows this general help text with syntax and command overview.\n"
+                   L"With argument: shows detailed help for the specified command."},
+
+        {L".exit", L".exit\n"
+                   L"Exits the interactive REPL session."},
+
+        {L".lang", L".lang [language_code]\n"
+                   L"Without argument: displays the current language used for node names.\n"
+                   L"With argument: sets the language (e.g., 'zelph', 'en', 'de', 'wikidata')."},
+
+        {L".name", L".name <current_name> <language_code> <new_name>\n"
+                   L"Sets or changes the name of a node in a specific language.\n"
+                   L"The <current_name> is looked up in the current language."},
+
+        {L".node", L".node <name_or_id>\n"
+                   L"Displays all known names of the node in every language.\n"
+                   L"If the node has a Wikidata ID, a clickable URL is shown.\n"
+                   L"The argument can be a name (in current language) or a numeric node ID."},
+
+        {L".nodes", L".nodes <count>\n"
+                    L"Lists the first N nodes with their names in all known languages."},
+
+        {L".dot", L".dot <node_name> <max_depth>\n"
+                  L"Generates a GraphViz .dot file visualizing the specified node and its connections\n"
+                  L"up to the given depth (depth ≥ 2 recommended). The file is named <node_name>.dot."},
+
+        {L".run", L".run\n"
+                  L"Performs full inference: repeatedly applies all rules until no new facts are derived.\n"
+                  L"Deductions are printed as they are found."},
+
+        {L".run-once", L".run-once\n"
+                       L"Performs a single inference pass."},
+
+        {L".run-md", L".run-md <subdir>\n"
+                     L"Runs full inference and exports all deductions and contradictions as Markdown files\n"
+                     L"in the directory mkdocs/docs/<subdir> for use with MkDocs."},
+
+        {L".list-rules", L".list-rules\n"
+                         L"Lists all currently defined inference rules in readable format."},
+
+        {L".list-predicate-usage", L".list-predicate-usage\n"
+                                   L"Shows how often each predicate (relation type) is used, sorted by frequency.\n"
+                                   L"If Wikidata language is active, Wikidata IDs are shown alongside names."},
+
+        {L".remove-rules", L".remove-rules\n"
+                           L"Deletes all inference rules from the network."},
+
+        {L".load", L".load <file.zph>\n"
+                   L"Loads and immediately executes a zelph script file."},
+
+        {L".wikidata", L".wikidata <json_file>\n"
+                       L"Imports the full Wikidata JSON dump specified by <json_file>.\n"
+                       L"Creates an index file for faster future loads and imports all statements."},
+
+        {L".wikidata-index", L".wikidata-index <json_file>\n"
+                             L"Only generates the index file for the specified Wikidata dump"},
+
+        {L".wikidata-export", L".wikidata-export <wikidata_id>\n"
+                              L"Exports a single Wikidata entry (e.g., Q42 or P31) as a JSON file.\n"
+                              L"Requires that an index has been generated previously."},
+
+        {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
+                                   L"Processes the Wikidata dump and exports constraint scripts\n"
+                                   L"to the specified output directory."}};
+
+    if (cmd[0] == L".help")
+    {
+        if (cmd.size() == 1)
+        {
+            for (const auto& l : general_help_lines)
+                _n->print(l, true);
+        }
+        else if (cmd.size() == 2)
+        {
+            auto it = detailed_help.find(cmd[1]);
+            if (it != detailed_help.end())
+            {
+                _n->print(it->second, true);
+            }
+            else
+            {
+                _n->print(L"Unknown command: " + cmd[1] + L". Use \".help\" for a list of all commands.", true);
+            }
+        }
+        else
+        {
+            throw std::runtime_error("Usage: .help [command]");
+        }
+        return;
+    }
+    else if (cmd[0] == L".lang")
     {
         if (cmd.size() < 2)
         {
