@@ -386,7 +386,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() == 1) throw std::runtime_error("Command .name: Missing current name. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
         if (cmd.size() == 2) throw std::runtime_error("Command .name: Missing language identifier. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
         if (cmd.size() == 3) throw std::runtime_error("Command .name: Missing " + network::utils::str(cmd[2]) + " name of " + network::utils::str(cmd[1]) + ". Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        _n->set_name(_n->node(cmd[1]), cmd[3], network::utils::str(cmd[2]));
+        _n->set_name(cmd[1], cmd[3], network::utils::str(cmd[2]));
     }
     else if (cmd[0] == L".node")
     {
@@ -405,7 +405,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             }
             catch (const std::exception&)
             {
-                throw std::runtime_error("Command .node: Unknown node '" + network::utils::str(cmd[1]) + "'");
+                throw std::runtime_error("Command .node: Unknown node '" + network::utils::str(cmd[1]) + "' in current language '" + _n->lang() + "'");
             }
         }
         else

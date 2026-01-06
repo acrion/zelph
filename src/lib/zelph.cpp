@@ -90,17 +90,126 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
+// Sets the name of an already existing node in a specific language.
+// This overload is used when you have a known Node handle and want to directly assign or update its name.
+// It does not create a new node – it only updates the name mappings for the given language.
 void Zelph::set_name(const Node node, const std::wstring& name, std::string lang)
 {
-    if (lang.empty()) lang = _lang;
+    if (lang.empty()) lang = _lang; // Use current default language if none specified
+
 #if _DEBUG
     // std::wcout << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
 #endif
 
     std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
     std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
-    _pImpl->_node_of_name[lang][name] = node;
+
+    // Store the forward mapping: node → name (in this language)
     _pImpl->_name_of_node[lang][node] = name;
+
+    // Check if this name is already mapped to a different node in this language
+    auto existing = _pImpl->_node_of_name[lang].find(name);
+    if (existing == _pImpl->_node_of_name[lang].end())
+    {
+        // Name is new in this language → create clean bidirectional mapping
+        _pImpl->_node_of_name[lang][name] = node;
+    }
+    else if (existing->second != node)
+    {
+        // Conflict: the same name is already used for another node
+        std::wclog << L"Warning: Name '" << name << L"' in language '" << utils::wstr(lang)
+                   << L"' is now shared by multiple nodes (previously Node " << existing->second
+                   << L", now Node " << node << L"). Last assignment wins (last-one-wins policy)."
+                   << std::endl;
+
+        // Last-one-wins: overwrite the reverse mapping with the new node
+        // TODO: In the future, consider supporting multiple nodes per name if memory impact is acceptable
+        _pImpl->_node_of_name[lang][name] = node;
+    }
+}
+
+// Assigns or links a name in a foreign language to a node and ensures the name in the current default language (_lang) is correctly set.
+// This overload is primarily used by the interactive `.name` command.
+// It either finds an existing node via the foreign-language name or creates a new one if none exists.
+// At the same time, it updates or corrects the name in the current default language.
+Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang)
+{
+    if (lang.empty() || lang == _lang)
+    {
+        throw std::runtime_error("Zelph::set_name: Source and target language must not be the same");
+    }
+
+    Node result_node;
+
+    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+
+    // 1. Look for an existing node that already has this name in the foreign language
+    auto existing = _pImpl->_node_of_name[lang].find(name_in_given_lang);
+    if (existing == _pImpl->_node_of_name[lang].end())
+    {
+        // No node found for this foreign name → create a new node using the current-language name
+        result_node = node(name_in_current_lang, _lang);
+
+        // Establish bidirectional mappings for the foreign language
+        _pImpl->_node_of_name[lang][name_in_given_lang] = result_node;
+        _pImpl->_name_of_node[lang][result_node]        = name_in_given_lang;
+    }
+    else
+    {
+        // Node already exists via the foreign-language name
+        result_node = existing->second;
+
+        // Consistency check: the reverse mapping (name_of_node) must exist
+        auto existing2 = _pImpl->_name_of_node[lang].find(result_node);
+        if (existing2 == _pImpl->_name_of_node[lang].end())
+        {
+            throw std::runtime_error("Zelph::set_name: Internal error – name mappings are inconsistent.");
+        }
+
+        // Retrieve current-language name mappings for updates
+        auto& name_of_node_cur = _pImpl->_name_of_node[_lang];
+        auto& node_of_name_cur = _pImpl->_node_of_name[_lang];
+
+        // Get the previously stored name in the current language (if any)
+        auto         it_current_name  = name_of_node_cur.find(result_node);
+        std::wstring old_current_name = (it_current_name != name_of_node_cur.end()) ? it_current_name->second : L"";
+
+        // If the stored current-language name differs from the desired one → update it
+        if (old_current_name != name_in_current_lang)
+        {
+            if (!old_current_name.empty())
+            {
+                std::wclog << L"Warning: Changing name in language '" << utils::wstr(_lang)
+                           << L"' for node with foreign name '" << name_in_given_lang
+                           << L"' (language '" << utils::wstr(lang) << L"') from '"
+                           << old_current_name << L"' to '" << name_in_current_lang << L"'." << std::endl;
+
+                // Remove the old current-language name from the reverse mapping
+                node_of_name_cur.erase(old_current_name);
+            }
+
+            // Check if the desired new current-language name is already assigned to another node
+            auto it_conflict = node_of_name_cur.find(name_in_current_lang);
+            if (it_conflict != node_of_name_cur.end() && it_conflict->second != result_node)
+            {
+                Node conflicting_node = it_conflict->second;
+                std::wclog << L"Warning: Reassigning name '" << name_in_current_lang
+                           << L"' in language '" << utils::wstr(_lang)
+                           << L"' from Node " << conflicting_node
+                           << L" to Node " << result_node << L"." << std::endl;
+
+                // Detach the conflicting node from this name
+                name_of_node_cur.erase(conflicting_node);
+            }
+
+            // Apply the new current-language mappings
+            node_of_name_cur[name_in_current_lang] = result_node;
+            name_of_node_cur[result_node]          = name_in_current_lang;
+        }
+    }
+
+    return result_node; // The (possibly newly created) node
 }
 
 Node Zelph::node(const std::wstring& name, std::string lang)
