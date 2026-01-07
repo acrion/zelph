@@ -262,6 +262,41 @@ namespace zelph
                 _node_count.fetch_sub(1, std::memory_order_relaxed);
             }
 
+            void remove_isolated_nodes(size_t& removed_count)
+            {
+                removed_count = 0;
+
+                std::vector<Node> all_nodes;
+                {
+                    std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+                    all_nodes.reserve(_left.size());
+                    for (const auto& p : _left)
+                    {
+                        all_nodes.push_back(p.first);
+                    }
+                }
+
+                std::vector<Node> isolated;
+                isolated.reserve(all_nodes.size() / 10); // grobe Schätzung
+
+                for (Node n : all_nodes)
+                {
+                    adjacency_set outgoing = get_right(n);
+                    adjacency_set incoming = get_left(n);
+
+                    if (outgoing.empty() && incoming.empty())
+                    {
+                        isolated.push_back(n);
+                    }
+                }
+
+                for (Node n : isolated)
+                {
+                    remove(n);
+                    ++removed_count;
+                }
+            }
+
             bool exists(Node a)
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_left);

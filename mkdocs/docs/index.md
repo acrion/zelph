@@ -34,7 +34,7 @@ The key features of zelph include:
 - Contradiction detection and resolution
 - Memory-efficient data structures optimized at bit level
 - A flexible scripting language for knowledge definition and querying
-- Built-in import functionality for Wikidata JSON datasets
+- Built-in import functionality for Wikidata JSON datasets and general binary save/load
 
 ## Core Concepts
 

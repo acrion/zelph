@@ -212,6 +212,70 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
     return result_node; // The (possibly newly created) node
 }
 
+void Zelph::cleanup_isolated(size_t& removed_count)
+{
+    removed_count = 0;
+
+    _pImpl->remove_isolated_nodes(removed_count);
+
+    if (removed_count == 0)
+    {
+        return;
+    }
+
+    std::unordered_set<Node> removed_named;
+
+    {
+        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+        for (const auto& lang_map : _pImpl->_name_of_node)
+        {
+            for (const auto& pair : lang_map.second)
+            {
+                Node n = pair.first;
+                if (!_pImpl->exists(n))
+                {
+                    removed_named.insert(n);
+                }
+            }
+        }
+    }
+
+    if (removed_named.empty())
+    {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+        for (auto& lang_map : _pImpl->_name_of_node)
+        {
+            for (Node n : removed_named)
+            {
+                lang_map.second.erase(n);
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+        for (auto& lang_map : _pImpl->_node_of_name)
+        {
+            auto& map = lang_map.second;
+            for (auto it = map.begin(); it != map.end();)
+            {
+                if (removed_named.count(it->second))
+                {
+                    it = map.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+    }
+}
+
 Node Zelph::node(const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;

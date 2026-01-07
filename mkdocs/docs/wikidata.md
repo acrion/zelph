@@ -207,13 +207,16 @@ zelph sample_scripts/wikidata.zph
 
 ### Basic Import
 
-To import Wikidata data, use the `.wikidata` command:
+To import Wikidata data (or load a previously saved network), use the `.load` command:
 
 ```
 .wikidata download/wikidata-20250127-all.json
 ```
 
-This creates an `.index` file in the same directory to accelerate future loading.
+This command is general-purpose:
+
+- For a Wikidata JSON dump, it imports the data and automatically creates a `.bin` cache file in the same directory for faster future loads.
+- For a `.bin` file (created by `.save`), it loads the serialized network directly.
 
 ### Advanced Commands
 
@@ -232,4 +235,4 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-export Q42
   ```
 
-Inference is performed using the general `.run` and `.run-md` commands (see [Performing Inference](index.md#performing-inference)).
+Inference is performed using the general `.run`, `.run-once`, `.run-md`, and `.run-file` commands (see [Performing Inference](index.md#performing-inference)).

@@ -65,6 +65,7 @@ namespace zelph::network
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
         void apply_rule(const network::Node& rule, network::Node condition);
         void set_markdown_subdir(const std::string& subdir);
+        void prune_matching(Node pattern, size_t& removed_count);
 
     private:
         void evaluate(RulePos rule, ReasoningContext& ctx);
@@ -85,5 +86,7 @@ namespace zelph::network
         int                                 _total_contradictions{0};
         std::unique_ptr<ThreadPool>         _pool;
         std::string                         _markdown_subdir;
+        bool                                _prune_mode{false};
+        std::unordered_set<Node>            _facts_to_prune;
     };
 }

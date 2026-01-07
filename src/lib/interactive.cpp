@@ -273,8 +273,11 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".list-rules                 – List all defined inference rules",
         L".list-predicate-usage       – Show predicate usage statistics (sorted by frequency)",
         L".remove-rules               – Remove all inference rules",
-        L".load <file.zph>            – Load and execute a zelph script file",
-        L".wikidata <json>            – Import full Wikidata dump",
+        L".import <file.zph>          – Load and execute a zelph script file",
+        L".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
+        L".save <file.bin>            – Save the current network to a binary file",
+        L".prune <pattern>            – Remove all facts matching the query pattern (must contain ≥1 variable)",
+        L".cleanup                    – Remove isolated nodes and clean name mappings",
         L".wikidata-index <json>      – Generate index only (for faster future loads)",
         L".wikidata-export <wid>      – Export a single Wikidata entry as JSON",
         L".wikidata-constraints <json> <dir> – Export constraints to a directory",
@@ -341,12 +344,28 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".remove-rules", L".remove-rules\n"
                            L"Deletes all inference rules from the network."},
 
-        {L".load", L".load <file.zph>\n"
-                   L"Loads and immediately executes a zelph script file."},
+        {L".import", L".import <file.zph>\n"
+                     L"Loads and immediately executes a zelph script file."},
 
-        {L".wikidata", L".wikidata <json_file>\n"
-                       L"Imports the full Wikidata JSON dump specified by <json_file>.\n"
-                       L"Creates an index file for faster future loads and imports all statements."},
+        {L".load", L".load <file>\n"
+                   L"Loads a previously saved network state.\n"
+                   L"- If <file> ends with '.bin': loads the serialized network directly (fast).\n"
+                   L"- If <file> ends with '.json' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
+                   L"  in the same directory for faster future loads."},
+
+        {L".save", L".save <file.bin>\n"
+                   L"Saves the current network state to a binary file.\n"
+                   L"The filename must end with '.bin'."},
+
+        {L".prune", L".prune <pattern>\n"
+                    L"Removes all facts that match the given query pattern.\n"
+                    L"The pattern must contain at least one variable (A-Z or starting with _).\n"
+                    L"Reports how many facts were removed.\n"
+                    L"After pruning, consider running .cleanup to remove newly isolated nodes."},
+
+        {L".cleanup", L".cleanup\n"
+                      L"Removes all nodes that have no connections (isolated nodes).\n"
+                      L"Also cleans up associated entries in name mappings."},
 
         {L".wikidata-index", L".wikidata-index <json_file>\n"
                              L"Only generates the index file for the specified Wikidata dump"},
@@ -630,12 +649,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             }
         }
     }
-    else if (cmd[0] == L".wikidata")
+    else if (cmd[0] == L".load")
     {
-        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata: Missing json file name");
-        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata: Unknown argument after json file name");
+        if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing bin or json file name");
+        if (cmd.size() > 2) throw std::runtime_error("Command .load: Unknown argument after file name");
 
-        std::ofstream log("wikidata.log");
+        std::ofstream log("load.log");
         _n->set_print([&](const std::wstring& str, bool o)
                       {
           log << string::unicode::to_utf8(str) << std::endl;
@@ -661,7 +680,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         else
         {
-            throw std::runtime_error("Command .wikidata: You need to specify one argument: the json file to import");
+            throw std::runtime_error("Command .load: You need to specify one argument: the *.bin or *.json file to import");
         }
     }
     else if (cmd[0] == L".wikidata-constraints")
@@ -739,11 +758,72 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->remove_rules();
         _n->print(L"All rules removed.", true);
     }
-    else if (cmd[0] == L".load")
+    else if (cmd[0] == L".prune")
     {
-        if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing script path");
+        if (cmd.size() < 2)
+            throw std::runtime_error("Command .prune requires a pattern with at least one variable");
+
+        std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
+
+        const std::wstring And    = _n->get_name(_n->core.And, _n->lang());
+        const std::wstring Causes = _n->get_name(_n->core.Causes, _n->lang());
+
+        bool                      is_rule = false;
+        std::wstring              assigns_to_var;
+        std::wstring              first_var = pattern_tokens.empty() ? L"" : (Impl::is_var(pattern_tokens[0]) ? L"" : pattern_tokens[0]);
+        std::vector<std::wstring> tokens;
+
+        for (const auto& token : pattern_tokens)
+        {
+            process_token(tokens, is_rule, first_var, assigns_to_var, token, And, Causes);
+        }
+
+        if (is_rule)
+            throw std::runtime_error("Command .prune: pattern must not be a rule (no '=>' allowed)");
+
+        if (!assigns_to_var.empty())
+            throw std::runtime_error("Command .prune: assignment to variable (=) not supported");
+
+        boost::bimap<std::wstring, network::Node> variables;
+        network::Node                             pattern_fact = process_fact(tokens, variables);
+
+        if (variables.empty())
+            throw std::runtime_error("Command .prune: pattern must contain at least one variable (A-Z or starting with _)");
+
+        size_t removed = 0;
+        dynamic_cast<network::Reasoning*>(_n)->prune_matching(pattern_fact, removed);
+
+        _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
+        if (removed > 0)
+            _n->print(L"Consider running .cleanup to remove newly isolated nodes.", true);
+    }
+    else if (cmd[0] == L".cleanup")
+    {
+        if (cmd.size() != 1)
+            throw std::runtime_error("Command .cleanup takes no arguments");
+
+        size_t removed = 0;
+        _n->cleanup_isolated(removed);
+        _n->print(L"Removed " + std::to_wstring(removed) + L" isolated nodes.", true);
+    }
+    else if (cmd[0] == L".save")
+    {
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .save requires exactly one argument: the output file (must end with .bin)");
+
+        std::wstring file = cmd[1];
+        if (!boost::algorithm::ends_with(file, L".bin"))
+            throw std::runtime_error("Command .save: filename must end with '.bin'");
+
+        std::string utf8_file = string::unicode::to_utf8(file);
+        _n->save_to_file(utf8_file);
+        _n->print(L"Saved network to " + file, true);
+    }
+    else if (cmd[0] == L".import")
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         std::wstring path = cmd[1];
-        if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .load: Script must end with .zph");
+        if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
         import_file(path);
     }
     else

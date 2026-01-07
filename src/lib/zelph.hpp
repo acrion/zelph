@@ -65,6 +65,7 @@ namespace zelph
             std::string              get_name_hex(Node node, bool prepend_num = true);
             void                     set_name(Node node, const std::wstring& name, std::string lang = "");
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
+            void                     cleanup_isolated(size_t& removed_count);
 
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;

@@ -68,16 +68,73 @@ zelph comes with sample scripts to demonstrate its capabilities:
 ./build/bin/zelph sample_scripts/wikidata.zph
 ```
 
-### Importing Wikidata
-
-zelph can import and process data [from Wikidata](https://dumps.wikimedia.org/wikidatawiki/entities/):
+Within interactive mode, you can load a `.zph` script file using:
 
 ```
-# Within the zelph CLI
-.wikidata path/to/wikidata-dump.json
+.import sample_scripts/english.zph
 ```
 
-For more details on Wikidata integration, see the [Working with Wikidata](#zelph-and-wikidata-finding-logical-connections-and-contradictions) section below.
+### Loading and Saving Network State
+
+zelph allows you to save the current network state to a binary file and load it later:
+
+```
+.save network.bin          # Save the current network
+.load network.bin          # Load a previously saved network
+```
+
+The `.load` command is general-purpose:
+
+- If the file ends in `.bin`, it loads the serialized network directly (fast).
+- If the file ends in `.json` (a Wikidata dump), it imports the data and automatically creates a `.bin` cache file for future loads.
+
+### Data Cleanup Commands
+
+Two commands help maintain a clean network:
+
+```
+.prune <pattern>           # Remove all facts matching a query pattern (must contain ≥1 variable)
+.cleanup                   # Remove all isolated nodes and clean name mappings
+```
+
+Example usage:
+
+```
+.lang wikidata
+A P31 Q5                    # Query all humans (P31 = instance of, Q5 = human)
+.prune A P31 Q5             # Remove all "instance of human" facts
+.cleanup                    # Remove any nodes that became isolated
+```
+
+### Full Command Reference
+
+Type `.help` inside the interactive session for a complete overview, or `.help <command>` for details on a specific command.
+
+Key commands include:
+
+- `.help [command]`          – Show help
+- `.exit`                    – Exit interactive mode
+- `.lang [code]`             – Show or set current language (e.g., `en`, `de`, `wikidata`)
+- `.name <cur> <lang> <new>` – Set node name in a specific language
+- `.node <name|id>`          – Show node details (all languages, Wikidata URL if available)
+- `.nodes <count>`           – List first N nodes with names
+- `.dot <name> <depth>`      – Generate GraphViz DOT file
+- `.run`                     – Full inference
+- `.run-once`                – Single inference pass
+- `.run-md <subdir>`         – Inference + Markdown export
+- `.run-file <file>`         – Inference + write deduced facts to file (compressed if wikidata)
+- `.decode <file>`           – Decode a file produced by `.run-file`
+- `.list-rules`              – List all defined rules
+- `.list-predicate-usage`    – Show predicate usage statistics
+- `.remove-rules`            – Remove all inference rules
+- `.import <file.zph>`       – Load and execute a zelph script
+- `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
+- `.save <file.bin>`         – Save current network to binary file
+- `.prune <pattern>`         – Remove matching facts
+- `.cleanup`                 – Remove isolated nodes
+- `.wikidata-index <json>`   – Generate index only
+- `.wikidata-export <wid>`   – Export single Wikidata entry
+- `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?
 
@@ -115,7 +172,7 @@ The key features of zelph include:
 - Contradiction detection and resolution
 - Memory-efficient data structures optimized at bit level
 - A flexible scripting language for knowledge definition and querying
-- Built-in import functionality for Wikidata JSON datasets
+- Built-in import functionality for Wikidata JSON datasets and general binary save/load
 
 ## Core Concepts
 
@@ -884,13 +941,16 @@ zelph sample_scripts/wikidata.zph
 
 ### Basic Import
 
-To import Wikidata data, use the `.wikidata` command:
+To import Wikidata data (or load a previously saved network), use the `.load` command:
 
 ```
 .wikidata download/wikidata-20250127-all.json
 ```
 
-This creates an `.index` file in the same directory to accelerate future loading.
+This command is general-purpose:
+
+- For a Wikidata JSON dump, it imports the data and automatically creates a `.bin` cache file in the same directory for faster future loads.
+- For a `.bin` file (created by `.save`), it loads the serialized network directly.
 
 ### Advanced Commands
 

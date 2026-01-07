@@ -47,6 +47,29 @@ void Reasoning::set_markdown_subdir(const std::string& subdir)
     _markdown_subdir = subdir;
 }
 
+void Reasoning::prune_matching(Node pattern, size_t& removed_count)
+{
+    _prune_mode = true;
+    _facts_to_prune.clear();
+
+    apply_rule(0, pattern);
+    _pool->wait();
+
+    removed_count = _facts_to_prune.size();
+
+    if (removed_count > 0)
+    {
+        std::lock_guard<std::mutex> lock(_mtx_network);
+        for (Node fact_node : _facts_to_prune)
+        {
+            _pImpl->remove(fact_node);
+        }
+    }
+
+    _prune_mode = false;
+    _facts_to_prune.clear();
+}
+
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
 {
     StopWatch watch;
@@ -244,7 +267,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
             }
             else
             {
-                // Leaf: sequentiell deduce/reporting
+                // Leaf: query or prune
                 ReasoningContext ctx_copy = ctx;
 
                 if (!ctx_copy.rule_deductions.empty())
@@ -273,8 +296,46 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                         }
                     }
                 }
+                else if (_prune_mode)
+                {
+                    // Instantiate the pattern
+                    adjacency_set objects;
+                    Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
+
+                    subject = string::get(*joined, subject, subject);
+                    if (subject != 0 && !_pImpl->is_var(subject))
+                    {
+                        Node relation = parse_relation(ctx_copy.current_condition);
+                        relation      = string::get(*joined, relation, relation);
+                        if (relation != 0 && !_pImpl->is_var(relation))
+                        {
+                            adjacency_set targets;
+                            bool          all_concrete = true;
+                            for (Node obj : objects)
+                            {
+                                Node iobj = string::get(*joined, obj, obj);
+                                if (iobj == 0 || _pImpl->is_var(iobj))
+                                {
+                                    all_concrete = false;
+                                    break;
+                                }
+                                targets.insert(iobj);
+                            }
+
+                            if (all_concrete)
+                            {
+                                Answer ans = check_fact(subject, relation, targets);
+                                if (ans.is_known() && ans.relation() != 0)
+                                {
+                                    _facts_to_prune.insert(ans.relation());
+                                }
+                            }
+                        }
+                    }
+                }
                 else
                 {
+                    // normal query output
                     std::lock_guard<std::mutex> lock(_mtx_output);
                     std::wstring                output;
                     format_fact(output, _lang, ctx_copy.current_condition, *joined, rule.node);
