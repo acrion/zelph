@@ -210,7 +210,7 @@ This approach provides several advantages:
 3. It allows relations to participate in other relations (higher-order relations)
 4. It provides a unified representation mechanism for both facts and rules
 
-This architecture is particularly valuable when working with knowledge bases like Wikidata, where relations (called "properties" in Wikidata terminology) are themselves first-class entities with their own attributes, constraints, and relationships. zelph’s approach naturally aligns with Wikidata’s conceptual model, allowing for seamless representation and inference across the entire knowledge graph.
+This architecture is particularly valuable when working with knowledge bases like Wikidata, where relations (called "properties" in Wikidata terminology) are themselves first-class entities with their own attributes, constraints, and relationships to other entities. zelph’s approach naturally aligns with Wikidata’s conceptual model, allowing for seamless representation and inference across the entire knowledge graph.
 
 Similarly, when stating:
 
@@ -338,6 +338,58 @@ To export all deductions and contradictions as structured Markdown reports:
 This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the directory `mkdocs/docs/` must already exist in the current working directory).  
 It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
 For normal interactive or script use, `.run` is the standard command.
+
+#### Exporting Deduced Facts to File
+
+The command `.run-file <path>` performs full inference (like `.run`) but additionally writes every deduced fact (positive deductions and contradictions) to the specified file – one per line.
+
+Key characteristics of the file output:
+
+- **Reversed order**: The reasoning chain comes first, followed by `⇒` and then the conclusion (or `!` for contradictions).
+- **Clean format**: No `«»` markup, no parentheses, no additional explanations – only the pure facts.
+- **Console output unchanged**: On the terminal you still see the normal format with `⇐` explanations and markup.
+
+Example session (with `.lang wikidata` active):
+
+```
+> Q1 P1 Q2
+«Q1» «P1» «Q2»
+> Q2 P1 Q3
+«Q2» «P1» «Q3»
+> A P1 B, B P1 C => A P2 C
+((A «P1» B), (B «P1» C)) «=>» (A «P2» C)
+> .run-file /home/stefan/RAMDisk/output2.txt
+Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to /home/stefan/RAMDisk/output2.txt (with Wikidata token encoding).
+...
+«Q1» «P2» «Q3» ⇐ («Q1» «P1» «Q2»), («Q2» «P1» «Q3»)
+...
+> Ready.
+```
+
+Content of `output2.txt`:
+
+```
+丂 一丂 七, 七 一丂 丄 ⇒ 丂 一七 丄
+```
+
+Decoding the file:
+
+```
+> .decode /home/stefan/RAMDisk/output2.txt
+Q1 P1 Q2, Q2 P1 Q3 ⇒ Q1 P2 Q3
+```
+
+The command is **general-purpose** and works with any language setting. It simply collects all deductions in a clean, machine-readable text file.
+
+When the current language is set to `wikidata` (via `.lang wikidata`), the output is **automatically compressed** using a dense encoding that maps Q/P identifiers to CJK characters. This dramatically reduces file size and – crucially – makes the data highly suitable for training or prompting large language models (LLMs). Standard tokenizers struggle with long numeric identifiers (Q123456789), often splitting them into many sub-tokens. The compact CJK encoding avoids this problem entirely, enabling efficient fine-tuning or continuation tasks on Wikidata-derived logical data.
+
+To read an encoded (or plain) file back in human-readable form, use:
+
+```
+.decode <path>
+```
+
+This prints each line decoded (if it was encoded) using Wikidata identifiers.
 
 ### Internal representation of rules
 
@@ -857,4 +909,4 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-export Q42
   ```
 
-Inference is performed using the general `.run` and `.run-md` commands (see the [Performing Inference](#performing-inference) section above).
+Inference is performed using the general `.run`, `.run-once`, `.run-md`, and `.run-file` commands (see the [Performing Inference](#performing-inference) section above).

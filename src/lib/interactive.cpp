@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "stopwatch.hpp"
 #include "string_utils.hpp"
 #include "wikidata.hpp"
+#include "wikidata_text_compressor.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/bimap.hpp>
@@ -267,6 +268,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".run                        – Run full inference",
         L".run-once                   – Run a single inference pass",
         L".run-md <subdir>            – Run inference and export results as Markdown",
+        L".run-file <file>            – Run inference, write deduced facts (reversed order) to <file> (encoded if lang=wikidata)",
+        L".decode <file>              – Decode an encoded/plain file and print readable facts",
         L".list-rules                 – List all defined inference rules",
         L".list-predicate-usage       – Show predicate usage statistics (sorted by frequency)",
         L".remove-rules               – Remove all inference rules",
@@ -316,6 +319,17 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".run-md", L".run-md <subdir>\n"
                      L"Runs full inference and exports all deductions and contradictions as Markdown files\n"
                      L"in the directory mkdocs/docs/<subdir> for use with MkDocs."},
+
+        {L".run-file", L".run-file <file>\n"
+                       L"Performs full inference. Deduced facts (positive conclusions and contradictions) are written to <file>\n"
+                       L"in reversed order (reasons first, then ⇒ conclusion), without any brackets or markup.\n"
+                       L"Console output remains unchanged (original order with ⇐ explanations).\n"
+                       L"If the current language is 'wikidata' (set via .lang wikidata), Wikidata identifiers are heavily\n"
+                       L"compressed for minimal file size. Otherwise the file contains plain readable text."},
+
+        {L".decode", L".decode <file>\n"
+                     L"Reads a file created by .run-file (encoded or plain) and prints the decoded facts\n"
+                     L"in readable form to standard output."},
 
         {L".list-rules", L".list-rules\n"
                          L"Lists all currently defined inference rules in readable format."},
@@ -510,6 +524,111 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             _wikidata->set_logging(false);
         }
         _n->run(false, true, false);
+    }
+    else if (cmd[0] == L".run-file")
+    {
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .run-file requires exactly one argument: the output file path");
+
+        std::string   outfile = string::unicode::to_utf8(cmd[1]);
+        std::ofstream out(outfile);
+        if (!out.is_open())
+            throw std::runtime_error("Command .run-file: Cannot open output file '" + outfile + "'");
+
+        zelph::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
+
+        bool is_wikidata = (_n->get_lang() == "wikidata");
+
+        auto normal_print = [](const std::wstring& str, bool)
+        {
+#ifdef _WIN32
+            std::wcout << str << std::endl;
+#else
+            std::clog << string::unicode::to_utf8(str) << std::endl;
+#endif
+        };
+
+        std::function<void(const std::wstring&, bool)> encode_print =
+            [&compressor, &out, normal_print, is_wikidata](const std::wstring& str, bool important)
+        {
+            normal_print(str, important);
+
+            size_t pos = str.find(L" ⇐ ");
+            if (pos == std::wstring::npos)
+                return;
+
+            std::wstring deduction = str.substr(0, pos);
+            boost::trim(deduction);
+
+            std::wstring reasons = str.substr(pos + 3);
+            boost::trim(reasons);
+
+            if (!reasons.empty() && reasons.front() == L'(')
+                reasons.erase(0, 1);
+            if (!reasons.empty() && reasons.back() == L')')
+                reasons.erase(reasons.size() - 1);
+            boost::trim(reasons);
+
+            boost::replace_all(reasons, L"(", L"");
+            boost::replace_all(reasons, L")", L"");
+
+            boost::replace_all(deduction, L"«", L"");
+            boost::replace_all(deduction, L"»", L"");
+            boost::replace_all(reasons, L"«", L"");
+            boost::replace_all(reasons, L"»", L"");
+
+            std::wstring line_for_file;
+            if (!reasons.empty())
+                line_for_file = reasons + L" ⇒ " + deduction;
+            else
+                line_for_file = deduction; // Fallback (sehr selten)
+
+            boost::trim(line_for_file);
+
+            std::string utf8_line = string::unicode::to_utf8(line_for_file);
+
+            if (is_wikidata)
+            {
+                std::string encoded = compressor.encode(utf8_line);
+                out << encoded << '\n';
+            }
+            else
+            {
+                out << utf8_line << '\n';
+            }
+        };
+
+        _n->print(L"Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to " + cmd[1] + (is_wikidata ? L" (with Wikidata token encoding)." : L" (plain text)."), true);
+
+        _n->set_print(encode_print);
+
+        _n->run(true, false, false);
+
+        _n->set_print(normal_print);
+
+        _n->print(L"> Ready.", true);
+    }
+    else if (cmd[0] == L".decode")
+    {
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .decode requires exactly one argument: the input file path");
+
+        std::string   infile = string::unicode::to_utf8(cmd[1]);
+        std::ifstream in(infile);
+        if (!in.is_open())
+            throw std::runtime_error("Command .decode: Cannot open input file '" + infile + "'");
+
+        zelph::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
+
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (!line.empty())
+            {
+                std::string decoded = compressor.decode(line);
+                std::cout << decoded << std::endl;
+            }
+        }
     }
     else if (cmd[0] == L".wikidata")
     {

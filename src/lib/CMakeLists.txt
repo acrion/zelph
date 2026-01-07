@@ -116,6 +116,8 @@ add_library(zelph_lib SHARED
     thread_pool.hpp
     wikidata.cpp
     wikidata.hpp
+    wikidata_text_compressor.hpp
+    wikidata_token_encoder.hpp
     # boost/serialization. We compile it ourselves. The configurations are (Mac, Linux, Windows) x (CMake, go). In addition we need to match the boost build with our build (e. g. regarding use of C++14).
     ../boost/serialization/src/archive_exception.cpp
     ../boost/serialization/src/basic_archive.cpp
