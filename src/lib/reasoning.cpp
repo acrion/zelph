@@ -337,7 +337,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
         if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
         {
             Node rel = _pImpl->is_var(*relations.begin())
-                         ? utils::get(variables, *relations.begin(), 0ull)
+                         ? string::get(variables, *relations.begin(), 0ull)
                          : *relations.begin();
 
             if (rel)
@@ -348,7 +348,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                 if (!var_targets.empty())
                 {
                     const Node source = _pImpl->is_var(var_source)
-                                          ? utils::get(variables, var_source, 0ull)
+                                          ? string::get(variables, var_source, 0ull)
                                           : var_source;
 
                     if (source)
@@ -358,7 +358,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                         for (Node var_t : var_targets)
                         {
                             Node t = _pImpl->is_var(var_t)
-                                       ? utils::get(variables, var_t, 0ull)
+                                       ? string::get(variables, var_t, 0ull)
                                        : var_t;
 
                             if (t)

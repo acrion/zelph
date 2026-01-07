@@ -71,11 +71,11 @@ namespace zelph::wikidata
     std::string Markdown::get_template(const std::string& id) const
     {
         std::string         name;
-        const network::Node node = _zelph->get_node(network::utils::wstr(id), "wikidata");
+        const network::Node node = _zelph->get_node(string::unicode::from_utf8(id), "wikidata");
         if (node != 0)
         {
             const std::wstring w_name = _zelph->get_name(node, "en", true);
-            name                      = network::utils::str(network::utils::convert_unicode_escapes(w_name));
+            name                      = string::unicode::to_utf8(string::unicode::unescape(w_name));
         }
         if (name.empty()) name = id;
 
@@ -90,7 +90,7 @@ namespace zelph::wikidata
         uint64_t h = 0xcbf29ce484222325ULL;
         for (const auto& line : block_lines)
         {
-            std::string utf8 = network::utils::str(line);
+            std::string utf8 = string::unicode::to_utf8(line);
             for (char c : utf8)
             {
                 h ^= static_cast<uint64_t>(c);
@@ -112,7 +112,7 @@ namespace zelph::wikidata
             node = _zelph->get_node(token, "zelph"); // fallback
         }
 
-        return node == 0 ? "" : network::utils::str(_zelph->get_name(node, "wikidata", true));
+        return node == 0 ? "" : string::unicode::to_utf8(_zelph->get_name(node, "wikidata", true));
     }
 
     std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message) const
@@ -145,11 +145,11 @@ namespace zelph::wikidata
             if (sep_pos != std::wstring::npos)
             {
                 std::wstring id_part = token.substr(0, sep_pos);
-                wikidataIds.push_back(network::utils::str(id_part));
+                wikidataIds.push_back(string::unicode::to_utf8(id_part));
             }
             else
             {
-                wikidataIds.push_back(network::utils::str(token)); // Assume token is ID
+                wikidataIds.push_back(string::unicode::to_utf8(token)); // Assume token is ID
             }
         }
 
@@ -177,12 +177,12 @@ namespace zelph::wikidata
             {
                 std::wstring id_part = token.substr(0, sep_pos);
                 tokenText            = token.substr(sep_pos + 3);
-                id_str               = network::utils::str(id_part);
+                id_str               = string::unicode::to_utf8(id_part);
             }
             else
             {
                 tokenText = token;
-                id_str    = network::utils::str(token);
+                id_str    = string::unicode::to_utf8(token);
             }
 
             std::string url = id_str + ".md";
@@ -193,7 +193,7 @@ namespace zelph::wikidata
             }
 
             // Add the formatted Markdown link
-            result += L"[" + tokenText + L"](" + network::utils::wstr(url) + L")";
+            result += L"[" + tokenText + L"](" + string::unicode::from_utf8(url) + L")";
 
             // Move the start iterator past the match
             contentStart = contentMatch[0].second;
@@ -201,7 +201,7 @@ namespace zelph::wikidata
 
         // Add any remaining content after the last match
         result = L"- " + result + std::wstring(contentStart, contentEnd);
-        result = network::utils::convert_unicode_escapes(result);
+        result = string::unicode::unescape(result);
 
         return std::make_pair(wikidataIds, result);
     }
@@ -256,7 +256,7 @@ namespace zelph::wikidata
                     else
                     {
                         std::string         templ = get_template(id);
-                        std::wistringstream ss(network::utils::wstr(templ));
+                        std::wistringstream ss(string::unicode::from_utf8(templ));
                         ss.imbue(std::locale(""));
                         std::wstring line;
                         while (std::getline(ss, line))
@@ -340,7 +340,7 @@ namespace zelph::wikidata
                         continue;
                     }
                     for (const auto& l : state.lines)
-                        out << network::utils::str(l) << "\n";
+                        out << string::unicode::to_utf8(l) << "\n";
 
                     out.close();
 

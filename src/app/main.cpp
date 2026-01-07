@@ -50,7 +50,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                script_files.push_back(zelph::network::utils::wstr(arg));
+                script_files.push_back(zelph::string::unicode::from_utf8(arg));
             }
         }
 
@@ -100,7 +100,7 @@ int main(int argc, char** argv)
             }
             catch (const std::exception& e)
             {
-                std::wcerr << zelph::network::utils::wstr(e.what()) << std::endl;
+                std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
             }
 
             std::wcout << L"> ";
@@ -144,7 +144,7 @@ int main(int argc, char** argv)
     }
     catch (std::exception& ex)
     {
-        std::wcout << zelph::network::utils::wstr(ex.what()) << std::endl;
+        std::wcout << zelph::string::unicode::from_utf8(ex.what()) << std::endl;
     }
 
     return 0;

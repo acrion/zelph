@@ -151,7 +151,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
             }
             catch (std::exception& ex)
             {
-                _pImpl->_n->print(L"Failed to load cache: " + utils::wstr(ex.what()), true);
+                _pImpl->_n->print(L"Failed to load cache: " + string::unicode::from_utf8(ex.what()), true);
             }
         }
     }
@@ -308,7 +308,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
                 }
                 catch (std::exception& ex)
                 {
-                    _pImpl->_n->print(L"Failed to save cache: " + utils::wstr(ex.what()), true);
+                    _pImpl->_n->print(L"Failed to save cache: " + string::unicode::from_utf8(ex.what()), true);
                 }
             }
         }
@@ -508,7 +508,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
     std::filesystem::create_directory(dir);
 
     // Output file path
-    std::string   filename = dir + "/" + utils::str(id_str) + ".zph";
+    std::string   filename = dir + "/" + string::unicode::to_utf8(id_str) + ".zph";
     std::ofstream out(filename);
 
     if (out)
@@ -564,22 +564,22 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
                     std::wstring numeric_id     = stmt_json.substr(type_start, type_end - type_start);
                     std::wstring constraint_qid = L"Q" + numeric_id;
 
-                    out << "# Constraint: " << utils::str(constraint_qid) << std::endl;
+                    out << "# Constraint: " << string::unicode::to_utf8(constraint_qid) << std::endl;
 
                     auto it = constraints_map.find(constraint_qid);
                     if (it != constraints_map.end())
                     {
-                        out << "# Short description: " << utils::str(it->second.short_desc) << std::endl;
-                        out << "# Long description: " << utils::str(it->second.long_desc) << std::endl;
+                        out << "# Short description: " << string::unicode::to_utf8(it->second.short_desc) << std::endl;
+                        out << "# Long description: " << string::unicode::to_utf8(it->second.long_desc) << std::endl;
                     }
                     else
                     {
-                        out << "# Unsupported constraint: " << utils::str(constraint_qid) << std::endl;
+                        out << "# Unsupported constraint: " << string::unicode::to_utf8(constraint_qid) << std::endl;
                         out << "# This constraint is not in the supported list but is included as a comment block." << std::endl;
                     }
 
                     out << "# Raw JSON block:" << std::endl;
-                    out << "# " << utils::str(stmt_json) << std::endl;
+                    out << "# " << string::unicode::to_utf8(stmt_json) << std::endl;
 
                     if (it != constraints_map.end() && it->second.generator)
                     {
@@ -590,7 +590,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
                         }
                         else
                         {
-                            out << utils::str(rules) << std::endl;
+                            out << string::unicode::to_utf8(rules) << std::endl;
                         }
                     }
                     else
@@ -608,7 +608,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
     else
     {
         // Error handling if file can't be opened
-        _pImpl->_n->print(L"Failed to open file: " + utils::wstr(filename), true);
+        _pImpl->_n->print(L"Failed to open file: " + string::unicode::from_utf8(filename), true);
     }
 }
 
@@ -637,7 +637,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                && (descriptions == std::wstring::npos || language0 < descriptions))
         {
             size_t      language1 = line.find(L"\"", language0 + language_tag.size());
-            std::string language  = utils::str(line.substr(language0 + language_tag.size(), language1 - language0 - language_tag.size()));
+            std::string language  = string::unicode::to_utf8(line.substr(language0 + language_tag.size(), language1 - language0 - language_tag.size()));
 
             static const std::wstring value_tag(L"\"value\":\"");
             const size_t              id0 = line.find(value_tag, language1 + 1);
@@ -661,7 +661,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
         if (property_str.empty() || property_str[0] != L'P')
         {
-            throw std::runtime_error("Invalid property '" + utils::str(property_str) + "' in " + utils::str(line));
+            throw std::runtime_error("Invalid property '" + string::unicode::to_utf8(property_str) + "' in " + string::unicode::to_utf8(line));
         }
 
         bool process_this_property = true;
@@ -748,7 +748,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                         }
                         catch (std::exception& ex)
                         {
-                            _pImpl->_n->print(utils::wstr(ex.what()), true);
+                            _pImpl->_n->print(string::unicode::from_utf8(ex.what()), true);
                         }
                     }
                 }
@@ -825,7 +825,7 @@ void Wikidata::generate_index() const
             {
                 {
                     std::lock_guard lock(_pImpl->_mtx);
-                    _pImpl->_n->print(L"Indexed " + std::to_wstring(_pImpl->_index.size()) + L" wikidata entries, latest is '" + utils::wstr(_pImpl->_last_entry) + L"' at position " + std::to_wstring(_pImpl->_last_index) + L" (" + std::to_wstring(_pImpl->_last_index / 1024.0 / 1024 / 1024) + L" GB)", true);
+                    _pImpl->_n->print(L"Indexed " + std::to_wstring(_pImpl->_index.size()) + L" wikidata entries, latest is '" + string::unicode::from_utf8(_pImpl->_last_entry) + L"' at position " + std::to_wstring(_pImpl->_last_index) + L" (" + std::to_wstring(_pImpl->_last_index / 1024.0 / 1024 / 1024) + L" GB)", true);
                 }
                 watch.start();
             }
@@ -853,7 +853,7 @@ void Wikidata::index_entry(const std::wstring& line, const std::streamoff stream
     {
         size_t       id1 = line.find(L"\"", id0 + id_tag.size() + 1);
         std::wstring idw(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
-        std::string  id = utils::str(idw);
+        std::string  id = string::unicode::to_utf8(idw);
 
         std::lock_guard lock(_pImpl->_mtx);
         _pImpl->_index[id]  = streampos;
@@ -869,7 +869,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
         return;
     }
 
-    std::string id = utils::str(wikidata_name);
+    std::string id = string::unicode::to_utf8(wikidata_name);
 
     {
         std::lock_guard lock(_pImpl->_mtx);
@@ -921,7 +921,7 @@ void Wikidata::export_entry(const std::wstring& wid) const
         throw std::runtime_error("Cannot export Wikidata entry: original JSON file not available");
     }
 
-    std::string id = network::utils::str(wid);
+    std::string id = string::unicode::to_utf8(wid);
 
     auto it = _pImpl->_index.find(id);
     if (it == _pImpl->_index.end())

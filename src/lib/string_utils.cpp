@@ -36,11 +36,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph
 {
-    namespace network
+    namespace string
     {
-        namespace utils
+        namespace unicode
         {
-            std::string str(const std::wstring& wstr)
+            std::string to_utf8(const std::wstring& wstr)
             {
                 try
                 {
@@ -79,12 +79,12 @@ namespace zelph
                 }
             }
 
-            std::wstring wstr(std::string str)
+            std::wstring from_utf8(std::string str)
             {
                 return boost::locale::conv::utf_to_utf<wchar_t>(str);
             }
 
-            std::wstring convert_unicode_escapes(const std::wstring& input)
+            std::wstring unescape(const std::wstring& input)
             {
                 std::wstring result;
                 result.reserve(input.size());
@@ -121,22 +121,22 @@ namespace zelph
 
                 return result;
             }
+        }
 
-            // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
-            // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
-            // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
-            std::wstring mark_identifier(const std::wstring& str)
+        // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
+        // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
+        // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
+        std::wstring mark_identifier(const std::wstring& str)
+        {
+            if (str.empty()
+                || (str.length() == 1 && std::iswupper(str[0]))
+                || str.front() == L'('
+                || str.back() == L')')
             {
-                if (str.empty()
-                    || (str.length() == 1 && std::iswupper(str[0]))
-                    || str.front() == L'('
-                    || str.back() == L')')
-                {
-                    return str;
-                }
-
-                return L"«" + str + L"»";
+                return str;
             }
+
+            return L"«" + str + L"»";
         }
     }
 }

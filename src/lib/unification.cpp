@@ -95,7 +95,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     if (_subject != 0)
     {
         Node s = _subject;
-        if (_n->_pImpl->is_var(s)) s = utils::get(*_variables, s, s);
+        if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
         if (!_n->_pImpl->is_var(s)) subject_is_bound = true;
     }
 
@@ -196,7 +196,7 @@ bool Unification::increment_fact_index()
 
             // Check if Subject is bound
             Node s = _subject;
-            if (_n->_pImpl->is_var(s)) s = utils::get(*_variables, s, s);
+            if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
 
             if (s != 0 && !_n->_pImpl->is_var(s))
             {
@@ -222,7 +222,7 @@ bool Unification::increment_fact_index()
             else if (!_objects.empty())
             {
                 Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
-                if (_n->_pImpl->is_var(o)) o = utils::get(*_variables, o, o);
+                if (_n->_pImpl->is_var(o)) o = string::get(*_variables, o, o);
 
                 if (o != 0 && !_n->_pImpl->is_var(o))
                 {
@@ -288,7 +288,7 @@ std::shared_ptr<Variables> Unification::Next()
     else
     {
         if (_relation_variable == 0
-            || utils::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
+            || string::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
         {
             while (increment_fact_index()) // iterate over all matching facts (in snapshot)
             {
@@ -319,9 +319,9 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
 {
     if (objects.empty() // a fact requires at least one object
         || subject == 0
-        || _n->_pImpl->is_var(subject)                            // the given "fact" is not a fact, but a rule, because it contains a variable as subject
-        || (!_n->_pImpl->is_var(_subject) && _subject != subject) // the rule _subject is not a variable and differs from the given subject
-        || utils::get(*_variables, _subject, subject) != subject) // The rule _subject is a bound variable that does not point to the given subject (no unification possible)
+        || _n->_pImpl->is_var(subject)                             // the given "fact" is not a fact, but a rule, because it contains a variable as subject
+        || (!_n->_pImpl->is_var(_subject) && _subject != subject)  // the rule _subject is not a variable and differs from the given subject
+        || string::get(*_variables, _subject, subject) != subject) // The rule _subject is a bound variable that does not point to the given subject (no unification possible)
     {
         return nullptr;
     }

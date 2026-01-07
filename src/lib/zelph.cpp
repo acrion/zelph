@@ -117,7 +117,7 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     else if (existing->second != node)
     {
         // Conflict: the same name is already used for another node
-        std::wclog << L"Warning: Name '" << name << L"' in language '" << utils::wstr(lang)
+        std::wclog << L"Warning: Name '" << name << L"' in language '" << string::unicode::from_utf8(lang)
                    << L"' is now shared by multiple nodes (previously Node " << existing->second
                    << L", now Node " << node << L"). Last assignment wins (last-one-wins policy)."
                    << std::endl;
@@ -180,9 +180,9 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
         {
             if (!old_current_name.empty())
             {
-                std::wclog << L"Warning: Changing name in language '" << utils::wstr(_lang)
+                std::wclog << L"Warning: Changing name in language '" << string::unicode::from_utf8(_lang)
                            << L"' for node with foreign name '" << name_in_given_lang
-                           << L"' (language '" << utils::wstr(lang) << L"') from '"
+                           << L"' (language '" << string::unicode::from_utf8(lang) << L"') from '"
                            << old_current_name << L"' to '" << name_in_current_lang << L"'." << std::endl;
 
                 // Remove the old current-language name from the reverse mapping
@@ -195,7 +195,7 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
             {
                 Node conflicting_node = it_conflict->second;
                 std::wclog << L"Warning: Reassigning name '" << name_in_current_lang
-                           << L"' in language '" << utils::wstr(_lang)
+                           << L"' in language '" << string::unicode::from_utf8(_lang)
                            << L"' from Node " << conflicting_node
                            << L" to Node " << result_node << L"." << std::endl;
 
@@ -339,7 +339,7 @@ bool Zelph::has_language(const std::string& language) const
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num)
 {
-    std::string name = utils::str(get_name(node, _lang, true));
+    std::string name = string::unicode::to_utf8(get_name(node, _lang, true));
 
     if (name.empty())
     {
@@ -351,7 +351,7 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num)
         {
             std::wstring output;
             format_fact(output, _lang, node);
-            name = utils::str(output);
+            name = string::unicode::to_utf8(output);
         }
     }
     else if (prepend_num && !_pImpl->is_hash(node) && !_pImpl->is_var(node))
@@ -579,7 +579,7 @@ Node Zelph::fact(const Node source, const Node relationType, const adjacency_set
                 const std::wstring name_subject_object = get_name(source, _lang, true, false);
                 const std::wstring name_relationType   = get_name(relationType, _lang, true, false);
 
-                throw std::runtime_error("fact(): facts with same subject and object are not supported: " + utils::str(name_subject_object) + " " + utils::str(name_relationType) + " " + utils::str(name_subject_object));
+                throw std::runtime_error("fact(): facts with same subject and object are not supported: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
             }
 
             _pImpl->connect(t, answer.relation());
@@ -709,7 +709,15 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 {
     // Formats a fact into a string representation.
 
-    utils::IncDec incDec(_pImpl->_format_fact_level);
+    struct IncDec
+    {
+        explicit IncDec(int& n)
+            : _n(n) { ++_n; }
+        ~IncDec() { --_n; }
+        int& _n;
+    };
+
+    IncDec incDec(_pImpl->_format_fact_level);
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
 
     if (history->find(fact) != history->end())
@@ -735,7 +743,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #if _DEBUG
         Node subject_before = subject;
 #endif
-        subject      = utils::get(variables, subject);
+        subject      = string::get(variables, subject);
         subject_name = subject ? get_formatted_name(subject, lang) : (is_condition ? L"" : L"?");
 #if _DEBUG
         if (subject_name == L"?")
@@ -761,7 +769,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         }
 
         Node relation = parse_relation(fact);
-        relation      = utils::get(variables, relation);
+        relation      = string::get(variables, relation);
         relation_name = relation ? get_formatted_name(relation, lang) : L"?";
         if (relation_name.empty())
         {
@@ -773,7 +781,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     std::wstring objects_name;
     for (Node object : objects)
     {
-        object = utils::get(variables, object);
+        object = string::get(variables, object);
         if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
         std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
         if (object_name.empty())
@@ -790,7 +798,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     }
     if (objects_name.empty()) objects_name = L"?";
 
-    result = utils::mark_identifier(subject_name) + L" " + utils::mark_identifier(relation_name) + L" " + utils::mark_identifier(objects_name);
+    result = string::mark_identifier(subject_name) + L" " + string::mark_identifier(relation_name) + L" " + string::mark_identifier(objects_name);
 
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");

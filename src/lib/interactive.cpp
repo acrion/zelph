@@ -57,7 +57,7 @@ public:
 #ifdef _WIN32
                                         std::wcout << str << std::endl;
 #else
-                                        std::clog << network::utils::str(str) << std::endl;
+                                        std::clog << string::unicode::to_utf8(str) << std::endl;
 #endif
                                     }))
         , _interactive(enclosing)
@@ -105,10 +105,10 @@ console::Interactive::~Interactive()
 
 void console::Interactive::Impl::import_file(const std::wstring& file) const
 {
-    std::clog << "Importing file " << network::utils::str(file) << "..." << std::endl;
-    std::wifstream stream(network::utils::str(file));
+    std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
+    std::wifstream stream(string::unicode::to_utf8(file));
 
-    if (stream.fail()) throw std::runtime_error("Could not open file '" + network::utils::str(file) + "'");
+    if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
 
     for (std::wstring line; std::getline(stream, line);)
     {
@@ -128,7 +128,7 @@ void console::Interactive::process(std::wstring line) const
 #ifdef _WIN32
                               std::wcout << str << std::endl;
 #else
-                              std::clog << network::utils::str(str) << std::endl;
+                              std::clog << string::unicode::to_utf8(str) << std::endl;
 #endif
                           });
 
@@ -216,7 +216,7 @@ void console::Interactive::process(std::wstring line) const
     }
     catch (std::exception& ex)
     {
-        throw std::runtime_error("Error in line \"" + network::utils::str(line) + "\": " + ex.what());
+        throw std::runtime_error("Error in line \"" + string::unicode::to_utf8(line) + "\": " + ex.what());
     }
 }
 
@@ -378,15 +378,15 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         else
         {
-            _n->set_lang(network::utils::str(cmd[1]));
+            _n->set_lang(string::unicode::to_utf8(cmd[1]));
         }
     }
     else if (cmd[0] == L".name")
     {
         if (cmd.size() == 1) throw std::runtime_error("Command .name: Missing current name. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
         if (cmd.size() == 2) throw std::runtime_error("Command .name: Missing language identifier. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        if (cmd.size() == 3) throw std::runtime_error("Command .name: Missing " + network::utils::str(cmd[2]) + " name of " + network::utils::str(cmd[1]) + ". Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        _n->set_name(cmd[1], cmd[3], network::utils::str(cmd[2]));
+        if (cmd.size() == 3) throw std::runtime_error("Command .name: Missing " + string::unicode::to_utf8(cmd[2]) + " name of " + string::unicode::to_utf8(cmd[1]) + ". Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
+        _n->set_name(cmd[1], cmd[3], string::unicode::to_utf8(cmd[2]));
     }
     else if (cmd[0] == L".node")
     {
@@ -400,12 +400,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                 nd         = std::stoull(cmd[1], &pos);
                 if (pos != cmd[1].length())
                 {
-                    throw std::runtime_error("Command .node: Invalid node ID format '" + network::utils::str(cmd[1]) + "'");
+                    throw std::runtime_error("Command .node: Invalid node ID format '" + string::unicode::to_utf8(cmd[1]) + "'");
                 }
             }
             catch (const std::exception&)
             {
-                throw std::runtime_error("Command .node: Unknown node '" + network::utils::str(cmd[1]) + "' in current language '" + _n->lang() + "'");
+                throw std::runtime_error("Command .node: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "' in current language '" + _n->lang() + "'");
             }
         }
         else
@@ -416,7 +416,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {
             std::wstring name = _n->get_name(nd, lang, false);
             std::clog << "Name of node in language '" << lang << "': '"
-                      << network::utils::str(name) << "'" << std::endl;
+                      << string::unicode::to_utf8(name) << "'" << std::endl;
 
             if (lang == "wikidata" && !name.empty())
             {
@@ -426,7 +426,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                 {
                     url += "Property:"; // Wikidata properties have a special URL format.
                 }
-                url += network::utils::str(name);
+                url += string::unicode::to_utf8(name);
                 const std::string OSC_START = "\033]8;;";
                 const char        OSC_SEP   = '\a'; // Use the BEL character as a separator
                 const std::string OSC_END   = "\033]8;;\a";
@@ -447,12 +447,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             count      = std::stoull(cmd[1], &pos);
             if (pos != cmd[1].length())
             {
-                throw std::runtime_error("Command .nodes: Invalid count format '" + network::utils::str(cmd[1]) + "'");
+                throw std::runtime_error("Command .nodes: Invalid count format '" + string::unicode::to_utf8(cmd[1]) + "'");
             }
         }
         catch (const std::exception&)
         {
-            throw std::runtime_error("Command .nodes: Invalid count '" + network::utils::str(cmd[1]) + "'");
+            throw std::runtime_error("Command .nodes: Invalid count '" + string::unicode::to_utf8(cmd[1]) + "'");
         }
 
         if (count <= 0) throw std::runtime_error("Command .nodes: Count must be greater than 0");
@@ -468,7 +468,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             for (const auto& lang : _n->get_languages())
             {
                 std::clog << "  Name in language '" << lang << "': '"
-                          << network::utils::str(_n->get_name(node, lang, false)) << "'" << std::endl;
+                          << string::unicode::to_utf8(_n->get_name(node, lang, false)) << "'" << std::endl;
             }
 
             std::clog << "------------------------" << std::endl;
@@ -483,11 +483,11 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     {
         if (cmd.size() == 1) throw std::runtime_error("Command .dot: Missing node name to visualize");
         network::Node nd = _n->get_node(cmd[1]);
-        if (nd == 0) throw std::runtime_error("Command .dot: Unknown node '" + network::utils::str(cmd[1]) + "'");
+        if (nd == 0) throw std::runtime_error("Command .dot: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "'");
         if (cmd.size() < 3) throw std::runtime_error("Command .dot: Missing maximum depth");
-        int max_depth = std::stoi(network::utils::str(cmd[2]));
+        int max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
         if (max_depth < 2) throw std::runtime_error("Command .dot: Maximum depth must be greater than 1");
-        _n->gen_dot(nd, network::utils::str(cmd[1]) + ".dot", max_depth);
+        _n->gen_dot(nd, string::unicode::to_utf8(cmd[1]) + ".dot", max_depth);
     }
     else if (cmd[0] == L".run")
     {
@@ -502,7 +502,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".run-md")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
-        std::string subdir = network::utils::str(cmd[1]);
+        std::string subdir = string::unicode::to_utf8(cmd[1]);
         _n->set_markdown_subdir(subdir);
         _n->print(L"> Running with markdown export...", true);
         if (_wikidata)
@@ -519,14 +519,14 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         std::ofstream log("wikidata.log");
         _n->set_print([&](const std::wstring& str, bool o)
                       {
-          log << network::utils::str(str) << std::endl;
+          log << string::unicode::to_utf8(str) << std::endl;
 
           if (o)
           {
 #ifdef _WIN32
               std::wcout << str << std::endl;
 #else
-            std::clog << network::utils::str(str) << std::endl;
+            std::clog << string::unicode::to_utf8(str) << std::endl;
 #endif
           } });
 
@@ -538,7 +538,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             _wikidata->generate_index();
             _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
             watch.stop();
-            _n->print(L" Time needed for importing: " + network::utils::wstr(watch.format()), true);
+            _n->print(L" Time needed for importing: " + string::unicode::from_utf8(watch.format()), true);
         }
         else
         {
@@ -554,7 +554,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         watch.start();
         _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
         _wikidata->generate_index();
-        std::string dir = network::utils::str(cmd[2]);
+        std::string dir = string::unicode::to_utf8(cmd[2]);
         _wikidata->import_all(false, dir);
         _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
@@ -596,7 +596,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 #ifdef _WIN32
               std::wcout << str << std::endl;
 #else
-            std::clog << network::utils::str(str) << std::endl;
+            std::clog << string::unicode::to_utf8(str) << std::endl;
 #endif
           } });
 
@@ -609,11 +609,11 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata-index <file> first.");
 
         std::wstring wid = cmd[1];
-        std::string  id  = network::utils::str(wid);
+        std::string  id  = string::unicode::to_utf8(wid);
 
         _wikidata->export_entry(wid);
 
-        _n->print(L"Exported '" + wid + L"' to '" + network::utils::wstr(id + ".json") + L"'", true);
+        _n->print(L"Exported '" + wid + L"' to '" + string::unicode::from_utf8(id + ".json") + L"'", true);
     }
     else if (cmd[0] == L".remove-rules")
     {
@@ -629,7 +629,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else
     {
-        throw std::runtime_error(network::utils::str(L"Unknown command " + cmd[0]));
+        throw std::runtime_error(string::unicode::to_utf8(L"Unknown command " + cmd[0]));
     }
 }
 
@@ -728,7 +728,7 @@ void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens
         if (current == Causes)
         {
             if (is_rule)
-                throw std::runtime_error("Line contains two times " + network::utils::str(_n->get_name(_n->core.Causes))); // this is just a parser restriction to distinguish between condition and deduction, might be useful to support it
+                throw std::runtime_error("Line contains two times " + string::unicode::to_utf8(_n->get_name(_n->core.Causes))); // this is just a parser restriction to distinguish between condition and deduction, might be useful to support it
             else
                 is_rule = true;
         }
@@ -806,7 +806,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
         }
         else
         {
-            throw std::runtime_error(network::utils::str(L"Fact '" + *tokens.begin() + L"' consists of only 1 token, which is only allowed for contradiction '" + _n->get_name(_n->core.Contradiction) + L"'"));
+            throw std::runtime_error(string::unicode::to_utf8(L"Fact '" + *tokens.begin() + L"' consists of only 1 token, which is only allowed for contradiction '" + _n->get_name(_n->core.Contradiction) + L"'"));
         }
     }
 
@@ -828,7 +828,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
 
                 if (variables.left.find(token) == variables.left.end())
                 {
-                    throw std::runtime_error(network::utils::str(L"Variable " + token + L" has been set to a different node."));
+                    throw std::runtime_error(string::unicode::to_utf8(L"Variable " + token + L" has been set to a different node."));
                 }
 
                 combined.emplace_back(this, node, token);
@@ -862,7 +862,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
             {
                 std::vector<std::wstring> test;
                 test.insert(test.end(), tokens.begin() + static_cast<long>(i), tokens.begin() + static_cast<long>(i) + static_cast<long>(len));
-                std::wstring  connected = network::utils::concatenate(test, L' ');
+                std::wstring  connected = string::concatenate(test, L' ');
                 network::Node node      = _n->get_node(connected, _n->lang());
                 if (node)
                 {
@@ -897,7 +897,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
 
         if (i != combined.size())
         {
-            throw std::runtime_error(network::utils::str(L"cannot match fact or condition (use quotation marks?): " + temp[0]._token + L"  " + temp[1]._token + L"  " + temp[2]._token + L" ..."));
+            throw std::runtime_error(string::unicode::to_utf8(L"cannot match fact or condition (use quotation marks?): " + temp[0]._token + L"  " + temp[1]._token + L"  " + temp[2]._token + L" ..."));
         }
 
         combined = std::move(temp);
@@ -923,7 +923,7 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
 
         if (tokens_for_fact.empty())
         {
-            throw std::runtime_error("Found empty condition or deduction in " + network::utils::str(line));
+            throw std::runtime_error("Found empty condition or deduction in " + string::unicode::to_utf8(line));
         }
 
         if (is_deduction)
@@ -934,8 +934,8 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
         if (i < tokens.size() && tokens[i] == Causes) is_deduction = true;
     }
 
-    if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + network::utils::str(line));
-    if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + network::utils::str(line));
+    if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + string::unicode::to_utf8(line));
+    if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + string::unicode::to_utf8(line));
 
     network::adjacency_set condition_nodes;
     for (const auto& condition : conditions)
@@ -984,7 +984,7 @@ extern "C" void zelph_process_c(const char* line, size_t len)
     if (len > 0)
     {
         std::string l(line, 0, len);
-        interactive.process(network::utils::wstr(l));
+        interactive.process(string::unicode::from_utf8(l));
     }
 }
 
