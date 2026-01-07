@@ -45,7 +45,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iostream>
 #include <map>
 #include <mutex>
-#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -74,11 +73,46 @@ public:
     bool                                  _logging{true};
     std::string                           _last_entry;
     std::streamoff                        _last_index{0};
+    std::filesystem::path                 _bin_file;
+    bool                                  _has_json{false};
 };
 
-Wikidata::Wikidata(Zelph* n, const std::filesystem::path& file_name)
-    : _pImpl(new Impl(n, file_name))
+Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
+    : _pImpl(new Impl(n, [&source_path]() -> std::filesystem::path
+                      {
+        if (source_path.empty())
+        {
+            throw std::runtime_error("Wikidata source path must not be empty");
+        }
+
+        auto ext = source_path.extension().string();
+
+        std::filesystem::path json_path = source_path;
+        if (ext == ".bin")
+        {
+            json_path.replace_extension(".json");
+        }
+        else if (ext != ".json")
+        {
+            throw std::runtime_error("Wikidata source path must have '.json' or '.bin' extension, got: " + ext);
+        }
+
+        return json_path; }()))
 {
+    if (!std::filesystem::exists(source_path))
+    {
+        throw std::runtime_error("Wikidata source file does not exist: " + source_path.string());
+    }
+
+    std::filesystem::path bin_path = source_path;
+    if (bin_path.extension() == ".json")
+    {
+        bin_path.replace_extension(".bin");
+    }
+
+    _pImpl->_bin_file = bin_path;
+    _pImpl->_has_json = std::filesystem::exists(_pImpl->_file_name);
+
     n->set_process_node([this](const Node node, const std::string& lang)
                         { return this->process_node(node, lang); });
 }
@@ -97,8 +131,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
         std::clog << "Number of nodes prior import: " << _pImpl->_n->count() << std::endl;
     }
 
-    std::filesystem::path cache_file = _pImpl->_file_name;
-    cache_file.replace_extension(".bin");
+    std::filesystem::path cache_file = _pImpl->_bin_file;
 
     bool cache_loaded = false;
     if (!export_constraints)
@@ -111,7 +144,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
                 std::ifstream                   ifs(cache_file, std::ios::binary);
                 boost::archive::binary_iarchive ia(ifs);
 
-                _pImpl->_n->load_from_file(cache_file.string());
+                _pImpl->_n->load_from_file(_pImpl->_bin_file.string());
 
                 _pImpl->_n->print(L"Cache loaded successfully.", true);
                 cache_loaded = true;
@@ -270,7 +303,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
                 try
                 {
                     _pImpl->_n->print(L"Saving network to cache " + cache_file.wstring() + L"...", true);
-                    _pImpl->_n->save_to_file(cache_file.string());
+                    _pImpl->_n->save_to_file(_pImpl->_bin_file.string());
                     _pImpl->_n->print(L"Cache saved.", true);
                 }
                 catch (std::exception& ex)
@@ -764,6 +797,11 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
 
 void Wikidata::generate_index() const
 {
+    if (!_pImpl->_has_json)
+    {
+        return;
+    }
+
     if (!_pImpl->read_index_file())
     {
         _pImpl->_n->print(L"Indexing file " + _pImpl->_file_name.wstring(), true);
@@ -826,15 +864,27 @@ void Wikidata::index_entry(const std::wstring& line, const std::streamoff stream
 
 void Wikidata::process_name(const std::wstring& wikidata_name)
 {
-    if (_pImpl->_index.count(utils::str(wikidata_name)) != 0)
+    if (!_pImpl->_has_json)
     {
-        std::wifstream stream(_pImpl->_file_name);
-        stream.seekg(_pImpl->_index[utils::str(wikidata_name)]);
-
-        std::wstring line;
-        std::getline(stream, line);
-        process_entry(line, true, false, false, false, "");
+        return;
     }
+
+    std::string id = utils::str(wikidata_name);
+
+    {
+        std::lock_guard lock(_pImpl->_mtx);
+        if (_pImpl->_index.count(id) == 0)
+        {
+            return;
+        }
+    }
+
+    std::wifstream stream(_pImpl->_file_name);
+    stream.seekg(_pImpl->_index.at(id));
+
+    std::wstring line;
+    std::getline(stream, line);
+    process_entry(line, true, false, false, false, "");
 }
 
 void Wikidata::process_node(const Node node, const std::string& /* lang */)
@@ -866,6 +916,11 @@ void Wikidata::process_node(const Node node, const std::string& /* lang */)
 
 void Wikidata::export_entry(const std::wstring& wid) const
 {
+    if (!_pImpl->_has_json)
+    {
+        throw std::runtime_error("Cannot export Wikidata entry: original JSON file not available");
+    }
+
     std::string id = network::utils::str(wid);
 
     auto it = _pImpl->_index.find(id);
@@ -898,13 +953,19 @@ void Wikidata::set_logging(bool do_log)
 
 bool Wikidata::Impl::read_index_file()
 {
-    if (!std::filesystem::exists(index_file_name()))
+    if (!_has_json)
     {
         return false;
     }
 
-    _n->print(L"Reading index file " + index_file_name().wstring() + L"...", true);
-    std::ifstream                 stream(index_file_name());
+    auto index_path = index_file_name();
+    if (!std::filesystem::exists(index_path))
+    {
+        return false;
+    }
+
+    _n->print(L"Reading index file " + index_path.wstring() + L"...", true);
+    std::ifstream                 stream(index_path);
     boost::archive::text_iarchive iarch(stream);
     iarch >> _index;
     _n->print(L"Finished reading", true);
@@ -914,6 +975,11 @@ bool Wikidata::Impl::read_index_file()
 
 void Wikidata::Impl::write_index_file() const
 {
+    if (!_has_json)
+    {
+        return;
+    }
+
     _n->print(L"Writing index file " + index_file_name().wstring() + L"...", true);
     std::ofstream                 stream(index_file_name());
     boost::archive::text_oarchive oarch(stream);
