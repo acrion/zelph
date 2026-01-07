@@ -131,6 +131,7 @@ Key commands include:
 - `.decode <file>`           – Decode a file produced by `.run-file`
 - `.list-rules`              – List all defined rules
 - `.list-predicate-usage`    – Show predicate usage statistics
+- `.list-predicate-value-usage <predicate>` – Show object/value usage statistics for a specific predicate
 - `.remove-rules`            – Remove all inference rules
 - `.import <file.zph>`       – Load and execute a zelph script
 - `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)

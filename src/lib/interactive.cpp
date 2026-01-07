@@ -79,6 +79,7 @@ public:
     void          process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
     static bool   is_var(std::wstring token);
     void          list_predicate_usage();
+    void          list_predicate_value_usage(const std::wstring& pred_arg);
 
     std::shared_ptr<Wikidata> _wikidata;
     network::Reasoning* const _n;
@@ -274,6 +275,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".decode <file>              – Decode an encoded/plain file and print readable facts",
         L".list-rules                 – List all defined inference rules",
         L".list-predicate-usage       – Show predicate usage statistics (sorted by frequency)",
+        L".list-predicate-value-usage <pred> – Show object/value usage statistics for a specific predicate (sorted by frequency)",
         L".remove-rules               – Remove all inference rules",
         L".import <file.zph>          – Load and execute a zelph script file",
         L".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
@@ -343,6 +345,11 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".list-predicate-usage", L".list-predicate-usage\n"
                                    L"Shows how often each predicate (relation type) is used, sorted by frequency.\n"
                                    L"If Wikidata language is active, Wikidata IDs are shown alongside names."},
+
+        {L".list-predicate-value-usage", L".list-predicate-value-usage <predicate>\n"
+                                         L"Shows how often each object (value) is used with the specified predicate, sorted by frequency.\n"
+                                         L"The <predicate> can be a name (in the current language) or a numeric node ID.\n"
+                                         L"If the Wikidata language is available and active, Wikidata IDs are shown alongside names."},
 
         {L".remove-rules", L".remove-rules\n"
                            L"Deletes all inference rules from the network."},
@@ -733,6 +740,13 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     {
         list_predicate_usage();
     }
+    else if (cmd[0] == L".list-predicate-value-usage")
+    {
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .list-predicate-value-usage requires exactly one argument: the predicate name or ID");
+
+        list_predicate_value_usage(cmd[1]);
+    }
     else if (cmd[0] == L".wikidata-index")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-index: Missing json file name");
@@ -912,7 +926,7 @@ void console::Interactive::Impl::list_predicate_usage()
     // Sort the predicates by usage count in descending order
     std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b)
               {
-                  return a.second > b.second; // Sort by count, descending
+                  return a.second < b.second; // Sort by count, ascending
               });
 
     // Determine if wikidata language is available for three-column output
@@ -944,6 +958,99 @@ void console::Interactive::Impl::list_predicate_usage()
         _n->print(line_output, true);
     }
     _n->print(L"------------------------", true);
+}
+
+void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& pred_arg)
+{
+    // Resolve the predicate node (accept name in current language or raw numeric ID)
+    network::Node pred = _n->get_node(pred_arg);
+    if (pred == 0)
+    {
+        try
+        {
+            size_t pos = 0;
+            pred       = std::stoull(pred_arg, &pos);
+            if (pos != pred_arg.length())
+                throw std::runtime_error("");
+        }
+        catch (...)
+        {
+            throw std::runtime_error("Unknown predicate '" + string::unicode::to_utf8(pred_arg) + "' in current language '" + _n->lang() + "'");
+        }
+    }
+
+    std::wstring pred_display = _n->get_name(pred, _n->lang(), true);
+    if (pred_display.empty())
+        pred_display = pred_arg;
+
+    _n->print(L"Value Usage for predicate " + pred_display + L":", true);
+    _n->print(L"------------------------", true);
+
+    ankerl::unordered_dense::map<network::Node, size_t> value_counts;
+
+    // All fact nodes that use this predicate: fact --> pred
+    network::adjacency_set facts = _n->get_left(pred);
+
+    for (network::Node fact : facts)
+    {
+        network::adjacency_set incoming = _n->get_left(fact);  // subject(s) + object(s) --> fact
+        network::adjacency_set outgoing = _n->get_right(fact); // subject(s) + pred (bidirectional for subject)
+
+        // Subjects are the nodes with bidirectional connection
+        network::adjacency_set subjects;
+        for (network::Node cand : incoming)
+        {
+            if (outgoing.count(cand))
+                subjects.insert(cand);
+        }
+
+        // Objects are incoming nodes that are not subjects
+        for (network::Node obj : incoming)
+        {
+            if (subjects.count(obj) == 0)
+            {
+                value_counts[obj]++;
+            }
+        }
+    }
+
+    // Sort by count descending
+    std::vector<std::pair<size_t, network::Node>> sorted;
+    sorted.reserve(value_counts.size());
+    for (const auto& p : value_counts)
+    {
+        sorted.emplace_back(p.second, p.first);
+    }
+    std::sort(sorted.begin(), sorted.end());
+
+    bool        has_wikidata_lang = _n->has_language("wikidata");
+    std::string curr_lang         = _n->get_lang();
+
+    for (const auto& entry : sorted)
+    {
+        std::wstring value_name = _n->get_name(entry.second, "", true); // current language with fallback
+
+        std::wstring line;
+        if (has_wikidata_lang && curr_lang != "wikidata")
+        {
+            std::wstring wikidata_name = _n->get_name(entry.second, "wikidata", false);
+            if (wikidata_name.empty())
+                wikidata_name = L"(no ID)";
+            line = value_name + L"\t" + wikidata_name + L"\t" + std::to_wstring(entry.first);
+        }
+        else
+        {
+            line = value_name + L"\t" + std::to_wstring(entry.first);
+        }
+        _n->print(line, true);
+    }
+
+    _n->print(L"------------------------", true);
+    _n->print(L"Total unique values: " + std::to_wstring(value_counts.size()), true);
+    if (value_counts.empty())
+    {
+        _n->print(L"(No values found for this predicate)", true);
+    }
 }
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const
