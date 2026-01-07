@@ -24,6 +24,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
+
+#include "network.hpp"
 #include "reasoning.hpp"
 #include "stopwatch.hpp"
 #include "string_utils.hpp"
@@ -276,7 +278,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".import <file.zph>          – Load and execute a zelph script file",
         L".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
         L".save <file.bin>            – Save the current network to a binary file",
-        L".prune <pattern>            – Remove all facts matching the query pattern (must contain ≥1 variable)",
+        L".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
+        L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
         L".cleanup                    – Remove isolated nodes and clean name mappings",
         L".wikidata-index <json>      – Generate index only (for faster future loads)",
         L".wikidata-export <wid>      – Export a single Wikidata entry as JSON",
@@ -357,11 +360,19 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                    L"Saves the current network state to a binary file.\n"
                    L"The filename must end with '.bin'."},
 
-        {L".prune", L".prune <pattern>\n"
-                    L"Removes all facts that match the given query pattern.\n"
-                    L"The pattern must contain at least one variable (A-Z or starting with _).\n"
-                    L"Reports how many facts were removed.\n"
-                    L"After pruning, consider running .cleanup to remove newly isolated nodes."},
+        {L".prune-facts", L".prune-facts <pattern>\n"
+                          L"Removes only the matching facts (statement nodes).\n"
+                          L"The pattern may contain variables in any position.\n"
+                          L"Reports how many facts were removed."},
+
+        {L".prune-nodes", L".prune-nodes <pattern>\n"
+                          L"Removes all matching facts AND all nodes that appear as subject or object in these facts.\n"
+                          L"Requirements:\n"
+                          L"- The relation (predicate) must be fixed (no variable allowed in predicate position)\n"
+                          L"- Variables are allowed in subject and/or object positions\n"
+                          L"WARNING: This is highly destructive! It removes ALL connections of the affected nodes.\n"
+                          L"The relation node itself becomes isolated and can be removed with .cleanup.\n"
+                          L"Reports removed facts and nodes."},
 
         {L".cleanup", L".cleanup\n"
                       L"Removes all nodes that have no connections (isolated nodes).\n"
@@ -758,10 +769,10 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->remove_rules();
         _n->print(L"All rules removed.", true);
     }
-    else if (cmd[0] == L".prune")
+    else if (cmd[0] == L".prune-facts")
     {
         if (cmd.size() < 2)
-            throw std::runtime_error("Command .prune requires a pattern with at least one variable");
+            throw std::runtime_error("Command .prune-facts requires a pattern with at least one variable");
 
         std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
 
@@ -779,23 +790,66 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
 
         if (is_rule)
-            throw std::runtime_error("Command .prune: pattern must not be a rule (no '=>' allowed)");
+            throw std::runtime_error("Command .prune-facts: pattern must not be a rule (no '=>' allowed)");
 
         if (!assigns_to_var.empty())
-            throw std::runtime_error("Command .prune: assignment to variable (=) not supported");
+            throw std::runtime_error("Command .prune-facts: assignment to variable (=) not supported");
 
         boost::bimap<std::wstring, network::Node> variables;
         network::Node                             pattern_fact = process_fact(tokens, variables);
 
         if (variables.empty())
-            throw std::runtime_error("Command .prune: pattern must contain at least one variable (A-Z or starting with _)");
+            throw std::runtime_error("Command .prune-facts: pattern must contain at least one variable (A-Z or starting with _)");
 
         size_t removed = 0;
-        dynamic_cast<network::Reasoning*>(_n)->prune_matching(pattern_fact, removed);
+        dynamic_cast<network::Reasoning*>(_n)->prune_facts(pattern_fact, removed);
 
         _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
         if (removed > 0)
             _n->print(L"Consider running .cleanup to remove newly isolated nodes.", true);
+    }
+    else if (cmd[0] == L".prune-nodes")
+    {
+        if (cmd.size() < 2)
+            throw std::runtime_error("Command .prune-nodes requires a pattern");
+
+        std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
+
+        const std::wstring And    = _n->get_name(_n->core.And, _n->lang());
+        const std::wstring Causes = _n->get_name(_n->core.Causes, _n->lang());
+
+        bool                      is_rule = false;
+        std::wstring              assigns_to_var;
+        std::wstring              first_var = pattern_tokens.empty() ? L"" : (Impl::is_var(pattern_tokens[0]) ? L"" : pattern_tokens[0]);
+        std::vector<std::wstring> tokens;
+
+        for (const auto& token : pattern_tokens)
+        {
+            process_token(tokens, is_rule, first_var, assigns_to_var, token, And, Causes);
+        }
+
+        if (is_rule)
+            throw std::runtime_error("Command .prune-nodes: pattern must not be a rule (no '=>' allowed)");
+
+        if (!assigns_to_var.empty())
+            throw std::runtime_error("Command .prune-nodes: assignment to variable (=) not supported");
+
+        boost::bimap<std::wstring, network::Node> variables;
+        network::Node                             pattern_fact = process_fact(tokens, variables);
+
+        network::Node relation = _n->parse_relation(pattern_fact);
+        if (network::Network::is_var(relation))
+        {
+            throw std::runtime_error("Command .prune-nodes: the relation (predicate) must be fixed – no variable allowed in predicate position");
+        }
+
+        size_t removed_facts = 0;
+        size_t removed_nodes = 0;
+        dynamic_cast<network::Reasoning*>(_n)->prune_nodes(pattern_fact, removed_facts, removed_nodes);
+
+        _n->print(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
+        if (removed_facts > 0 || removed_nodes > 0)
+            _n->print(L"Consider running .cleanup to remove any remaining isolated nodes.", true);
     }
     else if (cmd[0] == L".cleanup")
     {

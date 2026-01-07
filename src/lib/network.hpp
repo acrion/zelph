@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <boost/serialization/map.hpp>
 #include <boost/serialization/vector.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <limits>

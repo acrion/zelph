@@ -47,12 +47,15 @@ void Reasoning::set_markdown_subdir(const std::string& subdir)
     _markdown_subdir = subdir;
 }
 
-void Reasoning::prune_matching(Node pattern, size_t& removed_count)
+void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 {
-    _prune_mode = true;
+    _prune_mode       = true;
+    _prune_nodes_mode = false;
     _facts_to_prune.clear();
+    _nodes_to_prune.clear();
 
     apply_rule(0, pattern);
+
     _pool->wait();
 
     removed_count = _facts_to_prune.size();
@@ -60,14 +63,43 @@ void Reasoning::prune_matching(Node pattern, size_t& removed_count)
     if (removed_count > 0)
     {
         std::lock_guard<std::mutex> lock(_mtx_network);
-        for (Node fact_node : _facts_to_prune)
+        for (Node fact : _facts_to_prune)
         {
-            _pImpl->remove(fact_node);
+            _pImpl->remove(fact);
         }
     }
 
     _prune_mode = false;
+}
+
+void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes)
+{
+    _prune_mode       = true;
+    _prune_nodes_mode = true;
     _facts_to_prune.clear();
+    _nodes_to_prune.clear();
+
+    apply_rule(0, pattern);
+
+    _pool->wait();
+
+    removed_facts = _facts_to_prune.size();
+    removed_nodes = _nodes_to_prune.size();
+
+    std::lock_guard<std::mutex> lock(_mtx_network);
+
+    for (Node fact : _facts_to_prune)
+    {
+        _pImpl->remove(fact);
+    }
+
+    for (Node node : _nodes_to_prune)
+    {
+        _pImpl->remove(node);
+    }
+
+    _prune_mode       = false;
+    _prune_nodes_mode = false;
 }
 
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
@@ -298,37 +330,34 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 }
                 else if (_prune_mode)
                 {
-                    // Instantiate the pattern
                     adjacency_set objects;
                     Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
 
-                    subject = string::get(*joined, subject, subject);
-                    if (subject != 0 && !_pImpl->is_var(subject))
-                    {
-                        Node relation = parse_relation(ctx_copy.current_condition);
-                        relation      = string::get(*joined, relation, relation);
-                        if (relation != 0 && !_pImpl->is_var(relation))
-                        {
-                            adjacency_set targets;
-                            bool          all_concrete = true;
-                            for (Node obj : objects)
-                            {
-                                Node iobj = string::get(*joined, obj, obj);
-                                if (iobj == 0 || _pImpl->is_var(iobj))
-                                {
-                                    all_concrete = false;
-                                    break;
-                                }
-                                targets.insert(iobj);
-                            }
+                    subject       = string::get(*joined, subject, subject);
+                    Node relation = parse_relation(ctx_copy.current_condition);
+                    relation      = string::get(*joined, relation, relation);
 
-                            if (all_concrete)
+                    adjacency_set targets;
+                    for (Node obj : objects)
+                    {
+                        Node iobj = string::get(*joined, obj, obj);
+                        if (iobj && !_pImpl->is_var(iobj))
+                            targets.insert(iobj);
+                    }
+
+                    if (subject && relation && !targets.empty() && !_pImpl->is_var(subject) && !_pImpl->is_var(relation))
+                    {
+                        Answer ans = check_fact(subject, relation, targets);
+                        if (ans.is_known() && ans.relation())
+                        {
+                            _facts_to_prune.insert(ans.relation());
+
+                            if (_prune_nodes_mode)
                             {
-                                Answer ans = check_fact(subject, relation, targets);
-                                if (ans.is_known() && ans.relation() != 0)
-                                {
-                                    _facts_to_prune.insert(ans.relation());
-                                }
+                                if (_pImpl->is_var(parse_fact(ctx_copy.current_condition, objects)))
+                                    _nodes_to_prune.insert(subject);
+                                else if (objects.size() == 1)
+                                    _nodes_to_prune.insert(*targets.begin());
                             }
                         }
                     }

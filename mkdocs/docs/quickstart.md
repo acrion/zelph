@@ -88,20 +88,25 @@ The `.load` command is general-purpose:
 
 ### Data Cleanup Commands
 
-Two commands help maintain a clean network:
+zelph provides powerful commands for targeted data removal:
 
-```
-.prune <pattern>           # Remove all facts matching a query pattern (must contain ≥1 variable)
-.cleanup                   # Remove all isolated nodes and clean name mappings
-```
+- `.prune-facts <pattern>` – Removes only the matching facts (statement nodes).  
+  Useful for deleting specific properties without affecting the entities themselves.
 
-Example usage:
+- `.prune-nodes <pattern>` – Removes matching facts **and** all nodes bound to the single variable.  
+  Requirements: exactly one variable (subject or single object), fixed relation.  
+  **Warning**: This completely deletes the nodes and **all** their connections – use with caution!
+
+- `.cleanup` – Removes all isolated nodes and cleans name mappings.
+
+Example:
 
 ```
 .lang wikidata
-A P31 Q5                    # Query all humans (P31 = instance of, Q5 = human)
-.prune A P31 Q5             # Remove all "instance of human" facts
-.cleanup                    # Remove any nodes that became isolated
+A P31 Q8054                 # Query all proteins
+.prune-facts A P31 Q8054    # Remove only "instance of protein" statements
+.prune-nodes A P31 Q8054    # Remove statements AND all protein nodes (with all their properties!)
+.cleanup                    # Clean up any remaining isolated nodes
 ```
 
 ### Full Command Reference
@@ -128,7 +133,8 @@ Key commands include:
 - `.import <file.zph>`       – Load and execute a zelph script
 - `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
 - `.save <file.bin>`         – Save current network to binary file
-- `.prune <pattern>`         – Remove matching facts
+- `.prune-facts <pattern>`   – Remove all facts matching the query pattern (only statements)
+- `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
 - `.wikidata-index <json>`   – Generate index only
 - `.wikidata-export <wid>`   – Export single Wikidata entry
