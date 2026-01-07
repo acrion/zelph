@@ -43,6 +43,7 @@ namespace std
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
