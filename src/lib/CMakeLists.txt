@@ -81,7 +81,7 @@ FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
     GIT_TAG v1.3.0
-    CMAKE_ARGS -DCAPNP_BUILD_TESTS=OFF
+    CMAKE_ARGS -DBUILD_TESTING=OFF
 )
 
 FetchContent_MakeAvailable(unordered_dense CapnProto)

@@ -35,8 +35,17 @@ jobs:
           clang --version
           ld.lld --version
 
+      - name: Set extra CMake flags
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            echo "EXTRA_FLAGS=-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=\"-fuse-ld=lld\" -DCMAKE_SHARED_LINKER_FLAGS=\"-fuse-ld=lld\"" >> $GITHUB_ENV
+          else
+            echo "EXTRA_FLAGS=" >> $GITHUB_ENV
+          fi
+
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
