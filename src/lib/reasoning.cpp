@@ -102,6 +102,141 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
     _prune_nodes_mode = false;
 }
 
+void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates)
+{
+    removed_facts      = 0;
+    removed_predicates = 0;
+
+    std::vector<Node> all_predicates;
+
+    {
+        std::lock_guard<std::mutex> lock(_mtx_network);
+
+        adjacency_set def_facts = _pImpl->get_right(core.RelationTypeCategory);
+
+        for (Node def_fact : def_facts)
+        {
+            if (_pImpl->get_right(def_fact).count(core.IsA) == 1)
+            {
+                for (Node cand : _pImpl->get_left(def_fact))
+                {
+                    if (cand != core.RelationTypeCategory && cand != core.IsA)
+                    {
+                        if (_pImpl->get_right(cand).count(def_fact) == 1)
+                        {
+                            all_predicates.push_back(cand);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    auto is_protected = [&](Node n)
+    {
+        return n == core.IsA || n == core.And || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction;
+    };
+
+    std::clog << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
+
+    std::lock_guard<std::mutex> lock(_mtx_network);
+
+    for (size_t i = 0; i < all_predicates.size(); ++i)
+    {
+        Node pred = all_predicates[i];
+
+        if (is_protected(pred)) continue;
+
+        adjacency_set incoming_to_pred = _pImpl->get_left(pred);
+
+        if (incoming_to_pred.size() > 50000)
+        {
+            std::wstring name = get_name(pred, "wikidata", true);
+            std::clog << "[" << (i + 1) << "/" << all_predicates.size() << "] Checking "
+                      << string::unicode::to_utf8(name) << " (" << pred << ") with "
+                      << incoming_to_pred.size() << " entries..." << std::endl;
+        }
+
+        size_t valid_usage_count = 0;
+        size_t local_removed     = 0;
+
+        for (Node fact : incoming_to_pred)
+        {
+            if (_pImpl->get_right(fact).count(core.IsA) == 1)
+            {
+                continue;
+            }
+
+            bool is_zombie = false;
+
+            adjacency_set incoming_to_fact = _pImpl->get_left(fact);
+            if (incoming_to_fact.empty())
+            {
+                is_zombie = true;
+            }
+            else
+            {
+                adjacency_set outgoing_from_fact = _pImpl->get_right(fact);
+
+                bool has_subject = false;
+
+                bool has_object = false;
+
+                for (Node out_node : outgoing_from_fact)
+                {
+                    if (out_node == pred) continue;
+
+                    if (incoming_to_fact.count(out_node) == 1)
+                    {
+                        has_subject = true;
+                        break;
+                    }
+                }
+
+                if (has_subject)
+                {
+                    for (Node in_node : incoming_to_fact)
+                    {
+                        if (outgoing_from_fact.count(in_node) == 0)
+                        {
+                            has_object = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!has_subject || !has_object)
+                {
+                    is_zombie = true;
+                }
+            }
+
+            if (is_zombie)
+            {
+                _pImpl->remove(fact);
+                local_removed++;
+            }
+            else
+            {
+                valid_usage_count++;
+            }
+        }
+
+        removed_facts += local_removed;
+
+        if (local_removed > 0 && incoming_to_pred.size() > 200000)
+        {
+            std::clog << "   -> Purged " << local_removed << " broken facts." << std::endl;
+        }
+
+        if (valid_usage_count == 0)
+        {
+            _pImpl->remove(pred);
+            removed_predicates++;
+        }
+    }
+}
+
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
 {
     StopWatch watch;

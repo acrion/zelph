@@ -322,6 +322,63 @@ namespace zelph
                 }
             }
 
+            size_t cleanup_dangling_names()
+            {
+                size_t removed_count = 0;
+
+                ankerl::unordered_dense::set<Node> valid_nodes;
+                {
+                    std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                    valid_nodes.reserve(_left.size());
+                    for (const auto& pair : _left)
+                    {
+                        valid_nodes.insert(pair.first);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(_mtx_name_of_node);
+                    for (auto& lang_pair : _name_of_node)
+                    {
+                        auto& map = lang_pair.second;
+                        for (auto it = map.begin(); it != map.end();)
+                        {
+                            if (valid_nodes.count(it->first) == 0)
+                            {
+                                it = map.erase(it);
+                                removed_count++;
+                            }
+                            else
+                            {
+                                ++it;
+                            }
+                        }
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(_mtx_node_of_name);
+                    for (auto& lang_pair : _node_of_name)
+                    {
+                        auto& map = lang_pair.second;
+                        for (auto it = map.begin(); it != map.end();)
+                        {
+                            if (valid_nodes.count(it->second) == 0)
+                            {
+                                it = map.erase(it);
+                                removed_count++;
+                            }
+                            else
+                            {
+                                ++it;
+                            }
+                        }
+                    }
+                }
+
+                return removed_count;
+            }
+
             using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
             using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 

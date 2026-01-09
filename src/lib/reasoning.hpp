@@ -67,6 +67,7 @@ namespace zelph::network
         void set_markdown_subdir(const std::string& subdir);
         void prune_facts(Node pattern, size_t& removed_count);
         void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
+        void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
 
     private:
         void evaluate(RulePos rule, ReasoningContext& ctx);

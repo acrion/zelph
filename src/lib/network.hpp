@@ -427,6 +427,9 @@ namespace zelph
             Node                        _last{Node()};
             Node                        _last_var{Node()};
             std::atomic<Node>           _node_count{0};
+            mutable std::mutex          _mtx_prob;
+            mutable std::shared_mutex   _smtx_left;
+            mutable std::shared_mutex   _smtx_right;
 
 #ifndef _DEBUG
         private:
@@ -435,10 +438,6 @@ namespace zelph
             static constexpr Node mark_hash           = 0x4000000000000000ull;
             static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
             static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
-
-            mutable std::mutex        _mtx_prob;
-            mutable std::shared_mutex _smtx_left;
-            mutable std::shared_mutex _smtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {

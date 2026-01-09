@@ -904,9 +904,25 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() != 1)
             throw std::runtime_error("Command .cleanup takes no arguments");
 
-        size_t removed = 0;
-        _n->cleanup_isolated(removed);
-        _n->print(L"Removed " + std::to_wstring(removed) + L" isolated nodes.", true);
+        size_t removed_facts = 0;
+        size_t removed_preds = 0;
+
+        _n->print(L"Scanning for unused predicates and zombie facts...", true);
+
+        _n->purge_unused_predicates(removed_facts, removed_preds);
+
+        _n->print(L"Purged " + std::to_wstring(removed_facts) + L" zombie facts.", true);
+        _n->print(L"Removed " + std::to_wstring(removed_preds) + L" unused predicates.", true);
+
+        _n->print(L"Cleaning up isolated nodes...", true);
+
+        size_t cleanup_count = 0;
+        _n->cleanup_isolated(cleanup_count);
+        _n->print(L"Cleanup: removed " + std::to_wstring(cleanup_count) + L" isolated nodes/names.", true);
+
+        _n->print(L"Cleaning up name mappings...", true);
+        size_t names_removed = _n->cleanup_names();
+        _n->print(L"Removed " + std::to_wstring(names_removed) + L" dangling name entries.", true);
     }
     else if (cmd[0] == L".save")
     {
