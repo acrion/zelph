@@ -32,72 +32,75 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <queue>
 #include <thread>
 
-class ThreadPool
+namespace zelph
 {
-public:
-    explicit ThreadPool(size_t num_threads)
+    class ThreadPool
     {
-        for (size_t i = 0; i < num_threads; ++i)
+    public:
+        explicit ThreadPool(size_t num_threads)
         {
-            workers.emplace_back([this]
-                                 {
-                while (true) {
-                    std::function<void()> task;
-                    {
-                        std::unique_lock<std::mutex> lock(queue_mutex);
-                        condition.wait(lock, [this] { return stop || !tasks.empty(); });
-                        if (stop && tasks.empty()) return;
-                        task = std::move(tasks.front());
-                        tasks.pop();
-                    }
-                    task();
-                    --pending_tasks;
-                } });
+            for (size_t i = 0; i < num_threads; ++i)
+            {
+                workers.emplace_back([this]
+                                     {
+                    while (true) {
+                        std::function<void()> task;
+                        {
+                            std::unique_lock<std::mutex> lock(queue_mutex);
+                            condition.wait(lock, [this] { return stop || !tasks.empty(); });
+                            if (stop && tasks.empty()) return;
+                            task = std::move(tasks.front());
+                            tasks.pop();
+                        }
+                        task();
+                        --pending_tasks;
+                    } });
+            }
         }
-    }
 
-    ~ThreadPool()
-    {
+        ~ThreadPool()
         {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            stop = true;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                stop = true;
+            }
+            condition.notify_all();
+            for (auto& worker : workers)
+            {
+                if (worker.joinable()) worker.join();
+            }
         }
-        condition.notify_all();
-        for (auto& worker : workers)
+
+        void enqueue(std::function<void()> task)
         {
-            if (worker.joinable()) worker.join();
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                tasks.emplace(std::move(task));
+            }
+            ++pending_tasks;
+            condition.notify_one();
         }
-    }
 
-    void enqueue(std::function<void()> task)
-    {
+        size_t count()
         {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            tasks.emplace(std::move(task));
+            return workers.size();
         }
-        ++pending_tasks;
-        condition.notify_one();
-    }
 
-    size_t count()
-    {
-        return workers.size();
-    }
-
-    void wait()
-    {
-        while (pending_tasks > 0)
+        void wait()
         {
-            std::this_thread::yield();
+            while (pending_tasks > 0)
+            {
+                std::this_thread::yield();
+            }
         }
-    }
 
-    std::atomic<size_t> pending_tasks{0};
+        std::atomic<size_t> pending_tasks{0};
 
-private:
-    std::vector<std::thread>          workers;
-    std::queue<std::function<void()>> tasks;
-    std::mutex                        queue_mutex;
-    std::condition_variable           condition;
-    bool                              stop{false};
-};
+    private:
+        std::vector<std::thread>          workers;
+        std::queue<std::function<void()>> tasks;
+        std::mutex                        queue_mutex;
+        std::condition_variable           condition;
+        bool                              stop{false};
+    };
+}

@@ -28,14 +28,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network.hpp"
 #include "zelph.hpp"
 
+#include "zelph.capnp.h"
+
 #include <ankerl/unordered_dense.h>
 
-#include <boost/serialization/vector.hpp>
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
+#include <kj/io.h>
 
 #include <cstdint>
+#include <fstream>
+#include <iostream>
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace zelph
 {
@@ -46,89 +53,272 @@ namespace zelph
             friend class Zelph;
             Impl() = default;
 
-            friend class boost::serialization::access;
-
-            template <class Archive>
-            void serialize(Archive& ar, const unsigned int /*version*/)
+            void saveToFile(const std::string& filename)
             {
-                ar& boost::serialization::base_object<Network>(*this);
+                const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
 
-                std::size_t outer_size = _name_of_node.size();
-                ar & outer_size;
-                if constexpr (Archive::is_loading::value)
+                // Debug: Log sizes before serializing large structures
+                std::cerr << "Saving: probabilities size=" << _probabilities.size() << ", left size=" << _left.size() << ", right size=" << _right.size() << std::endl;
+                std::cerr << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size() << std::endl;
+
+                // Open file
+#ifdef _WIN32
+    #define fileno _fileno
+#endif
+                FILE* file = fopen(filename.c_str(), "wb");
+                if (!file)
                 {
-                    _name_of_node.clear();
-                    for (std::size_t i = 0; i < outer_size; ++i)
-                    {
-                        std::string lang;
-                        ar & lang;
-                        name_of_node_map inner;
-                        std::size_t      inner_size;
-                        ar & inner_size;
-                        inner.reserve(inner_size);
-                        for (std::size_t j = 0; j < inner_size; ++j)
-                        {
-                            Node         key;
-                            std::wstring value;
-                            ar & key;
-                            ar & value;
-                            inner[key] = value;
-                        }
-                        _name_of_node[lang] = std::move(inner);
-                    }
+                    throw std::runtime_error("Failed to open file for writing: " + filename);
                 }
-                else
+                kj::FdOutputStream output(fileno(file));
+
+                // Main message (small data)
+                ::capnp::MallocMessageBuilder mainMessage(1u << 26); // Large initial for safety
+                auto                          impl = mainMessage.initRoot<ZelphImpl>();
+
+                // Serialize probabilities
+                auto   probs = impl.initProbabilities(_probabilities.size());
+                size_t idx   = 0;
+                for (const auto& p : _probabilities)
                 {
-                    for (const auto& p : _name_of_node)
+                    probs[idx].setHash(p.first);
+                    probs[idx].setProb(static_cast<double>(p.second));
+                    ++idx;
+                }
+                impl.setLast(_last);
+                impl.setLastVar(_last_var);
+                impl.setNodeCount(_node_count.load(std::memory_order_relaxed));
+
+                // Serialize _name_of_node
+                auto nameOfNode = impl.initNameOfNode(_name_of_node.size());
+                idx             = 0;
+                for (const auto& langMap : _name_of_node)
+                {
+                    nameOfNode[idx].setLang(langMap.first);
+                    std::vector<std::pair<Node, std::wstring>> sorted(langMap.second.begin(), langMap.second.end());
+                    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
+                              { return a.first < b.first; });
+                    auto   pairs = nameOfNode[idx].initPairs(sorted.size());
+                    size_t pIdx  = 0;
+                    for (const auto& pair : sorted)
                     {
-                        ar & p.first;
-                        std::size_t inner_size = p.second.size();
-                        ar & inner_size;
-                        for (const auto& ip : p.second)
-                        {
-                            ar & ip.first;
-                            ar & ip.second;
-                        }
+                        pairs[pIdx].setKey(pair.first);
+                        pairs[pIdx].setValue(zelph::string::unicode::to_utf8(pair.second));
+                        ++pIdx;
                     }
+                    ++idx;
                 }
 
-                outer_size = _node_of_name.size();
-                ar & outer_size;
-                if constexpr (Archive::is_loading::value)
+                // Serialize _node_of_name
+                auto nodeOfName = impl.initNodeOfName(_node_of_name.size());
+                idx             = 0;
+                for (const auto& langMap : _node_of_name)
                 {
-                    _node_of_name.clear();
-                    for (std::size_t i = 0; i < outer_size; ++i)
+                    nodeOfName[idx].setLang(langMap.first);
+                    std::vector<std::pair<std::wstring, Node>> sorted(langMap.second.begin(), langMap.second.end());
+                    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
+                              { return a.first < b.first; });
+                    auto   pairs = nodeOfName[idx].initPairs(sorted.size());
+                    size_t pIdx  = 0;
+                    for (const auto& pair : sorted)
                     {
-                        std::string lang;
-                        ar & lang;
-                        node_of_name_map inner;
-                        std::size_t      inner_size;
-                        ar & inner_size;
-                        inner.reserve(inner_size);
-                        for (std::size_t j = 0; j < inner_size; ++j)
-                        {
-                            std::wstring key;
-                            Node         value;
-                            ar & key;
-                            ar & value;
-                            inner[key] = value;
-                        }
-                        _node_of_name[lang] = std::move(inner);
+                        pairs[pIdx].setKey(zelph::string::unicode::to_utf8(pair.first));
+                        pairs[pIdx].setValue(pair.second);
+                        ++pIdx;
                     }
+                    ++idx;
                 }
-                else
+
+                impl.setFormatFactLevel(_format_fact_level);
+
+                // Calculate and set chunk counts
+                size_t leftChunkCount  = (_left.size() + chunkSize - 1) / chunkSize;
+                size_t rightChunkCount = (_right.size() + chunkSize - 1) / chunkSize;
+                impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
+                impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
+
+                // Write main message
+                ::capnp::writePackedMessage(output, mainMessage);
+
+                // Chunk _left
+                auto leftIt = _left.begin();
+                for (size_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
                 {
-                    for (const auto& p : _node_of_name)
+                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    auto                          chunk = chunkMessage.initRoot<AdjChunk>();
+                    chunk.setWhich("left");
+                    chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+
+                    size_t thisChunkSize = std::min(chunkSize, _left.size() - chunkIdx * chunkSize);
+                    auto   pairList      = chunk.initPairs(thisChunkSize);
+                    size_t pIdx          = 0;
+                    for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
                     {
-                        ar & p.first;
-                        std::size_t inner_size = p.second.size();
-                        ar & inner_size;
-                        for (const auto& ip : p.second)
+                        pairList[pIdx].setNode(leftIt->first);
+                        std::vector<Node> sorted(leftIt->second.begin(), leftIt->second.end());
+                        std::sort(sorted.begin(), sorted.end());
+                        auto adj = pairList[pIdx].initAdj(sorted.size());
+                        for (size_t j = 0; j < sorted.size(); ++j)
                         {
-                            ar & ip.first;
-                            ar & ip.second;
+                            adj.set(j, sorted[j]);
+                        }
+                        ++pIdx;
+                    }
+                    ::capnp::writePackedMessage(output, chunkMessage);
+                }
+
+                // Chunk _right similarly
+                auto rightIt = _right.begin();
+                for (size_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
+                {
+                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    auto                          chunk = chunkMessage.initRoot<AdjChunk>();
+                    chunk.setWhich("right");
+                    chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+
+                    size_t thisChunkSize = std::min(chunkSize, _right.size() - chunkIdx * chunkSize);
+                    auto   pairList      = chunk.initPairs(thisChunkSize);
+                    size_t pIdx          = 0;
+                    for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
+                    {
+                        pairList[pIdx].setNode(rightIt->first);
+                        std::vector<Node> sorted(rightIt->second.begin(), rightIt->second.end());
+                        std::sort(sorted.begin(), sorted.end());
+                        auto adj = pairList[pIdx].initAdj(sorted.size());
+                        for (size_t j = 0; j < sorted.size(); ++j)
+                        {
+                            adj.set(j, sorted[j]);
+                        }
+                        ++pIdx;
+                    }
+                    ::capnp::writePackedMessage(output, chunkMessage);
+                }
+            }
+
+            void loadFromFile(const std::string& filename)
+            {
+                // Open file
+#ifdef _WIN32
+    #define fileno _fileno
+#endif
+                FILE* file = fopen(filename.c_str(), "rb");
+                if (!file)
+                {
+                    throw std::runtime_error("Failed to open file for reading: " + filename);
+                }
+                kj::FdInputStream              rawInput(fileno(file));
+                kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+
+                // Set ReaderOptions for large data (adjust traversalLimit based on RAM; 1ULL << 30 = ~8GB)
+                ::capnp::ReaderOptions options;
+                options.traversalLimitInWords = 1ULL << 30; // Increase to handle huge lists
+                options.nestingLimit          = 128;        // Increase if deep nesting
+
+                // Read main message
+                ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
+                auto                         impl = mainMessage.getRoot<ZelphImpl>();
+
+                // Load small data from main
+                _probabilities.clear();
+                for (auto p : impl.getProbabilities())
+                {
+                    _probabilities[p.getHash()] = static_cast<long double>(p.getProb());
+                }
+                _last     = impl.getLast();
+                _last_var = impl.getLastVar();
+                _node_count.store(impl.getNodeCount(), std::memory_order_relaxed);
+
+                // Load _name_of_node
+                _name_of_node.clear();
+                for (auto langMap : impl.getNameOfNode())
+                {
+                    name_of_node_map inner;
+                    for (auto pair : langMap.getPairs())
+                    {
+                        try
+                        {
+                            inner[pair.getKey()] = zelph::string::unicode::from_utf8(pair.getValue());
+                        }
+                        catch (...)
+                        {
+                            inner[pair.getKey()] = L"?";
+                            std::cerr << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey() << std::endl;
                         }
                     }
+                    _name_of_node[langMap.getLang()] = std::move(inner);
+                }
+
+                // Load _node_of_name
+                _node_of_name.clear();
+                for (auto langMap : impl.getNodeOfName())
+                {
+                    node_of_name_map inner;
+                    for (auto pair : langMap.getPairs())
+                    {
+                        try
+                        {
+                            inner[zelph::string::unicode::from_utf8(pair.getKey())] = pair.getValue();
+                        }
+                        catch (...)
+                        {
+                            inner[L"?"] = pair.getValue();
+                            std::cerr << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue() << std::endl;
+                        }
+                    }
+                    _node_of_name[langMap.getLang()] = std::move(inner);
+                }
+
+                _format_fact_level = impl.getFormatFactLevel();
+
+                // Debug: Log chunk counts
+                uint32_t leftChunkCount  = impl.getLeftChunkCount();
+                uint32_t rightChunkCount = impl.getRightChunkCount();
+                std::cerr << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount << std::endl;
+
+                // Load left chunks
+                _left.clear();
+                for (uint32_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
+                {
+                    ::capnp::PackedMessageReader chunkMessage(bufferedInput, options); // Use options for each chunk
+                    auto                         chunk = chunkMessage.getRoot<AdjChunk>();
+                    if (chunk.getWhich() != "left" || chunk.getChunkIndex() != chunkIdx)
+                    {
+                        throw std::runtime_error("Invalid left chunk order");
+                    }
+                    for (auto pair : chunk.getPairs())
+                    {
+                        adjacency_set adj;
+                        for (auto n : pair.getAdj())
+                        {
+                            adj.insert(n);
+                        }
+                        _left[pair.getNode()] = std::move(adj);
+                    }
+                    // Debug: Log after each chunk to track progress/memory
+                    std::cerr << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size() << std::endl;
+                }
+
+                // Load right chunks similarly
+                _right.clear();
+                for (uint32_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
+                {
+                    ::capnp::PackedMessageReader chunkMessage(bufferedInput, options); // Use options for each chunk
+                    auto                         chunk = chunkMessage.getRoot<AdjChunk>();
+                    if (chunk.getWhich() != "right" || chunk.getChunkIndex() != chunkIdx)
+                    {
+                        throw std::runtime_error("Invalid right chunk order");
+                    }
+                    for (auto pair : chunk.getPairs())
+                    {
+                        adjacency_set adj;
+                        for (auto n : pair.getAdj())
+                        {
+                            adj.insert(n);
+                        }
+                        _right[pair.getNode()] = std::move(adj);
+                    }
+                    // Debug: Log after each chunk
+                    std::cerr << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size() << std::endl;
                 }
             }
 

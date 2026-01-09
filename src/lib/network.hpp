@@ -30,9 +30,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <ankerl/unordered_dense.h>
 
-#include <boost/serialization/map.hpp>
-#include <boost/serialization/vector.hpp>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -77,88 +74,6 @@ namespace zelph
         class Network
         {
         public:
-            friend class boost::serialization::access;
-
-            template <class Archive>
-            void serialize(Archive& ar, const unsigned int /*version*/)
-            {
-                ar & _probabilities;
-                ar & _last;
-                ar & _last_var;
-
-                std::size_t left_size = _left.size();
-                ar & left_size;
-                if constexpr (Archive::is_loading::value)
-                {
-                    _left.clear();
-                    for (std::size_t i = 0; i < left_size; ++i)
-                    {
-                        Node key;
-                        ar & key;
-                        adjacency_set value;
-                        std::size_t   value_size;
-                        ar & value_size;
-                        value.reserve(value_size);
-                        for (std::size_t j = 0; j < value_size; ++j)
-                        {
-                            Node n;
-                            ar & n;
-                            value.insert(n);
-                        }
-                        _left[key] = std::move(value);
-                    }
-                }
-                else
-                {
-                    for (const auto& p : _left)
-                    {
-                        ar & p.first;
-                        std::size_t value_size = p.second.size();
-                        ar & value_size;
-                        for (const Node n : p.second)
-                        {
-                            ar & n;
-                        }
-                    }
-                }
-
-                std::size_t right_size = _right.size();
-                ar & right_size;
-                if constexpr (Archive::is_loading::value)
-                {
-                    _right.clear();
-                    for (std::size_t i = 0; i < right_size; ++i)
-                    {
-                        Node key;
-                        ar & key;
-                        adjacency_set value;
-                        std::size_t   value_size;
-                        ar & value_size;
-                        value.reserve(value_size);
-                        for (std::size_t j = 0; j < value_size; ++j)
-                        {
-                            Node n;
-                            ar & n;
-                            value.insert(n);
-                        }
-                        _right[key] = std::move(value);
-                    }
-                }
-                else
-                {
-                    for (const auto& p : _right)
-                    {
-                        ar & p.first;
-                        std::size_t value_size = p.second.size();
-                        ar & value_size;
-                        for (const Node n : p.second)
-                        {
-                            ar & n;
-                        }
-                    }
-                }
-            }
-
             void connect(Node a, Node b, long double probability = 1)
             {
                 std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -503,13 +418,8 @@ namespace zelph
             }
 
 #ifndef _DEBUG
-        private:
+        protected:
 #endif
-            static constexpr Node shift_inc           = 5;
-            static constexpr Node mark_hash           = 0x4000000000000000ull;
-            static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
-            static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
-
             adjacency_map _left;
             adjacency_map _right;
 
@@ -517,9 +427,18 @@ namespace zelph
             Node                        _last{Node()};
             Node                        _last_var{Node()};
             std::atomic<Node>           _node_count{0};
-            mutable std::mutex          _mtx_prob;
-            mutable std::shared_mutex   _smtx_left;
-            mutable std::shared_mutex   _smtx_right;
+
+#ifndef _DEBUG
+        private:
+#endif
+            static constexpr Node shift_inc           = 5;
+            static constexpr Node mark_hash           = 0x4000000000000000ull;
+            static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
+            static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
+
+            mutable std::mutex        _mtx_prob;
+            mutable std::shared_mutex _smtx_left;
+            mutable std::shared_mutex _smtx_right;
 
             typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
             {

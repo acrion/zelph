@@ -27,8 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph_impl.hpp"
 
 #include <boost/algorithm/string.hpp>
-#include <boost/archive/binary_iarchive.hpp>
-#include <boost/archive/binary_oarchive.hpp>
 
 #include <fstream>
 #include <iomanip>
@@ -1086,14 +1084,10 @@ void Zelph::print(const std::wstring& msg, const bool o) const
 
 void Zelph::save_to_file(const std::string& filename)
 {
-    std::ofstream                   ofs(filename, std::ios::binary);
-    boost::archive::binary_oarchive oa(ofs);
-    oa << *_pImpl;
+    _pImpl->saveToFile(filename);
 }
 
 void Zelph::load_from_file(const std::string& filename)
 {
-    std::ifstream                   ifs(filename, std::ios::binary);
-    boost::archive::binary_iarchive ia(ifs);
-    ia >> *_pImpl;
+    _pImpl->loadFromFile(filename);
 }

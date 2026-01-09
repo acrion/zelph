@@ -46,7 +46,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -march=native")
     endif ()
 
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto")
+    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
 
     set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -ffast-math -funroll-loops")
 
@@ -75,7 +75,28 @@ FetchContent_Declare(
     GIT_TAG v4.8.1
 )
 
-FetchContent_MakeAvailable(unordered_dense)
+FetchContent_Declare(
+    CapnProto
+    GIT_REPOSITORY https://github.com/capnproto/capnproto.git
+    GIT_TAG v1.3.0
+)
+
+FetchContent_MakeAvailable(unordered_dense CapnProto)
+
+# Suppress all warnings from Cap'n Proto targets (third-party), including LTO
+set(CAPNP_TARGETS kj kj-async capnp capnp-json capnpc capnp_tool capnpc_cpp)
+foreach (target IN LISTS CAPNP_TARGETS)
+    if (TARGET ${target})
+        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${target} PRIVATE -w)
+            target_link_options(${target} PRIVATE -w)
+        elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+            target_compile_options(${target} PRIVATE /w)
+            target_link_options(${target} PRIVATE /w)
+        endif ()
+    endif ()
+endforeach ()
 
 #FetchContent_Declare(
 #    acrion_cmake
@@ -85,6 +106,8 @@ FetchContent_MakeAvailable(unordered_dense)
 #FetchContent_MakeAvailable(acrion_cmake)
 #
 #include(${acrion_cmake_SOURCE_DIR}/set-cpp-version.cmake)
+
+capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp wikidata.capnp)
 
 add_library(zelph_lib SHARED
     # zelph::network
@@ -108,36 +131,29 @@ add_library(zelph_lib SHARED
     platform_utils.hpp
     string_utils.cpp
     string_utils.hpp
+    thread_pool.hpp
+    wikidata_text_compressor.hpp
+    wikidata_token_encoder.hpp
     # zelph::console
     interactive.cpp
     interactive.hpp
     read_async.cpp
     read_async.hpp
-    thread_pool.hpp
     wikidata.cpp
     wikidata.hpp
-    wikidata_text_compressor.hpp
-    wikidata_token_encoder.hpp
-    # boost/serialization. We compile it ourselves. The configurations are (Mac, Linux, Windows) x (CMake, go). In addition we need to match the boost build with our build (e. g. regarding use of C++14).
-    ../boost/serialization/src/archive_exception.cpp
-    ../boost/serialization/src/basic_archive.cpp
-    ../boost/serialization/src/binary_iarchive.cpp
-    ../boost/serialization/src/binary_oarchive.cpp
-    ../boost/serialization/src/basic_iarchive.cpp
-    ../boost/serialization/src/basic_iserializer.cpp
-    ../boost/serialization/src/basic_oarchive.cpp
-    ../boost/serialization/src/basic_oserializer.cpp
-    ../boost/serialization/src/basic_serializer_map.cpp
-    ../boost/serialization/src/basic_text_iprimitive.cpp
-    ../boost/serialization/src/basic_text_oprimitive.cpp
-    ../boost/serialization/src/codecvt_null.cpp
-    ../boost/serialization/src/extended_type_info.cpp
-    ../boost/serialization/src/extended_type_info_typeid.cpp
-    ../boost/serialization/src/text_iarchive.cpp
-    ../boost/serialization/src/text_oarchive.cpp
+    ${CAPNP_SRCS}
 )
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp)
+
+# Suppress warnings from Cap'n Proto includes in zelph_lib
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(zelph_lib PRIVATE -w)
+    target_link_options(zelph_lib PRIVATE -w)
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(zelph_lib PRIVATE /w)
+    target_link_options(zelph_lib PRIVATE /w)
+endif ()
 
 # Enable IPO/LTO if available
 include(CheckIPOSupported)
@@ -156,40 +172,33 @@ generate_export_header(zelph_lib
 target_include_directories(zelph_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE .)
 add_definitions(-DBOOST_ALL_NO_LIB) # disable boost auto linking under MSVC
 include_directories(
-    "../boost/algorithm/include"
-    "../boost/archive/include"
-    "../boost/assert/include"
-    "../boost/bimap/include"
-    "../boost/bind/include"
-    "../boost/concept_check/include"
-    "../boost/config_boost/include"
-    "../boost/container/include"
-    "../boost/container_hash/include"
-    "../boost/core/include"
-    "../boost/describe/include"
-    "../boost/detail/include"
-    "../boost/foreach/include"
-    "../boost/function/include"
-    "../boost/integer/include"
-    "../boost/io/include"
-    "../boost/iterator/include"
-    "../boost/locale/include"
-    "../boost/move/include"
-    "../boost/mp11/include"
-    "../boost/mpl/include"
-    "../boost/multi_index/include"
-    "../boost/predef/include"
-    "../boost/preprocessor/include"
-    "../boost/range/include"
-    "../boost/serialization/include"
-    "../boost/smart_ptr/include"
-    "../boost/static_assert/include"
-    "../boost/throw_exception/include"
-    "../boost/tokenizer/include"
-    "../boost/tuple/include"
-    "../boost/type_index/include"
-    "../boost/type_traits/include"
-    "../boost/utility/include"
+    "../boost/algorithm/include"       # used in interactive.cpp and zelph.cpp
+    "../boost/bimap/include"           # used in interactive.cpp
+    "../boost/locale/include"          # used in string_utils.cpp
+    "../boost/tokenizer/include"       # used in wikidata.cpp and interactive.cpp
+
+    "../boost/range/include"           # required by e.g. boost/algorithm
+    "../boost/function/include"        # required by e.g. boost/algorithm
+    "../boost/mpl/include"             # required by e.g. boost/algorithm
+    "../boost/container_hash/include"  # required by e.g. boost/bimap
+    "../boost/multi_index/include"     # required by e.g. boost/bimap
+    "../boost/iterator/include"        # required by e.g. boost/tokenizer
+    "../boost/throw_exception/include" # required by e.g. boost/tokenizer
+
+    "../boost/assert/include"          # required by e.g. boost/range
+    "../boost/concept_check/include"   # required by e.g. boost/range
+    "../boost/preprocessor/include"    # required by e.g. boost/range
+    "../boost/type_traits/include"     # required by e.g. boost/range
+    "../boost/utility/include"         # required by e.g. boost/range
+    "../boost/bind/include"            # required by e.g. boost/function
+    "../boost/describe/include"        # required by e.g. boost/container_hash
+    "../boost/move/include"            # required by e.g. boost/multi_index
+    "../boost/tuple/include"           # required by e.g. boost/multi_index
+    "../boost/mp11/include"            # required by e.g. boost/iterator
+    "../boost/core/include"            # required by e.g. boost/iterator
+
+    "../boost/static_assert/include"   # required by e.g. boost/type_traits
+    "../boost/config_boost/include"    # required by all of boost
 )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -209,6 +218,8 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ DESTINATION ${CMAKE_INSTALL_INCLU
     FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
     PATTERN "CMakeLists.txt" EXCLUDE
 )
+
+install(FILES ${CAPNP_HDRS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zelph)
 
 option(ENABLE_PGO "Enable Profile Guided Optimization" OFF)
 if (ENABLE_PGO)

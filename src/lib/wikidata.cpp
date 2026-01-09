@@ -30,15 +30,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "stopwatch.hpp"
 #include "string_utils.hpp"
 
-#include <boost/algorithm/string.hpp>
-#include <boost/archive/binary_iarchive.hpp>
-#include <boost/archive/binary_oarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
-#include <boost/archive/text_oarchive.hpp>
-#include <boost/serialization/map.hpp>
+#include "wikidata.capnp.h"
+
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
+#include <kj/io.h>
+
 #include <boost/tokenizer.hpp>
 
 #include <atomic>
+#include <cstdio>
 #include <fstream>
 #include <functional>
 #include <iomanip> // for std::setprecision
@@ -141,8 +142,6 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
             try
             {
                 _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
-                std::ifstream                   ifs(cache_file, std::ios::binary);
-                boost::archive::binary_iarchive ia(ifs);
 
                 _pImpl->_n->load_from_file(_pImpl->_bin_file.string());
 
@@ -965,9 +964,48 @@ bool Wikidata::Impl::read_index_file()
     }
 
     _n->print(L"Reading index file " + index_path.wstring() + L"...", true);
-    std::ifstream                 stream(index_path);
-    boost::archive::text_iarchive iarch(stream);
-    iarch >> _index;
+
+#ifdef _WIN32
+    #define fileno _fileno
+#endif
+    FILE* file = fopen(index_path.c_str(), "rb");
+    if (!file)
+    {
+        _n->print(L"Failed to open index file", true);
+        return false;
+    }
+    kj::FdInputStream              rawInput(fileno(file));
+    kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+
+    // Set ReaderOptions for large data
+    ::capnp::ReaderOptions options;
+    options.traversalLimitInWords = 1ULL << 30; // ~8GB; adjust if needed
+
+    // Read main message
+    ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
+    auto                         indexMain = mainMessage.getRoot<WikidataIndex>();
+
+    uint32_t chunkCount = indexMain.getChunkCount();
+    _index.clear();
+
+    for (uint32_t chunkIdx = 0; chunkIdx < chunkCount; ++chunkIdx)
+    {
+        ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
+        auto                         chunk = chunkMessage.getRoot<IndexChunk>();
+        if (chunk.getChunkIndex() != chunkIdx)
+        {
+            fclose(file);
+            throw std::runtime_error("Invalid index chunk order");
+        }
+        for (auto pair : chunk.getPairs())
+        {
+            _index[pair.getKey()] = static_cast<std::streamoff>(pair.getValue());
+        }
+        // Debug: Log progress
+        std::cerr << "Loaded index chunk " << chunkIdx + 1 << "/" << chunkCount << ", current index size=" << _index.size() << std::endl;
+    }
+
+    fclose(file);
     _n->print(L"Finished reading", true);
 
     return true;
@@ -980,10 +1018,52 @@ void Wikidata::Impl::write_index_file() const
         return;
     }
 
-    _n->print(L"Writing index file " + index_file_name().wstring() + L"...", true);
-    std::ofstream                 stream(index_file_name());
-    boost::archive::text_oarchive oarch(stream);
-    oarch << _index;
+    auto index_path = index_file_name();
+    _n->print(L"Writing index file " + index_path.wstring() + L"...", true);
+
+    const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
+
+#ifdef _WIN32
+    #define fileno _fileno
+#endif
+    FILE* file = fopen(index_path.c_str(), "wb");
+    if (!file)
+    {
+        throw std::runtime_error("Failed to open index file for writing: " + index_path.string());
+    }
+    kj::FdOutputStream output(fileno(file));
+
+    // Main message
+    ::capnp::MallocMessageBuilder mainMessage(1u << 26);
+    auto                          indexMain = mainMessage.initRoot<WikidataIndex>();
+
+    size_t chunkCount = (_index.size() + chunkSize - 1) / chunkSize;
+    indexMain.setChunkCount(static_cast<uint32_t>(chunkCount));
+
+    // Write main message
+    ::capnp::writePackedMessage(output, mainMessage);
+
+    // Chunk the map
+    auto it = _index.begin();
+    for (size_t chunkIdx = 0; chunkIdx < chunkCount; ++chunkIdx)
+    {
+        ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+        auto                          chunk = chunkMessage.initRoot<IndexChunk>();
+        chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+
+        size_t thisChunkSize = std::min(chunkSize, _index.size() - chunkIdx * chunkSize);
+        auto   pairs         = chunk.initPairs(thisChunkSize);
+        size_t pIdx          = 0;
+        for (size_t i = 0; i < thisChunkSize; ++i, ++it)
+        {
+            pairs[pIdx].setKey(it->first);
+            pairs[pIdx].setValue(static_cast<uint64_t>(it->second));
+            ++pIdx;
+        }
+        ::capnp::writePackedMessage(output, chunkMessage);
+    }
+
+    fclose(file);
     _n->print(L"Finished writing", true);
 }
 
