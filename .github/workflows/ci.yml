@@ -20,6 +20,9 @@ jobs:
             name: windows
           - os: macos-latest
             name: macos
+    env:
+      CC: clang
+      CXX: clang++
 
     steps:
       - name: Checkout repository with submodules
@@ -31,7 +34,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt update
-          sudo apt install clang -y
+          sudo apt install clang lld -y
           clang --version
 
       - name: Configure CMake
