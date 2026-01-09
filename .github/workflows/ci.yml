@@ -35,7 +35,7 @@ jobs:
           clang --version
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CLANG=ON -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DUSE_CLANG=ON -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
