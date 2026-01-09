@@ -47,7 +47,6 @@ namespace zelph
             char32_t base_codepoint = 0x4E00,
             uint32_t num_symbols    = 4096)
             : _base_codepoint(base_codepoint)
-            , _num_symbols(num_symbols)
             , _base(num_symbols - 1) // One symbol reserved for sign marker
         {
             if (num_symbols < 2)
@@ -227,7 +226,6 @@ namespace zelph
 
     private:
         char32_t _base_codepoint;
-        uint32_t _num_symbols;
         uint64_t _base;
     };
 }

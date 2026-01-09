@@ -63,9 +63,26 @@ namespace zelph
                         {
                             try
                             {
-                                std::wstring                                     singleChar(1, wc);
+                                std::wstring singleChar(1, wc);
+#if defined(_MSC_VER) // MSVC (Windows)
+    #pragma warning(push)
+    #pragma warning(disable : 4996)
+#elif defined(__GNUC__) && !defined(__clang__) // GCC (Linux)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(__clang__) // Clang (macOS)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
                                 std::wstring_convert<std::codecvt_utf8<wchar_t>> singleConverter;
                                 result += singleConverter.to_bytes(singleChar);
+#if defined(_MSC_VER)
+    #pragma warning(pop)
+#elif defined(__GNUC__) && !defined(__clang__)
+    #pragma GCC diagnostic pop
+#elif defined(__clang__)
+    #pragma clang diagnostic pop
+#endif
                             }
                             catch (...)
                             {

@@ -116,11 +116,16 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     }
     else if (existing->second != node)
     {
+        // Both nodes are either variables, or not. Note that this assertion makes assumptions about implementation of class console::Interactive (but they are reasonable, so we assert here).
+        assert(_pImpl->is_var(node) == _pImpl->is_var(existing->second));
+
         // Conflict: the same name is already used for another node
-        std::wclog << L"Warning: Name '" << name << L"' in language '" << string::unicode::from_utf8(lang)
-                   << L"' is now shared by multiple nodes (previously Node " << existing->second
-                   << L", now Node " << node << L"). Last assignment wins (last-one-wins policy)."
-                   << std::endl;
+        // Special case variables: console::Interactive currently creates separate variable nodes for new rules, even if they share the same name with an existing rule (which makes sense, although topological it is not required).
+        std::wclog
+            << L"Warning: Name '" << name << L"' in language '" << string::unicode::from_utf8(lang)
+            << L"' is now shared by multiple nodes (previously Node " << existing->second
+            << L", now Node " << node << L"). Last assignment wins."
+            << std::endl;
 
         // Last-one-wins: overwrite the reverse mapping with the new node
         // TODO: In the future, consider supporting multiple nodes per name if memory impact is acceptable
@@ -523,47 +528,61 @@ adjacency_set Zelph::get_right(const Node b)
     return _pImpl->get_right(b);
 }
 
-Answer Zelph::check_fact(const Node source, const Node relationType, const adjacency_set& targets)
+bool Zelph::has_left_edge(Node b, Node a) const
+{
+    return _pImpl->has_left_edge(b, a);
+}
+
+bool Zelph::has_right_edge(Node a, Node b) const
+{
+    return _pImpl->has_right_edge(a, b);
+}
+
+Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacency_set& objects)
 {
     bool known = false;
 
-    Node relation = _pImpl->create_hash(relationType, source, targets);
+    Node relation = _pImpl->create_hash(predicate, subject, objects);
 
     if (_pImpl->exists(relation))
     {
-        const adjacency_set& connectedFromRelationType = _pImpl->get_right(relation);
-        const adjacency_set& connectedToRelationType   = _pImpl->get_left(relation);
+        const adjacency_set& connectedFromRelation = _pImpl->get_right(relation);
+        const adjacency_set& connectedToRelation   = _pImpl->get_left(relation);
 
-        known = connectedFromRelationType.count(source) == 1
-             && connectedToRelationType.count(source) == 1 // source must be connected with and from <--> relation (i.e. bidirectional, to distinguish it from targets)
+        known = connectedFromRelation.count(subject) == 1
+             && connectedToRelation.count(subject) == 1 // subject must be connected from and to <--> relation node (i.e. bidirectional, to distinguish it from objects)
              && [&]()
         {
-            for (Node t : targets)
-                if (connectedToRelationType.count(t) == 0) return false;
+            for (Node t : objects)
+                if (connectedToRelation.count(t) == 0) return false;
             return true;
-        }() // targets must all be connected with relation
+        }() // objects must all be connected to relation
              && [&]()
         {
-            for (Node t : targets)
-                if (connectedFromRelationType.count(t) == 1) return false;
+            for (Node t : objects)
+                if (connectedFromRelation.count(t) == 1) return false;
             return true;
-        }(); // no target must be connected from relation
+        }(); // no object must be connected from relation node
 
-        if (!_pImpl->_format_fact_level && !known && !_pImpl->is_var(source) && !_pImpl->is_var(relationType) && [&]()
-            { for (const Node t : targets) if (_pImpl->is_var(t)) return false; return true; }())
+        if (!_pImpl->_format_fact_level
+            && !known
+            && !_pImpl->is_var(subject)
+            && !_pImpl->is_var(predicate)
+            && [&]()
+            { for (const Node t : objects) if (_pImpl->is_var(t)) return false; return true; }())
         {
-            const bool relationConnectsToSource              = connectedFromRelationType.count(source) == 1;
-            const bool sourceConnectsToRelation              = connectedToRelationType.count(source) == 1;
-            const bool targetsMustAllBeConnectedWithRelation = [&]()
+            const bool relationConnectsToSubject   = connectedFromRelation.count(subject) == 1;
+            const bool subjectConnectsToRelation   = connectedToRelation.count(subject) == 1;
+            const bool allObjectsConnectToRelation = [&]()
             {
-                for (Node t : targets)
-                    if (connectedToRelationType.count(t) == 0) return false;
+                for (Node t : objects)
+                    if (connectedToRelation.count(t) == 0) return false;
                 return true;
             }();
-            const bool noTargetMustBeConnectedFromRelation = [&]()
+            const bool noObjectsAreConnectedFromRelation = [&]()
             {
-                for (Node t : targets)
-                    if (connectedFromRelationType.count(t) == 1) return false;
+                for (Node t : objects)
+                    if (connectedFromRelation.count(t) == 1) return false;
                 return true;
             }();
 
@@ -573,16 +592,17 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const adjac
             print(output, true);
 
             gen_dot(relation, "debug.dot", 2);
-            print(L"relationConnectsToSource              == " + std::to_wstring(relationConnectsToSource), true);
-            print(L"sourceConnectsToRelation              == " + std::to_wstring(sourceConnectsToRelation), true);
-            print(L"targetsMustAllBeConnectedWithRelation == " + std::to_wstring(targetsMustAllBeConnectedWithRelation), true);
-            print(L"noTargetMustBeConnectedFromRelation   == " + std::to_wstring(noTargetMustBeConnectedFromRelation), true);
+            print(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
+            print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
+            print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
+            print(L"noObjectsAreConnectedFromRelation == " + std::to_wstring(noObjectsAreConnectedFromRelation), true);
+            assert(false);
         }
     }
 
     if (known)
     {
-        return {_pImpl->probability(relation, relationType), relation};
+        return {_pImpl->probability(relation, predicate), relation};
     }
     else
     {
@@ -590,9 +610,9 @@ Answer Zelph::check_fact(const Node source, const Node relationType, const adjac
     }
 }
 
-Node Zelph::fact(const Node source, const Node relationType, const adjacency_set& targets, const long double probability)
+Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& objects, const long double probability)
 {
-    const Answer answer = check_fact(source, relationType, targets);
+    const Answer answer = check_fact(subject, predicate, objects);
 
     if (answer.is_known())
     {
@@ -607,16 +627,16 @@ Node Zelph::fact(const Node source, const Node relationType, const adjacency_set
     }
     else
     {
-        if (targets.count(relationType) == 1)
+        if (objects.count(predicate) == 1)
         {
             // 1 13 13
             // ~ is for example is for example <= (~  is opposite of  is for example), (is for example  ~  ->)
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 
-        if (relationType != core.IsA) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
+        if (predicate != core.IsA) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
         {
-            fact(relationType, core.IsA, {core.RelationTypeCategory});
+            fact(predicate, core.IsA, {core.RelationTypeCategory});
         }
 
         if (_pImpl->exists(answer.relation()))
@@ -629,26 +649,26 @@ Node Zelph::fact(const Node source, const Node relationType, const adjacency_set
             _pImpl->create(answer.relation());
         }
 
-        _pImpl->connect(source, answer.relation());
-        _pImpl->connect(answer.relation(), source);
-        for (const Node t : targets)
+        _pImpl->connect(subject, answer.relation());
+        _pImpl->connect(answer.relation(), subject);
+        for (const Node t : objects)
         {
-            if (t == source)
+            if (t == subject)
             {
                 // We do not support relations that have the same subject and object. Real life example (from invalid wikidata entries):
                 // South Africa (Q258)  country (P17)  South Africa (Q258)
                 // or
                 // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                const std::wstring name_subject_object = get_name(source, _lang, true, false);
-                const std::wstring name_relationType   = get_name(relationType, _lang, true, false);
+                const std::wstring name_subject_object = get_name(subject, _lang, true, false);
+                const std::wstring name_relationType   = get_name(predicate, _lang, true, false);
 
                 throw std::runtime_error("fact(): facts with same subject and object are not supported: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
             }
 
             _pImpl->connect(t, answer.relation());
         }
-        _pImpl->connect(answer.relation(), relationType, probability);
+        _pImpl->connect(answer.relation(), predicate, probability);
     }
 
     return answer.relation();
@@ -998,7 +1018,7 @@ void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set&
                 std::string right_name = get_name_hex(right);
 
                 std::string key;
-                bool        is_bidirectional = _pImpl->has_left_edge(right, current);
+                bool        is_bidirectional = _pImpl->has_right_edge(right, current);
 
                 if (is_bidirectional)
                 {

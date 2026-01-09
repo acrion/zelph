@@ -78,8 +78,8 @@ public:
     network::Node process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
     void          process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
     static bool   is_var(std::wstring token);
-    void          list_predicate_usage();
-    void          list_predicate_value_usage(const std::wstring& pred_arg);
+    void          list_predicate_usage(size_t limit);
+    void          list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
 
     std::shared_ptr<Wikidata> _wikidata;
     network::Reasoning* const _n;
@@ -274,8 +274,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".run-file <file>            – Run inference, write deduced facts (reversed order) to <file> (encoded if lang=wikidata)",
         L".decode <file>              – Decode an encoded/plain file and print readable facts",
         L".list-rules                 – List all defined inference rules",
-        L".list-predicate-usage       – Show predicate usage statistics (sorted by frequency)",
-        L".list-predicate-value-usage <pred> – Show object/value usage statistics for a specific predicate (sorted by frequency)",
+        L".list-predicate-usage [max] – Show predicate usage statistics (top N most frequent predicates)",
+        L".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
         L".remove-rules               – Remove all inference rules",
         L".import <file.zph>          – Load and execute a zelph script file",
         L".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
@@ -344,11 +344,13 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         {L".list-predicate-usage", L".list-predicate-usage\n"
                                    L"Shows how often each predicate (relation type) is used, sorted by frequency.\n"
+                                   L"If <max_entries> is specified, only the top N most frequent predicates are shown.\n"
                                    L"If Wikidata language is active, Wikidata IDs are shown alongside names."},
 
         {L".list-predicate-value-usage", L".list-predicate-value-usage <predicate>\n"
                                          L"Shows how often each object (value) is used with the specified predicate, sorted by frequency.\n"
                                          L"The <predicate> can be a name (in the current language) or a numeric node ID.\n"
+                                         L"If <max_entries> is specified, only the top N most frequent values are shown.\n"
                                          L"If the Wikidata language is available and active, Wikidata IDs are shown alongside names."},
 
         {L".remove-rules", L".remove-rules\n"
@@ -738,14 +740,46 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else if (cmd[0] == L".list-predicate-usage")
     {
-        list_predicate_usage();
+        size_t limit = 0;
+        if (cmd.size() > 2) throw std::runtime_error("Command .list-predicate-usage accepts at most one optional argument (max entries)");
+        if (cmd.size() == 2)
+        {
+            try
+            {
+                size_t pos = 0;
+                limit      = std::stoull(cmd[1], &pos);
+                if (pos != cmd[1].length() || limit == 0)
+                    throw std::runtime_error("Could not parse max entries argument");
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid max entries argument");
+            }
+        }
+        list_predicate_usage(limit);
     }
     else if (cmd[0] == L".list-predicate-value-usage")
     {
-        if (cmd.size() != 2)
-            throw std::runtime_error("Command .list-predicate-value-usage requires exactly one argument: the predicate name or ID");
+        if (cmd.size() < 2 || cmd.size() > 3)
+            throw std::runtime_error("Command .list-predicate-value-usage requires one required argument (<predicate>) and one optional (max entries)");
 
-        list_predicate_value_usage(cmd[1]);
+        size_t       limit    = 0;
+        std::wstring pred_arg = cmd[1];
+        if (cmd.size() == 3)
+        {
+            try
+            {
+                size_t pos = 0;
+                limit      = std::stoull(cmd[2], &pos);
+                if (pos != cmd[2].length() || limit == 0)
+                    throw std::runtime_error("Could not parse max entries argument");
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid max entries argument");
+            }
+        }
+        list_predicate_value_usage(pred_arg, limit);
     }
     else if (cmd[0] == L".wikidata-index")
     {
@@ -900,30 +934,30 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
 }
 
-// New method implementation
-void console::Interactive::Impl::list_predicate_usage()
+void console::Interactive::Impl::list_predicate_usage(size_t limit)
 {
+    if (_wikidata)
+    {
+        _wikidata->set_logging(false);
+    }
+
     // Map to store predicate node and its usage count
     std::map<network::Node, size_t> predicate_usage_counts;
 
-    // Iterate through all nodes in the network
-    for (const auto& node_id : _n->get_all_nodes())
+    // Get all predicates directly: nodes that IsA RelationTypeCategory
+    auto predicates = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+
+    for (const auto& pred : predicates)
     {
-        // Check if the node is a relation type (predicate)
-        // A node is a relation type if it has a core.IsA relation to core.RelationTypeCategory
-        if (_n->check_fact(node_id, _n->core.IsA, {_n->core.RelationTypeCategory}).is_correct())
-        {
-            // Get all facts where this node is used as a relation type
-            // This counts how many facts use this predicate
-            const auto& facts_using_predicate = _n->get_left(node_id);
-            predicate_usage_counts[node_id]   = facts_using_predicate.size();
-        }
+        // Get all facts where this node is used as a relation type
+        const auto& facts_using_predicate = _n->get_left(pred);
+        predicate_usage_counts[pred]      = facts_using_predicate.size();
     }
 
     // Convert map to vector for sorting
     std::vector<std::pair<network::Node, size_t>> sorted_predicates(predicate_usage_counts.begin(), predicate_usage_counts.end());
 
-    // Sort the predicates by usage count in descending order
+    // Sort the predicates by usage count in ascending order
     std::sort(sorted_predicates.begin(), sorted_predicates.end(), [](const auto& a, const auto& b)
               {
                   return a.second < b.second; // Sort by count, ascending
@@ -932,12 +966,16 @@ void console::Interactive::Impl::list_predicate_usage()
     // Determine if wikidata language is available for three-column output
     bool has_wikidata_lang = _n->has_language("wikidata");
 
-    // Output the results
     _n->print(L"Predicate Usage:", true);
     _n->print(L"------------------------", true);
 
-    for (const auto& entry : sorted_predicates)
+    size_t total           = sorted_predicates.size();
+    size_t entries_to_show = limit ? std::min(limit, total) : total;
+    size_t start_idx       = (limit && limit < total) ? total - entries_to_show : 0;
+
+    for (size_t i = start_idx; i < total; ++i)
     {
+        const auto&  entry          = sorted_predicates[i];
         std::wstring predicate_name = _n->get_name(entry.first, "", true); // Current language, with fallback
         std::wstring line_output;
 
@@ -958,10 +996,23 @@ void console::Interactive::Impl::list_predicate_usage()
         _n->print(line_output, true);
     }
     _n->print(L"------------------------", true);
+    if (limit && limit < total)
+        _n->print(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" predicates.", true);
+
+    // Restore Wikidata logging state
+    if (_wikidata)
+    {
+        _wikidata->set_logging(true);
+    }
 }
 
-void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& pred_arg)
+void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& pred_arg, size_t limit /*= 0*/)
 {
+    if (_wikidata)
+    {
+        _wikidata->set_logging(false);
+    }
+
     // Resolve the predicate node (accept name in current language or raw numeric ID)
     network::Node pred = _n->get_node(pred_arg);
     if (pred == 0)
@@ -993,28 +1044,19 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
 
     for (network::Node fact : facts)
     {
-        network::adjacency_set incoming = _n->get_left(fact);  // subject(s) + object(s) --> fact
-        network::adjacency_set outgoing = _n->get_right(fact); // subject(s) + pred (bidirectional for subject)
+        network::adjacency_set incoming = _n->get_left(fact); // subject(s) + object(s) --> fact
 
-        // Subjects are the nodes with bidirectional connection
-        network::adjacency_set subjects;
+        // Objects are incoming nodes where fact does NOT point back to them
         for (network::Node cand : incoming)
         {
-            if (outgoing.count(cand))
-                subjects.insert(cand);
-        }
-
-        // Objects are incoming nodes that are not subjects
-        for (network::Node obj : incoming)
-        {
-            if (subjects.count(obj) == 0)
+            if (!_n->has_right_edge(fact, cand))
             {
-                value_counts[obj]++;
+                value_counts[cand]++;
             }
         }
     }
 
-    // Sort by count descending
+    // Sort by count ascending
     std::vector<std::pair<size_t, network::Node>> sorted;
     sorted.reserve(value_counts.size());
     for (const auto& p : value_counts)
@@ -1026,8 +1068,13 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
     bool        has_wikidata_lang = _n->has_language("wikidata");
     std::string curr_lang         = _n->get_lang();
 
-    for (const auto& entry : sorted)
+    size_t total           = sorted.size();
+    size_t entries_to_show = limit ? std::min(limit, total) : total;
+    size_t start_idx       = (limit && limit < total) ? total - entries_to_show : 0;
+
+    for (size_t i = start_idx; i < total; ++i)
     {
+        const auto&  entry      = sorted[i];
         std::wstring value_name = _n->get_name(entry.second, "", true); // current language with fallback
 
         std::wstring line;
@@ -1046,10 +1093,17 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
     }
 
     _n->print(L"------------------------", true);
-    _n->print(L"Total unique values: " + std::to_wstring(value_counts.size()), true);
-    if (value_counts.empty())
+    _n->print(L"Total unique values: " + std::to_wstring(total), true);
+    if (limit && limit < total)
+        _n->print(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" values.", true);
+    if (total == 0)
     {
         _n->print(L"(No values found for this predicate)", true);
+    }
+
+    if (_wikidata)
+    {
+        _wikidata->set_logging(true);
     }
 }
 

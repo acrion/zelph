@@ -77,8 +77,10 @@ namespace zelph
             static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
             adjacency_set        get_left(const Node b);
             adjacency_set        get_right(const Node b);
-            Answer               check_fact(Node source, Node relationType, const adjacency_set& targets);
-            Node                 fact(Node source, Node relationType, const adjacency_set& targets, long double probability = 1);
+            bool                 has_left_edge(Node b, Node a) const;
+            bool                 has_right_edge(Node a, Node b) const;
+            Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
+            Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 condition(Node op, const adjacency_set& conditions) const;
             void                 gen_dot(Node start, std::string file_name, int max_depth);
             void                 print(const std::wstring&, const bool) const;
