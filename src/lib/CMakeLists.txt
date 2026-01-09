@@ -27,9 +27,11 @@ cmake_policy(VERSION 3.25.2)
 option(USE_CLANG "Build with clang instead of default compiler" OFF)
 
 if (USE_CLANG)
-    set(CMAKE_C_COMPILER "clang")
-    set(CMAKE_CXX_COMPILER "clang++")
-    message(STATUS "Using Clang compiler")
+    find_program(CLANG clang REQUIRED)
+    find_program(CLANGXX clang++ REQUIRED)
+    set(CMAKE_C_COMPILER "${CLANG}")
+    set(CMAKE_CXX_COMPILER "${CLANGXX}")
+    message(STATUS "Using Clang compiler at ${CLANGXX}")
 endif ()
 
 include(CheckCXXCompilerFlag)
@@ -79,6 +81,7 @@ FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
     GIT_TAG v1.3.0
+    CMAKE_ARGS -DCAPNP_BUILD_TESTS=OFF
 )
 
 FetchContent_MakeAvailable(unordered_dense CapnProto)

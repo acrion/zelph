@@ -968,7 +968,7 @@ bool Wikidata::Impl::read_index_file()
 #ifdef _WIN32
     #define fileno _fileno
 #endif
-    FILE* file = fopen(index_path.c_str(), "rb");
+    FILE* file = fopen(index_path.string().c_str(), "rb");
     if (!file)
     {
         _n->print(L"Failed to open index file", true);
@@ -1026,7 +1026,7 @@ void Wikidata::Impl::write_index_file() const
 #ifdef _WIN32
     #define fileno _fileno
 #endif
-    FILE* file = fopen(index_path.c_str(), "wb");
+    FILE* file = fopen(index_path.string().c_str(), "wb");
     if (!file)
     {
         throw std::runtime_error("Failed to open index file for writing: " + index_path.string());

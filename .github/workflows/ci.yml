@@ -27,18 +27,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install GCC 14 (Linux only)
+      - name: Install Clang (Linux only)
         if: runner.os == 'Linux'
         run: |
-          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
           sudo apt update
-          sudo apt install gcc-14 g++-14 -y
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 --slave /usr/bin/g++ g++ /usr/bin/g++-14
-          sudo update-alternatives --set gcc /usr/bin/gcc-14
-          gcc --version
+          sudo apt install clang -y
+          clang --version
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CLANG=ON -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
