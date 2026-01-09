@@ -33,9 +33,10 @@ jobs:
           sudo apt update
           sudo apt install clang lld -y
           clang --version
+          lld --version
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
