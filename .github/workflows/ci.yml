@@ -20,9 +20,6 @@ jobs:
             name: windows
           - os: macos-latest
             name: macos
-    env:
-      CC: clang
-      CXX: clang++
 
     steps:
       - name: Checkout repository with submodules
@@ -30,7 +27,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Clang (Linux only)
+      - name: Install Clang and LLD (Linux only)
         if: runner.os == 'Linux'
         run: |
           sudo apt update
@@ -38,7 +35,7 @@ jobs:
           clang --version
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DUSE_CLANG=ON -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DCAPNP_BUILD_TESTS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
