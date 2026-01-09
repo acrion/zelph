@@ -27,6 +27,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install GCC 15 (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          sudo apt update
+          sudo apt install gcc-15 g++-15 -y
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-15 100 --slave /usr/bin/g++ g++ /usr/bin/g++-15
+          sudo update-alternatives --set gcc /usr/bin/gcc-15
+          gcc --version
+
       - name: Configure CMake
         run: cmake -DCMAKE_BUILD_TYPE=Release -B build -S src
 
@@ -38,16 +48,16 @@ jobs:
         run: |
           import shutil
           import os
-          
+
           if os.name == 'nt':
               source_dir = "build/bin/Release"
           else:
               source_dir = "build/bin"
-          
+
           output_filename = "zelph-${{ matrix.name }}"
-          
+
           print(f"Zipping content of {source_dir} to {output_filename}.zip")
-          
+
           shutil.make_archive(output_filename, 'zip', source_dir)
 
       - name: Upload build artifact
