@@ -99,8 +99,8 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     // std::wcout << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
 #endif
 
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
-    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
 
     // Store the forward mapping: node → name (in this language)
     _pImpl->_name_of_node[lang][node] = name;
@@ -144,8 +144,8 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
 
     Node result_node;
 
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
-    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
 
     // 1. Look for an existing node that already has this name in the foreign language
     auto existing = _pImpl->_node_of_name[lang].find(name_in_given_lang);
@@ -235,7 +235,7 @@ Node Zelph::node(const std::wstring& name, std::string lang)
         throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
 
     auto& node_of_name = _pImpl->_node_of_name[lang];
     auto  it           = node_of_name.find(name);
@@ -244,8 +244,8 @@ Node Zelph::node(const std::wstring& name, std::string lang)
         return it->second;
     }
 
-    Node                        new_node = _pImpl->create();
-    std::lock_guard<std::mutex> lock2(_pImpl->_mtx_name_of_node);
+    Node            new_node = _pImpl->create();
+    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
     node_of_name[name]                    = new_node;
     _pImpl->_name_of_node[lang][new_node] = name;
 
@@ -254,7 +254,7 @@ Node Zelph::node(const std::wstring& name, std::string lang)
 
 bool Zelph::has_name(const Node node, const std::string& lang) const
 {
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+    std::lock_guard lock(_pImpl->_mtx_name_of_node);
 
     auto& name_of_node = _pImpl->_name_of_node[lang];
     auto  it           = name_of_node.find(node);
@@ -272,9 +272,9 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
 
     // return `node` in the requested language (if available)
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-        auto&                       name_of_node = _pImpl->_name_of_node[lang];
-        auto                        it           = name_of_node.find(node);
+        std::lock_guard lock(_pImpl->_mtx_name_of_node);
+        auto&           name_of_node = _pImpl->_name_of_node[lang];
+        auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
             return it->second;
@@ -284,9 +284,9 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     // try English as fallback language
     if (fallback)
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-        auto&                       name_of_node = _pImpl->_name_of_node["en"];
-        auto                        it           = name_of_node.find(node);
+        std::lock_guard lock(_pImpl->_mtx_name_of_node);
+        auto&           name_of_node = _pImpl->_name_of_node["en"];
+        auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
             return it->second;
@@ -296,9 +296,9 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     // try zelph as fallback language
     if (fallback)
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
-        auto&                       name_of_node = _pImpl->_name_of_node["zelph"];
-        auto                        it           = name_of_node.find(node);
+        std::lock_guard lock(_pImpl->_mtx_name_of_node);
+        auto&           name_of_node = _pImpl->_name_of_node["zelph"];
+        auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
             return it->second;
@@ -308,7 +308,7 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     // try an arbitrary language as fallback
     if (fallback)
     {
-        std::lock_guard<std::mutex> lock(_pImpl->_mtx_name_of_node);
+        std::lock_guard lock(_pImpl->_mtx_name_of_node);
         for (const auto& l : _pImpl->_name_of_node)
         {
             auto it2 = l.second.find(node);
@@ -382,8 +382,8 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num)
 Node Zelph::get_node(const std::wstring& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_node_of_name);
-    auto                        node_of_name = _pImpl->_node_of_name.find(lang);
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    auto            node_of_name = _pImpl->_node_of_name.find(lang);
     if (node_of_name == _pImpl->_node_of_name.end())
     {
         return 0;
@@ -1026,7 +1026,7 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
 
 void Zelph::print(const std::wstring& msg, const bool o) const
 {
-    std::lock_guard<std::mutex> lock(_pImpl->_mtx_print);
+    std::lock_guard lock(_pImpl->_mtx_print);
     _print(msg, o);
 }
 

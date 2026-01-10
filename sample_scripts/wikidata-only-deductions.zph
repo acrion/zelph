@@ -1,0 +1,53 @@
+.lang zelph
+
+.name !                wikidata Q363948
+.name ~                wikidata P31
+.name "is subclass of" wikidata P279
+.name "is facet of"    wikidata P1269
+.name =>               wikidata Q374182
+.name ->               wikidata Q130901
+.name "is part of"     wikidata P361
+.name "has part"       wikidata P527
+.name "is opposite of" wikidata P461
+.name "is inverse of"  wikidata P1696
+.name "has quality"    wikidata P1552
+.name "is for example" wikidata Q21514624
+.name "transitive relation" wikidata Q18647515
+
+# The following facts are part of wikidata:
+#"is subclass of" ~ transitive relation
+#"has part"       ~ transitive relation
+#"is facet of"    ~ transitive relation
+#"is part of"     ~ transitive relation
+#"is part of"     is inverse of "has part"
+
+# The following facts are not part of wikidata:
+"has quality" ~ transitive relation
+
+X is facet of Y, Y has part P => X has part P
+X is facet of Y, Y is part of P => X is part of P
+X is facet of Y, Y has quality Q => X has quality Q
+
+# The following fact is not part of wikidata. Wikidata only includes the fact "is subclass of" "subject item of this property" "is for example"
+"is for example"  is inverse of "~"
+
+R ~ transitive relation, X R Y, Y R Z => X R Z
+P ~ transitive relation, P is inverse of Q => Q ~ transitive relation
+X ~ K, K is subclass of U => X ~ U
+
+X has quality E,   E ~ K                => X has quality K
+X has quality E,   E is subclass of K  => X has quality K
+K has quality E,   X ~ K                => X has quality E
+K has quality E,   X is subclass of K  => X has quality E
+X has part P,      P ~ K                => X has part K
+K has part P,      X is subclass of K  => X has part P
+
+X is opposite of Y, X ~ K              => Y ~ K
+X is opposite of Y, X is subclass of K => Y is subclass of K
+X is inverse of Y,  X ~ K              => Y ~ K
+X is inverse of Y,  X is subclass of K => Y is subclass of K
+
+X is opposite of Y        => Y is opposite of X
+X is inverse of Y         => Y is inverse of X
+R is opposite of S, X R Y => Y S X
+R is inverse of S,  X R Y => Y S X

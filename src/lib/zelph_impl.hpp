@@ -337,7 +337,7 @@ namespace zelph
                 }
 
                 {
-                    std::lock_guard<std::mutex> lock(_mtx_name_of_node);
+                    std::lock_guard lock(_mtx_name_of_node);
                     for (auto& lang_pair : _name_of_node)
                     {
                         auto& map = lang_pair.second;
@@ -357,7 +357,7 @@ namespace zelph
                 }
 
                 {
-                    std::lock_guard<std::mutex> lock(_mtx_node_of_name);
+                    std::lock_guard lock(_mtx_node_of_name);
                     for (auto& lang_pair : _node_of_name)
                     {
                         auto& map = lang_pair.second;
@@ -385,9 +385,9 @@ namespace zelph
             ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node; // key is language identifier
             ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
 
-            mutable std::mutex _mtx_node_of_name;
-            mutable std::mutex _mtx_name_of_node;
-            mutable std::mutex _mtx_print;
+            mutable std::recursive_mutex _mtx_node_of_name;
+            mutable std::recursive_mutex _mtx_name_of_node;
+            mutable std::recursive_mutex _mtx_print;
 
             int _format_fact_level{0}; // recursion level of method format_fact
         };
