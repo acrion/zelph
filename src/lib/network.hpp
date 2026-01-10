@@ -178,6 +178,90 @@ namespace zelph
                 _node_count.fetch_sub(1, std::memory_order_relaxed);
             }
 
+            void merge(Node from, Node into)
+            {
+                if (from == into)
+                {
+                    return; // Nothing to do if merging a node into itself
+                }
+
+                if (!exists(from) || !exists(into))
+                {
+                    throw std::runtime_error("Network::merge: One or both nodes do not exist");
+                }
+
+                // Transfer outgoing connections from 'from' to 'into'
+                adjacency_set outgoing = get_right(from);
+                for (Node to : outgoing)
+                {
+                    long double prob = probability(from, to);
+                    disconnect(from, to);
+                    // Connect only if not already connected to avoid duplicates
+                    if (!has_right_edge(into, to))
+                    {
+                        connect(into, to, prob);
+                    }
+                    else
+                    {
+                        // If already connected, update probability if necessary
+                        long double existing_prob = probability(into, to);
+                        if (existing_prob != prob)
+                        {
+                            // Resolve conflicting probabilities; here we take the max/min based on sign
+                            if (existing_prob >= 0.5L && prob >= 0.5L)
+                            {
+                                connect(into, to, std::max(existing_prob, prob));
+                            }
+                            else if (existing_prob <= 0.5L && prob <= 0.5L)
+                            {
+                                connect(into, to, std::min(existing_prob, prob));
+                            }
+                            else
+                            {
+                                throw std::runtime_error("Network::merge: Conflicting probabilities between existing and transferred connection");
+                            }
+                        }
+                    }
+                }
+
+                // Transfer incoming connections from 'from' to 'into'
+                adjacency_set incoming = get_left(from);
+                for (Node fr : incoming)
+                {
+                    long double prob = probability(fr, from);
+                    disconnect(fr, from);
+                    // Connect only if not already connected to avoid duplicates
+                    if (!has_left_edge(into, fr))
+                    {
+                        connect(fr, into, prob);
+                    }
+                    else
+                    {
+                        // If already connected, update probability if necessary
+                        long double existing_prob = probability(fr, into);
+                        if (existing_prob != prob)
+                        {
+                            // Resolve conflicting probabilities; here we take the max/min based on sign
+                            if (existing_prob >= 0.5L && prob >= 0.5L)
+                            {
+                                connect(fr, into, std::max(existing_prob, prob));
+                            }
+                            else if (existing_prob <= 0.5L && prob <= 0.5L)
+                            {
+                                connect(fr, into, std::min(existing_prob, prob));
+                            }
+                            else
+                            {
+                                throw std::runtime_error("Network::merge: Conflicting probabilities between existing and transferred connection");
+                            }
+                        }
+                    }
+                }
+
+                // Remove the 'from' node after transferring connections
+                remove(from);
+            }
+
             void remove_isolated_nodes(size_t& removed_count)
             {
                 removed_count = 0;

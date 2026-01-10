@@ -118,16 +118,22 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
         assert(_pImpl->is_var(node) == _pImpl->is_var(existing->second));
 
         // Conflict: the same name is already used for another node
-        // Special case variables: console::Interactive currently creates separate variable nodes for new rules, even if they share the same name with an existing rule (which makes sense, although topological it is not required).
-        std::wclog
-            << L"Warning: Name '" << name << L"' in language '" << string::unicode::from_utf8(lang)
-            << L"' is now shared by multiple nodes (previously Node " << existing->second
-            << L", now Node " << node << L"). Last assignment wins."
-            << std::endl;
+        Node from = node;
+        Node into = existing->second;
 
-        // Last-one-wins: overwrite the reverse mapping with the new node
-        // TODO: In the future, consider supporting multiple nodes per name if memory impact is acceptable
-        _pImpl->_node_of_name[lang][name] = node;
+        std::wclog << L"Warning: Merging Node " << from
+                   << L" into Node " << into
+                   << L" due to name conflict '" << name
+                   << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
+
+        // Merge
+        _pImpl->merge(from, into);
+
+        // Transfer names from the merged node
+        _pImpl->transfer_names(from, into);
+
+        // Update the reverse mapping to the surviving node
+        _pImpl->_node_of_name[lang][name] = into;
     }
 }
 
@@ -183,13 +189,11 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
         {
             if (!old_current_name.empty())
             {
-                std::wclog << L"Warning: Changing name in language '" << string::unicode::from_utf8(_lang)
-                           << L"' for node with foreign name '" << name_in_given_lang
-                           << L"' (language '" << string::unicode::from_utf8(lang) << L"') from '"
-                           << old_current_name << L"' to '" << name_in_current_lang << L"'." << std::endl;
-
                 // Remove the old current-language name from the reverse mapping
                 node_of_name_cur.erase(old_current_name);
+
+                // Remove from forward mapping
+                name_of_node_cur.erase(result_node);
             }
 
             // Check if the desired new current-language name is already assigned to another node
@@ -197,13 +201,24 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
             if (it_conflict != node_of_name_cur.end() && it_conflict->second != result_node)
             {
                 Node conflicting_node = it_conflict->second;
-                std::wclog << L"Warning: Reassigning name '" << name_in_current_lang
-                           << L"' in language '" << string::unicode::from_utf8(_lang)
-                           << L"' from Node " << conflicting_node
-                           << L" to Node " << result_node << L"." << std::endl;
 
-                // Detach the conflicting node from this name
-                name_of_node_cur.erase(conflicting_node);
+                // Determine merge direction: higher ID into lower ID
+                Node from = result_node;
+                Node into = conflicting_node;
+
+                std::wclog << L"Warning: Merging Node " << from
+                           << L" into Node " << into
+                           << L" due to name conflict '" << name_in_current_lang
+                           << L"' in language '" << string::unicode::from_utf8(_lang) << L"'." << std::endl;
+
+                // Merge
+                _pImpl->merge(from, into);
+
+                // Transfer names from the merged node
+                _pImpl->transfer_names(from, into);
+
+                // Update result_node to the surviving node
+                result_node = into;
             }
 
             // Apply the new current-language mappings
@@ -212,7 +227,7 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
         }
     }
 
-    return result_node; // The (possibly newly created) node
+    return result_node; // The (possibly newly created or merged) node
 }
 
 void Zelph::cleanup_isolated(size_t& removed_count)
@@ -250,6 +265,11 @@ Node Zelph::node(const std::wstring& name, std::string lang)
     _pImpl->_name_of_node[lang][new_node] = name;
 
     return new_node;
+}
+
+bool Zelph::exists(uint64_t nd)
+{
+    return _pImpl->exists(nd);
 }
 
 bool Zelph::has_name(const Node node, const std::string& lang) const

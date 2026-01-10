@@ -56,6 +56,7 @@ namespace zelph
             void                     set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }
             std::string              lang() { return _lang; }
             Node                     node(const std::wstring& name, std::string lang = "");
+            bool                     exists(uint64_t nd);
             bool                     has_name(Node node, const std::string& lang) const;
             std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false, const bool process_node = true) const;
             name_of_node_map         get_nodes_in_language(const std::string& lang) const;

@@ -294,9 +294,15 @@ namespace zelph
                         }
                         _left[pair.getNode()] = std::move(adj);
                     }
-                    // Debug: Log after each chunk to track progress/memory
+#ifdef _DEBUG
                     std::cerr << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size() << std::endl;
+#else
+                    std::cerr << "." << std::flush;
+#endif
                 }
+#ifndef _DEBUG
+                std::cerr << std::endl;
+#endif
 
                 // Load right chunks similarly
                 _right.clear();
@@ -317,8 +323,85 @@ namespace zelph
                         }
                         _right[pair.getNode()] = std::move(adj);
                     }
-                    // Debug: Log after each chunk
+#ifdef _DEBUG
                     std::cerr << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size() << std::endl;
+#else
+                    std::cerr << "." << std::flush;
+#endif
+                }
+#ifndef _DEBUG
+                std::cerr << std::endl;
+#endif
+            }
+
+            void transfer_names(const Node from, const Node into)
+            {
+                if (from == into) return;
+
+                std::lock_guard lock1(_mtx_name_of_node);
+                std::lock_guard lock2(_mtx_node_of_name);
+
+                // Transfer forward mappings: node -> name
+                for (auto& outer : _name_of_node)
+                {
+                    std::string lang = outer.first;
+                    auto&       map  = outer.second;
+                    auto        it   = map.find(from);
+                    if (it != map.end())
+                    {
+                        std::wstring name = it->second;
+                        map.erase(it);
+
+                        auto it2 = map.find(into);
+                        if (it2 != map.end())
+                        {
+                            if (it2->second != name)
+                            {
+                                std::wclog << L"Warning: Name conflict in language '" << string::unicode::from_utf8(lang) << L"': '" << name << L"' (from merged node) vs '" << it2->second << L"'. Keeping existing name '" << it2->second << L"'." << std::endl;
+                            }
+                            // No need to set, keep existing
+                        }
+                        else
+                        {
+                            map[into] = name;
+                        }
+                    }
+                }
+
+                // Update reverse mappings: name -> node
+                for (auto& outer : _node_of_name)
+                {
+                    std::string lang = outer.first;
+                    auto&       map  = outer.second;
+                    for (auto it = map.begin(); it != map.end();)
+                    {
+                        if (it->second == from)
+                        {
+                            std::wstring name = it->first;
+                            it                = map.erase(it);
+
+                            // Check if name already maps to something else
+                            auto it_existing = map.find(name);
+                            if (it_existing == map.end())
+                            {
+                                // Safe to set to into
+                                map[name] = into;
+                            }
+                            else
+                            {
+                                // Conflict, already maps to another node (likely into or other)
+                                if (it_existing->second != into)
+                                {
+                                    std::wclog << L"Warning: Skipping reverse mapping update for name '" << name << L"' in language '" << string::unicode::from_utf8(lang) << L"' due to existing conflicting mapping." << std::endl;
+                                }
+                                // Else already points to into, ok
+                            }
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
                 }
             }
 

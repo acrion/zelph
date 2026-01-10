@@ -453,12 +453,17 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                 nd         = std::stoull(cmd[1], &pos);
                 if (pos != cmd[1].length())
                 {
-                    throw std::runtime_error("Command .node: Invalid node ID format '" + string::unicode::to_utf8(cmd[1]) + "'");
+                    throw std::exception();
                 }
             }
             catch (const std::exception&)
             {
                 throw std::runtime_error("Command .node: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "' in current language '" + _n->lang() + "'");
+            }
+
+            if (!_n->exists(nd))
+            {
+                throw std::runtime_error("Command .node: Node '" + std::to_string(nd) + "' does not exist");
             }
         }
         else
