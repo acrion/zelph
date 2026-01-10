@@ -45,7 +45,7 @@ namespace zelph
         class ZELPH_EXPORT Zelph
         {
         public:
-            explicit Zelph(const std::function<void(const std::wstring&, const bool)>& print);
+            explicit Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print);
             ~Zelph();
 
             Node var() const;
@@ -110,7 +110,8 @@ namespace zelph
             } core;
 
         protected:
-            std::string _lang{"en"};
+            std::string                                            _lang{"en"};
+            const std::unordered_map<network::Node, std::wstring>& _core_node_names;
 
         private:
             void add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges);

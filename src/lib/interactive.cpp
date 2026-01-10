@@ -40,6 +40,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <unordered_map>
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT
@@ -55,7 +56,8 @@ class console::Interactive::Impl
 {
 public:
     Impl(Interactive* enclosing)
-        : _n(new network::Reasoning([](const std::wstring& str, const bool)
+        : _n(new network::Reasoning(_core_node_names,
+                                    [](const std::wstring& str, const bool)
                                     {
 #ifdef _WIN32
                                         std::wcout << str << std::endl;
@@ -70,6 +72,12 @@ public:
 #endif
 
         _n->set_lang("zelph");
+
+        _core_node_names[_n->core.Causes]        = L"=>";
+        _core_node_names[_n->core.And]           = L",";
+        _core_node_names[_n->core.IsA]           = L"~";
+        _core_node_names[_n->core.Unequal]       = L"!=";
+        _core_node_names[_n->core.Contradiction] = L"!";
     }
 
     void          import_file(const std::wstring& file) const;
@@ -81,8 +89,9 @@ public:
     void          list_predicate_usage(size_t limit);
     void          list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
 
-    std::shared_ptr<Wikidata> _wikidata;
-    network::Reasoning* const _n;
+    std::shared_ptr<Wikidata>                       _wikidata;
+    std::unordered_map<network::Node, std::wstring> _core_node_names;
+    network::Reasoning* const                       _n;
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
@@ -94,12 +103,6 @@ private:
 console::Interactive::Interactive()
     : _pImpl(new Impl(this))
 {
-    _pImpl->_n->set_name(_pImpl->_n->core.RelationTypeCategory, L"->", "zelph");
-    _pImpl->_n->set_name(_pImpl->_n->core.Causes, L"=>", "zelph");
-    _pImpl->_n->set_name(_pImpl->_n->core.And, L",", "zelph");
-    _pImpl->_n->set_name(_pImpl->_n->core.IsA, L"~", "zelph");
-    _pImpl->_n->set_name(_pImpl->_n->core.Unequal, L"!=", "zelph");
-    _pImpl->_n->set_name(_pImpl->_n->core.Contradiction, L"!", "zelph");
 }
 
 console::Interactive::~Interactive()
@@ -166,8 +169,8 @@ void console::Interactive::process(std::wstring line) const
         }
         else
         {
-            const std::wstring        And     = _pImpl->_n->get_name(_pImpl->_n->core.And, _pImpl->_n->lang());
-            const std::wstring        Causes  = _pImpl->_n->get_name(_pImpl->_n->core.Causes, _pImpl->_n->lang());
+            const std::wstring        And     = _pImpl->_core_node_names.at(_pImpl->_n->core.And);
+            const std::wstring        Causes  = _pImpl->_core_node_names.at(_pImpl->_n->core.Causes);
             bool                      is_rule = false;
             std::wstring              assigns_to_var;
             std::wstring              first_var = Impl::is_var(*it) ? L"" : *it;
@@ -829,8 +832,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
 
-        const std::wstring And    = _n->get_name(_n->core.And, _n->lang());
-        const std::wstring Causes = _n->get_name(_n->core.Causes, _n->lang());
+        const std::wstring And    = _core_node_names.at(_n->core.And);
+        const std::wstring Causes = _core_node_names.at(_n->core.Causes);
 
         bool                      is_rule = false;
         std::wstring              assigns_to_var;
@@ -855,7 +858,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             throw std::runtime_error("Command .prune-facts: pattern must contain at least one variable (A-Z or starting with _)");
 
         size_t removed = 0;
-        dynamic_cast<network::Reasoning*>(_n)->prune_facts(pattern_fact, removed);
+        _n->prune_facts(pattern_fact, removed);
 
         _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
         if (removed > 0)
@@ -868,8 +871,8 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
 
-        const std::wstring And    = _n->get_name(_n->core.And, _n->lang());
-        const std::wstring Causes = _n->get_name(_n->core.Causes, _n->lang());
+        const std::wstring And    = _core_node_names.at(_n->core.And);
+        const std::wstring Causes = _core_node_names.at(_n->core.Causes);
 
         bool                      is_rule = false;
         std::wstring              assigns_to_var;
@@ -898,7 +901,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         size_t removed_facts = 0;
         size_t removed_nodes = 0;
-        dynamic_cast<network::Reasoning*>(_n)->prune_nodes(pattern_fact, removed_facts, removed_nodes);
+        _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
 
         _n->print(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
         if (removed_facts > 0 || removed_nodes > 0)
@@ -1235,13 +1238,13 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
 
     if (tokens.size() == 1)
     {
-        if (*tokens.begin() == _n->get_name(_n->core.Contradiction))
+        if (*tokens.begin() == _core_node_names.at(_n->core.Contradiction))
         {
             return _n->core.Contradiction;
         }
         else
         {
-            throw std::runtime_error(string::unicode::to_utf8(L"Fact '" + *tokens.begin() + L"' consists of only 1 token, which is only allowed for contradiction '" + _n->get_name(_n->core.Contradiction) + L"'"));
+            throw std::runtime_error(string::unicode::to_utf8(L"Fact '" + *tokens.begin() + L"' consists of only 1 token, which is only allowed for contradiction '" + _core_node_names.at(_n->core.Contradiction) + L"'"));
         }
     }
 

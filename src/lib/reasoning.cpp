@@ -35,8 +35,8 @@ using namespace zelph::network;
 
 using adjacency_set = std::unordered_set<Node>;
 
-Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
-    : Zelph(print)
+Reasoning::Reasoning(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
+    : Zelph(core_node_names, print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
     , _markdown_subdir("")
 {
@@ -179,8 +179,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
                 adjacency_set outgoing_from_fact = _pImpl->get_right(fact);
 
                 bool has_subject = false;
-
-                bool has_object = false;
+                bool has_object  = false;
 
                 for (Node out_node : outgoing_from_fact)
                 {
@@ -341,7 +340,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
             {
                 std::wstring output;
                 format_fact(output, _lang, error.get_fact(), error.get_variables(), error.get_parent());
-                std::wstring message = L"«!» ⇐ " + output;
+                std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                 if (_print_deductions)
                 {
@@ -451,7 +450,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
                         std::wstring output;
                         format_fact(output, _lang, error.get_fact(), error.get_variables(), error.get_parent());
-                        std::wstring message = L"«!» ⇐ " + output;
+                        std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                         if (_print_deductions)
                         {

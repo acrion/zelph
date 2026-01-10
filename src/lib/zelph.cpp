@@ -40,9 +40,10 @@ std::string Zelph::get_version()
     return "0.9.2";
 }
 
-Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
+Zelph::Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
+    , _core_node_names(core_node_names)
     , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
@@ -65,26 +66,6 @@ void Zelph::set_lang(const std::string& lang)
     if (lang != _lang)
     {
         _lang = lang;
-
-        const std::vector<Node> cores = {
-            core.RelationTypeCategory,
-            core.Causes,
-            core.And,
-            core.IsA,
-            core.Unequal,
-            core.Contradiction};
-
-        for (Node c : cores)
-        {
-            if (!has_name(c, lang))
-            {
-                std::wstring name = get_name(c, "zelph", false);
-                if (!name.empty())
-                {
-                    set_name(c, name, lang);
-                }
-            }
-        }
     }
 }
 
@@ -335,6 +316,13 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
             if (it2 != l.second.end())
                 return it2->second;
         }
+    }
+
+    auto it = _core_node_names.find(node);
+
+    if (it != _core_node_names.end())
+    {
+        return it->second;
     }
 
     return L""; // return empty string if this node has no name (which can happen for internally generated nodes, see Interactive::Impl::process_fact and Interactive::Impl::process_rule)
