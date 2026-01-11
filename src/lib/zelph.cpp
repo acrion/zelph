@@ -95,12 +95,16 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     }
     else if (existing->second != node)
     {
-        // Both nodes are either variables, or not. Note that this assertion makes assumptions about implementation of class console::Interactive (but they are reasonable, so we assert here).
-        assert(_pImpl->is_var(node) == _pImpl->is_var(existing->second));
-
         // Conflict: the same name is already used for another node
-        Node from = node;
-        Node into = existing->second;
+        Node from = existing->second;
+        Node into = node;
+
+        if (_pImpl->is_var(from) != _pImpl->is_var(into))
+        {
+            std::stringstream s;
+            s << "Requested name '" << string::unicode::to_utf8(name) << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+            throw std::runtime_error(s.str());
+        }
 
         std::wclog << L"Warning: Merging Node " << from
                    << L" into Node " << into
@@ -186,6 +190,13 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
                 // Determine merge direction: higher ID into lower ID
                 Node from = result_node;
                 Node into = conflicting_node;
+
+                if (_pImpl->is_var(from) != _pImpl->is_var(into))
+                {
+                    std::stringstream s;
+                    s << "Requested name '" << string::unicode::to_utf8(name_in_current_lang) << "' is already used by node " << into << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+                    throw std::runtime_error(s.str());
+                }
 
                 std::wclog << L"Warning: Merging Node " << from
                            << L" into Node " << into
