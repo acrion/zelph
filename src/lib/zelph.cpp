@@ -24,14 +24,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "zelph.hpp"
+#include "ogdf/layered/BarycenterHeuristic.h"
 #include "zelph_impl.hpp"
 
 #include <ogdf/basic/Graph.h>
 #include <ogdf/basic/GraphAttributes.h>
 #include <ogdf/fileformats/GraphIO.h>
+#include <ogdf/layered/CoffmanGrahamRanking.h>
 #include <ogdf/layered/FastSimpleHierarchyLayout.h>
 #include <ogdf/layered/LongestPathRanking.h>
 #include <ogdf/layered/MedianHeuristic.h>
+#include <ogdf/layered/OptimalHierarchyLayout.h>
 #include <ogdf/layered/SugiyamaLayout.h>
 
 #include <boost/algorithm/string.hpp>
@@ -1070,13 +1073,13 @@ void Zelph::add_nodes(Node                                  current,
         }
 
         bool is_bidirectional = _pImpl->has_left_edge(left, current);
-        if (is_bidirectional)
+
+        ogdf::node leftn = node_map[left];
+        ogdf::node curn  = node_map[current];
+        if (G.searchEdge(leftn, curn) == nullptr && G.searchEdge(curn, leftn) == nullptr)
         {
-            if (G.searchEdge(curr_node, node_map[left]) == nullptr)
-            {
-                ogdf::edge e    = G.newEdge(curr_node, node_map[left]);
-                GA.arrowType(e) = ogdf::EdgeArrow::Last;
-            }
+            ogdf::edge e    = G.newEdge(leftn, curn);
+            GA.arrowType(e) = is_bidirectional ? ogdf::EdgeArrow::Both : ogdf::EdgeArrow::Last;
         }
     }
 
@@ -1092,14 +1095,13 @@ void Zelph::add_nodes(Node                                  current,
             GA.arrowType(e) = ogdf::EdgeArrow::Last;
         }
 
-        bool is_bidirectional = _pImpl->has_right_edge(right, current);
-        if (is_bidirectional)
+        bool       is_bidirectional = _pImpl->has_right_edge(right, current);
+        ogdf::node rightn           = node_map[right];
+        ogdf::node curn             = node_map[current];
+        if (G.searchEdge(curn, rightn) == nullptr && G.searchEdge(rightn, curn) == nullptr)
         {
-            if (G.searchEdge(node_map[right], curr_node) == nullptr)
-            {
-                ogdf::edge e    = G.newEdge(node_map[right], curr_node);
-                GA.arrowType(e) = ogdf::EdgeArrow::Last;
-            }
+            ogdf::edge e    = G.newEdge(curn, rightn);
+            GA.arrowType(e) = is_bidirectional ? ogdf::EdgeArrow::Both : ogdf::EdgeArrow::Last;
         }
     }
 }
@@ -1134,23 +1136,31 @@ void Zelph::gen_svg(Node start, std::string file_name, int max_depth)
     for (ogdf::node v : G.nodes)
     {
         std::string label               = GA.label(v);
-        double      text_width_estimate = label.length() * 6.0;
-        double      padding             = 20.0;
-        GA.width(v)                     = std::max(20.0, text_width_estimate + padding);
-        GA.height(v)                    = std::max(20.0, 20.0);
+        double      text_width_estimate = label.length() * 7.5; // Etwas großzügiger
+        double      padding             = 40.0;
+        GA.width(v)                     = std::max(120.0, text_width_estimate + padding);
+        GA.height(v)                    = 60.0; // Feste Höhe, mehr Platz für ankommende Pfeile
     }
 
     // Layout mit kompakteren Abständen
     ogdf::SugiyamaLayout sl;
-    sl.setRanking(new ogdf::LongestPathRanking());
-    sl.setCrossMin(new ogdf::MedianHeuristic());
 
-    ogdf::FastSimpleHierarchyLayout* fshl = new ogdf::FastSimpleHierarchyLayout();
-    fshl->layerDistance(10.0); // Noch kleinerer Layer-Abstand für kompakte Pfeile
-    fshl->nodeDistance(5.0);   // Noch kleinerer Node-Abstand
-    fshl->balanced(true);
+    // Besserer Ranker für kompakteres Layout
+    sl.setRanking(new ogdf::CoffmanGrahamRanking());
 
-    sl.setLayout(fshl);
+    // Crossing Minimization
+    sl.setCrossMin(new ogdf::BarycenterHeuristic());
+
+    // Hierarchy Layout mit Abständen und automatischen Bends/Polylinien
+    ogdf::OptimalHierarchyLayout* ohl = new ogdf::OptimalHierarchyLayout();
+    ohl->layerDistance(120.0); // Höher = mehr vertikaler Platz → Pfeile wirken kleiner
+    ohl->nodeDistance(60.0);   // Breiter = mehr horizontaler Platz
+    // Optional weitere Feinjustierung (kommentiere ein, falls gewünscht)
+    // ohl->weightBalancing(0.8);
+    // ohl->weightSegments(1.2);
+
+    sl.setLayout(ohl); // Jetzt mit Pointer (new → ownership wird übergeben)
+
     sl.call(GA);
 
     // SVG exportieren
