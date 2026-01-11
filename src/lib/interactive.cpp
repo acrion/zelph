@@ -405,7 +405,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".clist <count>                     – List first N nodes named in current language (sorted by ID if reasonable size, otherwise map order)",
         L".out <name|id> [count]             – List details of outgoing connected nodes (default 20)",
         L".in <name|id> [count]              – List details of incoming connected nodes (default 20)",
-        L".dot <name> <depth>         – Generate GraphViz DOT file for a node",
+        L".display <name> <depth>     – Generate and opens SVG file for a node",
         L".run                        – Run full inference",
         L".run-once                   – Run a single inference pass",
         L".run-md <subdir>            – Run inference and export results as Markdown",
@@ -483,9 +483,9 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                     L"Lists the first N nodes that have a name in the current language, sorted by node ID.\n"
                     L"Output format is identical to .list (names in all languages, connection counts, Wikidata URL)."},
 
-        {L".dot", L".dot <node_name> <max_depth>\n"
-                  L"Generates a GraphViz .dot file visualizing the specified node and its connections\n"
-                  L"up to the given depth (depth ≥ 2 recommended). The file is named <node_name>.dot."},
+        {L".display", L".display <node_name> <max_depth>\n"
+                      L"Generates and opens an svg file visualizing the specified node and its connections\n"
+                      L"up to the given depth (depth ≥ 2 recommended). The file is named <node_name>.svg."},
 
         {L".run", L".run\n"
                   L"Performs full inference: repeatedly applies all rules until no new facts are derived.\n"
@@ -800,15 +800,15 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->print(L"Removed node " + std::to_wstring(nd) + L" (all edges disconnected, name mappings cleaned).", true);
         _n->print(L"Consider running .cleanup afterwards if needed.", true);
     }
-    else if (cmd[0] == L".dot")
+    else if (cmd[0] == L".display")
     {
-        if (cmd.size() == 1) throw std::runtime_error("Command .dot: Missing node name to visualize");
+        if (cmd.size() == 1) throw std::runtime_error("Command .display: Missing node name to visualize");
         network::Node nd = _n->get_node(cmd[1]);
-        if (nd == 0) throw std::runtime_error("Command .dot: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "'");
-        if (cmd.size() < 3) throw std::runtime_error("Command .dot: Missing maximum depth");
+        if (nd == 0) throw std::runtime_error("Command .display: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "'");
+        if (cmd.size() < 3) throw std::runtime_error("Command .display: Missing maximum depth");
         int max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
-        if (max_depth < 2) throw std::runtime_error("Command .dot: Maximum depth must be greater than 1");
-        _n->gen_dot(nd, string::unicode::to_utf8(cmd[1]) + ".dot", max_depth);
+        if (max_depth < 2) throw std::runtime_error("Command .display: Maximum depth must be greater than 1");
+        _n->gen_svg(nd, string::unicode::to_utf8(cmd[1]) + ".svg", max_depth);
     }
     else if (cmd[0] == L".run")
     {

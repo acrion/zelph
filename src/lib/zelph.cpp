@@ -28,13 +28,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <ogdf/basic/Graph.h>
 #include <ogdf/basic/GraphAttributes.h>
-#include <ogdf/energybased/FMMMLayout.h> // Force-directed – ideal für "durcheinander" Graphen
 #include <ogdf/fileformats/GraphIO.h>
-// alternative
-// #include <ogdf/layered/SugiyamaLayout.h>
-// #include <ogdf/layered/LongestPathRanking.h>
-// #include <ogdf/layered/MedianHeuristic.h>
-// #include <ogdf/layered/FastSimpleHierarchyLayout.h>
+#include <ogdf/layered/FastSimpleHierarchyLayout.h>
+#include <ogdf/layered/LongestPathRanking.h>
+#include <ogdf/layered/MedianHeuristic.h>
+#include <ogdf/layered/SugiyamaLayout.h>
 
 #include <boost/algorithm/string.hpp>
 
@@ -571,7 +569,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             format_fact(output, _lang, relation);
             print(output, true);
 
-            gen_dot(relation, "debug.dot", 2);
+            gen_svg(relation, "debug.dot", 2);
             print(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
             print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
             print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
@@ -1014,111 +1012,105 @@ std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
     return results;
 }
 
-void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
+void Zelph::add_nodes(Node                                  current,
+                      int                                   depth_left,
+                      const adjacency_set&                  conditions,
+                      const adjacency_set&                  deductions,
+                      ogdf::Graph&                          G,
+                      ogdf::GraphAttributes&                GA,
+                      std::unordered_map<Node, ogdf::node>& node_map,
+                      ankerl::unordered_dense::set<Node>&   processed)
 {
-    if (--max_depth > 0 && touched.count(current) == 0)
+    if (node_map.count(current) == 0)
     {
-        touched.insert(current);
-        std::string current_name = get_name_hex(current);
+        ogdf::node curr_node = G.newNode();
+        node_map[current]    = curr_node;
+
+        GA.label(curr_node)       = get_name_hex(current);
+        GA.shape(curr_node)       = ogdf::Shape::RoundedRect;
+        GA.strokeColor(curr_node) = ogdf::Color(ogdf::Color::Name::Black);
 
         if (_pImpl->is_var(current))
         {
-            dot << "\"" << current_name << "\" [color=cornsilk2, style=filled]" << std::endl;
+            GA.fillColor(curr_node) = ogdf::Color(ogdf::Color::Name::Cornsilk);
         }
         else if (conditions.find(current) != conditions.end())
         {
-            dot << "\"" << current_name << "\" [color=lightskyblue, style=filled]" << std::endl;
+            GA.fillColor(curr_node) = ogdf::Color(ogdf::Color::Name::Lightskyblue);
         }
         else if (deductions.find(current) != deductions.end())
         {
-            dot << "\"" << current_name << "\" [color=darkolivegreen2, style=filled]" << std::endl;
+            GA.fillColor(curr_node) = ogdf::Color("#bcee68");
+        }
+        else
+        {
+            GA.fillColor(curr_node) = ogdf::Color(ogdf::Color::Name::White);
+        }
+    }
+
+    ogdf::node curr_node = node_map[current];
+
+    if (depth_left <= 0 || processed.count(current) != 0)
+    {
+        return;
+    }
+
+    processed.insert(current);
+
+    // Vorgänger (left)
+    auto lefts = _pImpl->get_left(current);
+    for (const Node& left : lefts)
+    {
+        add_nodes(left, depth_left - 1, conditions, deductions, G, GA, node_map, processed);
+
+        if (G.searchEdge(node_map[left], curr_node) == nullptr)
+        {
+            ogdf::edge e    = G.newEdge(node_map[left], curr_node);
+            GA.arrowType(e) = ogdf::EdgeArrow::Last; // Arrow am Ende der Kante
         }
 
-        for (const Node& left : _pImpl->get_left(current))
+        bool is_bidirectional = _pImpl->has_left_edge(left, current);
+        if (is_bidirectional)
         {
-            Node hash = _pImpl->create_hash({current, left});
-            if (touched.count(hash) == 0)
+            if (G.searchEdge(curr_node, node_map[left]) == nullptr)
             {
-                touched.insert(hash);
-                std::string left_name = get_name_hex(left);
-
-                std::string key;
-                bool        is_bidirectional = _pImpl->has_left_edge(left, current);
-
-                if (is_bidirectional)
-                {
-                    if (left_name < current_name)
-                        key = left_name + "<->" + current_name;
-                    else
-                        key = current_name + "<->" + left_name;
-                }
-                else
-                {
-                    key = left_name + "->" + current_name;
-                }
-
-                if (written_edges.find(key) == written_edges.end())
-                {
-                    written_edges.insert(key);
-                    dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
-                    if (is_bidirectional)
-                    {
-                        dot << R"( [dir="both"])";
-                    }
-                    dot << ";" << std::endl;
-                }
+                ogdf::edge e    = G.newEdge(curr_node, node_map[left]);
+                GA.arrowType(e) = ogdf::EdgeArrow::Last;
             }
-            add_nodes(left, touched, conditions, deductions, dot, max_depth, written_edges);
+        }
+    }
+
+    // Nachfolger (right)
+    auto rights = _pImpl->get_right(current);
+    for (const Node& right : rights)
+    {
+        add_nodes(right, depth_left - 1, conditions, deductions, G, GA, node_map, processed);
+
+        if (G.searchEdge(curr_node, node_map[right]) == nullptr)
+        {
+            ogdf::edge e    = G.newEdge(curr_node, node_map[right]);
+            GA.arrowType(e) = ogdf::EdgeArrow::Last;
         }
 
-        for (const Node& right : _pImpl->get_right(current))
+        bool is_bidirectional = _pImpl->has_right_edge(right, current);
+        if (is_bidirectional)
         {
-            Node hash = _pImpl->create_hash({current, right});
-            if (touched.count(hash) == 0)
+            if (G.searchEdge(node_map[right], curr_node) == nullptr)
             {
-                touched.insert(hash);
-                std::string right_name = get_name_hex(right);
-
-                std::string key;
-                bool        is_bidirectional = _pImpl->has_right_edge(right, current);
-
-                if (is_bidirectional)
-                {
-                    if (current_name < right_name)
-                        key = current_name + "<->" + right_name;
-                    else
-                        key = right_name + "<->" + current_name;
-                }
-                else
-                {
-                    key = current_name + "->" + right_name;
-                }
-
-                if (written_edges.find(key) == written_edges.end())
-                {
-                    written_edges.insert(key);
-                    dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
-                    if (is_bidirectional)
-                    {
-                        dot << R"( [dir="both"])";
-                    }
-                    dot << ";" << std::endl;
-                }
+                ogdf::edge e    = G.newEdge(node_map[right], curr_node);
+                GA.arrowType(e) = ogdf::EdgeArrow::Last;
             }
-            add_nodes(right, touched, conditions, deductions, dot, max_depth, written_edges);
         }
     }
 }
 
-void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
+void Zelph::gen_svg(Node start, std::string file_name, int max_depth)
 {
     adjacency_set conditions, deductions;
-
     for (Node rule : _pImpl->get_left(core.Causes))
     {
         adjacency_set current_deductions;
         Node          condition = parse_fact(rule, current_deductions);
-
         if (condition && condition != core.Causes)
         {
             conditions.insert(condition);
@@ -1129,15 +1121,43 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    adjacency_set                   touched;
-    std::unordered_set<std::string> written_edges;
-    std::ofstream                   dot(file_name, std::ios_base::out);
+    ogdf::Graph           G;
+    ogdf::GraphAttributes GA(G,
+                             ogdf::GraphAttributes::nodeGraphics | ogdf::GraphAttributes::edgeGraphics | ogdf::GraphAttributes::nodeLabel | ogdf::GraphAttributes::nodeStyle | ogdf::GraphAttributes::edgeStyle | ogdf::GraphAttributes::edgeArrow);
 
-    dot << "digraph graphname{" << std::endl;
+    std::unordered_map<Node, ogdf::node> node_map;
+    ankerl::unordered_dense::set<Node>   processed;
 
-    add_nodes(start, touched, conditions, deductions, dot, max_depth, written_edges);
+    add_nodes(start, max_depth, conditions, deductions, G, GA, node_map, processed);
 
-    dot << "}" << std::endl;
+    // Knoten-Größen anpassen
+    for (ogdf::node v : G.nodes)
+    {
+        std::string label               = GA.label(v);
+        double      text_width_estimate = label.length() * 6.0;
+        double      padding             = 20.0;
+        GA.width(v)                     = std::max(20.0, text_width_estimate + padding);
+        GA.height(v)                    = std::max(20.0, 20.0);
+    }
+
+    // Layout mit kompakteren Abständen
+    ogdf::SugiyamaLayout sl;
+    sl.setRanking(new ogdf::LongestPathRanking());
+    sl.setCrossMin(new ogdf::MedianHeuristic());
+
+    ogdf::FastSimpleHierarchyLayout* fshl = new ogdf::FastSimpleHierarchyLayout();
+    fshl->layerDistance(10.0); // Noch kleinerer Layer-Abstand für kompakte Pfeile
+    fshl->nodeDistance(5.0);   // Noch kleinerer Node-Abstand
+    fshl->balanced(true);
+
+    sl.setLayout(fshl);
+    sl.call(GA);
+
+    // SVG exportieren
+    if (!ogdf::GraphIO::drawSVG(GA, file_name))
+    {
+        throw std::runtime_error("SVG-Schreiben fehlgeschlagen: " + file_name);
+    }
 }
 
 void Zelph::print(const std::wstring& msg, const bool o) const

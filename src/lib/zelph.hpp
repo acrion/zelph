@@ -36,6 +36,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <unordered_set>
 #include <vector>
 
+namespace ogdf
+{
+    class NodeElement;
+    class Graph;
+    class GraphAttributes;
+    using node = NodeElement*;
+}
+
 namespace zelph
 {
     namespace network
@@ -109,7 +117,7 @@ namespace zelph
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 condition(Node op, const adjacency_set& conditions) const;
-            void                 gen_dot(Node start, std::string file_name, int max_depth);
+            void                 gen_svg(Node start, std::string file_name, int max_depth);
             void                 print(const std::wstring&, const bool) const;
             static std::string   get_version();
             void                 save_to_file(const std::string& filename);
@@ -144,7 +152,14 @@ namespace zelph
             const std::unordered_map<network::Node, std::wstring>& _core_node_names;
 
         private:
-            void add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges);
+            void add_nodes(Node                                  current,
+                           int                                   depth_left,
+                           const adjacency_set&                  conditions,
+                           const adjacency_set&                  deductions,
+                           ogdf::Graph&                          G,
+                           ogdf::GraphAttributes&                GA,
+                           std::unordered_map<Node, ogdf::node>& node_map,
+                           ankerl::unordered_dense::set<Node>&   processed);
 
             std::function<void(std::wstring, bool)> _print;
             std::function<void(Node, std::string)>  _process_node;
