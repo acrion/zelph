@@ -26,7 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "answer.hpp"
-#include "node_view.hpp"
+#include "network.hpp"
 
 #include <zelph_export.h>
 
@@ -41,6 +41,7 @@ namespace zelph
     namespace network
     {
         using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
+        using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 
         class ZELPH_EXPORT Zelph
         {
@@ -48,13 +49,37 @@ namespace zelph
             explicit Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print);
             ~Zelph();
 
+            class AllNodeView
+            {
+            private:
+                const adjacency_map& _left_ref;
+
+            public:
+                explicit AllNodeView(const adjacency_map& left) : _left_ref(left) {}
+                auto begin() const { return _left_ref.begin(); }
+                auto end() const { return _left_ref.end(); }
+                // Usage: for (auto it = view.begin(); it != view.end(); ++it) { Node nd = it->first; }
+            };
+
+            class LangNodeView
+            {
+            private:
+                const node_of_name_map& _rev_map;
+
+            public:
+                explicit LangNodeView(const node_of_name_map& rev) : _rev_map(rev) {}
+                auto begin() const { return _rev_map.begin(); }
+                auto end() const { return _rev_map.end(); }
+                // Usage: for (auto it = view.begin(); it != view.end(); ++it) { Node nd = it->second; }
+            };
+
             Node var() const;
 
             void                     set_lang(const std::string& lang);
             std::string              get_lang() { return _lang; }
             void                     set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
             void                     set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }
-            std::string              lang() { return _lang; }
+            std::string              lang() const { return _lang; }
             Node                     node(const std::wstring& name, std::string lang = "");
             bool                     exists(uint64_t nd);
             bool                     has_name(Node node, const std::string& lang) const;
@@ -90,10 +115,15 @@ namespace zelph
             void                 save_to_file(const std::string& filename);
             void                 load_from_file(const std::string& filename);
 
-            Node          count() const;
-            NodeView      get_all_nodes() const;
-            adjacency_set get_rules() const;
-            void          remove_rules();
+            Node              count() const;
+            void              remove_name(Node node, std::string lang = "");
+            adjacency_set     get_rules() const;
+            void              remove_rules();
+            void              remove_node(Node node);
+            AllNodeView       get_all_nodes_view() const;
+            LangNodeView      get_lang_nodes_view(const std::string& lang) const;
+            void              unset_name(Node node, std::string lang = "");
+            std::vector<Node> resolve_nodes_by_name(const std::wstring& name) const;
 
             // member list
             class Impl;

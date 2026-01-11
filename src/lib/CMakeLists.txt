@@ -123,7 +123,6 @@ add_library(zelph_lib SHARED
     markdown.cpp
     markdown.hpp
     network.hpp
-    node_view.hpp
     reasoning.cpp
     reasoning.hpp
     stopwatch.cpp

@@ -297,7 +297,7 @@ namespace zelph
                 }
             }
 
-            bool exists(Node a)
+            bool exists(Node a) const
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_left);
                 return _left.find(a) != _left.end();

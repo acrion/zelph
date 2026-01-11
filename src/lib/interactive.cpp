@@ -73,21 +73,26 @@ public:
 
         _n->set_lang("zelph");
 
-        _core_node_names[_n->core.Causes]        = L"=>";
-        _core_node_names[_n->core.And]           = L",";
-        _core_node_names[_n->core.IsA]           = L"~";
-        _core_node_names[_n->core.Unequal]       = L"!=";
-        _core_node_names[_n->core.Contradiction] = L"!";
+        _core_node_names[_n->core.RelationTypeCategory] = L"->";
+        _core_node_names[_n->core.Causes]               = L"=>";
+        _core_node_names[_n->core.And]                  = L",";
+        _core_node_names[_n->core.IsA]                  = L"~";
+        _core_node_names[_n->core.Unequal]              = L"!=";
+        _core_node_names[_n->core.Contradiction]        = L"!";
     }
 
-    void          import_file(const std::wstring& file) const;
-    void          process_command(const std::vector<std::wstring>& cmd);
-    network::Node process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
-    network::Node process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
-    void          process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
-    static bool   is_var(std::wstring token);
-    void          list_predicate_usage(size_t limit);
-    void          list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
+    void                       import_file(const std::wstring& file) const;
+    void                       process_command(const std::vector<std::wstring>& cmd);
+    void                       display_node_details(network::Node nd, bool resolved_from_name = false) const;
+    network::Node              process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
+    network::Node              process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
+    void                       process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
+    static bool                is_var(std::wstring token);
+    void                       list_predicate_usage(size_t limit);
+    void                       list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
+    network::Node              resolve_node(const std::wstring& arg) const;
+    network::Node              resolve_single_node(const std::wstring& arg, bool prioritize_id = false) const;
+    std::vector<network::Node> resolve_nodes_by_name(const std::wstring& name) const;
 
     std::shared_ptr<Wikidata>                       _wikidata;
     std::unordered_map<network::Node, std::wstring> _core_node_names;
@@ -197,7 +202,6 @@ void console::Interactive::process(std::wstring line) const
             }
 
             std::wstring output;
-            //_pImpl->_n->gen_dot(fact, "debug.dot", 5);
             _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact);
             _pImpl->_n->print(output, false);
 
@@ -230,6 +234,132 @@ void console::Interactive::process(std::wstring line) const
 void console::Interactive::import_file(const std::wstring& file) const
 {
     _pImpl->import_file(file);
+}
+
+void console::Interactive::Impl::display_node_details(network::Node nd, bool resolved_from_name /*= false*/) const
+{
+    if (resolved_from_name)
+    {
+        std::clog << "Resolved to node ID: " << nd << std::endl;
+    }
+
+    std::clog << "Node ID: " << nd << std::endl;
+
+    {
+        auto it = _core_node_names.find(nd);
+        if (it != _core_node_names.end())
+        {
+            std::clog << "  Core node: " << string::unicode::to_utf8(it->second) << std::endl;
+        }
+    }
+
+    if (network::Network::is_var(nd))
+    {
+        std::clog << "  Variable: yes" << std::endl;
+    }
+    else
+    {
+        std::clog << "  Variable: no" << std::endl;
+    }
+
+    bool         has_wikidata = false;
+    std::wstring wikidata_name;
+
+    bool has_any_name = false;
+    for (const std::string& lang : _n->get_languages())
+    {
+        std::wstring name = _n->get_name(nd, lang, false);
+        if (!name.empty())
+        {
+            has_any_name = true;
+            std::clog << "  Name in language '" << lang << "': '"
+                      << string::unicode::to_utf8(name) << "'" << std::endl;
+
+            if (lang == "wikidata")
+            {
+                has_wikidata  = true;
+                wikidata_name = name;
+            }
+        }
+    }
+
+    if (!has_any_name)
+    {
+        std::clog << "  (No names in any language)" << std::endl;
+    }
+
+    if (has_wikidata)
+    {
+        std::string prefix = (wikidata_name[0] == L'P') ? "Property:" : "";
+        std::string url    = "https://www.wikidata.org/wiki/" + prefix + string::unicode::to_utf8(wikidata_name);
+
+        const std::string OSC_START = "\033]8;;";
+        const char        OSC_SEP   = '\a';
+        const std::string OSC_END   = "\033]8;;\a";
+
+        std::clog << "  Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
+    }
+
+    auto format_node = [this](network::Node node) -> std::string
+    {
+        std::wstring node_str  = std::to_wstring(node);
+        std::wstring node_name = _n->get_name(node, _n->lang(), true); // fallback active
+
+        if (node_str == node_name || node_name.empty())
+        {
+            std::wstring fact_repr;
+            _n->format_fact(fact_repr, _n->lang(), node);
+            if (!fact_repr.empty() && fact_repr != L"??")
+            {
+                return string::unicode::to_utf8(fact_repr) + " (ID " + std::to_string(node) + ")";
+            }
+            else
+            {
+                return "ID " + std::to_string(node);
+            }
+        }
+        else
+        {
+            return string::unicode::to_utf8(node_name) + " (ID " + std::to_string(node) + ")";
+        }
+    };
+
+    auto display_connections = [&](const network::adjacency_set& conns, const std::string& header)
+    {
+        if (conns.empty())
+        {
+            return;
+        }
+
+        std::clog << "  " << header << ":" << std::endl;
+
+        if (conns.size() <= 3)
+        {
+            for (network::Node node : conns)
+            {
+                std::clog << "    - " << format_node(node) << std::endl;
+            }
+        }
+        else
+        {
+            std::clog << "    (" << conns.size() << " connections)" << std::endl;
+        }
+    };
+
+    network::adjacency_set incoming = _n->get_left(nd);
+    network::adjacency_set outgoing = _n->get_right(nd);
+
+    display_connections(incoming, "Incoming connections from");
+    display_connections(outgoing, "Outgoing connections to");
+
+    std::wstring fact_repr;
+    _n->format_fact(fact_repr, _n->lang(), nd);
+    if (!fact_repr.empty() && fact_repr != L"??")
+    {
+        std::clog << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
+    }
+
+    std::clog << "------------------------" << std::endl;
 }
 
 void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd)
@@ -267,9 +397,14 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".help [command]             – Show this help or detailed help for a specific command",
         L".exit                       – Exit interactive mode",
         L".lang [code]                – Show or set current language",
-        L".name <cur> <lang> <new>    – Set node name in a specific language",
-        L".node <name|id>             – Show node details (names in all languages, Wikidata URL if available)",
-        L".nodes <count>              – List the first N nodes with their names",
+        L".name <node|id> <new_name>         – Set name in current language",
+        L".name <node|id> <lang> <new_name>  – Set name in specific language",
+        L".delname <node|id> [lang]          – Delete name in current language (or specified language)",
+        L".node <name|id>                    – Show detailed node information (names, connections, representation, Wikidata URL)",
+        L".list <count>                      – List first N existing nodes (internal map order, with details)",
+        L".clist <count>                     – List first N nodes named in current language (sorted by ID if reasonable size, otherwise map order)",
+        L".out <name|id> [count]             – List details of outgoing connected nodes (default 20)",
+        L".in <name|id> [count]              – List details of incoming connected nodes (default 20)",
         L".dot <name> <depth>         – Generate GraphViz DOT file for a node",
         L".run                        – Run full inference",
         L".run-once                   – Run a single inference pass",
@@ -280,6 +415,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".list-predicate-usage [max] – Show predicate usage statistics (top N most frequent predicates)",
         L".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
         L".remove-rules               – Remove all inference rules",
+        L".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
         L".import <file.zph>          – Load and execute a zelph script file",
         L".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
         L".save <file.bin>            – Save the current network to a binary file",
@@ -304,17 +440,48 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                    L"Without argument: displays the current language used for node names.\n"
                    L"With argument: sets the language (e.g., 'zelph', 'en', 'de', 'wikidata')."},
 
-        {L".name", L".name <current_name> <language_code> <new_name>\n"
-                   L"Sets or changes the name of a node in a specific language.\n"
-                   L"The <current_name> is looked up in the current language."},
+        {L".name", L".name <node|id> <new_name>\n"
+                   L"Sets the name of the node in the current language.\n"
+                   L".name <node|id> <lang> <new_name>\n"
+                   L"Sets the name in the specified language.\n"
+                   L"The <node|id> can be a name (in current language) or numeric node ID.\n"
+                   L"Empty <new_name> is not allowed – use .delname to remove a name."},
+
+        {L".delname", L".delname <node|id> [lang]\n"
+                      L"Removes the name of the node in the current language (or the specified language if provided).\n"
+                      L"The <node|id> can be a name (in current language) or numeric node ID.\n"
+                      L"If the node had no name in the target language, nothing happens."},
+
+        {L".list", L".list <count>\n"
+                   L"Lists the first N existing nodes in the network (in internal map iteration order).\n"
+                   L"For each node: ID, non-empty names in all languages, connection counts, representation, and Wikidata URL if available."},
+
+        {L".clist", L".clist <count>\n"
+                    L"Lists the first N nodes that have a name in the current language.\n"
+                    L"If the language has a reasonable number of entries (≤ ~50k), nodes are sorted by ID.\n"
+                    L"For very large languages (e.g. 'wikidata'), order follows the internal map (fast, no full sort)."},
+
+        {L".out", L".out <name|id> [count]\n"
+                  L"Lists detailed information for up to <count> nodes reachable via outgoing connections\n"
+                  L"from the given node (default 20, sorted by node ID)."},
+
+        {L".in", L".in <name|id> [count]\n"
+                 L"Lists detailed information for up to <count> nodes that have outgoing connections\n"
+                 L"to the given node (default 20, sorted by node ID)."},
 
         {L".node", L".node <name_or_id>\n"
-                   L"Displays all known names of the node in every language.\n"
-                   L"If the node has a Wikidata ID, a clickable URL is shown.\n"
+                   L"Displays details for a single node: its ID, non-empty names in all languages,\n"
+                   L"incoming/outgoing connection counts, and a clickable Wikidata URL if it has a Wikidata ID.\n"
                    L"The argument can be a name (in current language) or a numeric node ID."},
 
         {L".nodes", L".nodes <count>\n"
-                    L"Lists the first N nodes with their names in all known languages."},
+                    L"Lists the first N named nodes (nodes that have at least one name in any language),\n"
+                    L"sorted by node ID. For each node: ID, non-empty names in all languages,\n"
+                    L"incoming/outgoing connection counts, and Wikidata URL if available."},
+
+        {L".clist", L".clist <count>\n"
+                    L"Lists the first N nodes that have a name in the current language, sorted by node ID.\n"
+                    L"Output format is identical to .list (names in all languages, connection counts, Wikidata URL)."},
 
         {L".dot", L".dot <node_name> <max_depth>\n"
                   L"Generates a GraphViz .dot file visualizing the specified node and its connections\n"
@@ -345,12 +512,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".list-rules", L".list-rules\n"
                          L"Lists all currently defined inference rules in readable format."},
 
-        {L".list-predicate-usage", L".list-predicate-usage\n"
+        {L".list-predicate-usage", L".list-predicate-usage [max_entries]\n"
                                    L"Shows how often each predicate (relation type) is used, sorted by frequency.\n"
                                    L"If <max_entries> is specified, only the top N most frequent predicates are shown.\n"
                                    L"If Wikidata language is active, Wikidata IDs are shown alongside names."},
 
-        {L".list-predicate-value-usage", L".list-predicate-value-usage <predicate>\n"
+        {L".list-predicate-value-usage", L".list-predicate-value-usage <predicate> [max_entries]\n"
                                          L"Shows how often each object (value) is used with the specified predicate, sorted by frequency.\n"
                                          L"The <predicate> can be a name (in the current language) or a numeric node ID.\n"
                                          L"If <max_entries> is specified, only the top N most frequent values are shown.\n"
@@ -358,6 +525,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         {L".remove-rules", L".remove-rules\n"
                            L"Deletes all inference rules from the network."},
+
+        {L".remove", L".remove <name_or_id>\n"
+                     L"Removes the specified node from the network, disconnecting all its edges\n"
+                     L"and cleaning all name mappings. The argument can be a node name (looked up in the current language)\n"
+                     L"or a numeric node ID.\n"
+                     L"WARNING: This operation is destructive and irreversible!"},
 
         {L".import", L".import <file.zph>\n"
                      L"Loads and immediately executes a zelph script file."},
@@ -439,106 +612,193 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     }
     else if (cmd[0] == L".name")
     {
-        if (cmd.size() == 1) throw std::runtime_error("Command .name: Missing current name. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        if (cmd.size() == 2) throw std::runtime_error("Command .name: Missing language identifier. Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        if (cmd.size() == 3) throw std::runtime_error("Command .name: Missing " + string::unicode::to_utf8(cmd[2]) + " name of " + string::unicode::to_utf8(cmd[1]) + ". Usage: .name <current name in " + _n->lang() + "> <language identifier> <name in that language>");
-        _n->set_name(cmd[1], cmd[3], string::unicode::to_utf8(cmd[2]));
+        if (cmd.size() < 3 || cmd.size() > 4)
+            throw std::runtime_error("Command .name: Invalid arguments. Usage: .name <node> <new_name>  or  .name <node> <lang> <new_name>");
+
+        network::Node nd = resolve_node(cmd[1]);
+
+        if (cmd.size() == 3)
+        {
+            // .name <node> <new_name> → current language
+            const std::wstring& new_name = cmd[2];
+            if (new_name.empty())
+                throw std::runtime_error("Command .name: New name cannot be empty. Use .delname to remove a name.");
+
+            _n->set_name(nd, new_name, _n->lang());
+        }
+        else // size == 4
+        {
+            // .name <node> <lang> <new_name>
+            std::string         target_lang = string::unicode::to_utf8(cmd[2]);
+            const std::wstring& new_name    = cmd[3];
+            if (new_name.empty())
+                throw std::runtime_error("Command .name: New name cannot be empty. Use .delname to remove a name.");
+
+            _n->set_name(nd, new_name, target_lang);
+        }
+    }
+    else if (cmd[0] == L".delname")
+    {
+        if (cmd.size() < 2 || cmd.size() > 3)
+            throw std::runtime_error("Command .delname: Invalid arguments. Usage: .delname <node|id> [lang]");
+
+        network::Node nd = resolve_single_node(cmd[1], true); // prioritize ID
+
+        std::string target_lang = _n->lang();
+        if (cmd.size() == 3)
+        {
+            target_lang = string::unicode::to_utf8(cmd[2]);
+        }
+
+        _n->remove_name(nd, target_lang);
+
+        _n->print(L"Removed name of node " + std::to_wstring(nd) + L" in language '" + string::unicode::from_utf8(target_lang) + L"' (if it existed).", true);
     }
     else if (cmd[0] == L".node")
     {
-        if (cmd.size() == 1) throw std::runtime_error("Command .node: Missing node name or ID");
-        network::Node nd = _n->get_node(cmd[1]);
+        if (cmd.size() != 2) throw std::runtime_error("Command .node: Exactly one argument required");
+
+        std::wstring arg = cmd[1];
+
+        std::vector<network::Node> nodes;
+
+        try
+        {
+            // Try single resolve (non-destructive: ID last)
+            network::Node single = resolve_single_node(arg, false);
+            nodes.push_back(single);
+        }
+        catch (...)
+        {
+            // Not a single node/ID → try name search (multiple possible)
+            nodes = resolve_nodes_by_name(arg);
+            if (nodes.empty())
+            {
+                throw std::runtime_error("No node found with name '" + string::unicode::to_utf8(arg) + "' in current language '" + _n->lang() + "'");
+            }
+        }
+
+        if (nodes.size() == 1)
+        {
+            bool resolved_from_name = !_n->get_name(nodes[0], _n->lang(), false).empty() || std::all_of(arg.begin(), arg.end(), ::iswdigit);
+            display_node_details(nodes[0], resolved_from_name && nodes.size() == 1);
+        }
+        else
+        {
+            std::clog << "Found " << nodes.size() << " nodes with name '" << string::unicode::to_utf8(arg)
+                      << "' in current language '" << _n->lang() << "':" << std::endl;
+            std::clog << "------------------------" << std::endl;
+
+            // Sort by ID for consistent output
+            std::sort(nodes.begin(), nodes.end());
+
+            for (network::Node nd : nodes)
+            {
+                display_node_details(nd, true);
+            }
+        }
+    }
+    else if (cmd[0] == L".list")
+    {
+        if (cmd.size() != 2) throw std::runtime_error("Command .list: Missing count parameter");
+
+        size_t count = string::parse_count(cmd[1]);
+
+        auto view = _n->get_all_nodes_view();
+
+        std::clog << "Listing " << count << " nodes:" << std::endl;
+        std::clog << "------------------------" << std::endl;
+
+        size_t displayed = 0;
+        for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
+        {
+            display_node_details(it->first);
+        }
+
+        std::clog << "Displayed " << displayed << " nodes." << std::endl;
+    }
+
+    else if (cmd[0] == L".clist")
+    {
+        if (cmd.size() != 2) throw std::runtime_error("Command .clist: Missing count parameter");
+
+        size_t count = string::parse_count(cmd[1]);
+
+        auto view = _n->get_lang_nodes_view(_n->lang());
+
+        std::clog << "Listing first " << count << " nodes named in current language '" << _n->lang() << "'" << std::endl;
+        std::clog << "------------------------" << std::endl;
+
+        size_t displayed = 0;
+        for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
+        {
+            display_node_details(it->second);
+        }
+    }
+    else if (cmd[0] == L".out" || cmd[0] == L".in")
+    {
+        bool outgoing = (cmd[0] == L".out");
+
+        if (cmd.size() < 2) throw std::runtime_error(std::string("Command ") + string::unicode::to_utf8(cmd[0]) + ": Missing node argument");
+
+        std::wstring  arg     = cmd[1];
+        network::Node base_nd = resolve_node(arg); // same resolve logic as .node/.remove
+
+        size_t max_count = 20; // default
+        if (cmd.size() >= 3)
+        {
+            max_count = string::parse_count(cmd[2]);
+        }
+
+        network::adjacency_set neighbors = outgoing ? _n->get_right(base_nd) : _n->get_left(base_nd);
+
+        std::vector<network::Node> vec(neighbors.begin(), neighbors.end());
+        std::sort(vec.begin(), vec.end());
+
+        size_t to_display = std::min(max_count, vec.size());
+
+        std::clog << (outgoing ? "Outgoing" : "Incoming")
+                  << " connected nodes of " << base_nd
+                  << " (first " << to_display << " of " << vec.size() << ", sorted by ID):" << std::endl;
+        std::clog << "------------------------" << std::endl;
+
+        for (size_t i = 0; i < to_display; ++i)
+        {
+            display_node_details(vec[i]);
+        }
+    }
+    else if (cmd[0] == L".remove")
+    {
+        if (cmd.size() != 2) throw std::runtime_error("Command .remove requires exactly one argument: name or ID");
+
+        std::wstring  arg = cmd[1];
+        network::Node nd  = resolve_single_node(arg, true); // prioritize ID
+
         if (nd == 0)
         {
             try
             {
                 size_t pos = 0;
-                nd         = std::stoull(cmd[1], &pos);
-                if (pos != cmd[1].length())
+                nd         = std::stoull(arg, &pos);
+                if (pos != arg.length())
                 {
                     throw std::exception();
                 }
             }
             catch (const std::exception&)
             {
-                throw std::runtime_error("Command .node: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "' in current language '" + _n->lang() + "'");
+                throw std::runtime_error("Command .remove: Unknown node '" + string::unicode::to_utf8(arg) + "' in current language '" + _n->lang() + "'");
             }
 
             if (!_n->exists(nd))
             {
-                throw std::runtime_error("Command .node: Node '" + std::to_string(nd) + "' does not exist");
+                throw std::runtime_error("Command .remove: Node '" + std::to_string(nd) + "' does not exist");
             }
         }
-        else
-        {
-            std::clog << "ID of node: " << nd << std::endl;
-        }
-        for (const auto& lang : _n->get_languages())
-        {
-            std::wstring name = _n->get_name(nd, lang, false);
-            std::clog << "Name of node in language '" << lang << "': '"
-                      << string::unicode::to_utf8(name) << "'" << std::endl;
 
-            if (lang == "wikidata" && !name.empty())
-            {
-                std::string url = "https://www.wikidata.org/wiki/";
-
-                if (name[0] == L'P')
-                {
-                    url += "Property:"; // Wikidata properties have a special URL format.
-                }
-                url += string::unicode::to_utf8(name);
-                const std::string OSC_START = "\033]8;;";
-                const char        OSC_SEP   = '\a'; // Use the BEL character as a separator
-                const std::string OSC_END   = "\033]8;;\a";
-
-                // We display the URL as the link text itself.
-                std::clog << "Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
-            }
-        }
-    }
-    else if (cmd[0] == L".nodes")
-    {
-        if (cmd.size() == 1) throw std::runtime_error("Command .nodes: Missing count parameter");
-
-        size_t count;
-        try
-        {
-            size_t pos = 0;
-            count      = std::stoull(cmd[1], &pos);
-            if (pos != cmd[1].length())
-            {
-                throw std::runtime_error("Command .nodes: Invalid count format '" + string::unicode::to_utf8(cmd[1]) + "'");
-            }
-        }
-        catch (const std::exception&)
-        {
-            throw std::runtime_error("Command .nodes: Invalid count '" + string::unicode::to_utf8(cmd[1]) + "'");
-        }
-
-        if (count <= 0) throw std::runtime_error("Command .nodes: Count must be greater than 0");
-
-        std::clog << "Listing first " << count << " nodes:" << std::endl;
-        std::clog << "------------------------" << std::endl;
-
-        size_t displayed = 0;
-        for (const auto& node : _n->get_all_nodes())
-        {
-            std::clog << "Node ID: " << node << std::endl;
-
-            for (const auto& lang : _n->get_languages())
-            {
-                std::clog << "  Name in language '" << lang << "': '"
-                          << string::unicode::to_utf8(_n->get_name(node, lang, false)) << "'" << std::endl;
-            }
-
-            std::clog << "------------------------" << std::endl;
-
-            displayed++;
-            if (displayed >= count) break;
-        }
-
-        std::clog << "Displayed " << displayed << " of " << count << " requested nodes." << std::endl;
+        _n->remove_node(nd);
+        _n->print(L"Removed node " + std::to_wstring(nd) + L" (all edges disconnected, name mappings cleaned).", true);
+        _n->print(L"Consider running .cleanup afterwards if needed.", true);
     }
     else if (cmd[0] == L".dot")
     {
@@ -1129,6 +1389,90 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
     {
         _wikidata->set_logging(true);
     }
+}
+
+network::Node console::Interactive::Impl::resolve_node(const std::wstring& arg) const
+{
+    network::Node nd = _n->get_node(arg);
+    if (nd == 0)
+    {
+        try
+        {
+            size_t pos = 0;
+            nd         = std::stoull(arg, &pos);
+            if (pos != arg.length())
+                throw std::exception();
+        }
+        catch (...)
+        {
+            throw std::runtime_error("Unknown node/argument");
+        }
+        if (!_n->exists(nd))
+        {
+            throw std::runtime_error("Node does not exist");
+        }
+    }
+    return nd;
+}
+
+network::Node console::Interactive::Impl::resolve_single_node(const std::wstring& arg, bool prioritize_id) const
+{
+    // prioritize_id = true für destructive commands (.delname, .remove)
+
+    bool is_numeric = true;
+    for (wchar_t c : arg)
+    {
+        if (!std::iswdigit(c))
+        {
+            is_numeric = false;
+            break;
+        }
+    }
+
+    if (is_numeric && prioritize_id)
+    {
+        try
+        {
+            size_t        pos = 0;
+            network::Node nd  = std::stoull(arg, &pos);
+            if (pos == arg.length() && _n->exists(nd))
+            {
+                return nd;
+            }
+        }
+        catch (...)
+        {
+        }
+    }
+
+    network::Node nd = _n->get_node(arg);
+    if (nd != 0)
+    {
+        return nd;
+    }
+
+    if (is_numeric && !prioritize_id)
+    {
+        try
+        {
+            size_t        pos   = 0;
+            network::Node nd_id = std::stoull(arg, &pos);
+            if (pos == arg.length() && _n->exists(nd_id))
+            {
+                return nd_id;
+            }
+        }
+        catch (...)
+        {
+        }
+    }
+
+    throw std::runtime_error("Unknown node '" + string::unicode::to_utf8(arg) + "'");
+}
+
+std::vector<network::Node> console::Interactive::Impl::resolve_nodes_by_name(const std::wstring& name) const
+{
+    return _n->resolve_nodes_by_name(name);
 }
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const

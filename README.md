@@ -120,9 +120,14 @@ Key commands include:
 - `.help [command]`          – Show help
 - `.exit`                    – Exit interactive mode
 - `.lang [code]`             – Show or set current language (e.g., `en`, `de`, `wikidata`)
-- `.name <cur> <lang> <new>` – Set node name in a specific language
-- `.node <name|id>`          – Show node details (all languages, Wikidata URL if available)
-- `.nodes <count>`           – List first N nodes with names
+- `.name <node|id> <new_name>` – Set node name in current language
+- `.name <node|id> <lang> <new_name>` – Set node name in specific language
+- `.delname <node|id> [lang]` – Delete node name in current (or specified) language
+- `.node <name|id>`          – Show detailed node information (names, connections, representation, Wikidata URL)
+- `.list <count>`            – List first N existing nodes (internal order, with details)
+- `.clist <count>`           – List first N nodes named in current language (sorted by ID if feasible)
+- `.out <name|id> [count]`   – List outgoing connected nodes (default 20)
+- `.in <name|id> [count]`    – List incoming connected nodes (default 20)
 - `.dot <name> <depth>`      – Generate GraphViz DOT file
 - `.run`                     – Full inference
 - `.run-once`                – Single inference pass
@@ -131,8 +136,9 @@ Key commands include:
 - `.decode <file>`           – Decode a file produced by `.run-file`
 - `.list-rules`              – List all defined rules
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent)
-- `.list-predicate-value-usage <predicate> [max]` – Show object/value usage statistics (top N most frequent values)
+- `.list-predicate-value-usage <pred> [max]` – Show object/value usage statistics (top N most frequent values)
 - `.remove-rules`            – Remove all inference rules
+- `.remove <name|id>`        – Remove a node (destructive: disconnects all edges and cleans names)
 - `.import <file.zph>`       – Load and execute a zelph script
 - `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
 - `.save <file.bin>`         – Save current network to binary file

@@ -462,6 +462,35 @@ namespace zelph
                 return removed_count;
             }
 
+            void remove_node_names(Node nd)
+            {
+                std::lock_guard lock1(_mtx_name_of_node);
+                std::lock_guard lock2(_mtx_node_of_name);
+
+                // Remove forward mappings (node → name) in all languages
+                for (auto& lang_map : _name_of_node)
+                {
+                    lang_map.second.erase(nd);
+                }
+
+                // Remove reverse mappings (name → node) for this node in all languages
+                for (auto& lang_map : _node_of_name)
+                {
+                    auto& map = lang_map.second;
+                    for (auto it = map.begin(); it != map.end();)
+                    {
+                        if (it->second == nd)
+                        {
+                            it = map.erase(it);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
+                }
+            }
+
             using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
             using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 

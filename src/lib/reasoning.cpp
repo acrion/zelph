@@ -149,7 +149,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
         adjacency_set incoming_to_pred = _pImpl->get_left(pred);
 
-        if (incoming_to_pred.size() > 50000)
+        if (incoming_to_pred.size() > 200000)
         {
             std::wstring name = get_name(pred, "wikidata", true);
             std::clog << "[" << (i + 1) << "/" << all_predicates.size() << "] Checking "

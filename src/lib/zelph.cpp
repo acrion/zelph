@@ -282,8 +282,13 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
         }
     }
 
+    if (!fallback)
+    {
+        // return empty string if this node has no name
+        return L"";
+    }
+
     // try English as fallback language
-    if (fallback)
     {
         std::lock_guard lock(_pImpl->_mtx_name_of_node);
         auto&           name_of_node = _pImpl->_name_of_node["en"];
@@ -295,7 +300,6 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     }
 
     // try zelph as fallback language
-    if (fallback)
     {
         std::lock_guard lock(_pImpl->_mtx_name_of_node);
         auto&           name_of_node = _pImpl->_name_of_node["zelph"];
@@ -307,7 +311,6 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     }
 
     // try an arbitrary language as fallback
-    if (fallback)
     {
         std::lock_guard lock(_pImpl->_mtx_name_of_node);
         for (const auto& l : _pImpl->_name_of_node)
@@ -318,14 +321,16 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
         }
     }
 
-    auto it = _core_node_names.find(node);
-
-    if (it != _core_node_names.end())
     {
-        return it->second;
+        auto it = _core_node_names.find(node);
+
+        if (it != _core_node_names.end())
+        {
+            return it->second;
+        }
     }
 
-    return L""; // return empty string if this node has no name (which can happen for internally generated nodes, see Interactive::Impl::process_fact and Interactive::Impl::process_rule)
+    return L"";
 }
 
 name_of_node_map Zelph::get_nodes_in_language(const std::string& lang) const
@@ -848,9 +853,25 @@ Node Zelph::count() const
     return _pImpl->count();
 }
 
-NodeView Zelph::get_all_nodes() const
+void Zelph::remove_name(Node node, std::string lang)
 {
-    return NodeView(_pImpl->_name_of_node);
+    if (lang.empty()) lang = _lang;
+
+    std::lock_guard lock1(_pImpl->_mtx_name_of_node);
+    std::lock_guard lock2(_pImpl->_mtx_node_of_name);
+
+    auto& name_map = _pImpl->_name_of_node[lang];
+    auto  name_it  = name_map.find(node);
+    if (name_it == name_map.end())
+    {
+        return; // nothing to remove
+    }
+
+    std::wstring old_name = name_it->second;
+    name_map.erase(name_it);
+
+    auto& rev_map = _pImpl->_node_of_name[lang];
+    rev_map.erase(old_name);
 }
 
 // Returns all nodes that are subjects of a core.Causes relation
@@ -904,6 +925,72 @@ void Zelph::remove_rules()
             }
         }
     }
+}
+
+void Zelph::remove_node(Node node)
+{
+    if (!_pImpl->exists(node))
+    {
+        throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));
+    }
+
+    _pImpl->remove(node);            // Disconnects edges and removes from adjacency maps
+    _pImpl->remove_node_names(node); // Separate method for name cleanup
+}
+
+Zelph::AllNodeView Zelph::get_all_nodes_view() const
+{
+    return AllNodeView(_pImpl->_left);
+}
+
+Zelph::LangNodeView Zelph::get_lang_nodes_view(const std::string& lang) const
+{
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    auto            it = _pImpl->_node_of_name.find(lang);
+    if (it == _pImpl->_node_of_name.end())
+    {
+        static const Impl::node_of_name_map empty;
+        return LangNodeView(empty);
+    }
+    return LangNodeView(it->second);
+}
+
+void Zelph::unset_name(Node node, std::string lang /*= ""*/)
+{
+    if (lang.empty()) lang = _lang;
+
+    std::lock_guard lock1(_pImpl->_mtx_name_of_node);
+    std::lock_guard lock2(_pImpl->_mtx_node_of_name);
+
+    auto& name_map = _pImpl->_name_of_node[lang];
+    auto  it       = name_map.find(node);
+    if (it != name_map.end())
+    {
+        std::wstring old_name = it->second;
+        name_map.erase(it);
+
+        auto& reverse_map = _pImpl->_node_of_name[lang];
+        reverse_map.erase(old_name);
+    }
+}
+
+std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
+{
+    std::vector<network::Node> results;
+
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    auto            lang_it = _pImpl->_node_of_name.find(lang());
+    if (lang_it != _pImpl->_node_of_name.end())
+    {
+        const auto& rev_map = lang_it->second;
+        auto        range   = rev_map.equal_range(name);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            results.push_back(it->second);
+        }
+    }
+
+    return results;
 }
 
 void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)

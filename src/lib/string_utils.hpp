@@ -153,6 +153,22 @@ namespace zelph
             return connected;
         }
 
+        inline size_t parse_count(const std::wstring& str)
+        {
+            try
+            {
+                size_t pos = 0;
+                size_t c   = std::stoull(str, &pos);
+                if (pos != str.length() || c == 0)
+                    throw std::exception();
+                return c;
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid count value");
+            }
+        }
+
         std::wstring mark_identifier(const std::wstring& str);
     }
 }
