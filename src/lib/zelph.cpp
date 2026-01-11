@@ -26,6 +26,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 #include "zelph_impl.hpp"
 
+#include <ogdf/basic/Graph.h>
+#include <ogdf/basic/GraphAttributes.h>
+#include <ogdf/energybased/FMMMLayout.h> // Force-directed – ideal für "durcheinander" Graphen
+#include <ogdf/fileformats/GraphIO.h>
+// alternative
+// #include <ogdf/layered/SugiyamaLayout.h>
+// #include <ogdf/layered/LongestPathRanking.h>
+// #include <ogdf/layered/MedianHeuristic.h>
+// #include <ogdf/layered/FastSimpleHierarchyLayout.h>
+
 #include <boost/algorithm/string.hpp>
 
 #include <fstream>

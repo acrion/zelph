@@ -81,10 +81,41 @@ FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
     GIT_TAG v1.3.0
-    CMAKE_ARGS -DBUILD_TESTING=OFF
+    #    CMAKE_ARGS -DBUILD_TESTING=OFF
 )
 
-FetchContent_MakeAvailable(unordered_dense CapnProto)
+FetchContent_Declare(
+    ogdf
+    GIT_REPOSITORY https://github.com/ogdf/ogdf.git
+    GIT_TAG foxglove-202510
+)
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libs" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Build testing" FORCE)
+set(OGDF_BUILD_TESTS OFF CACHE BOOL "Build OGDF tests" FORCE)
+set(OGDF_BUILD_EXAMPLES OFF CACHE BOOL "Build OGDF examples" FORCE)
+set(OGDF_BUILD_DOC OFF CACHE BOOL "Build OGDF doc" FORCE)
+set(OGDF_USE_COIN OFF CACHE BOOL "Disable COIN-OR in OGDF" FORCE)
+
+FetchContent_MakeAvailable(unordered_dense CapnProto ogdf)
+
+if (TARGET OGDF)
+    set_target_properties(OGDF PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(OGDF PRIVATE -w)
+    elseif (MSVC)
+        target_compile_options(OGDF PRIVATE /w)
+    endif ()
+endif ()
+
+if (TARGET COIN)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(COIN PRIVATE -w)
+    elseif (MSVC)
+        target_compile_options(COIN PRIVATE /w)
+    endif ()
+    set_target_properties(COIN PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif ()
 
 # Suppress all warnings from Cap'n Proto targets (third-party), including LTO
 set(CAPNP_TARGETS kj kj-async capnp capnp-json capnpc capnp_tool capnpc_cpp)
@@ -147,6 +178,17 @@ add_library(zelph_lib SHARED
 )
 
 target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp)
+
+string(TOLOWER "${CMAKE_BUILD_TYPE}" _ogdf_build_type_lower)
+target_include_directories(zelph_lib PRIVATE
+    ${ogdf_SOURCE_DIR}/include
+    ${ogdf_BINARY_DIR}/include
+    ${ogdf_BINARY_DIR}/include/ogdf-${_ogdf_build_type_lower}
+)
+
+target_link_libraries(zelph_lib PRIVATE OGDF)
+
+add_dependencies(zelph_lib OGDF)
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
