@@ -658,13 +658,17 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             else
             {
                 _n->set_name(node_in_target_lang, name_in_current_lang, current_lang);
-                _n->print(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') already exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
+                _n->print(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
             }
         }
         else if (node_in_target_lang == 0)
         {
             _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
-            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') already exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
+            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
+        }
+        else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false, true) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false, true))
+        {
+            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') already have the requested names.", true);
         }
         else // both nodes exist
         {
