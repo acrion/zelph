@@ -32,9 +32,50 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
+
+namespace zelph::network
+{
+    struct WrapperNode
+    {
+        bool     is_placeholder = false;
+        uint64_t value          = 0;
+        size_t   total_count    = 0; // Renamed for total nodes count (only for placeholders)
+
+        bool operator==(const WrapperNode& other) const
+        {
+            return is_placeholder == other.is_placeholder && value == other.value && total_count == other.total_count;
+        }
+
+        bool operator<(const WrapperNode& other) const
+        {
+            if (is_placeholder != other.is_placeholder)
+            {
+                return is_placeholder < other.is_placeholder;
+            }
+            if (value != other.value)
+            {
+                return value < other.value;
+            }
+            return total_count < other.total_count;
+        }
+    };
+}
+
+namespace std
+{
+    template <>
+    struct hash<zelph::network::WrapperNode>
+    {
+        size_t operator()(const zelph::network::WrapperNode& wn) const
+        {
+            return hash<bool>()(wn.is_placeholder) ^ hash<uint64_t>()(wn.value) ^ hash<size_t>()(wn.total_count);
+        }
+    };
+}
 
 namespace zelph
 {
@@ -88,7 +129,7 @@ namespace zelph
             std::vector<std::string> get_languages() const;
             bool                     has_language(const std::string& language) const;
             Node                     get_node(const std::wstring& name, std::string lang = "") const;
-            std::string              get_name_hex(Node node, bool prepend_num = true);
+            std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors);
             void                     set_name(Node node, const std::wstring& name, std::string lang = "");
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
             void                     cleanup_isolated(size_t& removed_count);
@@ -98,7 +139,7 @@ namespace zelph
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
             Node                 parse_relation(const Node rule);
             std::wstring         get_formatted_name(Node node, const std::string& lang) const;
-            void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr);
+            void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr);
             adjacency_set        filter(const adjacency_set& source, Node target) const;
             adjacency_set        filter(Node fact, Node relationType, Node target) const;
             static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
@@ -109,7 +150,7 @@ namespace zelph
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 condition(Node op, const adjacency_set& conditions) const;
-            void                 gen_dot(Node start, std::string file_name, int max_depth);
+            void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
             void                 print(const std::wstring&, const bool) const;
             static std::string   get_version();
             void                 save_to_file(const std::string& filename);
@@ -144,7 +185,16 @@ namespace zelph
             const std::unordered_map<network::Node, std::wstring>& _core_node_names;
 
         private:
-            void add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges);
+            void collect_mermaid_nodes(WrapperNode                                                     current_wrap,
+                                       int                                                             max_depth,
+                                       std::unordered_set<WrapperNode>&                                visited,
+                                       std::unordered_set<Node>&                                       processed_edge_hashes,
+                                       const adjacency_set&                                            conditions,
+                                       const adjacency_set&                                            deductions,
+                                       std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
+                                       std::unordered_set<WrapperNode>&                                all_nodes,
+                                       int                                                             max_neighbors,
+                                       size_t&                                                         placeholder_counter);
 
             std::function<void(std::wstring, bool)> _print;
             std::function<void(Node, std::string)>  _process_node;

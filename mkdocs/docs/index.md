@@ -160,19 +160,15 @@ This design prevents subject and object from being identical in a relation. Ther
 
 ## Creating a node graph
 
-You can generate a node graph yourself using zelph’s `.dot` command, which outputs a GraphViz DOT format file. For example:
+You can generate a node graph yourself using zelph’s `.mermaid` command, which outputs a Mermaid HTML format file. For example:
 
 ```
-.dot name 2
+.mermaid name 3
 ```
 
-In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualize. The following number represents the depth of connections to include in the graph.
+In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualise. The following number represents the depth of connections to include in the graph (default is 3).
 
-To convert the DOT file into an actual image, use the GraphViz command-line tool as follows:
-
-```bash
-dot -Tsvg -oname.svg name.dot
-```
+To view the Mermaid graph, open the generated HTML file in a web browser.
 
 ## Rules and Inference
 

@@ -339,7 +339,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
             if (_print_deductions || _generate_markdown)
             {
                 std::wstring output;
-                format_fact(output, _lang, error.get_fact(), error.get_variables(), error.get_parent());
+                format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                 std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                 if (_print_deductions)
@@ -449,7 +449,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                         ++_total_contradictions;
 
                         std::wstring output;
-                        format_fact(output, _lang, error.get_fact(), error.get_variables(), error.get_parent());
+                        format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                         std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                         if (_print_deductions)
@@ -501,7 +501,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     // normal query output
                     std::lock_guard<std::mutex> lock(_mtx_output);
                     std::wstring                output;
-                    format_fact(output, _lang, ctx_copy.current_condition, *joined, rule.node);
+                    format_fact(output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
                     print(L"Answer: " + output, true);
                 }
             }
@@ -640,8 +640,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                                             if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
 
                                             std::wstring input, output;
-                                            format_fact(input, _lang, ctx.current_condition, variables, parent);
-                                            format_fact(output, _lang, d, {}, parent);
+                                            format_fact(input, _lang, ctx.current_condition, 3, variables, parent);
+                                            format_fact(output, _lang, d, 3, {}, parent);
 
                                             std::wstring message = output + L" ⇐ " + input;
 

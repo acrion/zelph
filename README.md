@@ -85,8 +85,8 @@ zelph allows you to save the current network state to a binary file and load it 
 
 The `.load` command is general-purpose:
 
-- If the file ends in `.bin`, it loads the serialized network directly (fast).
-- If the file ends in `.json` (a Wikidata dump), it imports the data and automatically creates a `.bin` cache file for future loads.
+- If the file ends with `.bin`, it loads the serialized network directly (fast).
+- If the file ends with `.json` (a Wikidata dump), it imports the data and automatically creates a `.bin` cache file for future loads.
 
 ### Data Cleanup Commands
 
@@ -128,7 +128,7 @@ Key commands include:
 - `.clist <count>`           – List first N nodes named in current language (sorted by ID if feasible)
 - `.out <name|id> [count]`   – List outgoing connected nodes (default 20)
 - `.in <name|id> [count]`    – List incoming connected nodes (default 20)
-- `.dot <name> <depth>`      – Generate GraphViz DOT file
+- `.mermaid <name> [depth]`  – Generate Mermaid HTML file for a node (default depth 3)
 - `.run`                     – Full inference
 - `.run-once`                – Single inference pass
 - `.run-md <subdir>`         – Inference + Markdown export
@@ -311,19 +311,15 @@ This design prevents subject and object from being identical in a relation. Ther
 
 ## Creating a node graph
 
-You can generate a node graph yourself using zelph’s `.dot` command, which outputs a GraphViz DOT format file. For example:
+You can generate a node graph yourself using zelph’s `.mermaid` command, which outputs a Mermaid HTML format file. For example:
 
 ```
-.dot name 2
+.mermaid name 3
 ```
 
-In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualize. The following number represents the depth of connections to include in the graph.
+In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualise. The following number represents the depth of connections to include in the graph (default is 3).
 
-To convert the DOT file into an actual image, use the GraphViz command-line tool as follows:
-
-```bash
-dot -Tsvg -oname.svg name.dot
-```
+To view the Mermaid graph, open the generated HTML file in a web browser.
 
 ## Rules and Inference
 

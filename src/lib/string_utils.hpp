@@ -170,5 +170,6 @@ namespace zelph
         }
 
         std::wstring mark_identifier(const std::wstring& str);
+        std::wstring sanitize_filename(const std::wstring& name);
     }
 }

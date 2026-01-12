@@ -155,5 +155,19 @@ namespace zelph
 
             return L"«" + str + L"»";
         }
+
+        std::wstring sanitize_filename(const std::wstring& name)
+        {
+            std::wstring       result        = name;
+            const std::wstring invalid_chars = L"/\\:*?\"<>|";
+            for (wchar_t& c : result)
+            {
+                if (invalid_chars.find(c) != std::wstring::npos)
+                {
+                    c = L'_';
+                }
+            }
+            return result;
+        }
     }
 }

@@ -59,5 +59,6 @@ mkdocs/docs/*/
 mkdocs/site
 /*.svg
 /*.dot
+/*.html
 perf.data
 constraints*/

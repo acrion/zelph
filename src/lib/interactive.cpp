@@ -83,7 +83,7 @@ public:
 
     void                       import_file(const std::wstring& file) const;
     void                       process_command(const std::vector<std::wstring>& cmd);
-    void                       display_node_details(network::Node nd, bool resolved_from_name = false) const;
+    void                       display_node_details(network::Node nd, bool resolved_from_name, int depth, int max_neighbors) const;
     network::Node              process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
     network::Node              process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
     void                       process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
@@ -93,6 +93,7 @@ public:
     network::Node              resolve_node(const std::wstring& arg) const;
     network::Node              resolve_single_node(const std::wstring& arg, bool prioritize_id = false) const;
     std::vector<network::Node> resolve_nodes_by_name(const std::wstring& name) const;
+    void                       generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const;
 
     std::shared_ptr<Wikidata>                       _wikidata;
     std::unordered_map<network::Node, std::wstring> _core_node_names;
@@ -202,7 +203,7 @@ void console::Interactive::process(std::wstring line) const
             }
 
             std::wstring output;
-            _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact);
+            _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact, 3);
             _pImpl->_n->print(output, false);
 
             if (!is_rule)
@@ -236,7 +237,7 @@ void console::Interactive::import_file(const std::wstring& file) const
     _pImpl->import_file(file);
 }
 
-void console::Interactive::Impl::display_node_details(network::Node nd, bool resolved_from_name /*= false*/) const
+void console::Interactive::Impl::display_node_details(network::Node nd, bool resolved_from_name, int depth, int max_neighbors) const
 {
     if (resolved_from_name)
     {
@@ -300,7 +301,12 @@ void console::Interactive::Impl::display_node_details(network::Node nd, bool res
         std::clog << "  Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
     }
 
-    auto format_node = [this](network::Node node) -> std::string
+    if (depth > 0)
+    {
+        generate_and_print_mermaid_link(nd, depth, max_neighbors);
+    }
+
+    auto format_node = [this, max_neighbors](network::Node node) -> std::string
     {
         std::wstring node_str  = std::to_wstring(node);
         std::wstring node_name = _n->get_name(node, _n->lang(), true); // fallback active
@@ -308,7 +314,7 @@ void console::Interactive::Impl::display_node_details(network::Node nd, bool res
         if (node_str == node_name || node_name.empty())
         {
             std::wstring fact_repr;
-            _n->format_fact(fact_repr, _n->lang(), node);
+            _n->format_fact(fact_repr, _n->lang(), node, max_neighbors);
             if (!fact_repr.empty() && fact_repr != L"??")
             {
                 return string::unicode::to_utf8(fact_repr) + " (ID " + std::to_string(node) + ")";
@@ -333,7 +339,7 @@ void console::Interactive::Impl::display_node_details(network::Node nd, bool res
 
         std::clog << "  " << header << ":" << std::endl;
 
-        if (conns.size() <= 3)
+        if (conns.size() <= max_neighbors)
         {
             for (network::Node node : conns)
             {
@@ -346,14 +352,14 @@ void console::Interactive::Impl::display_node_details(network::Node nd, bool res
         }
     };
 
-    network::adjacency_set incoming = _n->get_left(nd);
-    network::adjacency_set outgoing = _n->get_right(nd);
+    const network::adjacency_set& incoming = _n->get_left(nd);
+    const network::adjacency_set& outgoing = _n->get_right(nd);
 
     display_connections(incoming, "Incoming connections from");
     display_connections(outgoing, "Outgoing connections to");
 
     std::wstring fact_repr;
-    _n->format_fact(fact_repr, _n->lang(), nd);
+    _n->format_fact(fact_repr, _n->lang(), nd, max_neighbors);
     if (!fact_repr.empty() && fact_repr != L"??")
     {
         std::clog << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
@@ -405,7 +411,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".clist <count>                     – List first N nodes named in current language (sorted by ID if reasonable size, otherwise map order)",
         L".out <name|id> [count]             – List details of outgoing connected nodes (default 20)",
         L".in <name|id> [count]              – List details of incoming connected nodes (default 20)",
-        L".dot <name> <depth>         – Generate GraphViz DOT file for a node",
+        L".mermaid <node_name> [max_depth]   – Generate Mermaid HTML file for a node",
         L".run                        – Run full inference",
         L".run-once                   – Run a single inference pass",
         L".run-md <subdir>            – Run inference and export results as Markdown",
@@ -483,9 +489,10 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                     L"Lists the first N nodes that have a name in the current language, sorted by node ID.\n"
                     L"Output format is identical to .list (names in all languages, connection counts, Wikidata URL)."},
 
-        {L".dot", L".dot <node_name> <max_depth>\n"
-                  L"Generates a GraphViz .dot file visualizing the specified node and its connections\n"
-                  L"up to the given depth (depth ≥ 2 recommended). The file is named <node_name>.dot."},
+        {L".mermaid", L".mermaid <node_name> [max_depth]\n"
+                      L"Generates a Mermaid HTML file visualizing the specified node and its connections\n"
+                      L"up to the given depth (default 3). The file is named <node_name>.html in the system temp dir.\n"
+                      L"Outputs a clickable file:// link to the generated HTML."},
 
         {L".run", L".run\n"
                   L"Performs full inference: repeatedly applies all rules until no new facts are derived.\n"
@@ -681,7 +688,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (nodes.size() == 1)
         {
             bool resolved_from_name = !_n->get_name(nodes[0], _n->lang(), false).empty() || std::all_of(arg.begin(), arg.end(), ::iswdigit);
-            display_node_details(nodes[0], resolved_from_name && nodes.size() == 1);
+            display_node_details(nodes[0], resolved_from_name && nodes.size() == 1, 3, 3);
         }
         else
         {
@@ -694,7 +701,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
             for (network::Node nd : nodes)
             {
-                display_node_details(nd, true);
+                display_node_details(nd, true, 3, 3);
             }
         }
     }
@@ -712,7 +719,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
         {
-            display_node_details(it->first);
+            display_node_details(it->first, false, 3, 3);
         }
 
         std::clog << "Displayed " << displayed << " nodes." << std::endl;
@@ -732,7 +739,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
         {
-            display_node_details(it->second);
+            display_node_details(it->second, false, 3, 3);
         }
     }
     else if (cmd[0] == L".out" || cmd[0] == L".in")
@@ -764,7 +771,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         for (size_t i = 0; i < to_display; ++i)
         {
-            display_node_details(vec[i]);
+            display_node_details(vec[i], false, 3, 3);
         }
     }
     else if (cmd[0] == L".remove")
@@ -800,15 +807,19 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->print(L"Removed node " + std::to_wstring(nd) + L" (all edges disconnected, name mappings cleaned).", true);
         _n->print(L"Consider running .cleanup afterwards if needed.", true);
     }
-    else if (cmd[0] == L".dot")
+    else if (cmd[0] == L".mermaid")
     {
-        if (cmd.size() == 1) throw std::runtime_error("Command .dot: Missing node name to visualize");
-        network::Node nd = _n->get_node(cmd[1]);
-        if (nd == 0) throw std::runtime_error("Command .dot: Unknown node '" + string::unicode::to_utf8(cmd[1]) + "'");
-        if (cmd.size() < 3) throw std::runtime_error("Command .dot: Missing maximum depth");
-        int max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
-        if (max_depth < 2) throw std::runtime_error("Command .dot: Maximum depth must be greater than 1");
-        _n->gen_dot(nd, string::unicode::to_utf8(cmd[1]) + ".dot", max_depth);
+        if (cmd.size() < 2) throw std::runtime_error("Command .mermaid: Missing node name to visualise");
+        std::wstring  arg = cmd[1];
+        network::Node nd  = resolve_single_node(arg, true);
+        if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
+        int max_depth = 3; // Default
+        if (cmd.size() == 3)
+        {
+            max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
+            if (max_depth < 2) throw std::runtime_error("Command .mermaid: Maximum depth must be greater than 1");
+        }
+        generate_and_print_mermaid_link(nd, max_depth, 3);
     }
     else if (cmd[0] == L".run")
     {
@@ -1001,7 +1012,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {
             std::wstring output;
             // Format the rule for printing
-            _n->format_fact(output, _n->lang(), rule);
+            _n->format_fact(output, _n->lang(), rule, 3);
             _n->print(output, true);
         }
         _n->print(L"------------------------", true);
@@ -1473,6 +1484,25 @@ network::Node console::Interactive::Impl::resolve_single_node(const std::wstring
 std::vector<network::Node> console::Interactive::Impl::resolve_nodes_by_name(const std::wstring& name) const
 {
     return _n->resolve_nodes_by_name(name);
+}
+
+void console::Interactive::Impl::generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const
+{
+    std::filesystem::path temp_dir  = std::filesystem::temp_directory_path();
+    std::wstring          hex_name  = string::unicode::from_utf8(_n->get_name_hex(nd, false, max_neighbors));
+    std::wstring          safe_name = string::sanitize_filename(hex_name);
+    std::filesystem::path html_path = temp_dir / (safe_name + L".html");
+
+    _n->gen_mermaid_html(nd, html_path.string(), depth, max_neighbors);
+
+    std::string abs_path = html_path.string();
+    std::string file_url = "file://" + abs_path;
+
+    const std::string OSC_START = "\033]8;;";
+    const char        OSC_SEP   = '\a';
+    const std::string OSC_END   = "\033]8;;\a";
+
+    std::clog << "  Mermaid HTML: " << OSC_START << file_url << OSC_SEP << file_url << OSC_END << std::endl;
 }
 
 void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const

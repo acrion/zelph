@@ -739,9 +739,9 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                             if (log)
                             {
                                 std::wstring output;
-                                _pImpl->_n->format_fact(output, "en", fact);
+                                _pImpl->_n->format_fact(output, "en", fact, 3);
                                 _pImpl->_n->print(id_str + L":       en> " + output, false);
-                                _pImpl->_n->format_fact(output, "wikidata", fact);
+                                _pImpl->_n->format_fact(output, "wikidata", fact, 3);
                                 _pImpl->_n->print(id_str + L": wikidata> " + output, false);
                             }
                         }

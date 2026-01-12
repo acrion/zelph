@@ -376,33 +376,6 @@ bool Zelph::has_language(const std::string& language) const
     return std::find(languages.begin(), languages.end(), language) != languages.end();
 }
 
-std::string Zelph::get_name_hex(Node node, bool prepend_num)
-{
-    std::string name = string::unicode::to_utf8(get_name(node, _lang, true));
-
-    if (name.empty())
-    {
-        if (_pImpl->is_var(node))
-        {
-            name = std::to_string(static_cast<int>(node));
-        }
-        else
-        {
-            std::wstring output;
-            format_fact(output, _lang, node);
-            name = string::unicode::to_utf8(output);
-        }
-    }
-    else if (prepend_num && !_pImpl->is_hash(node) && !_pImpl->is_var(node))
-    {
-        name = "(" + std::to_string(node) + ") " + name;
-    }
-
-    boost::replace_all(name, "\r\n", "\\n");
-    boost::replace_all(name, "\n", "\\n");
-    return name;
-}
-
 Node Zelph::get_node(const std::wstring& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
@@ -558,10 +531,10 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
 
             // inconsistent state => debug output TODO
             std::wstring output;
-            format_fact(output, _lang, relation);
+            format_fact(output, _lang, relation, 3);
             print(output, true);
 
-            gen_dot(relation, "debug.dot", 2);
+            gen_mermaid_html(relation, "debug.html", 2, 3);
             print(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
             print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
             print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
@@ -665,7 +638,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
         {
             if (_pImpl->get_right(nd).count(core.Causes) == 0) // TODO: this might be not sufficient if rule is a sub-condition!?
             {
-                assert(nd != parent); // indicates corrupt database
+                // assert(nd != parent); // indicates corrupt database
 
                 if (subject)
                     empty_subject = true; // there may be only 1 subject
@@ -759,7 +732,7 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     }
 }
 
-void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
+void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
 {
     // Formats a fact into a string representation.
 
@@ -818,7 +791,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #endif
         if (subject_name.empty())
         {
-            format_fact(subject_name, lang, subject, variables, fact, history);
+            format_fact(subject_name, lang, subject, max_objects, variables, fact, history);
             subject_name = L"(" + subject_name + L")";
         }
 
@@ -827,30 +800,38 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         relation_name = relation ? get_formatted_name(relation, lang) : L"?";
         if (relation_name.empty())
         {
-            format_fact(relation_name, lang, relation, variables, fact, history);
+            format_fact(relation_name, lang, relation, max_objects, variables, fact, history);
             relation_name = L"(" + relation_name + L")";
         }
     }
 
     std::wstring objects_name;
-    for (Node object : objects)
+
+    if (objects.size() > max_objects)
     {
-        object = string::get(variables, object);
-        if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
-        std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
-        if (object_name.empty())
-        {
-#ifdef _DEBUG
-            std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
-                      << ", is_hash=" << _pImpl->is_hash(object)
-                      << ", will recurse" << std::endl;
-#endif
-            format_fact(object_name, lang, object, variables, fact, history);
-            object_name = L"(" + object_name + L")";
-        }
-        objects_name += object_name;
+        objects_name = L"(... " + std::to_wstring(objects.size()) + L" objects ...)";
     }
-    if (objects_name.empty()) objects_name = L"?";
+    else
+    {
+        for (Node object : objects)
+        {
+            object = string::get(variables, object);
+            if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
+            std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
+            if (object_name.empty())
+            {
+#ifdef _DEBUG
+                std::clog << "[DEBUG format_fact] object_name is empty for object=" << object
+                          << ", is_hash=" << _pImpl->is_hash(object)
+                          << ", will recurse" << std::endl;
+#endif
+                format_fact(object_name, lang, object, max_objects, variables, fact, history);
+                object_name = L"(" + object_name + L")";
+            }
+            objects_name += object_name;
+        }
+        if (objects_name.empty()) objects_name = L"?";
+    }
 
     result = string::mark_identifier(subject_name) + L" " + string::mark_identifier(relation_name) + L" " + string::mark_identifier(objects_name);
 
@@ -1004,103 +985,116 @@ std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
     return results;
 }
 
-void Zelph::add_nodes(Node current, adjacency_set& touched, const adjacency_set& conditions, const adjacency_set& deductions, std::ofstream& dot, int max_depth, std::unordered_set<std::string>& written_edges)
+std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors)
 {
-    if (--max_depth > 0 && touched.count(current) == 0)
+    std::string name = string::unicode::to_utf8(get_name(node, _lang, true));
+
+    if (name.empty())
     {
-        touched.insert(current);
-        std::string current_name = get_name_hex(current);
-
-        if (_pImpl->is_var(current))
+        if (_pImpl->is_var(node))
         {
-            dot << "\"" << current_name << "\" [color=cornsilk2, style=filled]" << std::endl;
+            name = std::to_string(static_cast<int>(node));
         }
-        else if (conditions.find(current) != conditions.end())
+        else
         {
-            dot << "\"" << current_name << "\" [color=lightskyblue, style=filled]" << std::endl;
+            std::wstring output;
+            format_fact(output, _lang, node, max_neighbors);
+            name = string::unicode::to_utf8(output);
         }
-        else if (deductions.find(current) != deductions.end())
+    }
+    else if (prepend_num && !_pImpl->is_hash(node) && !_pImpl->is_var(node))
+    {
+        name = "(" + std::to_string(static_cast<unsigned long long>(node)) + ") " + name;
+    }
+
+    return name;
+}
+
+void Zelph::collect_mermaid_nodes(WrapperNode                                                     current_wrap,
+                                  int                                                             max_depth,
+                                  std::unordered_set<WrapperNode>&                                visited,
+                                  std::unordered_set<Node>&                                       processed_edge_hashes,
+                                  const adjacency_set&                                            conditions,
+                                  const adjacency_set&                                            deductions,
+                                  std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
+                                  std::unordered_set<WrapperNode>&                                all_nodes,
+                                  int                                                             max_neighbors,
+                                  size_t&                                                         placeholder_counter)
+{
+    if (--max_depth <= 0 || visited.count(current_wrap))
+        return;
+
+    visited.insert(current_wrap);
+    all_nodes.insert(current_wrap);
+
+    if (current_wrap.is_placeholder) return; // No recursion for placeholders
+
+    Node current = current_wrap.value;
+
+    // Left neighbors (incoming)
+    const auto& lefts      = _pImpl->get_left(current);
+    size_t      num_left   = lefts.size();
+    size_t      limit_left = (max_neighbors > 0) ? std::min(static_cast<size_t>(max_neighbors), num_left) : num_left;
+    auto        left_it    = lefts.begin();
+    for (size_t i = 0; i < limit_left; ++i, ++left_it)
+    {
+        Node left = *left_it;
+        Node hash = _pImpl->create_hash({current, left});
+
+        if (processed_edge_hashes.insert(hash).second)
         {
-            dot << "\"" << current_name << "\" [color=darkolivegreen2, style=filled]" << std::endl;
+            bool        is_bi = _pImpl->has_left_edge(left, current);
+            std::string arrow = is_bi ? "<-->" : "-->";
+            raw_edges.emplace_back(WrapperNode{false, left}, WrapperNode{false, current}, arrow);
+            all_nodes.insert(WrapperNode{false, left});
         }
 
-        for (const Node& left : _pImpl->get_left(current))
+        collect_mermaid_nodes(WrapperNode{false, left}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+    }
+    if (max_neighbors > 0 && num_left > static_cast<size_t>(max_neighbors))
+    {
+        // Add unique placeholder for lefts
+        ++placeholder_counter;
+        size_t      total = num_left;
+        WrapperNode placeholder_wrap{true, placeholder_counter, total};
+        std::string arrow = "-->"; // Simple directed to current
+        raw_edges.emplace_back(placeholder_wrap, WrapperNode{false, current}, arrow);
+        all_nodes.insert(placeholder_wrap);
+    }
+
+    // Right neighbors (outgoing)
+    const auto& rights      = _pImpl->get_right(current);
+    size_t      num_right   = rights.size();
+    size_t      limit_right = (max_neighbors > 0) ? std::min(static_cast<size_t>(max_neighbors), num_right) : num_right;
+    auto        right_it    = rights.begin();
+    for (size_t i = 0; i < limit_right; ++i, ++right_it)
+    {
+        Node right = *right_it;
+        Node hash  = _pImpl->create_hash({current, right});
+
+        if (processed_edge_hashes.insert(hash).second)
         {
-            Node hash = _pImpl->create_hash({current, left});
-            if (touched.count(hash) == 0)
-            {
-                touched.insert(hash);
-                std::string left_name = get_name_hex(left);
-
-                std::string key;
-                bool        is_bidirectional = _pImpl->has_left_edge(left, current);
-
-                if (is_bidirectional)
-                {
-                    if (left_name < current_name)
-                        key = left_name + "<->" + current_name;
-                    else
-                        key = current_name + "<->" + left_name;
-                }
-                else
-                {
-                    key = left_name + "->" + current_name;
-                }
-
-                if (written_edges.find(key) == written_edges.end())
-                {
-                    written_edges.insert(key);
-                    dot << "\"" << left_name << "\" -> \"" << current_name << "\"";
-                    if (is_bidirectional)
-                    {
-                        dot << R"( [dir="both"])";
-                    }
-                    dot << ";" << std::endl;
-                }
-            }
-            add_nodes(left, touched, conditions, deductions, dot, max_depth, written_edges);
+            bool        is_bi = _pImpl->has_right_edge(right, current);
+            std::string arrow = is_bi ? "<-->" : "-->";
+            raw_edges.emplace_back(WrapperNode{false, current}, WrapperNode{false, right}, arrow);
+            all_nodes.insert(WrapperNode{false, right});
         }
 
-        for (const Node& right : _pImpl->get_right(current))
-        {
-            Node hash = _pImpl->create_hash({current, right});
-            if (touched.count(hash) == 0)
-            {
-                touched.insert(hash);
-                std::string right_name = get_name_hex(right);
-
-                std::string key;
-                bool        is_bidirectional = _pImpl->has_right_edge(right, current);
-
-                if (is_bidirectional)
-                {
-                    if (current_name < right_name)
-                        key = current_name + "<->" + right_name;
-                    else
-                        key = right_name + "<->" + current_name;
-                }
-                else
-                {
-                    key = current_name + "->" + right_name;
-                }
-
-                if (written_edges.find(key) == written_edges.end())
-                {
-                    written_edges.insert(key);
-                    dot << "\"" << current_name << "\" -> \"" << right_name << "\"";
-                    if (is_bidirectional)
-                    {
-                        dot << R"( [dir="both"])";
-                    }
-                    dot << ";" << std::endl;
-                }
-            }
-            add_nodes(right, touched, conditions, deductions, dot, max_depth, written_edges);
-        }
+        collect_mermaid_nodes(WrapperNode{false, right}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+    }
+    if (max_neighbors > 0 && num_right > static_cast<size_t>(max_neighbors))
+    {
+        // Add unique placeholder for rights
+        ++placeholder_counter;
+        size_t      total = num_right;
+        WrapperNode placeholder_wrap{true, placeholder_counter, total};
+        std::string arrow = "-->";
+        raw_edges.emplace_back(WrapperNode{false, current}, placeholder_wrap, arrow);
+        all_nodes.insert(placeholder_wrap);
     }
 }
 
-void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
+void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors)
 {
     adjacency_set conditions, deductions;
 
@@ -1119,15 +1113,126 @@ void Zelph::gen_dot(Node start, std::string file_name, int max_depth)
         }
     }
 
-    adjacency_set                   touched;
-    std::unordered_set<std::string> written_edges;
-    std::ofstream                   dot(file_name, std::ios_base::out);
+    std::unordered_set<WrapperNode>                                visited;
+    std::unordered_set<Node>                                       processed_edge_hashes;
+    std::vector<std::tuple<WrapperNode, WrapperNode, std::string>> raw_edges;
+    std::unordered_set<WrapperNode>                                all_nodes;
+    size_t                                                         placeholder_counter = 0;
 
-    dot << "digraph graphname{" << std::endl;
+    collect_mermaid_nodes(WrapperNode{false, start}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
 
-    add_nodes(start, touched, conditions, deductions, dot, max_depth, written_edges);
+    // Node IDs, definitions and styles
+    std::map<WrapperNode, std::string> node_ids;
+    std::vector<std::string>           node_defs;
+    std::vector<std::string>           style_defs;
 
-    dot << "}" << std::endl;
+    for (const WrapperNode& wn : all_nodes)
+    {
+        std::string id;
+        std::string raw_label;
+        if (wn.is_placeholder)
+        {
+            id        = "ph_" + std::to_string(wn.value);
+            raw_label = "[... " + std::to_string(wn.total_count) + " nodes ...]";
+        }
+        else
+        {
+            id        = "n_" + std::to_string(static_cast<unsigned long long>(wn.value));
+            raw_label = get_name_hex(wn.value, true, max_neighbors);
+        }
+        node_ids[wn] = id;
+
+        std::string label = raw_label;
+        boost::replace_all(label, "\"", "\\\"");
+
+        node_defs.push_back("    " + id + "[\"" + label + "\"]");
+
+        std::string fill_color;
+        if (!wn.is_placeholder)
+        {
+            Node node = wn.value;
+            if (node == start)
+            {
+                fill_color = "#FFBB00"; // Special color for start node
+            }
+            else if (_pImpl->is_var(node))
+            {
+                fill_color = "#eee8dc"; // cornsilk2
+            }
+            else if (conditions.count(node))
+            {
+                fill_color = "#87cefa"; // lightskyblue
+            }
+            else if (deductions.count(node))
+            {
+                fill_color = "#bcee68"; // darkolivegreen2
+            }
+        }
+        else
+        {
+            fill_color = "#d3d3d3";
+        }
+
+        if (!fill_color.empty())
+        {
+            style_defs.push_back("    style " + id + " fill:" + fill_color + ",stroke:#333,stroke-width:2px");
+        }
+    }
+
+    // Edges
+    std::vector<std::string> edge_lines;
+    for (const auto& [from, to, arrow] : raw_edges)
+    {
+        edge_lines.push_back("    " + node_ids[from] + " " + arrow + " " + node_ids[to]);
+    }
+
+    // Build Mermaid
+    std::stringstream mermaid;
+    mermaid << "graph TD" << std::endl;
+
+    for (const auto& def : node_defs)
+        mermaid << def << std::endl;
+
+    for (const auto& style : style_defs)
+        mermaid << style << std::endl;
+
+    for (const auto& edge : edge_lines)
+        mermaid << edge << std::endl;
+
+    // HTML template
+    const std::string html_header = R"(<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Zelph Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: { useMaxWidth: true }
+        });
+    </script>
+    <style>
+        body { margin: 20px; background: #ffffff; font-family: sans-serif; }
+        .mermaid { text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="mermaid">
+)";
+
+    const std::string html_footer = R"(
+    </div>
+</body>
+</html>
+)";
+
+    std::ofstream file(file_name);
+    if (!file.is_open())
+        throw std::runtime_error("Kann Datei nicht öffnen: " + file_name);
+
+    file << html_header << mermaid.str() << html_footer;
 }
 
 void Zelph::print(const std::wstring& msg, const bool o) const
