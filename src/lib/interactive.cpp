@@ -90,7 +90,7 @@ public:
     static bool                is_var(std::wstring token);
     void                       list_predicate_usage(size_t limit);
     void                       list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
-    network::Node              resolve_node(const std::wstring& arg) const;
+    network::Node              resolve_node(const std::wstring& arg, std::string lang) const;
     network::Node              resolve_single_node(const std::wstring& arg, bool prioritize_id = false) const;
     std::vector<network::Node> resolve_nodes_by_name(const std::wstring& name) const;
     void                       generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const;
@@ -622,26 +622,53 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() < 3 || cmd.size() > 4)
             throw std::runtime_error("Command .name: Invalid arguments. Usage: .name <node> <new_name>  or  .name <node> <lang> <new_name>");
 
-        network::Node nd = resolve_node(cmd[1]);
+        const std::wstring& name_in_current_lang = cmd[1];
+        const std::wstring& name_in_target_lang  = cmd.size() == 3 ? cmd[2] : cmd[3];
+        std::string         current_lang         = _n->get_lang();
+        std::string         target_lang          = cmd.size() == 3 ? _n->lang() : string::unicode::to_utf8(cmd[2]);
 
-        if (cmd.size() == 3)
+        network::Node node_in_current_lang = resolve_node(name_in_current_lang, current_lang);
+        network::Node node_in_target_lang  = resolve_node(name_in_target_lang, target_lang);
+
+        if (current_lang == target_lang)
         {
-            // .name <node> <new_name> → current language
-            const std::wstring& new_name = cmd[2];
-            if (new_name.empty())
-                throw std::runtime_error("Command .name: New name cannot be empty. Use .delname to remove a name.");
-
-            _n->set_name(nd, new_name, _n->lang());
+            // In this case, name_in_current_lang is strictly interpreted as the old name that we use to reference
+            // the existing node. It does not make sense to support creating a new node in this mode.
+            if (node_in_current_lang == 0)
+            {
+                throw std::runtime_error("Node '" + string::unicode::to_utf8(name_in_current_lang) + "' does not exist");
+            }
+            else if (node_in_target_lang != 0)
+            {
+                throw std::runtime_error("Name '" + string::unicode::to_utf8(name_in_target_lang) + "' is already in use by node " + std::to_string(node_in_target_lang));
+            }
+            else
+            {
+                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+            }
         }
-        else // size == 4
+        else if (node_in_current_lang == 0)
         {
-            // .name <node> <lang> <new_name>
-            std::string         target_lang = string::unicode::to_utf8(cmd[2]);
-            const std::wstring& new_name    = cmd[3];
-            if (new_name.empty())
-                throw std::runtime_error("Command .name: New name cannot be empty. Use .delname to remove a name.");
-
-            _n->set_name(nd, new_name, target_lang);
+            if (node_in_target_lang == 0)
+            {
+                node_in_current_lang = _n->node(name_in_current_lang);
+                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+                _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') does not exist yet in either language => created it.", true);
+            }
+            else
+            {
+                _n->set_name(node_in_target_lang, name_in_current_lang, current_lang);
+                _n->print(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') already exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
+            }
+        }
+        else if (node_in_target_lang == 0)
+        {
+            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') already exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
+        }
+        else // both nodes exist
+        {
+            throw std::runtime_error("Node '" + string::unicode::to_utf8(name_in_current_lang) + "' ('" + current_lang + "') / '" + string::unicode::to_utf8(name_in_target_lang) + "' ('" + target_lang + "') exists in both languages as different nodes => did not do anything)");
         }
     }
     else if (cmd[0] == L".delname")
@@ -749,7 +776,12 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         if (cmd.size() < 2) throw std::runtime_error(std::string("Command ") + string::unicode::to_utf8(cmd[0]) + ": Missing node argument");
 
         std::wstring  arg     = cmd[1];
-        network::Node base_nd = resolve_node(arg); // same resolve logic as .node/.remove
+        network::Node base_nd = resolve_node(arg, _n->lang()); // same resolve logic as .node/.remove
+
+        if (base_nd == 0)
+        {
+            throw std::runtime_error("Unknown node");
+        }
 
         size_t max_count = 20; // default
         if (cmd.size() >= 3)
@@ -1402,9 +1434,9 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
     }
 }
 
-network::Node console::Interactive::Impl::resolve_node(const std::wstring& arg) const
+network::Node console::Interactive::Impl::resolve_node(const std::wstring& arg, std::string lang) const
 {
-    network::Node nd = _n->get_node(arg);
+    network::Node nd = _n->get_node(arg, lang);
     if (nd == 0)
     {
         try
@@ -1412,15 +1444,17 @@ network::Node console::Interactive::Impl::resolve_node(const std::wstring& arg) 
             size_t pos = 0;
             nd         = std::stoull(arg, &pos);
             if (pos != arg.length())
-                throw std::exception();
+            {
+                nd = 0; // arg is no unsigned integer number => we interpret it as a string and return 0, denoting there is no node with this name in lang
+            }
+            else if (!_n->exists(nd))
+            {
+                throw std::runtime_error("Node does not exist"); // arg is a number => throw, because node numbers must only be created by class Network
+            }
         }
         catch (...)
         {
-            throw std::runtime_error("Unknown node/argument");
-        }
-        if (!_n->exists(nd))
-        {
-            throw std::runtime_error("Node does not exist");
+            nd = 0; // arg is no number => return 0, denoting there is no node with this name in lang
         }
     }
     return nd;
