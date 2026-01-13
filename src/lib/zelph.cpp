@@ -106,10 +106,13 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
             throw std::runtime_error(s.str());
         }
 
-        std::wclog << L"Warning: Merging Node " << from
-                   << L" into Node " << into
-                   << L" due to name conflict '" << name
-                   << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
+        if (!_pImpl->is_var(from))
+        {
+            std::wclog << L"Warning: Merging Node " << from
+                       << L" into Node " << into
+                       << L" due to name conflict '" << name
+                       << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
+        }
 
         // Merge
         _pImpl->merge(from, into);
@@ -198,10 +201,13 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
                     throw std::runtime_error(s.str());
                 }
 
-                std::wclog << L"Warning: Merging Node " << from
-                           << L" into Node " << into
-                           << L" due to name conflict '" << name_in_current_lang
-                           << L"' in language '" << string::unicode::from_utf8(_lang) << L"'." << std::endl;
+                if (!_pImpl->is_var(from))
+                {
+                    std::wclog << L"Warning: Merging Node " << from
+                               << L" into Node " << into
+                               << L" due to name conflict '" << name_in_current_lang
+                               << L"' in language '" << string::unicode::from_utf8(_lang) << L"'." << std::endl;
+                }
 
                 // Merge
                 _pImpl->merge(from, into);
