@@ -668,9 +668,10 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         }
         else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false, true) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false, true))
         {
-            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') already have the requested names.", true);
+            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') have the requested names, but are different nodes => Merging them.", true);
+            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
         }
-        else // both nodes exist
+        else
         {
             throw std::runtime_error("Node '" + string::unicode::to_utf8(name_in_current_lang) + "' ('" + current_lang + "') / '" + string::unicode::to_utf8(name_in_target_lang) + "' ('" + target_lang + "') exists in both languages as different nodes => did not do anything)");
         }
