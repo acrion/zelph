@@ -861,19 +861,19 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
     else if (cmd[0] == L".run")
     {
         _n->run(true, false, false);
-        _n->print(L"> Ready.", true);
+        _n->print(L"Ready.", true);
     }
     else if (cmd[0] == L".run-once")
     {
         _n->run(true, false, true);
-        _n->print(L"> Ready.", true);
+        _n->print(L"Ready.", true);
     }
     else if (cmd[0] == L".run-md")
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
         std::string subdir = string::unicode::to_utf8(cmd[1]);
         _n->set_markdown_subdir(subdir);
-        _n->print(L"> Running with markdown export...", true);
+        _n->print(L"Running with markdown export...", true);
         if (_wikidata)
         {
             _wikidata->set_logging(false);
@@ -961,7 +961,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         _n->set_print(normal_print);
 
-        _n->print(L"> Ready.", true);
+        _n->print(L"Ready.", true);
     }
     else if (cmd[0] == L".decode")
     {
@@ -1810,6 +1810,11 @@ network::Node console::Interactive::Impl::process_rule(const std::vector<std::ws
 void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const
 {
     _pImpl->_n->run(print_deductions, generate_markdown, suppress_repetition);
+}
+
+std::string console::Interactive::get_lang() const
+{
+    return _pImpl->_n->get_lang();
 }
 
 bool console::Interactive::Impl::is_var(std::wstring token)
