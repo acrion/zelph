@@ -888,6 +888,11 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
 void Wikidata::process_node(const Node node, const std::string& /* lang */)
 {
+    if (Network::is_var(node))
+    {
+        return;
+    }
+
     std::lock_guard lock(_pImpl->_mtx);
 
     if (!_pImpl->_n->has_name(node, "en"))
