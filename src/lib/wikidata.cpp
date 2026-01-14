@@ -888,7 +888,7 @@ void Wikidata::process_name(const std::wstring& wikidata_name)
 
 void Wikidata::process_node(const Node node, const std::string& /* lang */)
 {
-    if (Network::is_var(node))
+    if (!_pImpl->_has_json && Network::is_var(node))
     {
         return;
     }
