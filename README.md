@@ -146,7 +146,6 @@ Key commands include:
 - `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
 - `.wikidata-index <json>`   – Generate index only
-- `.wikidata-export <wid>`   – Export single Wikidata entry
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?
@@ -972,10 +971,6 @@ zelph provides several additional commands for working with Wikidata:
 * **Generate Index Only:** If you only want to build the index without importing data:
   ```
   .wikidata-index download/wikidata-20250127-all.json
-  ```
-* **Export Item:** Export a specific item as a JSON snippet (requires index):
-  ```
-  .wikidata-export Q42
   ```
 
 Inference is performed using the general `.run`, `.run-once`, `.run-md`, and `.run-file` commands (see the [Performing Inference](#performing-inference) section above).

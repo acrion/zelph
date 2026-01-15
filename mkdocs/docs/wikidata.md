@@ -230,9 +230,5 @@ zelph provides several additional commands for working with Wikidata:
   ```
   .wikidata-index download/wikidata-20250127-all.json
   ```
-* **Export Item:** Export a specific item as a JSON snippet (requires index):
-  ```
-  .wikidata-export Q42
-  ```
 
 Inference is performed using the general `.run`, `.run-once`, `.run-md`, and `.run-file` commands (see [Performing Inference](index.md#performing-inference)).

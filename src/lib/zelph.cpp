@@ -72,7 +72,7 @@ void Zelph::set_lang(const std::string& lang)
 // Sets the name of an already existing node in a specific language.
 // This overload is used when you have a known Node handle and want to directly assign or update its name.
 // It does not create a new node – it only updates the name mappings for the given language.
-void Zelph::set_name(const Node node, const std::wstring& name, std::string lang)
+void Zelph::set_name(const Node node, const std::wstring& name, std::string lang, const bool merge_on_conflict)
 {
     if (lang.empty()) lang = _lang; // Use current default language if none specified
 
@@ -86,42 +86,55 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     // Store the forward mapping: node → name (in this language)
     _pImpl->_name_of_node[lang][node] = name;
 
-    // Check if this name is already mapped to a different node in this language
-    auto existing = _pImpl->_node_of_name[lang].find(name);
-    if (existing == _pImpl->_node_of_name[lang].end())
+    if (merge_on_conflict)
     {
-        // Name is new in this language → create clean bidirectional mapping
-        _pImpl->_node_of_name[lang][name] = node;
+        // Check if this name is already mapped to a different node in this language
+        auto existing = _pImpl->_node_of_name[lang].find(name);
+        if (existing == _pImpl->_node_of_name[lang].end())
+        {
+            // Name is new in this language → create clean bidirectional mapping
+            _pImpl->_node_of_name[lang][name] = node;
+        }
+        else if (existing->second != node)
+        {
+            // Conflict: the same name is already used for another node
+            Node from = existing->second;
+            Node into = node;
+
+            if (_pImpl->is_var(from) != _pImpl->is_var(into))
+            {
+                std::stringstream s;
+                s << "Requested name '" << string::unicode::to_utf8(name) << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+                throw std::runtime_error(s.str());
+            }
+
+            if (!_pImpl->is_var(from))
+            {
+                std::wclog << L"Warning: Merging Node " << from
+                           << L" into Node " << into
+                           << L" due to name conflict '" << name
+                           << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
+            }
+
+            // Merge
+            _pImpl->merge(from, into);
+
+            // Transfer names from the merged node
+            _pImpl->transfer_names(from, into);
+
+            // Update the reverse mapping to the surviving node
+            _pImpl->_node_of_name[lang][name] = into;
+        }
     }
-    else if (existing->second != node)
+    else // !merge_on_conflict
     {
-        // Conflict: the same name is already used for another node
-        Node from = existing->second;
-        Node into = node;
-
-        if (_pImpl->is_var(from) != _pImpl->is_var(into))
-        {
-            std::stringstream s;
-            s << "Requested name '" << string::unicode::to_utf8(name) << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
-            throw std::runtime_error(s.str());
-        }
-
-        if (!_pImpl->is_var(from))
-        {
-            std::wclog << L"Warning: Merging Node " << from
-                       << L" into Node " << into
-                       << L" due to name conflict '" << name
-                       << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
-        }
-
-        // Merge
-        _pImpl->merge(from, into);
-
-        // Transfer names from the merged node
-        _pImpl->transfer_names(from, into);
-
-        // Update the reverse mapping to the surviving node
-        _pImpl->_node_of_name[lang][name] = into;
+        // In case the caller does not request merging, we set the node of this name independent of its existence.
+        // This is useful for Wikidata import, when setting names in a different language than "wikidata", which are all ambiguous.
+        // See Wikidata::process_import()
+        // We also use it in case of variable names in rules, because they can only refer to the current rule, never a different one.
+        // This strategy regarding variables is not strictly required, but it makes the topology of the network cleaner, because
+        // that way a variable node is only connect a single rule. See console::Interactive::Impl::process_fact()
+        _pImpl->_node_of_name[lang][name] = node;
     }
 }
 
@@ -279,14 +292,9 @@ bool Zelph::has_name(const Node node, const std::string& lang) const
     return it != name_of_node.end();
 }
 
-std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback, const bool process_node) const
+std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback) const
 {
     if (lang.empty()) lang = _lang;
-
-    if (_process_node && process_node)
-    {
-        _process_node(node, lang);
-    }
 
     // return `node` in the requested language (if available)
     {
@@ -609,8 +617,8 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                 // or
                 // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                const std::wstring name_subject_object = get_name(subject, _lang, true, false);
-                const std::wstring name_relationType   = get_name(predicate, _lang, true, false);
+                const std::wstring name_subject_object = get_name(subject, _lang, true);
+                const std::wstring name_relationType   = get_name(predicate, _lang, true);
 
                 throw std::runtime_error("fact(): facts with same subject and object are not supported: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
             }

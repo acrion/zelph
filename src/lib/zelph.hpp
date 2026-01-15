@@ -119,18 +119,17 @@ namespace zelph
             void                     set_lang(const std::string& lang);
             std::string              get_lang() { return _lang; }
             void                     set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
-            void                     set_process_node(std::function<void(const Node, const std::string&)> process_node) { _process_node = process_node; }
             std::string              lang() const { return _lang; }
             Node                     node(const std::wstring& name, std::string lang = "");
             bool                     exists(uint64_t nd);
             bool                     has_name(Node node, const std::string& lang) const;
-            std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false, const bool process_node = true) const;
+            std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false) const;
             name_of_node_map         get_nodes_in_language(const std::string& lang) const;
             std::vector<std::string> get_languages() const;
             bool                     has_language(const std::string& language) const;
             Node                     get_node(const std::wstring& name, std::string lang = "") const;
             std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors);
-            void                     set_name(Node node, const std::wstring& name, std::string lang = "");
+            void                     set_name(Node node, const std::wstring& name, std::string lang, bool merge_on_conflict);
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
             void                     cleanup_isolated(size_t& removed_count);
             size_t                   cleanup_names();
@@ -197,7 +196,6 @@ namespace zelph
                                        size_t&                                                         placeholder_counter);
 
             std::function<void(std::wstring, bool)> _print;
-            std::function<void(Node, std::string)>  _process_node;
         };
     }
 }

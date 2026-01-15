@@ -63,19 +63,12 @@ public:
     {
     }
 
-    bool                  read_index_file();
-    void                  write_index_file() const;
-    std::filesystem::path index_file_name() const;
-
-    network::Zelph*                       _n{nullptr};
-    std::filesystem::path                 _file_name;
-    std::map<std::string, std::streamoff> _index;
-    std::recursive_mutex                  _mtx;
-    bool                                  _logging{true};
-    std::string                           _last_entry;
-    std::streamoff                        _last_index{0};
-    std::filesystem::path                 _bin_file;
-    bool                                  _has_json{false};
+    network::Zelph*       _n{nullptr};
+    std::filesystem::path _file_name;
+    std::recursive_mutex  _mtx;
+    bool                  _logging{true};
+    std::filesystem::path _bin_file;
+    bool                  _has_json{false};
 };
 
 Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
@@ -113,9 +106,6 @@ Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
 
     _pImpl->_bin_file = bin_path;
     _pImpl->_has_json = std::filesystem::exists(_pImpl->_file_name);
-
-    n->set_process_node([this](const Node node, const std::string& lang)
-                        { return this->process_node(node, lang); });
 }
 
 Wikidata::~Wikidata()
@@ -645,7 +635,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
             if (import_english && language == "en")
             {
-                _pImpl->_n->set_name(subject, value, language);
+                _pImpl->_n->set_name(subject, value, language, false);
             }
         }
     }
@@ -794,285 +784,7 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
     }
 }
 
-void Wikidata::generate_index() const
-{
-    if (!_pImpl->_has_json)
-    {
-        return;
-    }
-
-    if (!_pImpl->read_index_file())
-    {
-        _pImpl->_n->print(L"Indexing file " + _pImpl->_file_name.wstring(), true);
-
-        ReadAsync read_async(_pImpl->_file_name);
-        // std::wifstream stream(_pImpl->_file_name.string());
-
-        std::vector<std::thread> threads;
-
-        StopWatch watch;
-        watch.start();
-
-        // for (std::wstring line; std::getline(stream, line); )
-        std::wstring   line;
-        std::streamoff streampos;
-        while (read_async.get_line(line, streampos))
-        {
-            index_entry(line, streampos);
-
-            if (watch.duration() >= 1000)
-            {
-                {
-                    std::lock_guard lock(_pImpl->_mtx);
-                    _pImpl->_n->print(L"Indexed " + std::to_wstring(_pImpl->_index.size()) + L" wikidata entries, latest is '" + string::unicode::from_utf8(_pImpl->_last_entry) + L"' at position " + std::to_wstring(_pImpl->_last_index) + L" (" + std::to_wstring(_pImpl->_last_index / 1024.0 / 1024 / 1024) + L" GB)", true);
-                }
-                watch.start();
-            }
-        }
-
-        if (read_async.error_text().empty())
-        {
-            _pImpl->write_index_file();
-        }
-        else
-        {
-            throw std::runtime_error(read_async.error_text());
-        }
-    }
-
-    _pImpl->_n->print(L"Total number of wikidata items in " + _pImpl->_file_name.wstring() + L": " + std::to_wstring(_pImpl->_index.size()), true);
-}
-
-void Wikidata::index_entry(const std::wstring& line, const std::streamoff streampos) const
-{
-    static const std::wstring id_tag(L"\"id\":\"");
-    size_t                    id0 = line.find(id_tag);
-
-    if (id0 != std::wstring::npos)
-    {
-        size_t       id1 = line.find(L"\"", id0 + id_tag.size() + 1);
-        std::wstring idw(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
-        std::string  id = string::unicode::to_utf8(idw);
-
-        std::lock_guard lock(_pImpl->_mtx);
-        _pImpl->_index[id]  = streampos;
-        _pImpl->_last_entry = id;
-        _pImpl->_last_index = streampos;
-    }
-}
-
-void Wikidata::process_name(const std::wstring& wikidata_name)
-{
-    if (!_pImpl->_has_json)
-    {
-        return;
-    }
-
-    std::string id = string::unicode::to_utf8(wikidata_name);
-
-    {
-        std::lock_guard lock(_pImpl->_mtx);
-        if (_pImpl->_index.count(id) == 0)
-        {
-            return;
-        }
-    }
-
-    std::wifstream stream(_pImpl->_file_name);
-    stream.seekg(_pImpl->_index.at(id));
-
-    std::wstring line;
-    std::getline(stream, line);
-    process_entry(line, true, false, false, false, "");
-}
-
-void Wikidata::process_node(const Node node, const std::string& /* lang */)
-{
-    if (!_pImpl->_has_json && Network::is_var(node))
-    {
-        return;
-    }
-
-    std::lock_guard lock(_pImpl->_mtx);
-
-    if (!_pImpl->_n->has_name(node, "en"))
-    {
-        const std::wstring name = _pImpl->_n->get_name(node, "wikidata", false, false);
-        if (!name.empty())
-        {
-            process_name(name);
-            const std::wstring english_name = _pImpl->_n->get_name(node, "en", false, false);
-            if (english_name.empty())
-            {
-                if (_pImpl->_logging)
-                {
-                    _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L")", true);
-                }
-                _pImpl->_n->set_name(node, name, "en"); // In case a node has no name in Wikidata (like e.g. Q3071250) we want to avoid trying multiple times to find one.
-            }
-            else if (_pImpl->_logging)
-            {
-                _pImpl->_n->print(L"Fetched node '" + name + L"' (" + std::to_wstring(node) + L") --> '" + english_name + L"'", true);
-            }
-        }
-    }
-}
-
-void Wikidata::export_entry(const std::wstring& wid) const
-{
-    if (!_pImpl->_has_json)
-    {
-        throw std::runtime_error("Cannot export Wikidata entry: original JSON file not available");
-    }
-
-    std::string id = string::unicode::to_utf8(wid);
-
-    auto it = _pImpl->_index.find(id);
-    if (it == _pImpl->_index.end())
-        throw std::runtime_error("Command .wikidata-export: ID '" + id + "' not found in index.");
-
-    std::streamoff pos = it->second;
-
-    std::ifstream in(_pImpl->_file_name.string(), std::ios::binary);
-    if (!in) throw std::runtime_error("Command .wikidata-export: Could not open Wikidata file '" + _pImpl->_file_name.string() + "'");
-
-    in.seekg(pos);
-
-    std::string line;
-    std::getline(in, line);
-
-    std::string   out_file = id + ".json";
-    std::ofstream out(out_file, std::ios::binary);
-    if (!out) throw std::runtime_error("Command .wikidata-export: Could not create output file '" + out_file + "'");
-
-    out << line;
-}
-
 void Wikidata::set_logging(bool do_log)
 {
     _pImpl->_logging = do_log;
-}
-
-// ------------------------------------------------- Wikidata::Impl
-
-bool Wikidata::Impl::read_index_file()
-{
-    if (!_has_json)
-    {
-        return false;
-    }
-
-    auto index_path = index_file_name();
-    if (!std::filesystem::exists(index_path))
-    {
-        return false;
-    }
-
-    _n->print(L"Reading index file " + index_path.wstring() + L"...", true);
-
-#ifdef _WIN32
-    #define fileno _fileno
-#endif
-    FILE* file = fopen(index_path.string().c_str(), "rb");
-    if (!file)
-    {
-        _n->print(L"Failed to open index file", true);
-        return false;
-    }
-    kj::FdInputStream              rawInput(fileno(file));
-    kj::BufferedInputStreamWrapper bufferedInput(rawInput);
-
-    // Set ReaderOptions for large data
-    ::capnp::ReaderOptions options;
-    options.traversalLimitInWords = 1ULL << 30; // ~8GB; adjust if needed
-
-    // Read main message
-    ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-    auto                         indexMain = mainMessage.getRoot<WikidataIndex>();
-
-    uint32_t chunkCount = indexMain.getChunkCount();
-    _index.clear();
-
-    for (uint32_t chunkIdx = 0; chunkIdx < chunkCount; ++chunkIdx)
-    {
-        ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
-        auto                         chunk = chunkMessage.getRoot<IndexChunk>();
-        if (chunk.getChunkIndex() != chunkIdx)
-        {
-            fclose(file);
-            throw std::runtime_error("Invalid index chunk order");
-        }
-        for (auto pair : chunk.getPairs())
-        {
-            _index[pair.getKey()] = static_cast<std::streamoff>(pair.getValue());
-        }
-        // Debug: Log progress
-        std::cerr << "Loaded index chunk " << chunkIdx + 1 << "/" << chunkCount << ", current index size=" << _index.size() << std::endl;
-    }
-
-    fclose(file);
-    _n->print(L"Finished reading", true);
-
-    return true;
-}
-
-void Wikidata::Impl::write_index_file() const
-{
-    if (!_has_json)
-    {
-        return;
-    }
-
-    auto index_path = index_file_name();
-    _n->print(L"Writing index file " + index_path.wstring() + L"...", true);
-
-    const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
-
-#ifdef _WIN32
-    #define fileno _fileno
-#endif
-    FILE* file = fopen(index_path.string().c_str(), "wb");
-    if (!file)
-    {
-        throw std::runtime_error("Failed to open index file for writing: " + index_path.string());
-    }
-    kj::FdOutputStream output(fileno(file));
-
-    // Main message
-    ::capnp::MallocMessageBuilder mainMessage(1u << 26);
-    auto                          indexMain = mainMessage.initRoot<WikidataIndex>();
-
-    size_t chunkCount = (_index.size() + chunkSize - 1) / chunkSize;
-    indexMain.setChunkCount(static_cast<uint32_t>(chunkCount));
-
-    // Write main message
-    ::capnp::writePackedMessage(output, mainMessage);
-
-    // Chunk the map
-    auto it = _index.begin();
-    for (size_t chunkIdx = 0; chunkIdx < chunkCount; ++chunkIdx)
-    {
-        ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
-        auto                          chunk = chunkMessage.initRoot<IndexChunk>();
-        chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
-
-        size_t thisChunkSize = std::min(chunkSize, _index.size() - chunkIdx * chunkSize);
-        auto   pairs         = chunk.initPairs(thisChunkSize);
-        size_t pIdx          = 0;
-        for (size_t i = 0; i < thisChunkSize; ++i, ++it)
-        {
-            pairs[pIdx].setKey(it->first);
-            pairs[pIdx].setValue(static_cast<uint64_t>(it->second));
-            ++pIdx;
-        }
-        ::capnp::writePackedMessage(output, chunkMessage);
-    }
-
-    fclose(file);
-    _n->print(L"Finished writing", true);
-}
-
-std::filesystem::path Wikidata::Impl::index_file_name() const
-{
-    return _file_name.parent_path() / (_file_name.stem().string() + ".index");
 }

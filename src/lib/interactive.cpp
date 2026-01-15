@@ -199,7 +199,7 @@ void console::Interactive::process(std::wstring line) const
 
             if (!assigns_to_var.empty())
             {
-                _pImpl->_n->set_name(fact, assigns_to_var, _pImpl->_n->lang());
+                _pImpl->_n->set_name(fact, assigns_to_var, _pImpl->_n->lang(), true);
             }
 
             std::wstring output;
@@ -429,7 +429,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
         L".cleanup                    – Remove isolated nodes and clean name mappings",
         L".wikidata-index <json>      – Generate index only (for faster future loads)",
-        L".wikidata-export <wid>      – Export a single Wikidata entry as JSON",
         L".wikidata-constraints <json> <dir> – Export constraints to a directory",
         L"",
         L"Type \".help <command>\" for detailed information about a specific command."};
@@ -573,10 +572,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".wikidata-index", L".wikidata-index <json_file>\n"
                              L"Only generates the index file for the specified Wikidata dump"},
 
-        {L".wikidata-export", L".wikidata-export <wikidata_id>\n"
-                              L"Exports a single Wikidata entry (e.g., Q42 or P31) as a JSON file.\n"
-                              L"Requires that an index has been generated previously."},
-
         {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                    L"Processes the Wikidata dump and exports constraint scripts\n"
                                    L"to the specified output directory."}};
@@ -644,7 +639,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             }
             else
             {
-                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
             }
         }
         else if (node_in_current_lang == 0)
@@ -652,24 +647,24 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             if (node_in_target_lang == 0)
             {
                 node_in_current_lang = _n->node(name_in_current_lang);
-                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
                 _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') does not exist yet in either language => created it.", true);
             }
             else
             {
-                _n->set_name(node_in_target_lang, name_in_current_lang, current_lang);
+                _n->set_name(node_in_target_lang, name_in_current_lang, current_lang, true);
                 _n->print(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
             }
         }
         else if (node_in_target_lang == 0)
         {
-            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
             _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
         }
-        else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false, true) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false, true))
+        else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false))
         {
             _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') have the requested names, but are different nodes => Merging them.", true);
-            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang);
+            _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
         }
         else
         {
@@ -1009,7 +1004,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             network::StopWatch watch;
             watch.start();
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            _wikidata->generate_index();
             _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
             watch.stop();
             _n->print(L" Time needed for importing: " + string::unicode::from_utf8(watch.format()), true);
@@ -1026,8 +1020,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         network::StopWatch watch;
         watch.start();
-        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-        _wikidata->generate_index();
+        _wikidata       = std::make_shared<Wikidata>(_n, cmd[1]);
         std::string dir = string::unicode::to_utf8(cmd[2]);
         _wikidata->import_all(false, dir);
         _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
@@ -1114,19 +1107,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
           } });
 
         _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-        _wikidata->generate_index();
-    }
-    else if (cmd[0] == L".wikidata-export")
-    {
-        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-export: Missing Wikidata ID (e.g., P31 or Q42)");
-        if (!_wikidata) throw std::runtime_error("Command .wikidata-export: Wikidata not loaded. Run .wikidata-index <file> first.");
-
-        std::wstring wid = cmd[1];
-        std::string  id  = string::unicode::to_utf8(wid);
-
-        _wikidata->export_entry(wid);
-
-        _n->print(L"Exported '" + wid + L"' to '" + string::unicode::from_utf8(id + ".json") + L"'", true);
     }
     else if (cmd[0] == L".remove-rules")
     {
@@ -1674,7 +1654,7 @@ network::Node console::Interactive::Impl::process_fact(const std::vector<std::ws
             if (var == variables.left.end())
             {
                 network::Node node = _n->var();
-                _n->set_name(node, token, _n->lang());
+                _n->set_name(node, token, _n->lang(), false);
                 variables.left.insert(boost::bimap<std::wstring, network::Node>::left_value_type(token, node));
 
                 if (variables.left.find(token) == variables.left.end())
