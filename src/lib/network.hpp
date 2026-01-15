@@ -401,7 +401,16 @@ namespace zelph
 
             static inline uint64_t mix_bits(uint64_t seed, uint64_t value)
             {
-                seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 12) + (seed >> 4);
+                // Scramble value to avoid collisions of sequential IDs
+                // (MurmurHash3 64-bit finalizer)
+                value ^= value >> 33;
+                value *= 0xff51afd7ed558ccdULL;
+                value ^= value >> 33;
+                value *= 0xc4ceb9fe1a85ec53ULL;
+                value ^= value >> 33;
+
+                // Boost hash_combine 64-bit (using standard shifts 6 and 2)
+                seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
                 return seed;
             }
 
@@ -478,7 +487,7 @@ namespace zelph
             }
 
             // get predecessors / incoming edges
-            adjacency_set get_left(const Node b)
+            adjacency_set get_left(const Node b) const
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_right);
                 auto                                it = _right.find(b);
@@ -490,7 +499,7 @@ namespace zelph
             }
 
             // get successors / outgoing edges
-            adjacency_set get_right(const Node b)
+            adjacency_set get_right(const Node b) const
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_left);
                 auto                                it = _left.find(b);

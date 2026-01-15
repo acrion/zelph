@@ -41,13 +41,13 @@ namespace zelph
             Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
             ~Wikidata();
 
-            void import_all(bool filter_existing_only = false, const std::string& constraints_dir = "");
+            void import_all(const std::string& constraints_dir = "");
             void set_logging(bool do_log);
 
         private:
             void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
-            void process_entry(const std::wstring& line, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, const std::string& constraints_dir);
-            void process_import(const std::wstring& line, const std::wstring& id_str, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, size_t id1);
+            void process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
+            void process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
 
             class Impl;
             Impl* const _pImpl; // must stay at top of members list because of initialization order

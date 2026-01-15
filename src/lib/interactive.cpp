@@ -1004,7 +1004,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             network::StopWatch watch;
             watch.start();
             _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            _wikidata->import_all(false); // false, i.e. we do no filtering anymore (was: _n->has_language("wikidata") - so we only imported statements that were connected to existing nodes in the script)
+            _wikidata->import_all();
             watch.stop();
             _n->print(L" Time needed for importing: " + string::unicode::from_utf8(watch.format()), true);
         }
@@ -1022,7 +1022,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         watch.start();
         _wikidata       = std::make_shared<Wikidata>(_n, cmd[1]);
         std::string dir = string::unicode::to_utf8(cmd[2]);
-        _wikidata->import_all(false, dir);
+        _wikidata->import_all(dir);
         _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     else if (cmd[0] == L".list-rules")

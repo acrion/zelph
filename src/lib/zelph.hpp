@@ -90,6 +90,13 @@ namespace zelph
             explicit Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print);
             ~Zelph();
 
+            struct FactComponents
+            {
+                Node          subject   = 0;
+                Node          predicate = 0;
+                adjacency_set objects;
+            };
+
             class AllNodeView
             {
             private:
@@ -142,13 +149,14 @@ namespace zelph
             adjacency_set        filter(const adjacency_set& source, Node target) const;
             adjacency_set        filter(Node fact, Node relationType, Node target) const;
             static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
-            adjacency_set        get_left(const Node b);
-            adjacency_set        get_right(const Node b);
+            adjacency_set        get_left(const Node b) const;
+            adjacency_set        get_right(const Node b) const;
             bool                 has_left_edge(Node b, Node a) const;
             bool                 has_right_edge(Node a, Node b) const;
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 condition(Node op, const adjacency_set& conditions) const;
+            FactComponents       extract_fact_components(Node relation) const;
             void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
             void                 print(const std::wstring&, const bool) const;
             static std::string   get_version();

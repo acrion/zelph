@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <boost/algorithm/string.hpp>
 
+#include <bitset>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -475,12 +476,12 @@ adjacency_set Zelph::filter(const adjacency_set& source, const std::function<boo
     return result;
 }
 
-adjacency_set Zelph::get_left(const Node b)
+adjacency_set Zelph::get_left(const Node b) const
 {
     return _pImpl->get_left(b);
 }
 
-adjacency_set Zelph::get_right(const Node b)
+adjacency_set Zelph::get_right(const Node b) const
 {
     return _pImpl->get_right(b);
 }
@@ -553,6 +554,31 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
             print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
             print(L"noObjectsAreConnectedFromRelation == " + std::to_wstring(noObjectsAreConnectedFromRelation), true);
+
+            FactComponents actual = extract_fact_components(relation);
+            print(L"Hash collision detected for relation=" + std::to_wstring(relation), true);
+            print(L"Expected inputs to create_hash:", true);
+            print(L"  Subject:   " + std::to_wstring(subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(subject).to_string()) + L")", true);
+            print(L"  Predicate: " + std::to_wstring(predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(predicate).to_string()) + L")", true);
+            print(L"  Objects:", true);
+            for (Node obj : objects)
+            {
+                print(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+            }
+
+            print(L"Actual inputs in existing relation:", true);
+            print(L"  Subject:   " + std::to_wstring(actual.subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.subject).to_string()) + L")", true);
+            print(L"  Predicate: " + std::to_wstring(actual.predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.predicate).to_string()) + L")", true);
+            print(L"  Objects:", true);
+            for (Node obj : actual.objects)
+            {
+                print(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+            }
+
+            static int hash_collision_count = 0;
+            ++hash_collision_count;
+            print(L"Hash collision count: " + std::to_wstring(hash_collision_count), true);
+
             assert(false);
         }
     }
@@ -1106,6 +1132,51 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
         raw_edges.emplace_back(WrapperNode{false, current}, placeholder_wrap, arrow);
         all_nodes.insert(placeholder_wrap);
     }
+}
+
+// Extracts the components (subject, predicate, objects) from a relation node.
+Zelph::FactComponents Zelph::extract_fact_components(Node relation) const
+{
+    FactComponents components;
+    auto           left  = get_left(relation);
+    auto           right = get_right(relation);
+
+    // Find subject: The node present in both left and right (bidirectional connection)
+    for (Node candidate : right)
+    {
+        if (left.count(candidate) == 1)
+        {
+            components.subject = candidate;
+            break;
+        }
+    }
+
+    if (components.subject == 0)
+    {
+        // No subject found (possibly corrupted data)
+        return components;
+    }
+
+    // Find predicate: In right, but not the subject
+    for (Node candidate : right)
+    {
+        if (candidate != components.subject)
+        {
+            components.predicate = candidate;
+            break;
+        }
+    }
+
+    // Find objects: In left, but not the subject
+    for (Node candidate : left)
+    {
+        if (candidate != components.subject)
+        {
+            components.objects.insert(candidate);
+        }
+    }
+
+    return components;
 }
 
 void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors)

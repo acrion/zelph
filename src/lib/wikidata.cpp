@@ -54,6 +54,8 @@ using namespace zelph::network;
 using boost::escaped_list_separator;
 using boost::tokenizer;
 
+// #define SINGLE_THREADED_IMPORT
+
 class Wikidata::Impl
 {
 public:
@@ -65,7 +67,10 @@ public:
 
     network::Zelph*       _n{nullptr};
     std::filesystem::path _file_name;
-    std::recursive_mutex  _mtx;
+    std::recursive_mutex  _mtx_read;
+#ifdef SINGLE_THREADED_IMPORT
+    std::mutex _mtx_network;
+#endif
     bool                  _logging{true};
     std::filesystem::path _bin_file;
     bool                  _has_json{false};
@@ -113,7 +118,7 @@ Wikidata::~Wikidata()
     delete _pImpl;
 }
 
-void Wikidata::import_all(bool filter_existing_only, const std::string& constraints_dir)
+void Wikidata::import_all(const std::string& constraints_dir)
 {
     const bool export_constraints = !constraints_dir.empty();
 
@@ -147,6 +152,8 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
 
     if (export_constraints || !cache_loaded)
     {
+        const std::string additional_language_to_import = "en";
+
         if (export_constraints)
         {
             _pImpl->_n->print(L"Exporting constraints from file " + _pImpl->_file_name.wstring(), true);
@@ -171,6 +178,11 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
         const unsigned int          num_threads = std::thread::hardware_concurrency();
         std::atomic<unsigned int>   active_threads{num_threads};
         std::vector<std::thread>    workers;
+#ifdef _DEBUG
+        const bool log = true;
+#else
+        const bool log = false;
+#endif
 
         // Worker function: each thread processes lines from ReadAsync
         std::mutex read_mtx;
@@ -190,7 +202,7 @@ void Wikidata::import_all(bool filter_existing_only, const std::string& constrai
                 }
 
                 bytes_read.store(streampos, std::memory_order_relaxed);
-                process_entry(line, true, false, filter_existing_only, filter_existing_only, constraints_dir);
+                process_entry(line, additional_language_to_import, log, constraints_dir);
             }
 
             active_threads.fetch_sub(1, std::memory_order_relaxed);
@@ -601,47 +613,40 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
     }
 }
 
-void Wikidata::process_import(const std::wstring& line, const std::wstring& id_str, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, size_t id1)
+void Wikidata::process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1)
 {
-    Node subject        = _pImpl->_n->get_node(id_str, "wikidata");
-    bool subject_exists = (subject != 0);
+    Node         subject = 0;
+    std::wstring name_in_additional_language;
 
-    if (!filter_existing_nodes && subject == 0)
+    if (!additional_language_to_import.empty())
     {
-        subject        = _pImpl->_n->node(id_str, "wikidata");
-        subject_exists = true;
-    }
-
-    if (subject_exists)
-    {
-        size_t                    language0;
-        static const std::wstring language_tag(L"{\"language\":\"");
-        size_t                    labels       = line.find(L"\"labels\":{");
-        size_t                    aliases      = line.find(L"\"aliases\":{", id1 + 7);
-        size_t                    descriptions = line.find(L"\"descriptions\":{", id1 + 7);
-
-        while ((language0 = line.find(language_tag, id1 + 7)) != std::wstring::npos
-               && language0 > labels
-               && (aliases == std::wstring::npos || language0 < aliases)
-               && (descriptions == std::wstring::npos || language0 < descriptions))
+        static const std::wstring language_tag(L"{\"language\":\"" + string::unicode::from_utf8(additional_language_to_import) + L"\",\"value\":\"");
+        const size_t              language0 = line.find(language_tag, id1 + 7);
+        if (language0 != std::wstring::npos)
         {
-            size_t      language1 = line.find(L"\"", language0 + language_tag.size());
-            std::string language  = string::unicode::to_utf8(line.substr(language0 + language_tag.size(), language1 - language0 - language_tag.size()));
-
-            static const std::wstring value_tag(L"\"value\":\"");
-            const size_t              id0 = line.find(value_tag, language1 + 1);
-            id1                           = line.find(L"\"", id0 + value_tag.size() + 1);
-            std::wstring value(line.substr(id0 + value_tag.size(), id1 - id0 - value_tag.size()));
-
-            if (import_english && language == "en")
+            if (language0 > line.find(L"\"labels\":{"))
             {
-                _pImpl->_n->set_name(subject, value, language, false);
+                const size_t aliases = line.find(L"\"aliases\":{", id1 + 7);
+
+                if (aliases == std::wstring::npos || language0 < aliases)
+                {
+                    const size_t descriptions = line.find(L"\"descriptions\":{", id1 + 7);
+
+                    if (descriptions == std::wstring::npos || language0 < descriptions)
+                    {
+                        id1                         = line.find(L"\"", language0 + language_tag.size() + 1);
+                        name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
+                    }
+                }
             }
         }
     }
 
     size_t                    property0;
     static const std::wstring property_tag(LR"(":[{"mainsnak":{"snaktype":"value","property":")");
+#ifdef SINGLE_THREADED_IMPORT
+    std::unique_lock lock(_pImpl->_mtx_network, std::defer_lock);
+#endif
 
     while ((property0 = line.find(property_tag, id1 + 1)) != std::wstring::npos)
     {
@@ -653,18 +658,9 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
             throw std::runtime_error("Invalid property '" + string::unicode::to_utf8(property_str) + "' in " + string::unicode::to_utf8(line));
         }
 
-        bool process_this_property = true;
-        if (restrictive_property_filter)
-        {
-            if (_pImpl->_n->get_node(property_str, "wikidata") == 0)
-            {
-                process_this_property = false;
-            }
-        }
-
         static const std::wstring numeric_id_tag(LR"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
 
-        if (process_this_property && line.substr(property1, numeric_id_tag.size()) == numeric_id_tag)
+        if (line.substr(property1, numeric_id_tag.size()) == numeric_id_tag)
         {
             size_t id0 = property1 + numeric_id_tag.size();
 
@@ -687,58 +683,46 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                     id1                     = line.find(L"\"", id0);
                     std::wstring object_str = line.substr(id0, id1 - id0);
 
-                    bool should_import      = !filter_existing_nodes;
                     Node object_node_handle = 0;
 
-                    if (filter_existing_nodes)
+                    try
                     {
-                        if (restrictive_property_filter)
-                        {
-                            should_import = true;
-                        }
-                        else
-                        {
-                            object_node_handle = _pImpl->_n->get_node(object_str, "wikidata");
-                            if (subject_exists || object_node_handle != 0)
-                            {
-                                should_import = true;
-                            }
-                        }
-                    }
+#ifdef SINGLE_THREADED_IMPORT
+                        if (!lock.owns_lock()) lock.lock();
+#endif
 
-                    if (should_import)
-                    {
-                        try
+                        if (subject == 0)
                         {
+                            subject = _pImpl->_n->get_node(id_str, "wikidata");
+
                             if (subject == 0)
                             {
-                                subject        = _pImpl->_n->node(id_str, "wikidata");
-                                subject_exists = true;
-                            }
-
-                            if (object_node_handle == 0)
-                            {
-                                object_node_handle = _pImpl->_n->node(object_str, "wikidata");
-                            }
-
-                            auto fact = _pImpl->_n->fact(
-                                subject,
-                                _pImpl->_n->node(property_str, "wikidata"),
-                                {object_node_handle});
-
-                            if (log)
-                            {
-                                std::wstring output;
-                                _pImpl->_n->format_fact(output, "en", fact, 3);
-                                _pImpl->_n->print(id_str + L":       en> " + output, false);
-                                _pImpl->_n->format_fact(output, "wikidata", fact, 3);
-                                _pImpl->_n->print(id_str + L": wikidata> " + output, false);
+                                subject = _pImpl->_n->node(id_str, "wikidata");
                             }
                         }
-                        catch (std::exception& ex)
+
+                        if (object_node_handle == 0)
                         {
-                            _pImpl->_n->print(string::unicode::from_utf8(ex.what()), true);
+                            object_node_handle = _pImpl->_n->node(object_str, "wikidata");
                         }
+
+                        auto fact = _pImpl->_n->fact(
+                            subject,
+                            _pImpl->_n->node(property_str, "wikidata"),
+                            {object_node_handle});
+
+                        if (log)
+                        {
+                            std::wstring output;
+                            _pImpl->_n->format_fact(output, "en", fact, 3);
+                            _pImpl->_n->print(id_str + L":       en> " + output, false);
+                            _pImpl->_n->format_fact(output, "wikidata", fact, 3);
+                            _pImpl->_n->print(id_str + L": wikidata> " + output, false);
+                        }
+                    }
+                    catch (std::exception& ex)
+                    {
+                        _pImpl->_n->print(string::unicode::from_utf8(ex.what()), true);
                     }
                 }
                 else
@@ -756,9 +740,30 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
             id1 += property_tag.size();
         }
     }
+
+    if (subject == 0)
+    {
+#ifdef SINGLE_THREADED_IMPORT
+        if (!lock.owns_lock()) lock.lock();
+#endif
+        subject = _pImpl->_n->get_node(id_str, "wikidata");
+
+        if (subject == 0)
+        {
+            subject = _pImpl->_n->node(id_str, "wikidata");
+        }
+    }
+
+    if (!name_in_additional_language.empty())
+    {
+#ifdef SINGLE_THREADED_IMPORT
+        assert(lock.owns_lock());
+#endif
+        _pImpl->_n->set_name(subject, name_in_additional_language, additional_language_to_import, false);
+    }
 }
 
-void Wikidata::process_entry(const std::wstring& line, const bool import_english, const bool log, const bool filter_existing_nodes, const bool restrictive_property_filter, const std::string& constraints_dir)
+void Wikidata::process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir)
 {
     const bool export_constraints = !constraints_dir.empty();
 
@@ -779,7 +784,7 @@ void Wikidata::process_entry(const std::wstring& line, const bool import_english
         }
         else
         {
-            process_import(line, id_str, import_english, log, filter_existing_nodes, restrictive_property_filter, id1);
+            process_import(line, id_str, additional_language_to_import, log, id1);
         }
     }
 }

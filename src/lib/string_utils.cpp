@@ -140,6 +140,14 @@ namespace zelph
             }
         }
 
+        // Converts a uint64_t value to its hexadecimal string representation (without '0x' prefix).
+        std::string to_hex(uint64_t value)
+        {
+            std::stringstream ss;
+            ss << std::hex << value;
+            return ss.str();
+        }
+
         // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
         // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
         // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
