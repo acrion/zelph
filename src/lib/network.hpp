@@ -45,7 +45,7 @@ namespace zelph
 {
     namespace network
     {
-        using adjacency_map = ankerl::unordered_dense::map<Node, adjacency_set>;
+        using adjacency_map = ankerl::unordered_dense::segmented_map<Node, adjacency_set>;
 
         inline std::shared_ptr<Variables> join(const Variables& v1, const Variables& v2)
         {
