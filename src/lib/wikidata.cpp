@@ -93,9 +93,9 @@ Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
         {
             json_path.replace_extension(".json");
         }
-        else if (ext != ".json")
+        else if (ext != ".json" && ext != ".bz2")
         {
-            throw std::runtime_error("Wikidata source path must have '.json' or '.bin' extension, got: " + ext);
+            throw std::runtime_error("Wikidata source path must have '.json', '.bz2' or '.bin' extension, got: " + ext);
         }
 
         return json_path; }()))
@@ -106,7 +106,7 @@ Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
     }
 
     std::filesystem::path bin_path = source_path;
-    if (bin_path.extension() == ".json")
+    if (bin_path.extension() == ".json" || bin_path.extension() == ".bz2")
     {
         bin_path.replace_extension(".bin");
     }

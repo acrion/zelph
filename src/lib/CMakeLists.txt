@@ -101,6 +101,31 @@ foreach (target IN LISTS CAPNP_TARGETS)
     endif ()
 endforeach ()
 
+FetchContent_Declare(
+    bzip2
+    GIT_REPOSITORY https://gitlab.com/bzip2/bzip2.git
+    GIT_TAG bzip2-1.0.8
+)
+
+FetchContent_GetProperties(bzip2)
+if (NOT bzip2_POPULATED)
+    FetchContent_Populate(bzip2)
+    add_library(bz2 STATIC
+        ${bzip2_SOURCE_DIR}/blocksort.c
+        ${bzip2_SOURCE_DIR}/bzlib.c
+        ${bzip2_SOURCE_DIR}/compress.c
+        ${bzip2_SOURCE_DIR}/crctable.c
+        ${bzip2_SOURCE_DIR}/decompress.c
+        ${bzip2_SOURCE_DIR}/huffman.c
+        ${bzip2_SOURCE_DIR}/randtable.c
+    )
+    target_include_directories(bz2 PUBLIC ${bzip2_SOURCE_DIR})
+    if (MSVC)
+        target_compile_definitions(bz2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif ()
+    set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif ()
+
 #FetchContent_Declare(
 #    acrion_cmake
 #    GIT_REPOSITORY git@github.com:acrion/cmake.git
@@ -146,7 +171,7 @@ add_library(zelph_lib SHARED
     ${CAPNP_SRCS}
 )
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2)
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
