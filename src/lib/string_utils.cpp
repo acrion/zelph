@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iostream>
 #include <locale>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 
 namespace zelph
