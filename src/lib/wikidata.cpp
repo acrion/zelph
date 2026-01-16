@@ -30,8 +30,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "stopwatch.hpp"
 #include "string_utils.hpp"
 
-#include "wikidata.capnp.h"
-
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include <kj/io.h>

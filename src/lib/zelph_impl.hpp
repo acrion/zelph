@@ -211,7 +211,7 @@ namespace zelph
 
                 // Set ReaderOptions for large data (adjust traversalLimit based on RAM; 1ULL << 30 = ~8GB)
                 ::capnp::ReaderOptions options;
-                options.traversalLimitInWords = 1ULL << 30; // Increase to handle huge lists
+                options.traversalLimitInWords = 4ULL << 30; // Increase to handle huge lists
                 options.nestingLimit          = 128;        // Increase if deep nesting
 
                 // Read main message
