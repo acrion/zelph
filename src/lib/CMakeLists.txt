@@ -135,7 +135,7 @@ endif ()
 #
 #include(${acrion_cmake_SOURCE_DIR}/set-cpp-version.cmake)
 
-capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp wikidata.capnp)
+capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp)
 
 add_library(zelph_lib SHARED
     # zelph::network

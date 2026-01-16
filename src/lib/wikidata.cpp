@@ -89,8 +89,8 @@ Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& source_path)
         std::filesystem::path json_path = source_path;
         if (ext == ".bin")
         {
-            json_path.replace_extension(".json");
-        }
+                json_path.replace_extension(".json");
+            }
         else if (ext != ".json" && ext != ".bz2")
         {
             throw std::runtime_error("Wikidata source path must have '.json', '.bz2' or '.bin' extension, got: " + ext);

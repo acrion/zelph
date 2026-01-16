@@ -428,7 +428,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
         L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
         L".cleanup                    – Remove isolated nodes and clean name mappings",
-        L".wikidata-index <json>      – Generate index only (for faster future loads)",
         L".wikidata-constraints <json> <dir> – Export constraints to a directory",
         L"",
         L"Type \".help <command>\" for detailed information about a specific command."};
@@ -568,9 +567,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".cleanup", L".cleanup\n"
                       L"Removes all nodes that have no connections (isolated nodes).\n"
                       L"Also cleans up associated entries in name mappings."},
-
-        {L".wikidata-index", L".wikidata-index <json_file>\n"
-                             L"Only generates the index file for the specified Wikidata dump"},
 
         {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                    L"Processes the Wikidata dump and exports constraint scripts\n"
@@ -1089,24 +1085,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
             }
         }
         list_predicate_value_usage(pred_arg, limit);
-    }
-    else if (cmd[0] == L".wikidata-index")
-    {
-        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-index: Missing json file name");
-        if (cmd.size() > 2) throw std::runtime_error("Command .wikidata-index: Unknown argument after json file name");
-
-        _n->set_print([&](const std::wstring& str, bool o)
-                      {
-          if (o)
-          {
-#ifdef _WIN32
-              std::wcout << str << std::endl;
-#else
-            std::clog << string::unicode::to_utf8(str) << std::endl;
-#endif
-          } });
-
-        _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
     }
     else if (cmd[0] == L".remove-rules")
     {

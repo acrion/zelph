@@ -1,0 +1,37 @@
+.lang wikidata
+.remove-rules
+.list-rules
+.prune-nodes A P31 Q8054
+.prune-nodes A P279 Q8054
+.prune-nodes A P31 Q7187
+.prune-nodes A P279 Q7187
+.prune-nodes A P31 Q11173
+.prune-nodes A P279 Q11173
+.prune-nodes A P31 Q13442814
+.prune-nodes A P31 Q16521
+.prune-nodes A P31 Q5
+.prune-nodes A P131 B
+.prune-nodes A P31 Q4167836
+.prune-nodes A P31 Q523
+.prune-nodes A P31 Q318
+.prune-nodes A P31 Q4167410
+.prune-nodes A P31 Q113145171
+.prune-nodes A P31 Q11266439
+.prune-nodes A P31 Q79007
+.prune-nodes A P31 Q13433827
+.prune-nodes A P31 Q101352
+.prune-nodes A P31 Q13100073
+.prune-nodes A P279 Q277338
+.prune-nodes A P31 Q277338
+.prune-nodes A P1433 B
+.prune-nodes A P31 Q3305213
+.prune-nodes A P31 Q4022
+.prune-nodes A P31 Q8502
+.prune-nodes A P31 Q486972
+.prune-nodes A P31 Q2668072
+.prune-nodes A P31 Q3331189
+.prune-nodes A P407 Q7850
+.prune-nodes A P407 Q7737
+.prune-nodes A P921 B
+.prune-nodes A P17 B
+.cleanup

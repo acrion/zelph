@@ -226,9 +226,5 @@ zelph provides several additional commands for working with Wikidata:
   ```
   .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
   ```
-* **Generate Index Only:** If you only want to build the index without importing data:
-  ```
-  .wikidata-index download/wikidata-20250127-all.json
-  ```
 
 Inference is performed using the general `.run`, `.run-once`, `.run-md`, and `.run-file` commands (see [Performing Inference](index.md#performing-inference)).
