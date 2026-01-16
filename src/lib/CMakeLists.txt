@@ -139,6 +139,7 @@ capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp wikidata.capnp)
 
 add_library(zelph_lib SHARED
     # zelph::network
+    adjacency_set.hpp
     answer.cpp
     answer.hpp
     zelph.cpp

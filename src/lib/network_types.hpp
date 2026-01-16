@@ -34,9 +34,8 @@ namespace zelph
 {
     namespace network
     {
-        using Node          = uint64_t;
-        using Variables     = std::map<Node, Node>;
-        using adjacency_set = ankerl::unordered_dense::set<Node>;
+        using Node      = uint64_t;
+        using Variables = std::map<Node, Node>;
 
         static_assert(sizeof(Node) == 8,
                       "Node must be exactly 64 bits (8 bytes) in size. This implementation uses "

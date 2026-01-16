@@ -25,7 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "network_types.hpp"
+#include "adjacency_set.hpp"
 #include "string_utils.hpp"
 
 #include <ankerl/unordered_dense.h>

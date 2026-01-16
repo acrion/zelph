@@ -33,8 +33,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-using adjacency_set = std::unordered_set<Node>;
-
 Reasoning::Reasoning(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(core_node_names, print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
