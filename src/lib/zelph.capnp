@@ -39,7 +39,7 @@ struct AdjChunk {  # New: For chunked _left/_right
   pairs @2 :List(AdjPair);
 }
 
-struct ZelphImpl {  # Main message, now without direct left/right
+struct ZelphImplOld {
   probabilities @0 :List(ProbPair);
   last @1 :UInt64;
   lastVar @2 :UInt64;
@@ -49,4 +49,40 @@ struct ZelphImpl {  # Main message, now without direct left/right
   formatFactLevel @6 :Int32;
   leftChunkCount @7 :UInt32;  # Number of chunks for left
   rightChunkCount @8 :UInt32;  # Number of chunks for right
+}
+
+struct ZelphImpl {
+  probabilities @0 :List(ProbPair);
+  last @1 :UInt64;
+  lastVar @2 :UInt64;
+  nodeCount @3 :UInt64;
+  nameOfNode @4 :List(NameLangMap);
+  nodeOfName @5 :List(NodeLangMap);
+  formatFactLevel @6 :Int32;
+  leftChunkCount @7 :UInt32;  # Number of chunks for left
+  rightChunkCount @8 :UInt32;  # Number of chunks for right
+  nameOfNodeChunkCount @9 :UInt32;  # Number of chunks for name_of_node (over all languages)
+  nodeOfNameChunkCount @10 :UInt32;  # Number of chunks for node_of_name (over all languages)
+}
+
+struct NamePair {
+  key @0 : UInt64;
+  value @1 : Text;
+}
+
+struct NameChunk {
+  lang @0 : Text;
+  chunkIndex @1 : UInt32;
+  pairs @2 : List(NamePair);
+}
+
+struct NodeNamePair {
+  key @0 : Text;
+  value @1 : UInt64;
+}
+
+struct NodeNameChunk {
+  lang @0 : Text;
+  chunkIndex @1 : UInt32;
+  pairs @2 : List(NodeNamePair);
 }
