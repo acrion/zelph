@@ -7,6 +7,7 @@ theme:
 nav:
   - Home: index.md
   - Quick Start Guide: quickstart.md
+  - Binary Data Files: binaries.md
   - Use Case - Wikidata:
       - Overview: wikidata.md
       - Wikimedia Rapid Fund Report: grant-report.md

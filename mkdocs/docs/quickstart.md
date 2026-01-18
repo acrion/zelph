@@ -52,7 +52,7 @@ After entering these statements, zelph will automatically infer that Berlin is l
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
-In section [Semantic Network Structure](#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.
+In section [Semantic Network Structure](index.md#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.
 
 ### Using Sample Scripts
 
@@ -143,12 +143,11 @@ Key commands include:
 - `.prune-facts <pattern>`   – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
-- `.wikidata-export <wid>`   – Export single Wikidata entry
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?
 
-- Explore the [Core Concepts](#core-concepts) to understand how zelph represents knowledge
-- Learn about [Rules and Inference](#rules-and-inference) to leverage zelph’s reasoning capabilities
-- Check out the [Example Script](#example-script) for a comprehensive demonstration
+- Explore the [Core Concepts](index.md#core-concepts) to understand how zelph represents knowledge
+- Learn about [Rules and Inference](index.md#rules-and-inference) to leverage zelph’s reasoning capabilities
+- Check out the [Example Script](index.md#example-script) for a comprehensive demonstration
 
