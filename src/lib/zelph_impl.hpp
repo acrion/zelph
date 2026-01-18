@@ -150,7 +150,7 @@ namespace zelph
 #endif
             }
 
-            void saveToFile(const std::string& filename)
+            void saveToFile(const std::string& filename) const
             {
                 const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
 
@@ -347,7 +347,6 @@ namespace zelph
                 kj::FdInputStream              rawInput(fileno(file));
                 kj::BufferedInputStreamWrapper bufferedInput(rawInput);
 
-                // Versuche zuerst, als neues Schema zu laden (standard)
                 bool is_old_format = false;
                 try
                 {
