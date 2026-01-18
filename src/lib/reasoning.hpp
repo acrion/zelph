@@ -1,26 +1,7 @@
 /*
 Copyright (c) 2025, 2026 acrion innovations GmbH
 Authors: Stefan Zipproth, s.zipproth@acrion.ch
-
-This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
-
-zelph is offered under a commercial and under the AGPL license.
-For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
-
-AGPL licensing:
-
-zelph is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-zelph is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with zelph. If not, see <https://www.gnu.org/licenses/>.
+...
 */
 
 #pragma once
@@ -44,11 +25,11 @@ namespace zelph::network
 {
     struct RulePos
     {
-        Node                       node;
-        adjacency_set::iterator    end;
-        adjacency_set::iterator    index;
-        std::shared_ptr<Variables> variables{std::make_shared<Variables>()};
-        std::shared_ptr<Variables> unequals{std::make_shared<Variables>()};
+        Node                               node;
+        std::shared_ptr<std::vector<Node>> conditions;
+        size_t                             index;
+        std::shared_ptr<Variables>         variables{std::make_shared<Variables>()};
+        std::shared_ptr<Variables>         unequals{std::make_shared<Variables>()};
     };
 
     struct ReasoningContext
@@ -70,9 +51,10 @@ namespace zelph::network
         void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
 
     private:
-        void evaluate(RulePos rule, ReasoningContext& ctx);
-        bool contradicts(const Variables& variables, const Variables& unequals) const;
-        void deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
+        void                               evaluate(RulePos rule, ReasoningContext& ctx);
+        bool                               contradicts(const Variables& variables, const Variables& unequals) const;
+        void                               deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
+        std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars);
 
         std::atomic<bool>                   _done{false};
         std::unique_ptr<wikidata::Markdown> _markdown;

@@ -99,7 +99,24 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         if (!_n->_pImpl->is_var(s)) subject_is_bound = true;
     }
 
-    if (_pool && _relation_variable == 0 && !subject_is_bound)
+    // NEW OPTIMIZATION: Do NOT use parallel if the object is bound (const or bound var).
+    // In this case, an object-driven index lookup (in sequential mode) is much faster than scanning the relation.
+    bool object_is_bound = false;
+    for (Node o : _objects)
+    {
+        if (!_n->_pImpl->is_var(o))
+        {
+            object_is_bound = true;
+            break;
+        }
+        else if (_variables->find(o) != _variables->end())
+        {
+            object_is_bound = true;
+            break;
+        }
+    }
+
+    if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound)
     {
         Node fixed_rel = *_relation_list.begin();
 

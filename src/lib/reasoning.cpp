@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm> // For std::sort
 #include <cassert>
 #include <iostream> // For std::clog
 
@@ -317,15 +318,16 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
     if (condition && condition != core.Causes)
     {
-        adjacency_set conditions;
-        conditions.insert(condition);
-
         ctx.current_condition = condition;
         ctx.next.clear();
 
+        // Create initial vector with single condition
+        auto conditions = std::make_shared<std::vector<Node>>();
+        conditions->push_back(condition);
+
         try
         {
-            evaluate(RulePos({rule, conditions.end(), conditions.begin()}), ctx);
+            evaluate(RulePos({rule, conditions, 0}), ctx);
         }
         catch (const contradiction_error& error)
         {
@@ -356,10 +358,94 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     }
 }
 
+// Greedy Sort to optimize execution order based on variable bindings
+std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set& conditions, const Variables& current_vars)
+{
+    auto sorted = std::make_shared<std::vector<Node>>();
+    sorted->reserve(conditions.size());
+
+    // Copy to a temporary list we can destructively consume
+    std::vector<Node> pending(conditions.begin(), conditions.end());
+
+    // Track local variables as we simulate the binding process
+    Variables simulated_vars = current_vars;
+
+    while (!pending.empty())
+    {
+        auto best_it   = pending.end();
+        int  max_score = -999999;
+
+        for (auto it = pending.begin(); it != pending.end(); ++it)
+        {
+            Node cond  = *it;
+            int  score = 0;
+
+            adjacency_set objects;
+            Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
+
+            bool s_is_var = _pImpl->is_var(subject);
+            bool s_bound  = s_is_var && simulated_vars.count(subject);
+
+            if (!s_is_var)
+                score += 100; // Subject is constant (Great!)
+            else if (s_bound)
+                score += 100; // Subject is bound variable (Great!)
+            else
+                score -= 10; // Subject is unbound variable (Bad)
+
+            // Heuristic for objects (simplified, assumes 1 object usually)
+            for (Node obj : objects)
+            {
+                bool o_is_var = _pImpl->is_var(obj);
+                bool o_bound  = o_is_var && simulated_vars.count(obj);
+
+                if (!o_is_var)
+                    score += 50; // Object is constant (Good)
+                else if (o_bound)
+                    score += 50; // Object is bound variable (Good)
+                else
+                    score -= 10; // Object is unbound variable (Bad)
+            }
+
+            if (score > max_score)
+            {
+                max_score = score;
+                best_it   = it;
+            }
+        }
+
+        if (best_it != pending.end())
+        {
+            Node best_cond = *best_it;
+            sorted->push_back(best_cond);
+
+            // "Bind" variables for next iteration
+            adjacency_set objects;
+            Node          subject = parse_fact(best_cond, objects);
+            if (_pImpl->is_var(subject)) simulated_vars[subject] = 1; // Dummy bind
+            for (Node obj : objects)
+            {
+                if (_pImpl->is_var(obj)) simulated_vars[obj] = 1; // Dummy bind
+            }
+
+            pending.erase(best_it);
+        }
+        else
+        {
+            // Should not happen unless empty
+            break;
+        }
+    }
+
+    return sorted;
+}
+
 void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 {
-    Node condition  = *rule.index;                  // points to the relation: normally 'and', connecting several conditions, or the relation of a fact (which may consist of variables)
-    auto current_op = _pImpl->get_right(condition); // get the set of Nodes the relation points to, which is its type. Empty if the relation is a variable.
+    if (!rule.conditions || rule.index >= rule.conditions->size()) return;
+
+    Node condition  = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
+    auto current_op = _pImpl->get_right(condition);
 
     // condition points to
     //    (1) the rule itself (i.e. the relaton node pointing to core.Causes), and
@@ -374,13 +460,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
         if (!condition_back_link.empty())
         {
-            RulePos next(rule);
-            if (++next.index != next.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
+            // Optimization: Sort conditions to evaluate most constrained ones first
+            // This prevents combinatorial explosion (e.g. evaluating "K P279 Y" before K is bound)
+            auto sorted_conditions = optimize_order(condition_back_link, *rule.variables);
+            // Push next alternative (sibling of current AND-node logic) to stack if applicable
+            RulePos next_branch(rule);
+            if (++next_branch.index < next_branch.conditions->size())
             {
-                ctx.next.push_back(next);
+                ctx.next.push_back(next_branch);
             }
 
-            evaluate(RulePos({condition, condition_back_link.end(), condition_back_link.begin(), rule.variables, rule.unequals}), ctx);
+            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals}), ctx);
         }
     }
     else
@@ -409,15 +499,15 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 continue;
             }
 
-            auto temp_index = rule.index;
-            ++temp_index;
+            // Move to next condition in the sorted vector
+            size_t next_index = rule.index + 1;
 
-            if (temp_index != rule.end) // if we are on first recursion level, this will always fail, since the top list of conditions always has length 1
+            if (next_index < rule.conditions->size())
             {
                 RulePos next   = rule;
                 next.variables = joined;
                 next.unequals  = joined_unequals;
-                ++next.index;
+                next.index     = next_index;
 
                 ReasoningContext ctx_copy = ctx;
                 evaluate(next, ctx_copy);
@@ -509,7 +599,8 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
         if (!_generate_markdown && local_match_count > 0)
         {
-            std::clog << "Condition processed: " << local_match_count << " raw matches." << std::endl;
+            // Only log high volume conditions to avoid spamming unless explicit debugging needed
+            // std::clog << "Condition processed: " << local_match_count << " raw matches." << std::endl;
         }
     }
 }
