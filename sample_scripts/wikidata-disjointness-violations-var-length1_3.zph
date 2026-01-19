@@ -1,0 +1,45 @@
+.load /home/stefan/zelph/wikidata-20251222-all.bin
+.lang zelph
+
+# Top 1: concrete object vs abstract entity (93% of the total culprits)
+#.name e1 wikidata Q4406616
+#.name e2 wikidata Q7048977
+
+# Top 2: artificial object vs natural object
+.name e1 wikidata Q16686448
+.name e2 wikidata Q1970309
+
+# Top 3: natural physical object vs artificial physical object
+#.name e1 wikidata Q16686022
+#.name e2 wikidata Q8205328
+
+# Top 4: person vs organization
+#.name e1 wikidata Q215627
+#.name e2 wikidata Q43229
+
+# =============================================================================
+# Path lengths 1-3 on each side, all combinations
+# =============================================================================
+
+# Depth 1+1
+K P279 e1, K P279 e2 => !
+
+# Depth 1+2 and 2+1
+K P279 e1, K P279 Y, Y P279 e2 => !
+K P279 X, X P279 e1, K P279 e2 => !
+
+# Depth 2+2
+K P279 X, X P279 e1, K P279 Y, Y P279 e2 => !
+
+# Depth 1+3 and 3+1
+K P279 e1, K P279 A, A P279 B, B P279 e2 => !
+K P279 A, A P279 B, B P279 e1, K P279 e2 => !
+
+# Depth 2+3 and 3+2
+K P279 X, X P279 e1, K P279 A, A P279 B, B P279 e2 => !
+K P279 A, A P279 B, B P279 e1, K P279 Y, Y P279 e2 => !
+
+# Depth 3+3
+K P279 A, A P279 B, B P279 e1, K P279 C, C P279 D, D P279 e2 => !
+
+.run-md disjointness-violations-var-length1-3
