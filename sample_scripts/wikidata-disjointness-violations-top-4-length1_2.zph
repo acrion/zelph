@@ -1,3 +1,4 @@
+.load /home/stefan/zelph/wikidata-20251222-all.bin
 .lang wikidata
 
 # Top 1: concrete object vs abstract entity (93% of the total culprits)
@@ -23,3 +24,5 @@ K P279 Q215627, K P279 Y, Y P279 Q43229 => !
 K P279 Q43229, K P279 Y, Y P279 Q215627 => !
 X P31 Q215627, X P31 Y, Y P31 Q43229 => !
 X P31 Q43229, X P31 Y, Y P31 Q215627 => !
+
+.run-md disjointness-violations-top4-length1-2
