@@ -87,8 +87,6 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     _relation_index         = _relation_list.begin();
     _fact_index_initialized = false;
 
-    static std::unordered_set<Node> logged_relations;
-
     // parallel only with fixed relation
     // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
     bool subject_is_bound = false;
@@ -131,16 +129,11 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         auto   snap_end = std::chrono::steady_clock::now();
         double snap_ms  = std::chrono::duration<double, std::milli>(snap_end - snap_start).count();
 
-        if (logged_relations.insert(fixed_rel).second)
+        if (snap_ms > 100) // Only log significant snapshots
         {
-            std::clog << "Unification snapshot for relation " << fixed_rel
-                      << " – size: " << snapshot.size()
-                      << " (took " << snap_ms << " ms)";
-            if (snapshot.size() > 0)
-            {
-                std::clog << " >>> PARALLEL ACTIVATED";
-            }
-            std::clog << std::endl;
+            std::clog << "[Timer] Unification snapshot " << fixed_rel
+                      << " size=" << snapshot.size()
+                      << " took=" << snap_ms << "ms" << std::endl;
         }
 
         if (snapshot.size() > 0)
@@ -187,10 +180,6 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                        _queue_cv.notify_all();
                                    } });
             }
-        }
-        else
-        {
-            std::clog << "Sequential fallback for small snapshot (" << snapshot.size() << " facts)" << std::endl;
         }
     }
 }
