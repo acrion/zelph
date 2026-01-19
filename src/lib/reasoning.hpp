@@ -85,8 +85,8 @@ namespace zelph::network
         std::atomic<size_t>                 _skipped{0};
         std::mutex                          _mtx_output;
         std::mutex                          _mtx_network;
-        int                                 _total_matches{0};
-        int                                 _total_contradictions{0};
+        std::atomic<int>                    _total_matches{0};
+        std::atomic<int>                    _total_contradictions{0};
         std::unique_ptr<ThreadPool>         _pool;
         std::string                         _markdown_subdir;
         bool                                _prune_mode{false};

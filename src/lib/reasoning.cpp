@@ -479,24 +479,20 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
             this, condition, rule.node, rule.variables, rule.unequals, _pool.get());
 
-        size_t local_match_count = 0;
-
-        while (std::shared_ptr<Variables> match = u->Next())
+        // Define the processing logic for a single match (extracted to be usable in both serial and parallel loops)
+        auto process_match = [&](std::shared_ptr<Variables> match)
         {
-            ++local_match_count;
-            ++_total_matches;
-
             std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
             std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u->Unequals());
 
             if (contradicts(*joined, *joined_unequals))
             {
-                continue;
+                return;
             }
 
             if (joined->empty())
             {
-                continue;
+                return;
             }
 
             // Move to next condition in the sorted vector
@@ -593,14 +589,41 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     print(L"Answer: " + output, true);
                 }
             }
-        }
+        };
 
-        u->wait_for_completion();
-
-        if (!_generate_markdown && local_match_count > 0)
+        if (u->uses_parallel())
         {
-            // Only log high volume conditions to avoid spamming unless explicit debugging needed
-            // std::clog << "Condition processed: " << local_match_count << " raw matches." << std::endl;
+            // The unification object has already started its own producer tasks in the pool.
+            // We now launch consumer tasks in the same pool. They will execute concurrently with producers.
+
+            size_t num_threads = _pool->count();
+
+            for (size_t i = 0; i < num_threads; ++i)
+            {
+                _pool->enqueue([&, u_ptr = u.get()]()
+                               {
+                    int local_matches = 0;
+                    while (std::shared_ptr<Variables> match = u_ptr->Next())
+                    {
+                        local_matches++;
+                        process_match(match);
+                    }
+                    _total_matches += local_matches; });
+            }
+
+            // Wait for all consumers (and consequently all producers) to finish
+            _pool->wait();
+        }
+        else
+        {
+            // Standard serial execution on the main thread
+            while (std::shared_ptr<Variables> match = u->Next())
+            {
+                ++_total_matches;
+                process_match(match);
+            }
+            // Ensure cleanup
+            u->wait_for_completion();
         }
     }
 }
