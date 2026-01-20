@@ -195,7 +195,42 @@ void console::Interactive::process(std::wstring line) const
             }
             else
             {
-                fact = _pImpl->process_fact(tokens, variables);
+                std::vector<std::vector<std::wstring>> sub_conditions_tokens;
+                std::vector<std::wstring>              current_batch;
+
+                for (const auto& t : tokens)
+                {
+                    if (t == And)
+                    {
+                        if (!current_batch.empty())
+                        {
+                            sub_conditions_tokens.push_back(current_batch);
+                            current_batch.clear();
+                        }
+                    }
+                    else
+                    {
+                        current_batch.push_back(t);
+                    }
+                }
+                if (!current_batch.empty())
+                {
+                    sub_conditions_tokens.push_back(current_batch);
+                }
+
+                if (sub_conditions_tokens.size() > 1)
+                {
+                    network::adjacency_set condition_nodes;
+                    for (const auto& batch : sub_conditions_tokens)
+                    {
+                        condition_nodes.insert(_pImpl->process_fact(batch, variables));
+                    }
+                    fact = _pImpl->_n->condition(_pImpl->_n->core.And, condition_nodes);
+                }
+                else
+                {
+                    fact = _pImpl->process_fact(tokens, variables);
+                }
             }
 
             if (!assigns_to_var.empty())
@@ -207,23 +242,20 @@ void console::Interactive::process(std::wstring line) const
             _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact, 3);
             _pImpl->_n->print(output, false);
 
-            if (!is_rule)
+            bool contains_variable = false;
+
+            for (const auto& token : tokens)
             {
-                bool contains_variable = false;
-
-                for (const auto& token : tokens)
+                if (Impl::is_var(token))
                 {
-                    if (Impl::is_var(token))
-                    {
-                        contains_variable = true;
-                        break;
-                    }
+                    contains_variable = true;
+                    break;
                 }
+            }
 
-                if (contains_variable)
-                {
-                    _pImpl->_n->apply_rule(0, fact); // query
-                }
+            if (contains_variable)
+            {
+                _pImpl->_n->apply_rule(0, fact); // query
             }
         }
     }
