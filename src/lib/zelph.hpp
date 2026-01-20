@@ -140,6 +140,10 @@ namespace zelph
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
             void                     cleanup_isolated(size_t& removed_count);
             size_t                   cleanup_names();
+            size_t                   get_name_of_node_size(const std::string& lang) const;
+            size_t                   get_node_of_name_size(const std::string& lang) const;
+            size_t                   language_count() const;
+            size_t                   rule_count() const;
 
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;

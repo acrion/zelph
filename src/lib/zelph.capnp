@@ -55,7 +55,7 @@ struct ZelphImpl {
   probabilities @0 :List(ProbPair);
   last @1 :UInt64;
   lastVar @2 :UInt64;
-  nodeCount @3 :UInt64;
+  nodeCount @3 :UInt64; # TODO Deprecated
   nameOfNode @4 :List(NameLangMap);
   nodeOfName @5 :List(NodeLangMap);
   formatFactLevel @6 :Int32;

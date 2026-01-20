@@ -254,6 +254,30 @@ size_t Zelph::cleanup_names()
     return _pImpl->cleanup_dangling_names();
 }
 
+size_t Zelph::get_name_of_node_size(const std::string& lang) const
+{
+    std::lock_guard lock(_pImpl->_mtx_name_of_node);
+    auto            it = _pImpl->_name_of_node.find(lang);
+    return (it != _pImpl->_name_of_node.end()) ? it->second.size() : 0;
+}
+
+size_t Zelph::get_node_of_name_size(const std::string& lang) const
+{
+    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    auto            it = _pImpl->_node_of_name.find(lang);
+    return (it != _pImpl->_node_of_name.end()) ? it->second.size() : 0;
+}
+
+size_t Zelph::language_count() const
+{
+    return get_languages().size();
+}
+
+size_t Zelph::rule_count() const
+{
+    return get_rules().size();
+}
+
 Node Zelph::node(const std::wstring& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
