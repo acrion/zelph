@@ -64,7 +64,7 @@ From AllNumbers.csv, the most significant pairs by culprit count:
 
 ## Experimental Results
 
-### Testing with December 2024 Dump
+### Testing with December 2025 Dump
 
 I loaded the complete Wikidata dump (118M nodes) and tested various rule configurations.
 
@@ -112,7 +112,7 @@ K P279 Q11432, K P279 Q11435 => !
 
 Result: **0 contradictions**
 
-This suggests these specific violations have been **fixed** in the 4 months between the paper (August 2024) and our dump (December 2024).
+This suggests these specific violations have been **fixed** in the 16 months between the paper (August 2024) and our dump (December 2025).
 
 ### Verifying Individual Queries Work
 

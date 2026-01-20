@@ -12,6 +12,7 @@ nav:
       - Overview: wikidata.md
       - Wikimedia Rapid Fund Report: grant-report.md
       - Disjointness Violations: disjointness-violations.md
+      - Mereology Violations: mereology-violations.md
       - Detected Split Order Violations:
           - Gene: split-order-classes/gene.md
           - Protein: split-order-classes/protein.md
