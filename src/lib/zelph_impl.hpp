@@ -66,7 +66,6 @@ namespace zelph
                 }
                 _last     = impl.getLast();
                 _last_var = impl.getLastVar();
-                _node_count.store(impl.getNodeCount(), std::memory_order_relaxed);
 
                 _format_fact_level = impl.getFormatFactLevel();
             }
@@ -82,7 +81,6 @@ namespace zelph
                 }
                 _last     = impl_old.getLast();
                 _last_var = impl_old.getLastVar();
-                _node_count.store(impl_old.getNodeCount(), std::memory_order_relaxed);
 
                 _format_fact_level = impl_old.getFormatFactLevel();
             }
@@ -184,7 +182,6 @@ namespace zelph
                 }
                 impl.setLast(_last);
                 impl.setLastVar(_last_var);
-                impl.setNodeCount(_node_count.load(std::memory_order_relaxed));
 
                 size_t nameOfNodeChunkTotal = 0;
                 for (const auto& langMap : _name_of_node)

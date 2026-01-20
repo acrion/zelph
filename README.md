@@ -145,6 +145,7 @@ Key commands include:
 - `.prune-facts <pattern>`   – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
+- `.stat`                    – Show network statistics (nodes, RAM usage, name entries, languages, rules)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?

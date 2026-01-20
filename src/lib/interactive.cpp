@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 
 #include "network.hpp"
+#include "platform_utils.hpp"
 #include "reasoning.hpp"
 #include "stopwatch.hpp"
 #include "string_utils.hpp"
@@ -428,6 +429,7 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         L".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
         L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
         L".cleanup                    – Remove isolated nodes and clean name mappings",
+        L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
         L".wikidata-constraints <json> <dir> – Export constraints to a directory",
         L"",
         L"Type \".help <command>\" for detailed information about a specific command."};
@@ -567,6 +569,15 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {L".cleanup", L".cleanup\n"
                       L"Removes all nodes that have no connections (isolated nodes).\n"
                       L"Also cleans up associated entries in name mappings."},
+
+        {L".stat", L".stat\n"
+                   L"Shows current network statistics:\n"
+                   L"- Number of nodes\n"
+                   L"- RAM usage (in GiB, if available)\n"
+                   L"- Total entries in name-of-node mappings\n"
+                   L"- Total entries in node-of-name mappings\n"
+                   L"- Number of languages\n"
+                   L"- Number of rules"},
 
         {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                    L"Processes the Wikidata dump and exports constraint scripts\n"
@@ -1197,6 +1208,42 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->print(L"Cleaning up name mappings...", true);
         size_t names_removed = _n->cleanup_names();
         _n->print(L"Removed " + std::to_wstring(names_removed) + L" dangling name entries.", true);
+    }
+    else if (cmd[0] == L".stat")
+    {
+        if (cmd.size() != 1) throw std::runtime_error("Command .stat takes no arguments");
+
+        std::clog << "Network Statistics:" << std::endl;
+        std::clog << "------------------------" << std::endl;
+
+        std::clog << "Nodes: " << _n->count() << std::endl;
+
+        size_t ram_usage = zelph::platform::get_process_memory_usage();
+        if (ram_usage > 0)
+        {
+            std::clog << "RAM Usage: " << std::fixed << std::setprecision(1)
+                      << (static_cast<double>(ram_usage) / (1024 * 1024 * 1024)) << " GiB" << std::endl;
+        }
+
+        if (_n->language_count() > 0)
+        {
+            std::clog << "Name-of-Node Entries by language:" << std::endl;
+            for (const std::string& lang : _n->get_languages())
+            {
+                std::clog << "  " << lang << ": " << _n->get_name_of_node_size(lang) << std::endl;
+            }
+
+            std::clog << "Name-of-Node Entries by language:" << std::endl;
+            for (const std::string& lang : _n->get_languages())
+            {
+                std::clog << "  " << lang << ": " << _n->get_node_of_name_size(lang) << std::endl;
+            }
+        }
+
+        std::clog << "Languages: " << _n->language_count() << std::endl;
+        std::clog << "Rules: " << _n->rule_count() << std::endl;
+
+        std::clog << "------------------------" << std::endl;
     }
     else if (cmd[0] == L".save")
     {

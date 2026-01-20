@@ -175,7 +175,6 @@ namespace zelph
                 std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
                 _left.erase(node);
                 _right.erase(node);
-                _node_count.fetch_sub(1, std::memory_order_relaxed);
             }
 
             void merge(Node from, Node into)
@@ -340,13 +339,13 @@ namespace zelph
 
                 _left[_last]  = adjacency_set{};
                 _right[_last] = adjacency_set{};
-                _node_count.fetch_add(1, std::memory_order_relaxed);
                 return _last;
             }
 
             Node count() const
             {
-                return _node_count.load(std::memory_order_relaxed);
+                std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+                return _left.size();
             }
 
             Node var()
@@ -519,7 +518,6 @@ namespace zelph
             std::map<Node, long double> _probabilities;
             Node                        _last{Node()};
             Node                        _last_var{Node()};
-            std::atomic<Node>           _node_count{0};
             mutable std::mutex          _mtx_prob;
             mutable std::shared_mutex   _smtx_left;
             mutable std::shared_mutex   _smtx_right;
