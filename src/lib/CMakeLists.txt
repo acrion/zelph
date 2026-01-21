@@ -163,6 +163,8 @@ add_library(zelph_lib SHARED
     wikidata_text_compressor.hpp
     wikidata_token_encoder.hpp
     # zelph::console
+    data_manager.hpp
+    data_manager.cpp
     interactive.cpp
     interactive.hpp
     read_async.cpp

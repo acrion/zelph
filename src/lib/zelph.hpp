@@ -84,6 +84,10 @@ namespace zelph
         using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
         using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 
+        // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
+        // provides low-level API for graph manipulation, and handles raw binary serialization (I/O)
+        // of the network state via load_from_file/save_to_file. It is agnostic to the semantic meaning
+        // or source format of the data.
         class ZELPH_EXPORT Zelph
         {
         public:
