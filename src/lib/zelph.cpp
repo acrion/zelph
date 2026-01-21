@@ -38,7 +38,7 @@ using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.9.2";
+    return "0.9.3";
 }
 
 Zelph::Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
