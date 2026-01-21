@@ -32,8 +32,6 @@ brew install zelph
 choco install zelph
 ```
 
-*(Note: During the initial review period, the additional argument `--version 0.9.2` is required. Once approved, `choco install zelph` will suffice.)*
-
 ### Basic Usage
 
 Once installed, you can run zelph in interactive mode simply by typing `zelph` in your terminal.
@@ -677,7 +675,7 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 ## Project Status
 
-The project is currently in **Version 0.9.2 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
+The project is currently in **Version 0.9.3 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.
 
 Current focus areas include:
 
