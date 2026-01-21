@@ -34,6 +34,9 @@ namespace zelph
 {
     namespace console
     {
+        // The command-line interface (REPL). It manages user input, translates commands into operations
+        // on the DataManager or Zelph instance, and visualizes results. It holds the current state of
+        // how the data was loaded via the DataManager.
         class ZELPH_EXPORT Interactive
         {
         public:

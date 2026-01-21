@@ -96,7 +96,7 @@ public:
     std::vector<network::Node> resolve_nodes_by_name(const std::wstring& name) const;
     void                       generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const;
 
-    std::shared_ptr<Wikidata>                       _wikidata;
+    std::shared_ptr<DataManager>                    _data_manager;
     std::unordered_map<network::Node, std::wstring> _core_node_names;
     network::Reasoning* const                       _n;
 
@@ -876,9 +876,9 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         std::string subdir = string::unicode::to_utf8(cmd[1]);
         _n->set_markdown_subdir(subdir);
         _n->print(L"Running with markdown export...", true);
-        if (_wikidata)
+        if (_data_manager)
         {
-            _wikidata->set_logging(false);
+            _data_manager->set_logging(false);
         }
         _n->run(false, true, false);
     }
@@ -1010,10 +1010,13 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         {
             network::StopWatch watch;
             watch.start();
-            _wikidata = std::make_shared<Wikidata>(_n, cmd[1]);
-            _wikidata->import_all();
+
+            // This detects if it's Wikidata (json/bz2 OR bin with source) or Generic (bin only)
+            _data_manager = DataManager::create(_n, cmd[1]);
+            _data_manager->load();
+
             watch.stop();
-            _n->print(L" Time needed for importing: " + string::unicode::from_utf8(watch.format()), true);
+            _n->print(L" Time needed for loading/importing: " + string::unicode::from_utf8(watch.format()), true);
         }
         else
         {
@@ -1027,9 +1030,31 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
         network::StopWatch watch;
         watch.start();
-        _wikidata       = std::make_shared<Wikidata>(_n, cmd[1]);
-        std::string dir = string::unicode::to_utf8(cmd[2]);
-        _wikidata->import_all(dir);
+
+        std::string           dir        = string::unicode::to_utf8(cmd[2]);
+        std::filesystem::path input_path = cmd[1];
+
+        // Specific Logic: This command strictly requires Wikidata capability.
+        // We update the global manager to reflect this load context.
+        _data_manager = DataManager::create(_n, input_path);
+
+        // Dynamic cast to check if the factory returned a Wikidata manager
+        auto wikidata_mgr = std::dynamic_pointer_cast<Wikidata>(_data_manager);
+
+        if (wikidata_mgr)
+        {
+            wikidata_mgr->import_all(dir);
+        }
+        else
+        {
+            // Fallback: If create() returned Generic (e.g. user pointed to a bin file without source),
+            // but user wants constraints. This implies user error (missing source) or misuse.
+            // But if user supplied JSON, create() definitely returns Wikidata.
+            // If user supplied BIN, create() checks for source. If no source, it returns Generic.
+            // If Generic, we can't export constraints.
+            throw std::runtime_error("Cannot export constraints: Original Wikidata source file not found or invalid format.");
+        }
+
         _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     else if (cmd[0] == L".list-rules")
@@ -1072,7 +1097,15 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                 throw std::runtime_error("Invalid max entries argument");
             }
         }
+        if (_data_manager)
+        {
+            _data_manager->set_logging(false);
+        }
         list_predicate_usage(limit);
+        if (_data_manager)
+        {
+            _data_manager->set_logging(true);
+        }
     }
     else if (cmd[0] == L".list-predicate-value-usage")
     {
@@ -1095,8 +1128,17 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
                 throw std::runtime_error("Invalid max entries argument");
             }
         }
+        if (_data_manager)
+        {
+            _data_manager->set_logging(false);
+        }
         list_predicate_value_usage(pred_arg, limit);
+        if (_data_manager)
+        {
+            _data_manager->set_logging(true);
+        }
     }
+
     else if (cmd[0] == L".remove-rules")
     {
         _n->remove_rules();
@@ -1273,11 +1315,6 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
 
 void console::Interactive::Impl::list_predicate_usage(size_t limit)
 {
-    if (_wikidata)
-    {
-        _wikidata->set_logging(false);
-    }
-
     // Map to store predicate node and its usage count
     std::map<network::Node, size_t> predicate_usage_counts;
 
@@ -1335,21 +1372,10 @@ void console::Interactive::Impl::list_predicate_usage(size_t limit)
     _n->print(L"------------------------", true);
     if (limit && limit < total)
         _n->print(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" predicates.", true);
-
-    // Restore Wikidata logging state
-    if (_wikidata)
-    {
-        _wikidata->set_logging(true);
-    }
 }
 
 void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& pred_arg, size_t limit /*= 0*/)
 {
-    if (_wikidata)
-    {
-        _wikidata->set_logging(false);
-    }
-
     // Resolve the predicate node (accept name in current language or raw numeric ID)
     network::Node pred = _n->get_node(pred_arg);
     if (pred == 0)
@@ -1436,11 +1462,6 @@ void console::Interactive::Impl::list_predicate_value_usage(const std::wstring& 
     if (total == 0)
     {
         _n->print(L"(No values found for this predicate)", true);
-    }
-
-    if (_wikidata)
-    {
-        _wikidata->set_logging(true);
     }
 }
 

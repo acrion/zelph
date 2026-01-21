@@ -63,14 +63,9 @@ public:
     {
     }
 
-    Zelph* _n{nullptr};
-
-    // Path to the original source file (JSON data), potentially compressed.
-    // This may be empty if initialized from a .bin file and the source is missing.
-    // ReadAsync handles .bz2 decompression automatically.
+    Zelph*                _n{nullptr};
     std::filesystem::path _original_source_path;
-
-    std::recursive_mutex _mtx_read;
+    std::recursive_mutex  _mtx_read;
 #ifdef SINGLE_THREADED_IMPORT
     std::mutex _mtx_network;
 #endif
@@ -79,38 +74,32 @@ public:
 };
 
 Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& input_path)
-    : _pImpl(new Impl(n, resolve_original_source_path(input_path)))
+    : DataManager(n, input_path)
+    , _pImpl(new Impl(n, resolve_original_source_path(input_path))) // Use the base class static helper
 {
-    // Validate input extension for sanity, though resolve_original_source_path handles the logic.
-    // We just ensure we aren't getting something completely wild if it's not .bin.
-    if (input_path.extension() != ".bin")
-    {
-        auto ext = input_path.extension();
-        if (ext != ".json" && ext != ".bz2")
-        {
-            throw std::runtime_error("Wikidata input path must have '.json', '.bz2' or '.bin' extension, got: " + ext.string());
-        }
-    }
-    // Note: If input was .bin, we don't check existence here, assuming the user wants to load the cache.
-    // The load_from_file call later will fail if the .bin doesn't exist.
+    // Logic from previous constructor regarding .bin path calculation
+    // Validate input logic is partly handled by factory, but we double check or handle specific logic here.
 
     // Calculate the path for the binary cache (.bin).
     std::filesystem::path bin_path = input_path;
 
     if (bin_path.extension() == ".bz2")
     {
-        bin_path.replace_extension(""); // Strip .bz2 to avoid .json.bin
+        bin_path.replace_extension("");
     }
 
-    // Ensure it ends in .bin (replaces .json or .bin with .bin)
     bin_path.replace_extension(".bin");
-
     _pImpl->_bin_path = bin_path;
 }
 
 Wikidata::~Wikidata()
 {
     delete _pImpl;
+}
+
+void Wikidata::load()
+{
+    import_all();
 }
 
 void Wikidata::import_all(const std::string& constraints_dir)
@@ -133,9 +122,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
             try
             {
                 _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
-
                 _pImpl->_n->load_from_file(_pImpl->_bin_path.string());
-
                 _pImpl->_n->print(L"Cache loaded successfully.", true);
                 cache_loaded = true;
             }
@@ -149,7 +136,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
     // If we need to process the original source (either for export or because cache failed/missing)
     if (export_constraints || !cache_loaded)
     {
-        // CRITICAL CHECK: Do we have a source file?
+        // Check if source exists
         if (_pImpl->_original_source_path.empty())
         {
             // This happens if initialized with a .bin file, but the corresponding source file wasn't found.
@@ -227,10 +214,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
             auto current_time           = std::chrono::steady_clock::now();
-            auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                              current_time - last_update_time)
-                                              .count()
-                                        / 1000.0;
+            auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count() / 1000.0;
 
             if (time_since_last_update >= 1.0)
             {
@@ -765,55 +749,6 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 #endif
         _pImpl->_n->set_name(subject, name_in_additional_language, additional_language_to_import, false);
     }
-}
-
-std::filesystem::path Wikidata::resolve_original_source_path(const std::filesystem::path& input_path)
-{
-    namespace fs = std::filesystem;
-
-    if (input_path.empty())
-    {
-        throw std::runtime_error("Wikidata input path must not be empty");
-    }
-
-    // CASE 1: Input is NOT a cache file (.bin).
-    // It must be the direct source file. We check for existence immediately.
-    if (input_path.extension() != ".bin")
-    {
-        if (!fs::exists(input_path))
-        {
-            throw std::runtime_error("Wikidata source file does not exist: " + input_path.string());
-        }
-        return input_path;
-    }
-
-    // CASE 2: Input IS a cache file (.bin).
-    // We try to locate the corresponding source file, but it is optional at this stage.
-
-    fs::path base = input_path;
-    base.replace_extension(""); // Remove .bin extension
-
-    // 2a. Check for uncompressed JSON
-    fs::path candidate_json = base;
-    if (candidate_json.extension() != ".json")
-    {
-        candidate_json.replace_extension(".json");
-    }
-    if (fs::exists(candidate_json)) return candidate_json;
-
-    // 2b. Check for compressed JSON (.json.bz2)
-    fs::path candidate_json_bz2 = candidate_json;
-    candidate_json_bz2 += ".bz2";
-    if (fs::exists(candidate_json_bz2)) return candidate_json_bz2;
-
-    // 2c. Check for generic compressed file (.bz2)
-    fs::path candidate_bz2 = base;
-    candidate_bz2.replace_extension(".bz2");
-    if (fs::exists(candidate_bz2)) return candidate_bz2;
-
-    // Source not found. This is valid for now (loading from cache only).
-    // We return an empty path.
-    return std::filesystem::path();
 }
 
 void Wikidata::process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir)
