@@ -28,8 +28,25 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Clang and LLD (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install clang lld -y
+          clang --version
+          ld.lld --version
+
+      - name: Set extra CMake flags
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            echo "EXTRA_FLAGS=-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=\"-fuse-ld=lld\" -DCMAKE_SHARED_LINKER_FLAGS=\"-fuse-ld=lld\"" >> $GITHUB_ENV
+          else
+            echo "EXTRA_FLAGS=" >> $GITHUB_ENV
+          fi
+
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S src
 
       - name: Build zelph
         run: cmake --build build --config Release
@@ -46,6 +63,9 @@ jobs:
               source_dir = "build/bin"
           
           output_filename = "zelph-${{ matrix.name }}"
+
+          print(f"Zipping content of {source_dir} to {output_filename}.zip")
+
           shutil.make_archive(output_filename, 'zip', source_dir)
 
       - name: Upload Release Asset
