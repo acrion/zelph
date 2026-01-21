@@ -38,13 +38,18 @@ namespace zelph
         class Wikidata
         {
         public:
-            Wikidata(network::Zelph* n, const std::filesystem::path& file_name);
+            // input_path can be a raw source file (.json, .bz2) or a cache file (.bin)
+            Wikidata(network::Zelph* n, const std::filesystem::path& input_path);
             ~Wikidata();
 
             void import_all(const std::string& constraints_dir = "");
             void set_logging(bool do_log);
 
         private:
+            // Helper to find the original source file (json/bz2) corresponding to the input.
+            // If input is .bin and no source is found, returns an empty path.
+            static std::filesystem::path resolve_original_source_path(const std::filesystem::path& input_path);
+
             void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
             void process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
             void process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
