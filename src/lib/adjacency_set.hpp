@@ -298,22 +298,122 @@ namespace zelph
                 using pointer           = const Node*;
                 using reference         = const Node&;
 
+                using VecIter = typename std::vector<Node>::const_iterator;
+
             private:
                 Mode _mode;
                 union
                 {
-                    const Node*                                ptr_single;
-                    typename std::vector<Node>::const_iterator it_generic;
+                    const Node* ptr_single;
+                    VecIter     it_generic;
                 };
 
                 bool _single_is_end = false;
 
             public:
-                const_iterator() : _mode(Mode::Empty), ptr_single(nullptr) {}
+                const_iterator()
+                    : _mode(Mode::Empty), ptr_single(nullptr) {}
 
-                explicit const_iterator(std::nullptr_t) : _mode(Mode::Empty), ptr_single(nullptr) {}
-                const_iterator(const Node* ptr, bool is_end) : _mode(Mode::Single), ptr_single(ptr), _single_is_end(is_end) {}
-                const_iterator(typename std::vector<Node>::const_iterator it, Mode m) : _mode(m), it_generic(it) {}
+                explicit const_iterator(std::nullptr_t)
+                    : _mode(Mode::Empty), ptr_single(nullptr) {}
+
+                const_iterator(const Node* ptr, bool is_end)
+                    : _mode(Mode::Single), ptr_single(ptr), _single_is_end(is_end) {}
+
+                const_iterator(VecIter it, Mode m)
+                    : _mode(m)
+                {
+                    // Konstruiert den Iterator im Speicher der Union
+                    new (&it_generic) VecIter(it);
+                }
+
+                // 1. Destruktor
+                ~const_iterator()
+                {
+                    if (_mode == Mode::Vector || _mode == Mode::Set)
+                    {
+                        it_generic.~VecIter(); // Korrekter Aufruf über den Alias
+                    }
+                }
+
+                // 2. Copy Constructor
+                const_iterator(const const_iterator& other)
+                    : _mode(other._mode), _single_is_end(other._single_is_end)
+                {
+                    if (_mode == Mode::Single || _mode == Mode::Empty)
+                    {
+                        ptr_single = other.ptr_single;
+                    }
+                    else
+                    {
+                        new (&it_generic) VecIter(other.it_generic);
+                    }
+                }
+
+                // 3. Move Constructor
+                const_iterator(const_iterator&& other) noexcept
+                    : _mode(other._mode), _single_is_end(other._single_is_end)
+                {
+                    if (_mode == Mode::Single || _mode == Mode::Empty)
+                    {
+                        ptr_single = other.ptr_single;
+                    }
+                    else
+                    {
+                        new (&it_generic) VecIter(std::move(other.it_generic));
+                    }
+                }
+
+                // 4. Copy Assignment
+                const_iterator& operator=(const const_iterator& other)
+                {
+                    if (this != &other)
+                    {
+                        // Alten Iterator zerstören, falls aktiv
+                        if (_mode == Mode::Vector || _mode == Mode::Set)
+                        {
+                            it_generic.~VecIter();
+                        }
+
+                        _mode          = other._mode;
+                        _single_is_end = other._single_is_end;
+
+                        if (_mode == Mode::Single || _mode == Mode::Empty)
+                        {
+                            ptr_single = other.ptr_single;
+                        }
+                        else
+                        {
+                            new (&it_generic) VecIter(other.it_generic);
+                        }
+                    }
+                    return *this;
+                }
+
+                // 5. Move Assignment
+                const_iterator& operator=(const_iterator&& other) noexcept
+                {
+                    if (this != &other)
+                    {
+                        if (_mode == Mode::Vector || _mode == Mode::Set)
+                        {
+                            it_generic.~VecIter();
+                        }
+
+                        _mode          = other._mode;
+                        _single_is_end = other._single_is_end;
+
+                        if (_mode == Mode::Single || _mode == Mode::Empty)
+                        {
+                            ptr_single = other.ptr_single;
+                        }
+                        else
+                        {
+                            new (&it_generic) VecIter(std::move(other.it_generic));
+                        }
+                    }
+                    return *this;
+                }
 
                 reference operator*() const
                 {

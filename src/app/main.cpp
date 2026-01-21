@@ -56,7 +56,11 @@ int main(int argc, char** argv)
 
         if (show_version)
         {
+#ifdef _WIN32
+            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()) << std::endl;
+#else
             std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+#endif
             return 0;
         }
 
@@ -68,11 +72,17 @@ int main(int argc, char** argv)
         if (!script_files.empty())
             std::wcout << L"Ready." << std::endl;
 
-        std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+#ifdef _WIN32
+        std::wcout << L"zelph " << zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()) << std::endl;
         std::wcout << std::endl;
-
         if (script_files.empty())
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
+#else
+        std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+        std::cout << std::endl;
+        if (script_files.empty())
+            std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
+#endif
 
         std::wcout << L"-- interactive mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
         std::wcout << std::endl;
