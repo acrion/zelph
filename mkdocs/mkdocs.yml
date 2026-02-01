@@ -6,6 +6,7 @@ theme:
     - content.code.annotate
 nav:
   - Home: index.md
+  - Presentation: presentation.md
   - Quick Start Guide: quickstart.md
   - Performing Queries: queries.md
   - Binary Data Files: binaries.md

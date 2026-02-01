@@ -7,6 +7,14 @@ This project provides a powerful foundation for knowledge representation and aut
 With dedicated import functions and specialized semantic scripts (like [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph)),
 zelph offers powerful analysis capabilities for the complete Wikidata knowledge graph while remaining adaptable for any semantic domain.
 
+### Video Presentation
+Watch this video introduction to zelph, presented at the Wikidata Ontology Cleaning Task Force. For detailed section navigation and more context, visit the [full presentation page](presentation.md).
+
+<video controls width="100%">
+  <source src="/assets/2026-01-13-zelph.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
 ### Quick Start Guide 🚀
 
 see [this page](quickstart.md)
