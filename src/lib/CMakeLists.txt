@@ -71,6 +71,44 @@ elseif (MSVC)
 endif ()
 
 include(FetchContent)
+
+FetchContent_Declare(
+    janet
+    GIT_REPOSITORY https://github.com/janet-lang/janet.git
+    GIT_TAG v1.40.1
+    SOURCE_SUBDIR ""
+)
+
+FetchContent_MakeAvailable(janet)
+
+execute_process(
+    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false
+    WORKING_DIRECTORY ${janet_SOURCE_DIR}
+    RESULT_VARIABLE result
+)
+if (result)
+    message(FATAL_ERROR "Janet Meson setup failed: ${result}")
+endif ()
+
+execute_process(
+    COMMAND ninja -C build
+    WORKING_DIRECTORY ${janet_SOURCE_DIR}
+    RESULT_VARIABLE result
+)
+if (result)
+    message(FATAL_ERROR "Janet Ninja build failed: ${result}")
+endif ()
+
+add_library(janet_lib STATIC IMPORTED)
+set_target_properties(janet_lib PROPERTIES
+    IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/libjanet.a
+    INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
+)
+target_compile_definitions(janet_lib INTERFACE JANET_BUILD="\"amalgam\"")
+if (NOT WIN32)
+    target_compile_options(janet_lib INTERFACE -pthread)
+endif ()
+
 FetchContent_Declare(
     unordered_dense
     GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
@@ -174,11 +212,11 @@ add_library(zelph_lib SHARED
     ${CAPNP_SRCS}
 )
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(zelph_lib PRIVATE -w)
+    target_compile_options(zelph_lib PRIVATE -w -fpermissive)
     target_link_options(zelph_lib PRIVATE -w)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(zelph_lib PRIVATE /w)

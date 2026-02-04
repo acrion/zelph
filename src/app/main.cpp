@@ -41,6 +41,8 @@ int main(int argc, char** argv)
         std::vector<std::wstring> script_files;
         bool                      show_version = false;
 
+        std::vector<std::string> script_args;
+
         for (int i = 1; i < argc; ++i)
         {
             std::string arg = argv[i];
@@ -48,25 +50,29 @@ int main(int argc, char** argv)
             {
                 show_version = true;
             }
-            else
+            else if (script_files.empty())
             {
                 script_files.push_back(zelph::string::unicode::from_utf8(arg));
+            }
+            else
+            {
+                script_args.push_back(arg);
             }
         }
 
         if (show_version)
         {
 #ifdef _WIN32
-            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()) << std::endl;
+            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
 #else
-            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+            std::cout << "zelph " << interactive.get_version() << std::endl;
 #endif
             return 0;
         }
 
         for (const auto& file : script_files)
         {
-            interactive.import_file(file);
+            interactive.process_file(file, script_args);
         }
 
         if (!script_files.empty())
@@ -78,7 +84,7 @@ int main(int argc, char** argv)
         if (script_files.empty())
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #else
-        std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
+        std::cout << "zelph " << interactive.get_version() << std::endl;
         std::cout << std::endl;
         if (script_files.empty())
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;

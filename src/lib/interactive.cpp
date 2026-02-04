@@ -33,6 +33,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "wikidata.hpp"
 #include "wikidata_text_compressor.hpp"
 
+#include <janet.h>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/bimap.hpp>
 #include <boost/tokenizer.hpp>
@@ -53,9 +55,75 @@ using namespace zelph;
 using boost::escaped_list_separator;
 using boost::tokenizer;
 
+static int zelph_node_compare(void* p1, void* p2)
+{
+    network::Node n1 = *static_cast<network::Node*>(p1);
+    network::Node n2 = *static_cast<network::Node*>(p2);
+    return (n1 > n2) ? 1 : ((n1 < n2) ? -1 : 0);
+}
+
+static int zelph_node_hash(void* p, size_t size)
+{
+    (void)size;
+    network::Node n = *static_cast<network::Node*>(p);
+    // Simple hash for uint64
+    return static_cast<int32_t>(n ^ (n >> 32));
+}
+
+static void zelph_node_tostring(void* p, JanetBuffer* buffer)
+{
+    network::Node n = *static_cast<network::Node*>(p);
+    std::string   s = "<zelph/node " + std::to_string(n) + ">";
+    janet_buffer_push_bytes(buffer, (const uint8_t*)s.c_str(), (int32_t)s.size());
+}
+
+static const JanetAbstractType zelph_node_type = {
+    "zelph/node",
+    NULL,                // gc
+    NULL,                // gcmark
+    NULL,                // get
+    NULL,                // put
+    NULL,                // marshal
+    NULL,                // unmarshal
+    zelph_node_tostring, // tostring
+    zelph_node_compare,  // compare
+    zelph_node_hash,     // hash
+    NULL,                // next
+    NULL,                // call
+    NULL,                // length
+    NULL,                // bytes
+};
+
+static Janet zelph_wrap_node(network::Node n)
+{
+    network::Node* ptr = (network::Node*)janet_abstract(&zelph_node_type, sizeof(network::Node));
+    *ptr               = n;
+    return janet_wrap_abstract(ptr);
+}
+
+static network::Node zelph_unwrap_node(Janet val)
+{
+    if (janet_checktype(val, JANET_ABSTRACT))
+    {
+        void* abstract = janet_unwrap_abstract(val);
+        if (janet_abstract_type(abstract) == &zelph_node_type)
+        {
+            return *static_cast<network::Node*>(abstract);
+        }
+    }
+    // Fallback for small numbers (e.g., literals in the script such as 0 or 1)
+    if (janet_checktype(val, JANET_NUMBER))
+    {
+        return (network::Node)janet_unwrap_number(val);
+    }
+    return 0;
+}
+
 class console::Interactive::Impl
 {
 public:
+    static Impl* s_instance;
+
     Impl(Interactive* enclosing)
         : _n(new network::Reasoning(_core_node_names,
                                     [](const std::wstring& str, const bool)
@@ -68,6 +136,8 @@ public:
                                     }))
         , _interactive(enclosing)
     {
+        s_instance = this;
+
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_U16TEXT);
 #endif
@@ -80,14 +150,69 @@ public:
         _core_node_names[_n->core.IsA]                  = L"~";
         _core_node_names[_n->core.Unequal]              = L"!=";
         _core_node_names[_n->core.Contradiction]        = L"!";
+        _core_node_names[_n->core.FollowedBy]           = L":";
+        _core_node_names[_n->core.PartOf]               = L"∈";
+
+        janet_init();
+        _janet_env = janet_core_env(NULL);
+        register_zelph_functions();
+
+        std::string peg_setup = R"(
+            (def zelph-grammar
+              ~{:ws (set " \t\r\f\n\0\v")
+                :s* (any :ws)
+                :s+ (some :ws)
+                :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?@^_") (set "=><,"))
+
+                :sep-rule "=>"
+                :sep-cond ","
+
+                :var (capture (choice (range "AZ") (sequence "_" (any :symchars))))
+                :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
+                :raw-tok (capture (some :symchars))
+
+                :val-any (choice :quoted :var :raw-tok)
+
+                # Safe value excludes => and , to prevent consuming delimiters in rules
+                :val-safe (if-not (+ :sep-rule :sep-cond) :val-any)
+
+                :stmt-safe (sequence :val-safe :s+ :val-safe (some (sequence :s+ :val-safe)))
+                :grp-stmt-safe (group :stmt-safe)
+
+                # Conditions list: stmt , stmt , stmt
+                :cond-list (sequence :grp-stmt-safe (any (sequence :s* :sep-cond :s* :grp-stmt-safe)))
+
+                :rule-def (sequence (constant "rule")
+                                    (group :cond-list)
+                                    :s* :sep-rule :s*
+                                    (group :cond-list))
+
+                :stmt-any (sequence :val-any :s+ :val-any (some (sequence :s+ :val-any)))
+                :fact-def (sequence (constant "fact") :stmt-any)
+
+                :main (sequence :s* (choice :rule-def :fact-def) :s*)})
+
+            (defn zelph-safe-parse [peg text]
+               (peg/match peg text))
+        )";
+        process_janet_setup(peg_setup);
+
+        Janet out;
+        janet_dostring(_janet_env, "(def zelph-peg (peg/compile zelph-grammar))", "init", &out);
+        _zelph_peg = out;
+        janet_gcroot(_zelph_peg);
+    }
+
+    ~Impl()
+    {
+        if (s_instance == this) s_instance = nullptr;
+        janet_gcunroot(_zelph_peg);
+        janet_deinit();
     }
 
     void                       import_file(const std::wstring& file) const;
     void                       process_command(const std::vector<std::wstring>& cmd);
     void                       display_node_details(network::Node nd, bool resolved_from_name, int depth, int max_neighbors) const;
-    network::Node              process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables);
-    network::Node              process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes);
-    void                       process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const;
     static bool                is_var(std::wstring token);
     void                       list_predicate_usage(size_t limit);
     void                       list_predicate_value_usage(const std::wstring& pred_arg, size_t limit);
@@ -96,16 +221,137 @@ public:
     std::vector<network::Node> resolve_nodes_by_name(const std::wstring& name) const;
     void                       generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const;
 
+    std::string transform_subtree(Janet subtree) const;
+    std::string transform_token(Janet tok) const;
+
+    std::string   parse_zelph_to_janet(const std::string& input) const;
+    void          process_janet(const std::string& code, bool is_zelph_ast);
+    network::Node evaluate_janet_expression(const std::string& janet_code);
+    void          process_janet_setup(const std::string& code) const;
+
+    void process_zelph_file(const std::string& path, const std::vector<std::string>& args = {}) const;
+
     std::shared_ptr<DataManager>                    _data_manager;
     std::unordered_map<network::Node, std::wstring> _core_node_names;
     network::Reasoning* const                       _n;
+
+    std::map<std::string, network::Node> _scoped_variables;
+
+    JanetTable* _janet_env = nullptr;
+    Janet       _zelph_peg;
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
 
 private:
     const Interactive* _interactive;
+
+    void register_zelph_functions()
+    {
+        janet_def(_janet_env, "zelph/fact", janet_wrap_cfunction((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
+        janet_def(_janet_env, "zelph/rule", janet_wrap_cfunction((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
+    }
+
+    network::Node resolve_janet_arg(Janet arg)
+    {
+        if (janet_checktype(arg, JANET_ABSTRACT) || janet_checktype(arg, JANET_NUMBER))
+        {
+            return zelph_unwrap_node(arg);
+        }
+        else if (janet_checktype(arg, JANET_STRING))
+        {
+            const uint8_t* str  = janet_unwrap_string(arg);
+            std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+
+            // Check if string is explicitly quoted (e.g., "\"abc\"")
+            if (wstr.size() >= 2 && wstr.front() == L'"' && wstr.back() == L'"')
+            {
+                // It was quoted in the source, so it's a single Node
+                wstr = wstr.substr(1, wstr.size() - 2);
+                return _n->node(wstr, _n->lang());
+            }
+            else
+            {
+                // It was unquoted in the source, so it's a sequence of characters
+                std::vector<std::wstring> chars;
+                chars.reserve(wstr.length());
+                for (wchar_t c : wstr)
+                {
+                    chars.push_back(std::wstring(1, c));
+                }
+                return _n->sequence(chars);
+            }
+        }
+        else if (janet_checktype(arg, JANET_SYMBOL))
+        {
+            const uint8_t* sym   = janet_unwrap_symbol(arg);
+            std::string    s_sym = reinterpret_cast<const char*>(sym);
+            if (_scoped_variables.count(s_sym)) return _scoped_variables[s_sym];
+
+            network::Node v = _n->var();
+            _n->set_name(v, string::unicode::from_utf8(s_sym), _n->lang(), false);
+            _scoped_variables[s_sym] = v;
+            return v;
+        }
+        return 0;
+    }
+
+    static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        auto extract_nodes = [](Janet val, network::adjacency_set& target)
+        {
+            const Janet* arr;
+            int32_t      len;
+            if (janet_indexed_view(val, &arr, &len))
+            {
+                for (int i = 0; i < len; ++i)
+                {
+                    // Use standard resolution to handle Numbers, Strings (Sequences), and Symbols (Vars)
+                    network::Node n = s_instance->resolve_janet_arg(arr[i]);
+                    if (n) target.insert(n);
+                }
+            }
+        };
+
+        network::adjacency_set conds, deducs;
+        extract_nodes(argv[0], conds);
+        extract_nodes(argv[1], deducs);
+
+        if (conds.empty() || deducs.empty()) return janet_wrap_nil();
+
+        network::Node cond_node = (conds.size() == 1) ? *conds.begin()
+                                                      : s_instance->_n->condition(s_instance->_n->core.And, conds);
+
+        network::Node rule = s_instance->_n->fact(cond_node, s_instance->_n->core.Causes, deducs);
+        return zelph_wrap_node(rule);
+    }
+
+    static Janet janet_cfun_zelph_fact(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, -1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node s = s_instance->resolve_janet_arg(argv[0]);
+        network::Node p = s_instance->resolve_janet_arg(argv[1]);
+        if (!s || !p) return janet_wrap_nil();
+
+        network::adjacency_set objs;
+        for (int i = 2; i < argc; ++i)
+        {
+            network::Node o = s_instance->resolve_janet_arg(argv[i]);
+            if (o) objs.insert(o);
+        }
+        if (objs.empty()) return janet_wrap_nil();
+
+        network::Node f = s_instance->_n->fact(s, p, objs);
+        return zelph_wrap_node(f);
+    }
 };
+
+console::Interactive::Impl* console::Interactive::Impl::s_instance = nullptr;
 
 console::Interactive::Interactive()
     : _pImpl(new Impl(this))
@@ -130,7 +376,197 @@ void console::Interactive::Impl::import_file(const std::wstring& file) const
     }
 }
 
-std::string console::Interactive::get_version()
+std::string console::Interactive::Impl::parse_zelph_to_janet(const std::string& input) const
+{
+    JanetSymbol      match_sym = janet_csymbol("zelph-safe-parse");
+    Janet            match_fun_out;
+    JanetBindingType bt = janet_resolve(_janet_env, match_sym, &match_fun_out);
+
+    if (bt != JANET_BINDING_DEF) return "";
+
+    JanetFunction* match_fun = janet_unwrap_function(match_fun_out);
+
+    Janet args[2] = {_zelph_peg, janet_cstringv(input.c_str())};
+    Janet result;
+
+    if (janet_pcall(match_fun, 2, args, &result, NULL) != JANET_SIGNAL_OK)
+    {
+        return "";
+    }
+
+    if (janet_checktype(result, JANET_NIL)) return "";
+
+    JanetArray* tree = janet_unwrap_array(result);
+    if (tree->count < 1) return "";
+
+    const uint8_t* type_str = janet_unwrap_string(tree->data[0]);
+    std::string    type     = reinterpret_cast<const char*>(type_str);
+
+    if (type == "fact")
+    {
+        std::string subj = transform_token(tree->data[1]);
+        std::string pred = transform_token(tree->data[2]);
+        std::string objs = "";
+        for (int32_t i = 3; i < tree->count; ++i)
+        {
+            objs += transform_token(tree->data[i]) + " ";
+        }
+        return "(zelph/fact " + subj + " " + pred + " " + objs + ")";
+    }
+    else if (type == "rule")
+    {
+        std::string conds  = transform_subtree(tree->data[1]);
+        std::string deducs = transform_subtree(tree->data[2]);
+        return "(zelph/rule " + conds + " " + deducs + ")";
+    }
+
+    return "";
+}
+
+std::string console::Interactive::Impl::transform_token(Janet tok) const
+{
+    if (janet_checktype(tok, JANET_STRING))
+    {
+        const uint8_t* tok_str = janet_unwrap_string(tok);
+        std::string    tok_s   = reinterpret_cast<const char*>(tok_str);
+        std::wstring   wtok    = string::unicode::from_utf8(tok_s);
+
+        if (is_var(wtok))
+        {
+            // Variables must be quoted so that Janet passes them as symbols and does not attempt to resolve them immediately
+            return "'" + tok_s;
+        }
+        else
+        {
+            std::string inner = tok_s;
+
+            if (inner.size() >= 2 && inner.front() == '"' && inner.back() == '"')
+            {
+                inner = inner.substr(1, inner.size() - 2);
+            }
+
+            // Escape inner quotes
+            boost::replace_all(inner, "\"", "\\\"");
+
+            // result: "\"content\"" -> resolve_janet_arg sees "content" (with quotes) -> Node
+            return "\"\\\"" + inner + "\\\"\"";
+        }
+    }
+    return "";
+}
+
+std::string console::Interactive::Impl::transform_subtree(Janet subtree) const
+{
+    if (!janet_checktype(subtree, JANET_ARRAY) && !janet_checktype(subtree, JANET_TUPLE)) return "";
+
+    const Janet* data;
+    int32_t      len;
+    janet_indexed_view(subtree, &data, &len);
+
+    std::string result = "[";
+    for (int32_t i = 0; i < len; ++i)
+    {
+        if (janet_checktype(data[i], JANET_ARRAY) || janet_checktype(data[i], JANET_TUPLE))
+        {
+            const Janet* fact_data;
+            int32_t      fact_len;
+            janet_indexed_view(data[i], &fact_data, &fact_len);
+
+            if (fact_len < 3) continue;
+
+            std::string subj = transform_token(fact_data[0]);
+            std::string pred = transform_token(fact_data[1]);
+            std::string objs = "";
+            for (int32_t j = 2; j < fact_len; ++j)
+            {
+                objs += transform_token(fact_data[j]) + " ";
+            }
+            result += "(zelph/fact " + subj + " " + pred + " " + objs + ") ";
+        }
+    }
+    return result + "]";
+}
+
+void console::Interactive::Impl::process_janet(const std::string& code, bool is_zelph_ast)
+{
+    _scoped_variables.clear();
+
+    Janet out;
+    int   status = janet_dostring(_janet_env, code.c_str(), "zelph-script", &out);
+
+    if (status != JANET_SIGNAL_OK)
+    {
+        janet_stacktrace(NULL, out);
+    }
+    else
+    {
+        if (is_zelph_ast)
+        {
+            network::Node n = zelph_unwrap_node(out);
+            if (n)
+            {
+                std::wstring output;
+                _n->format_fact(output, _n->lang(), n, 3);
+                if (!output.empty() && output != L"??") _n->print(output, false);
+
+                if (!_scoped_variables.empty())
+                {
+                    _n->apply_rule(0, n);
+                }
+            }
+        }
+        else
+        {
+            if (!janet_checktype(out, JANET_NIL))
+            {
+                janet_eprintf("%v\n", out);
+            }
+        }
+    }
+}
+
+// Helper function to evaluate a Janet expression and return a Node (used by prune commands)
+network::Node console::Interactive::Impl::evaluate_janet_expression(const std::string& janet_code)
+{
+    Janet out;
+    int   status = janet_dostring(_janet_env, janet_code.c_str(), "eval_expr", &out);
+    if (status != JANET_SIGNAL_OK)
+    {
+        janet_stacktrace(NULL, out);
+        throw std::runtime_error("Error evaluating janet expression");
+    }
+    return zelph_unwrap_node(out);
+}
+
+void console::Interactive::Impl::process_zelph_file(const std::string& path, const std::vector<std::string>& args) const
+{
+    // Setze args in Janet-Env
+    JanetArray* jargs = janet_array(args.size());
+    for (const auto& arg : args)
+    {
+        janet_array_push(jargs, janet_cstringv(arg.c_str()));
+    }
+    janet_table_put(_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
+
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Konnte Datei nicht öffnen: " + path);
+    std::string line;
+    while (std::getline(file, line))
+    {
+        boost::trim(line);
+        if (line.empty() || line[0] == '#') continue;
+        std::wstring wline = string::unicode::from_utf8(line);
+        _interactive->process(wline);
+    }
+}
+
+// Neu: Public Wrapper für process_file
+void console::Interactive::process_file(const std::wstring& file, const std::vector<std::string>& args) const
+{
+    _pImpl->process_zelph_file(string::unicode::to_utf8(file), args);
+}
+
+std::string console::Interactive::get_version() const
 {
     return network::Zelph::get_version();
 }
@@ -150,113 +586,50 @@ void console::Interactive::process(std::wstring line) const
     {
         if (boost::starts_with(line, "#")) return; // comment
 
-        tokenizer<escaped_list_separator<wchar_t>, std::wstring::const_iterator, std::wstring> tok(line,
-                                                                                                   escaped_list_separator<wchar_t>(L"\\", L" \t", L"\""));
-
-        decltype(tok)::iterator it = tok.begin();
-
-        while (it != tok.end() && it->empty())
-            ++it;
-
-        if (it == tok.end())
+        size_t first_char_pos = line.find_first_not_of(L" \t");
+        if (first_char_pos != std::wstring::npos && line[first_char_pos] == L'.')
         {
-            return; // empty line
-        }
-
-        if ((*it)[0] == L'.')
-        {
-            std::vector<std::wstring> cmd;
-            while (it != tok.end())
-            {
-                if (!it->empty()) cmd.push_back(*it);
+            // Command processing logic deliberately does not use PEG
+            tokenizer<escaped_list_separator<wchar_t>, std::wstring::const_iterator, std::wstring> tok(line, escaped_list_separator<wchar_t>(L"\\", L" \t", L"\""));
+            auto                                                                                   it = tok.begin();
+            while (it != tok.end() && it->empty())
                 ++it;
-            }
 
-            _pImpl->process_command(cmd);
+            if (it != tok.end() && (*it)[0] == L'.')
+            {
+                std::vector<std::wstring> cmd;
+                while (it != tok.end())
+                {
+                    if (!it->empty()) cmd.push_back(*it);
+                    ++it;
+                }
+                _pImpl->process_command(cmd);
+                return;
+            }
         }
-        else
+
+        std::string utf8_line   = string::unicode::to_utf8(line);
+        std::string transformed = _pImpl->parse_zelph_to_janet(utf8_line);
+
+        // 1. Zelph syntax parsed via PEG
+        if (!transformed.empty())
         {
-            const std::wstring        And     = _pImpl->_core_node_names.at(_pImpl->_n->core.And);
-            const std::wstring        Causes  = _pImpl->_core_node_names.at(_pImpl->_n->core.Causes);
-            bool                      is_rule = false;
-            std::wstring              assigns_to_var;
-            std::wstring              first_var = Impl::is_var(*it) ? L"" : *it;
-            std::vector<std::wstring> tokens;
-            for (; it != tok.end(); ++it)
-            {
-                _pImpl->process_token(tokens, is_rule, first_var, assigns_to_var, *it, And, Causes);
-            }
+            _pImpl->process_janet(transformed, true);
+            return;
+        }
 
-            boost::bimap<std::wstring, network::Node> variables;
-            network::Node                             fact = 0;
-            if (is_rule)
-            {
-                fact = _pImpl->process_rule(tokens, line, variables, And, Causes);
-            }
-            else
-            {
-                std::vector<std::vector<std::wstring>> sub_conditions_tokens;
-                std::vector<std::wstring>              current_batch;
+        // 2. Native Janet syntax
+        size_t u_first = utf8_line.find_first_not_of(" \t");
+        if (u_first != std::string::npos && utf8_line[u_first] == '(')
+        {
+            _pImpl->process_janet(utf8_line, false);
+            return;
+        }
 
-                for (const auto& t : tokens)
-                {
-                    if (t == And)
-                    {
-                        if (!current_batch.empty())
-                        {
-                            sub_conditions_tokens.push_back(current_batch);
-                            current_batch.clear();
-                        }
-                    }
-                    else
-                    {
-                        current_batch.push_back(t);
-                    }
-                }
-                if (!current_batch.empty())
-                {
-                    sub_conditions_tokens.push_back(current_batch);
-                }
-
-                if (sub_conditions_tokens.size() > 1)
-                {
-                    network::adjacency_set condition_nodes;
-                    for (const auto& batch : sub_conditions_tokens)
-                    {
-                        condition_nodes.insert(_pImpl->process_fact(batch, variables));
-                    }
-                    fact = _pImpl->_n->condition(_pImpl->_n->core.And, condition_nodes);
-                }
-                else
-                {
-                    fact = _pImpl->process_fact(tokens, variables);
-                }
-            }
-
-            if (!assigns_to_var.empty())
-            {
-                _pImpl->_n->set_name(fact, assigns_to_var, _pImpl->_n->lang(), true);
-            }
-
-            std::wstring output;
-            _pImpl->_n->format_fact(output, _pImpl->_n->lang(), fact, 3);
-            _pImpl->_n->print(output, false);
-
-            bool contains_variable = false;
-
-            for (const auto& token : tokens)
-            {
-                if (Impl::is_var(token))
-                {
-                    contains_variable = true;
-                    break;
-                }
-            }
-
-            if (contains_variable)
-            {
-                _pImpl->_n->apply_rule(0, fact); // query
-            }
+        // 3. Syntax Error
+        if (u_first != std::string::npos) // Line is not empty
+        {
+            throw std::runtime_error("Syntax error: Could not parse line.");
         }
     }
     catch (std::exception& ex)
@@ -1176,87 +1549,65 @@ void console::Interactive::Impl::process_command(const std::vector<std::wstring>
         _n->remove_rules();
         _n->print(L"All rules removed.", true);
     }
-    else if (cmd[0] == L".prune-facts")
+    else if (cmd[0] == L".prune-facts" || cmd[0] == L".prune-nodes")
     {
         if (cmd.size() < 2)
-            throw std::runtime_error("Command .prune-facts requires a pattern with at least one variable");
+            throw std::runtime_error("Command requires a pattern");
 
-        std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
-
-        const std::wstring And    = _core_node_names.at(_n->core.And);
-        const std::wstring Causes = _core_node_names.at(_n->core.Causes);
-
-        bool                      is_rule = false;
-        std::wstring              assigns_to_var;
-        std::wstring              first_var = pattern_tokens.empty() ? L"" : (Impl::is_var(pattern_tokens[0]) ? L"" : pattern_tokens[0]);
-        std::vector<std::wstring> tokens;
-
-        for (const auto& token : pattern_tokens)
+        // Reconstruct the pattern string from arguments to feed into the parser
+        std::wstring pattern_str;
+        for (size_t i = 1; i < cmd.size(); ++i)
         {
-            process_token(tokens, is_rule, first_var, assigns_to_var, token, And, Causes);
+            std::wstring token = cmd[i];
+            // If it's a variable, keep as is (A). If not, quote it ("is") so PEG treats it as value.
+            // Note: Since cmd is already tokenized by escaped_list_separator, quotes were stripped.
+            // We re-add them for non-vars to be safe for parse_zelph_to_janet.
+            if (is_var(token))
+                pattern_str += token + L" ";
+            else
+                pattern_str += L"\"" + token + L"\" ";
         }
 
-        if (is_rule)
-            throw std::runtime_error("Command .prune-facts: pattern must not be a rule (no '=>' allowed)");
+        std::string utf8_pattern = string::unicode::to_utf8(pattern_str);
+        std::string janet_code   = parse_zelph_to_janet(utf8_pattern);
 
-        if (!assigns_to_var.empty())
-            throw std::runtime_error("Command .prune-facts: assignment to variable (=) not supported");
+        if (janet_code.empty())
+            throw std::runtime_error("Could not parse pattern");
 
-        boost::bimap<std::wstring, network::Node> variables;
-        network::Node                             pattern_fact = process_fact(tokens, variables);
+        // Clear variables scope before eval to correctly capture new vars in pattern
+        _scoped_variables.clear();
+        network::Node pattern_fact = evaluate_janet_expression(janet_code);
 
-        if (variables.empty())
-            throw std::runtime_error("Command .prune-facts: pattern must contain at least one variable (A-Z or starting with _)");
+        if (pattern_fact == 0)
+            throw std::runtime_error("Invalid pattern");
 
-        size_t removed = 0;
-        _n->prune_facts(pattern_fact, removed);
-
-        _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
-        if (removed > 0)
-            _n->print(L"Consider running .cleanup to remove newly isolated nodes.", true);
-    }
-    else if (cmd[0] == L".prune-nodes")
-    {
-        if (cmd.size() < 2)
-            throw std::runtime_error("Command .prune-nodes requires a pattern");
-
-        std::vector<std::wstring> pattern_tokens(cmd.begin() + 1, cmd.end());
-
-        const std::wstring And    = _core_node_names.at(_n->core.And);
-        const std::wstring Causes = _core_node_names.at(_n->core.Causes);
-
-        bool                      is_rule = false;
-        std::wstring              assigns_to_var;
-        std::wstring              first_var = pattern_tokens.empty() ? L"" : (Impl::is_var(pattern_tokens[0]) ? L"" : pattern_tokens[0]);
-        std::vector<std::wstring> tokens;
-
-        for (const auto& token : pattern_tokens)
+        if (cmd[0] == L".prune-facts")
         {
-            process_token(tokens, is_rule, first_var, assigns_to_var, token, And, Causes);
+            if (_scoped_variables.empty())
+                throw std::runtime_error("Command .prune-facts: pattern must contain at least one variable");
+
+            size_t removed = 0;
+            _n->prune_facts(pattern_fact, removed);
+            _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
+            if (removed > 0) _n->print(L"Consider running .cleanup.", true);
         }
-
-        if (is_rule)
-            throw std::runtime_error("Command .prune-nodes: pattern must not be a rule (no '=>' allowed)");
-
-        if (!assigns_to_var.empty())
-            throw std::runtime_error("Command .prune-nodes: assignment to variable (=) not supported");
-
-        boost::bimap<std::wstring, network::Node> variables;
-        network::Node                             pattern_fact = process_fact(tokens, variables);
-
-        network::Node relation = _n->parse_relation(pattern_fact);
-        if (network::Network::is_var(relation))
+        else // .prune-nodes
         {
-            throw std::runtime_error("Command .prune-nodes: the relation (predicate) must be fixed – no variable allowed in predicate position");
+            network::Node relation = _n->parse_relation(pattern_fact);
+            if (network::Network::is_var(relation))
+            {
+                throw std::runtime_error("Command .prune-nodes: relation (predicate) must be fixed");
+            }
+
+            size_t removed_facts = 0;
+            size_t removed_nodes = 0;
+            _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
+            _n->print(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
+            if (removed_facts > 0 || removed_nodes > 0)
+            {
+                _n->print(L"Consider running .cleanup.", true);
+            }
         }
-
-        size_t removed_facts = 0;
-        size_t removed_nodes = 0;
-        _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
-
-        _n->print(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
-        if (removed_facts > 0 || removed_nodes > 0)
-            _n->print(L"Consider running .cleanup to remove any remaining isolated nodes.", true);
     }
     else if (cmd[0] == L".cleanup")
     {
@@ -1602,269 +1953,6 @@ void console::Interactive::Impl::generate_and_print_mermaid_link(network::Node n
     std::clog << "  Mermaid HTML: " << OSC_START << file_url << OSC_SEP << file_url << OSC_END << std::endl;
 }
 
-void console::Interactive::Impl::process_token(std::vector<std::wstring>& tokens, bool& is_rule, const std::wstring& first_var, std::wstring& assigns_to_var, const std::wstring& token, const std::wstring& And, const std::wstring& Causes) const
-{
-    if (!token.empty())
-    {
-        std::wstring current;
-
-        if (!And.empty())
-        {
-            if (boost::algorithm::starts_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the following token
-            {
-                current = token.substr(And.size());
-                tokens.push_back(And);
-                tokens.push_back(current);
-            }
-
-            if (boost::algorithm::ends_with(token, And)) // we allow the "and" symbol - usually a comma - to be connected with the preceding token
-            {
-                if (current.empty())
-                {
-                    current = token.substr(0, token.size() - And.size());
-                    tokens.push_back(current);
-                }
-                tokens.push_back(And);
-            }
-        }
-
-        if (current.empty())
-        {
-            current = token;
-            tokens.push_back(current);
-        }
-
-        if (current == Causes)
-        {
-            if (is_rule)
-                throw std::runtime_error("Line contains two times " + string::unicode::to_utf8(_n->get_name(_n->core.Causes))); // this is just a parser restriction to distinguish between condition and deduction, might be useful to support it
-            else
-                is_rule = true;
-        }
-        else if (tokens.size() == 2 && token == L"=" && !first_var.empty())
-        {
-            assigns_to_var = first_var;
-            tokens.clear();
-        }
-    }
-}
-
-network::Node console::Interactive::Impl::process_fact(const std::vector<std::wstring>& tokens, boost::bimap<std::wstring, network::Node>& variables)
-{
-    class C
-    {
-        Interactive::Impl* _enclosing{nullptr};
-
-    public:
-        C(Interactive::Impl* enclosing, network::Node node = 0, const std::wstring& token = L"")
-            : _enclosing(enclosing)
-            , _node(node)
-            , _token(token)
-        {
-        }
-        network::Node _node{0};
-        std::wstring  _token;
-
-        static C grab(const std::vector<C>& list, size_t& i, const size_t max_index)
-        {
-            if (list[i]._node) return list[i++];
-            C result(list[0]._enclosing);
-            while (i <= max_index && !list[i]._node)
-            {
-                if (!result._token.empty()) result._token += L" ";
-
-                if (list[i]._token.find(L' ') != std::wstring::npos)
-                {
-                    if (result._token.empty())
-                    {
-                        result._token += list[i++]._token;
-                        break;
-                    }
-                    else
-                    {
-                        throw std::runtime_error("Could not parse this line");
-                    }
-                }
-                else
-                {
-                    result._token += list[i++]._token;
-                }
-            }
-            return result;
-        }
-
-        operator network::Node()
-        {
-            if (_node)
-                return _node;
-            else
-            {
-                if (_token.empty())
-                    throw std::logic_error("Internal error: empty token in process_fact::C");
-                else
-                    return _node = _enclosing->_n->node(_token, _enclosing->_n->lang());
-            }
-        }
-    };
-
-    if (tokens.size() == 1)
-    {
-        if (*tokens.begin() == _core_node_names.at(_n->core.Contradiction))
-        {
-            return _n->core.Contradiction;
-        }
-        else
-        {
-            throw std::runtime_error(string::unicode::to_utf8(L"Fact '" + *tokens.begin() + L"' consists of only 1 token, which is only allowed for contradiction '" + _core_node_names.at(_n->core.Contradiction) + L"'"));
-        }
-    }
-
-    std::vector<C> combined;
-    bool           done_all = true;
-
-    for (size_t i = 0; i < tokens.size(); ++i)
-    {
-        const std::wstring& token = tokens[i];
-
-        if (is_var(token))
-        {
-            auto var = variables.left.find(token);
-            if (var == variables.left.end())
-            {
-                network::Node node = _n->var();
-                _n->set_name(node, token, _n->lang(), false);
-                variables.left.insert(boost::bimap<std::wstring, network::Node>::left_value_type(token, node));
-
-                if (variables.left.find(token) == variables.left.end())
-                {
-                    throw std::runtime_error(string::unicode::to_utf8(L"Variable " + token + L" has been set to a different node."));
-                }
-
-                combined.emplace_back(this, node, token);
-            }
-            else
-            {
-                combined.emplace_back(this, var->second, token);
-            }
-        }
-        else if (token.find(L' ') != std::wstring::npos)
-        {
-            network::Node node = _n->get_node(token, _n->lang());
-            combined.emplace_back(this, node, token);
-        }
-        else
-        {
-            // Find the longest sequence of words that makes sense to start searching a sequence that matches a relation name.
-            // We start at the longest to prefer longer word combinations over shorter, e.g. "is a" is found before "is".
-            size_t max_len = tokens.size() - i;
-            if (combined.empty())
-                max_len -= 2;
-            else                                     // we are at the object and will need predicate and subject, so reduce by 2
-                if (combined.size() == 1) --max_len; // we are at the predicate and will need the subject, so reduce by 1
-            size_t len = 1;
-            for (; len <= max_len && !is_var(tokens[i + len - 1]); ++len)
-                ; // if the first is a variable then len=1
-            --len;
-
-            bool done = false;
-            for (; len >= 1; --len)
-            {
-                std::vector<std::wstring> test;
-                test.insert(test.end(), tokens.begin() + static_cast<long>(i), tokens.begin() + static_cast<long>(i) + static_cast<long>(len));
-                std::wstring  connected = string::concatenate(test, L' ');
-                network::Node node      = _n->get_node(connected, _n->lang());
-                if (node)
-                {
-                    combined.emplace_back(this, node, connected);
-                    done = true;
-                    break;
-                }
-            }
-
-            if (done)
-            {
-                i += len - 1;
-            }
-            else
-            {
-                combined.emplace_back(this, 0, token);
-                done_all = false;
-            }
-        }
-    }
-
-    if (combined.size() < 3) throw std::runtime_error("A fact must consist of at least 3 tokens.");
-
-    if (!done_all && combined.size() > 3)
-    {
-        // combined is longer than 3 elements, so aggregate it to get subject, predicate, object
-        decltype(combined) temp;
-        size_t             i = 0;
-        temp.emplace_back(C::grab(combined, i, combined.size() - 3));
-        temp.emplace_back(C::grab(combined, i, combined.size() - 2));
-        temp.emplace_back(C::grab(combined, i, combined.size() - 1));
-
-        if (i != combined.size())
-        {
-            throw std::runtime_error(string::unicode::to_utf8(L"cannot match fact or condition (use quotation marks?): " + temp[0]._token + L"  " + temp[1]._token + L"  " + temp[2]._token + L" ..."));
-        }
-
-        combined = std::move(temp);
-    }
-
-    network::adjacency_set objects;
-    for (size_t i = 2; i < combined.size(); ++i)
-        objects.insert(combined[i]);
-
-    return _n->fact(combined[0], combined[1], objects);
-}
-
-network::Node console::Interactive::Impl::process_rule(const std::vector<std::wstring>& tokens, const std::wstring& line, boost::bimaps::bimap<std::wstring, zelph::network::Node>& variables, const std::wstring& And, const std::wstring& Causes)
-{
-    std::vector<std::vector<std::wstring>> conditions, deductions;
-    bool                                   is_deduction = false;
-
-    for (size_t i = 0; i < tokens.size(); ++i)
-    {
-        std::vector<std::wstring> tokens_for_fact;
-        while (i < tokens.size() && tokens[i] != And && tokens[i] != Causes)
-            tokens_for_fact.push_back(tokens[i++]);
-
-        if (tokens_for_fact.empty())
-        {
-            throw std::runtime_error("Found empty condition or deduction in " + string::unicode::to_utf8(line));
-        }
-
-        if (is_deduction)
-            deductions.emplace_back(tokens_for_fact);
-        else
-            conditions.emplace_back(tokens_for_fact);
-
-        if (i < tokens.size() && tokens[i] == Causes) is_deduction = true;
-    }
-
-    if (conditions.empty()) throw std::runtime_error("Found rule without condition in " + string::unicode::to_utf8(line));
-    if (deductions.empty()) throw std::runtime_error("Found rule without deduction in " + string::unicode::to_utf8(line));
-
-    network::adjacency_set condition_nodes;
-    for (const auto& condition : conditions)
-    {
-        condition_nodes.insert(process_fact(condition, variables));
-    }
-
-    const network::Node combined_condition = conditions.size() == 1
-                                               ? *condition_nodes.begin()
-                                               : _n->condition(_n->core.And, condition_nodes);
-
-    network::adjacency_set deduction_list;
-    for (const auto& deduction : deductions)
-    {
-        deduction_list.insert(process_fact(deduction, variables));
-    }
-
-    return _n->fact(combined_condition, _n->core.Causes, deduction_list);
-}
-
 void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const
 {
     _pImpl->_n->run(print_deductions, generate_markdown, suppress_repetition);
@@ -1888,6 +1976,13 @@ bool console::Interactive::Impl::is_var(std::wstring token)
     default:
         return *token.begin() == L'_';
     }
+}
+
+void console::Interactive::Impl::process_janet_setup(const std::string& code) const
+{
+    Janet out;
+    int   status = janet_dostring(_janet_env, code.c_str(), "setup", &out);
+    if (status != JANET_SIGNAL_OK) janet_stacktrace(NULL, out);
 }
 
 #ifdef PROVIDE_C_INTERFACE

@@ -43,13 +43,15 @@ std::string Zelph::get_version()
 
 Zelph::Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
-    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
+    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
     , _core_node_names(core_node_names)
     , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
     fact(core.Unequal, core.IsA, {core.RelationTypeCategory});
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});
+    fact(core.FollowedBy, core.IsA, {core.RelationTypeCategory});
+    fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
 }
 
 Zelph::~Zelph()
@@ -689,6 +691,42 @@ Node Zelph::condition(Node op, const adjacency_set& conditions) const
     for (Node condition : conditions)
         _pImpl->connect(condition, relation);
     return relation;
+}
+
+Node Zelph::sequence(const std::vector<std::wstring>& elements)
+{
+    if (elements.empty()) return 0;
+
+    // Create the super-node representing the sequence itself
+    Node seq_node = _pImpl->create();
+
+    Node prev_node = 0;
+
+    for (const auto& elem_name : elements)
+    {
+        // Create a distinct node for this element instance (e.g., the first "t")
+        Node current_node = _pImpl->create();
+        set_name(current_node, elem_name, _lang, false);
+
+        // Retrieve or create the concept node for the name (e.g., the concept of "t")
+        Node concept_node = node(elem_name, _lang);
+
+        // Define what this node is (an instance of the concept)
+        fact(current_node, core.IsA, {concept_node});
+
+        // Link to the sequence container
+        fact(current_node, core.PartOf, {seq_node});
+
+        // Maintain order
+        if (prev_node != 0)
+        {
+            fact(prev_node, core.FollowedBy, {current_node});
+        }
+
+        prev_node = current_node;
+    }
+
+    return seq_node;
 }
 
 Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const

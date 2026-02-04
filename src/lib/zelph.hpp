@@ -164,6 +164,7 @@ namespace zelph
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 condition(Node op, const adjacency_set& conditions) const;
+            Node                 sequence(const std::vector<std::wstring>& elements);
             FactComponents       extract_fact_components(Node relation) const;
             void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
             void                 print(const std::wstring&, const bool) const;
@@ -193,6 +194,8 @@ namespace zelph
                 Node IsA;
                 Node Unequal;
                 Node Contradiction;
+                Node FollowedBy;
+                Node PartOf;
             } core;
 
         protected:
