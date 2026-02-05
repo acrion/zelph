@@ -41,15 +41,16 @@ std::string Zelph::get_version()
     return "0.9.4";
 }
 
-Zelph::Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
+Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
-    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
-    , _core_node_names(core_node_names)
+    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
     , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
     fact(core.Unequal, core.IsA, {core.RelationTypeCategory});
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});
+    fact(core.FollowedBy, core.IsA, {core.RelationTypeCategory});
+    fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
 }
 
 Zelph::~Zelph()
@@ -286,21 +287,51 @@ Node Zelph::node(const std::wstring& name, std::string lang)
         throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
+    // 1. Check existing regular nodes
     std::lock_guard lock(_pImpl->_mtx_node_of_name);
-
-    auto& node_of_name = _pImpl->_node_of_name[lang];
-    auto  it           = node_of_name.find(name);
-    if (it != node_of_name.end())
     {
-        return it->second;
+        auto& node_of_name = _pImpl->_node_of_name[lang];
+        auto  it           = node_of_name.find(name);
+        if (it != node_of_name.end())
+        {
+            return it->second;
+        }
     }
 
+    // 2. Check core nodes
+    {
+        auto it = _core_names.right.find(name);
+        if (it != _core_names.right.end())
+        {
+            return it->second;
+        }
+    }
+
+    // 3. Create new node
     Node            new_node = _pImpl->create();
     std::lock_guard lock2(_pImpl->_mtx_name_of_node);
-    node_of_name[name]                    = new_node;
+
+    _pImpl->_node_of_name[lang][name]     = new_node;
     _pImpl->_name_of_node[lang][new_node] = name;
 
     return new_node;
+}
+
+void Zelph::register_core_node(Node n, const std::wstring& name)
+{
+    _core_names.insert({n, name});
+}
+
+Node Zelph::get_core_node(const std::wstring& name) const
+{
+    auto it = _core_names.right.find(name);
+    return (it != _core_names.right.end()) ? it->second : 0;
+}
+
+std::wstring Zelph::get_core_name(Node n) const
+{
+    auto it = _core_names.left.find(n);
+    return (it != _core_names.left.end()) ? it->second : L"";
 }
 
 bool Zelph::exists(uint64_t nd)
@@ -371,10 +402,10 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
         }
     }
 
+    // Fallback to core node names
     {
-        auto it = _core_node_names.find(node);
-
-        if (it != _core_node_names.end())
+        auto it = _core_names.left.find(node);
+        if (it != _core_names.left.end())
         {
             return it->second;
         }
@@ -689,6 +720,41 @@ Node Zelph::condition(Node op, const adjacency_set& conditions) const
     for (Node condition : conditions)
         _pImpl->connect(condition, relation);
     return relation;
+}
+
+Node Zelph::sequence(const std::vector<std::wstring>& elements)
+{
+    if (elements.empty()) return 0;
+
+    // Create the super-node representing the sequence itself
+    Node seq_node = _pImpl->create();
+
+    Node prev_node = 0;
+
+    for (const auto& elem_name : elements)
+    {
+        // Create a distinct node for this element instance (e.g., the first "t")
+        Node current_node = _pImpl->create();
+
+        // Retrieve or create the concept node for the name (e.g., the concept of "t")
+        Node concept_node = node(elem_name, _lang);
+
+        // Define what this node is (an instance of the concept)
+        fact(current_node, core.IsA, {concept_node});
+
+        // Link to the sequence container
+        fact(current_node, core.PartOf, {seq_node});
+
+        // Maintain order
+        if (prev_node != 0)
+        {
+            fact(prev_node, core.FollowedBy, {current_node});
+        }
+
+        prev_node = current_node;
+    }
+
+    return seq_node;
 }
 
 Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const

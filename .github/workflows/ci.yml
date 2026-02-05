@@ -27,13 +27,21 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Clang and LLD (Linux only)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt update
-          sudo apt install clang lld -y
+          sudo apt install clang lld meson ninja-build -y
           clang --version
           ld.lld --version
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: pip install meson ninja
 
       - name: Set extra CMake flags
         shell: bash

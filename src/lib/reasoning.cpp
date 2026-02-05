@@ -34,8 +34,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-Reasoning::Reasoning(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print)
-    : Zelph(core_node_names, print)
+Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
+    : Zelph(print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
     , _markdown_subdir("")
 {
@@ -133,7 +133,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
     auto is_protected = [&](Node n)
     {
-        return n == core.IsA || n == core.And || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction;
+        return n == core.IsA || n == core.And || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.FollowedBy || n == core.PartOf;
     };
 
     std::clog << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;

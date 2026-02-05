@@ -48,9 +48,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -march=native")
     endif ()
 
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
+    # CRITICAL: Do NOT use -ffast-math!
+    # Janet uses NaN-boxing on 64-bit systems to pack type information and pointers into double-precision floats.
+    # -ffast-math enables -ffinite-math-only, which assumes NaNs do not exist. This causes the compiler to
+    # optimize away the bitwise checks Janet uses to distinguish objects (NaNs) from numbers, breaking
+    # the type system completely and leading to undefined behavior (e.g. strings treated as 0.0).
 
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -ffast-math -funroll-loops")
+    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
+    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -funroll-loops")
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -fomit-frame-pointer")
@@ -66,11 +71,94 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     message(STATUS "Optimization flags: ${OPTIMIZATION_FLAGS}")
 elseif (MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /Ot /GL")
+
+    # CRITICAL: Do NOT use /fp:fast!
+    # /fp:fast breaks IEEE-754 compliance and assumes no NaNs exist.
+    # This destroys Janet's NaN-boxing mechanism (same issue as -ffast-math on GCC/Clang),
+    # leading to crashes or undefined behavior when handling dynamic types.
+    # The default /fp:precise (implied by /O2) is safe.
+    
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
 endif ()
 
 include(FetchContent)
+
+FetchContent_Declare(
+    janet
+    GIT_REPOSITORY https://github.com/janet-lang/janet.git
+    GIT_TAG v1.40.1
+    SOURCE_SUBDIR ""
+)
+
+FetchContent_MakeAvailable(janet)
+
+set(OLD_ENV_CC $ENV{CC})
+set(OLD_ENV_CXX $ENV{CXX})
+set(OLD_ENV_PATH $ENV{PATH})
+
+if (MSVC)
+    set(JANET_LIB_NAME "janet.lib")
+    set(MESON_OPTIONS "--vsenv")
+
+    set(CLEAN_PATH_LIST "")
+    file(TO_CMAKE_PATH "$ENV{PATH}" PATH_LIST)
+    foreach (P IN LISTS PATH_LIST)
+        if (NOT "${P}" MATCHES "Strawberry")
+            list(APPEND CLEAN_PATH_LIST "${P}")
+        endif ()
+    endforeach ()
+    list(JOIN CLEAN_PATH_LIST ";" NEW_PATH_STR)
+    file(TO_NATIVE_PATH "${NEW_PATH_STR}" NEW_NATIVE_PATH)
+    set(ENV{PATH} "${NEW_NATIVE_PATH}")
+
+    set(BUILD_COMMAND meson compile -C build --verbose)
+
+else ()
+    set(JANET_LIB_NAME "libjanet.a")
+    set(MESON_OPTIONS "")
+
+    set(ENV{CC} "${CMAKE_C_COMPILER}")
+    set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
+
+    set(BUILD_COMMAND ninja -C build)
+endif ()
+
+execute_process(
+    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false ${MESON_OPTIONS}
+    WORKING_DIRECTORY ${janet_SOURCE_DIR}
+    RESULT_VARIABLE result
+)
+if (result)
+    message(FATAL_ERROR "Janet Meson setup failed: ${result}")
+endif ()
+
+execute_process(
+    COMMAND ${BUILD_COMMAND}
+    WORKING_DIRECTORY ${janet_SOURCE_DIR}
+    RESULT_VARIABLE result
+)
+if (result)
+    message(FATAL_ERROR "Janet build failed: ${result}")
+endif ()
+
+set(ENV{CC} "${OLD_ENV_CC}")
+set(ENV{CXX} "${OLD_ENV_CXX}")
+set(ENV{PATH} "${OLD_ENV_PATH}")
+
+add_library(janet_lib STATIC IMPORTED)
+
+set_target_properties(janet_lib PROPERTIES
+    IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/${JANET_LIB_NAME}
+    INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
+)
+
+target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
+
+if (NOT WIN32)
+    target_compile_options(janet_lib INTERFACE -pthread)
+endif ()
+
 FetchContent_Declare(
     unordered_dense
     GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
@@ -96,7 +184,6 @@ foreach (target IN LISTS CAPNP_TARGETS)
             target_link_options(${target} PRIVATE -w)
         elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
             target_compile_options(${target} PRIVATE /w)
-            target_link_options(${target} PRIVATE /w)
         endif ()
     endif ()
 endforeach ()
@@ -126,15 +213,6 @@ if (NOT bzip2_POPULATED)
     set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif ()
 
-#FetchContent_Declare(
-#    acrion_cmake
-#    GIT_REPOSITORY git@github.com:acrion/cmake.git
-#    GIT_TAG main
-#)
-#FetchContent_MakeAvailable(acrion_cmake)
-#
-#include(${acrion_cmake_SOURCE_DIR}/set-cpp-version.cmake)
-
 capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp)
 
 add_library(zelph_lib SHARED
@@ -157,6 +235,8 @@ add_library(zelph_lib SHARED
     unification.hpp
     platform_utils.cpp
     platform_utils.hpp
+    script_engine.cpp
+    script_engine.hpp
     string_utils.cpp
     string_utils.hpp
     thread_pool.hpp
@@ -172,17 +252,22 @@ add_library(zelph_lib SHARED
     wikidata.cpp
     wikidata.hpp
     ${CAPNP_SRCS}
+    command_executor.cpp
+    command_executor.hpp
 )
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)
+if (WIN32)
+    # ws2_32 and Mswsock are required by Janet
+    target_link_libraries(zelph_lib PRIVATE ws2_32 Mswsock)
+endif ()
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(zelph_lib PRIVATE -w)
+    target_compile_options(zelph_lib PRIVATE -w -fpermissive)
     target_link_options(zelph_lib PRIVATE -w)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(zelph_lib PRIVATE /w)
-    target_link_options(zelph_lib PRIVATE /w)
 endif ()
 
 # Enable IPO/LTO if available

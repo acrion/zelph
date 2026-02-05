@@ -27,8 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
-#include <map>
 #include <string>
+#include <vector>
 
 namespace zelph
 {
@@ -42,18 +42,19 @@ namespace zelph
         public:
             Interactive();
             ~Interactive();
-            void               import_file(const std::wstring& file) const;
-            void               process(std::wstring line) const;
-            void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
-            std::string        get_lang() const;
-            static std::string get_version();
+            void        import_file(const std::wstring& file) const;
+            void        process(std::wstring line) const;
+            void        run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
+            std::string get_lang() const;
+            std::string get_version() const;
+            void        process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
 
             Interactive(const Interactive&)            = delete;
             Interactive& operator=(const Interactive&) = delete;
 
         private:
             class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
+            Impl* const _pImpl;
         };
     }
 }
