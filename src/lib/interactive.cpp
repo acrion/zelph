@@ -246,8 +246,19 @@ private:
 
     void register_zelph_functions()
     {
-        janet_def(_janet_env, "zelph/fact", janet_wrap_cfunction((void*)(JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
-        janet_def(_janet_env, "zelph/rule", janet_wrap_cfunction((void*)(JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
+// Helper to handle platform-specific Janet definitions
+// On Linux/x64, it's a macro expecting void*.
+// On macOS, it's a function expecting JanetCFunction.
+#ifdef JANET_NANBOX_64
+        auto wrap = [](JanetCFunction f)
+        { return janet_wrap_cfunction((void*)f); };
+#else
+        auto wrap = [](JanetCFunction f)
+        { return janet_wrap_cfunction(f); };
+#endif
+
+        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
+        janet_def(_janet_env, "zelph/rule", wrap((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
     }
 
     network::Node resolve_janet_arg(Janet arg)
