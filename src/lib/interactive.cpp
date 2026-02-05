@@ -125,8 +125,7 @@ public:
     static Impl* s_instance;
 
     Impl(Interactive* enclosing)
-        : _n(new network::Reasoning(_core_node_names,
-                                    [](const std::wstring& str, const bool)
+        : _n(new network::Reasoning([](const std::wstring& str, const bool)
                                     {
 #ifdef _WIN32
                                         std::wcout << str << std::endl;
@@ -144,14 +143,14 @@ public:
 
         _n->set_lang("zelph");
 
-        _core_node_names[_n->core.RelationTypeCategory] = L"->";
-        _core_node_names[_n->core.Causes]               = L"=>";
-        _core_node_names[_n->core.And]                  = L",";
-        _core_node_names[_n->core.IsA]                  = L"~";
-        _core_node_names[_n->core.Unequal]              = L"!=";
-        _core_node_names[_n->core.Contradiction]        = L"!";
-        _core_node_names[_n->core.FollowedBy]           = L"..";
-        _core_node_names[_n->core.PartOf]               = L"in";
+        _n->register_core_node(_n->core.RelationTypeCategory, L"->");
+        _n->register_core_node(_n->core.Causes, L"=>");
+        _n->register_core_node(_n->core.And, L",");
+        _n->register_core_node(_n->core.IsA, L"~");
+        _n->register_core_node(_n->core.Unequal, L"!=");
+        _n->register_core_node(_n->core.Contradiction, L"!");
+        _n->register_core_node(_n->core.FollowedBy, L"..");
+        _n->register_core_node(_n->core.PartOf, L"in");
 
         janet_init();
         _janet_env = janet_core_env(NULL);
@@ -231,9 +230,8 @@ public:
 
     void process_zelph_file(const std::string& path, const std::vector<std::string>& args = {}) const;
 
-    std::shared_ptr<DataManager>                    _data_manager;
-    std::unordered_map<network::Node, std::wstring> _core_node_names;
-    network::Reasoning* const                       _n;
+    std::shared_ptr<DataManager> _data_manager;
+    network::Reasoning* const _n;
 
     std::map<std::string, network::Node> _scoped_variables;
 
@@ -263,8 +261,13 @@ private:
             const uint8_t* str  = janet_unwrap_string(arg);
             std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
 
-            // Check if string is explicitly quoted (e.g., "\"abc\"")
-            if (wstr.size() >= 2 && wstr.front() == L'"' && wstr.back() == L'"')
+            // Check if it matches a core node name (unquoted in source)
+            network::Node core_node = _n->get_core_node(wstr);
+            if (core_node != 0)
+            {
+                return core_node;
+            }
+            else if (wstr.size() >= 2 && wstr.front() == L'"' && wstr.back() == L'"')
             {
                 // It was quoted in the source, so it's a single Node
                 wstr = wstr.substr(1, wstr.size() - 2);
@@ -343,7 +346,7 @@ private:
         {
             network::Node o = s_instance->resolve_janet_arg(argv[i]);
             if (o) objs.insert(o);
-        }
+    }
         if (objs.empty()) return janet_wrap_nil();
 
         network::Node f = s_instance->_n->fact(s, p, objs);
@@ -643,10 +646,10 @@ void console::Interactive::Impl::display_node_details(network::Node nd, bool res
     std::clog << "Node ID: " << nd << std::endl;
 
     {
-        auto it = _core_node_names.find(nd);
-        if (it != _core_node_names.end())
+        std::wstring core_name = _n->get_core_name(nd);
+        if (!core_name.empty())
         {
-            std::clog << "  Core node: " << string::unicode::to_utf8(it->second) << std::endl;
+            std::clog << "  Core node: " << string::unicode::to_utf8(core_name) << std::endl;
         }
     }
 

@@ -61,7 +61,7 @@ namespace zelph::network
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
-        explicit Reasoning(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>&);
+        explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
         void apply_rule(const network::Node& rule, network::Node condition);
         void set_markdown_subdir(const std::string& subdir);

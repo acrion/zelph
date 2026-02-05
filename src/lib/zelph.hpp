@@ -30,6 +30,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <boost/bimap.hpp>
+
 #include <functional>
 #include <memory>
 #include <set>
@@ -91,7 +93,7 @@ namespace zelph
         class ZELPH_EXPORT Zelph
         {
         public:
-            explicit Zelph(const std::unordered_map<network::Node, std::wstring>& core_node_names, const std::function<void(const std::wstring&, const bool)>& print);
+            explicit Zelph(const std::function<void(const std::wstring&, const bool)>& print);
             ~Zelph();
 
             struct FactComponents
@@ -132,6 +134,9 @@ namespace zelph
             void                     set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
             std::string              lang() const { return _lang; }
             Node                     node(const std::wstring& name, std::string lang = "");
+            void                     register_core_node(Node n, const std::wstring& name);
+            Node                     get_core_node(const std::wstring& name) const;
+            std::wstring             get_core_name(Node n) const;
             bool                     exists(uint64_t nd);
             bool                     has_name(Node node, const std::string& lang) const;
             std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false) const;
@@ -188,19 +193,19 @@ namespace zelph
 
             const struct PredefinedNode
             {
-                Node RelationTypeCategory;
-                Node Causes;
-                Node And;
-                Node IsA;
-                Node Unequal;
-                Node Contradiction;
-                Node FollowedBy;
-                Node PartOf;
+                const Node RelationTypeCategory;
+                const Node Causes;
+                const Node And;
+                const Node IsA;
+                const Node Unequal;
+                const Node Contradiction;
+                const Node FollowedBy;
+                const Node PartOf;
             } core;
 
         protected:
-            std::string                                            _lang{"en"};
-            const std::unordered_map<network::Node, std::wstring>& _core_node_names;
+            std::string                               _lang{"en"};
+            boost::bimap<network::Node, std::wstring> _core_names;
 
         private:
             void collect_mermaid_nodes(WrapperNode                                                     current_wrap,
