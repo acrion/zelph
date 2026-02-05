@@ -48,9 +48,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -march=native")
     endif ()
 
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
+    # CRITICAL: Do NOT use -ffast-math!
+    # Janet uses NaN-boxing on 64-bit systems to pack type information and pointers into double-precision floats.
+    # -ffast-math enables -ffinite-math-only, which assumes NaNs do not exist. This causes the compiler to
+    # optimize away the bitwise checks Janet uses to distinguish objects (NaNs) from numbers, breaking
+    # the type system completely and leading to undefined behavior (e.g. strings treated as 0.0).
 
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -ffast-math -funroll-loops")
+    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
+    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -funroll-loops")
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -fomit-frame-pointer")
@@ -66,6 +71,13 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     message(STATUS "Optimization flags: ${OPTIMIZATION_FLAGS}")
 elseif (MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /Ot /GL")
+
+    # CRITICAL: Do NOT use /fp:fast!
+    # /fp:fast breaks IEEE-754 compliance and assumes no NaNs exist.
+    # This destroys Janet's NaN-boxing mechanism (same issue as -ffast-math on GCC/Clang),
+    # leading to crashes or undefined behavior when handling dynamic types.
+    # The default /fp:precise (implied by /O2) is safe.
+    
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
 endif ()
@@ -201,15 +213,6 @@ if (NOT bzip2_POPULATED)
     set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif ()
 
-#FetchContent_Declare(
-#    acrion_cmake
-#    GIT_REPOSITORY git@github.com:acrion/cmake.git
-#    GIT_TAG main
-#)
-#FetchContent_MakeAvailable(acrion_cmake)
-#
-#include(${acrion_cmake_SOURCE_DIR}/set-cpp-version.cmake)
-
 capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp)
 
 add_library(zelph_lib SHARED
@@ -249,6 +252,8 @@ add_library(zelph_lib SHARED
     wikidata.cpp
     wikidata.hpp
     ${CAPNP_SRCS}
+    command_executor.cpp
+    command_executor.hpp
 )
 
 target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)

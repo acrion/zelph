@@ -162,7 +162,7 @@ public:
               ~{:ws (set " \t\r\f\n\0\v")
                 :s* (any :ws)
                 :s+ (some :ws)
-                :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?@^_") (set "=><,"))
+                :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<>?@^_~") (set "=><,"))
 
                 :sep-rule "=>"
                 :sep-cond ","
@@ -394,7 +394,10 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     {
         return "";
     }
-    if (janet_checktype(result, JANET_NIL)) return "";
+    if (janet_checktype(result, JANET_NIL))
+    {
+        return "";
+    }
 
     JanetArray* tree = janet_unwrap_array(result);
     if (tree->count < 1) return "";
