@@ -37,7 +37,7 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install meson ninja
+        run: brew install meson
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
