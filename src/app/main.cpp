@@ -79,7 +79,7 @@ int main(int argc, char** argv)
             std::wcout << L"Ready." << std::endl;
 
 #ifdef _WIN32
-        std::wcout << L"zelph " << zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()) << std::endl;
+        std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
         std::wcout << std::endl;
         if (script_files.empty())
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
