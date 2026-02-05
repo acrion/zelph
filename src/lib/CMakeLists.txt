@@ -81,32 +81,22 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(janet)
 
-set(MESON_CC "${CMAKE_C_COMPILER}")
-set(MESON_CXX "${CMAKE_CXX_COMPILER}")
+set(OLD_ENV_CC $ENV{CC})
+set(OLD_ENV_CXX $ENV{CXX})
 
 if (MSVC)
     set(JANET_LIB_NAME "janet.lib")
-
-    # Prepend MSVC bin directory to PATH so Meson finds the correct link.exe
-    get_filename_component(MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    set(MESON_OPTIONS "--vsenv")
 else ()
     set(JANET_LIB_NAME "libjanet.a")
-endif ()
+    set(MESON_OPTIONS "")
 
-set(OLD_ENV_CC $ENV{CC})
-set(OLD_ENV_CXX $ENV{CXX})
-set(OLD_ENV_PATH $ENV{PATH})
-
-set(ENV{CC} "${MESON_CC}")
-set(ENV{CXX} "${MESON_CXX}")
-
-if (MSVC)
-    # Ensure MSVC compiler dir is first in PATH
-    set(ENV{PATH} "${MSVC_BIN_DIR};$ENV{PATH}")
+    set(ENV{CC} "${CMAKE_C_COMPILER}")
+    set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
 endif ()
 
 execute_process(
-    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false
+    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false ${MESON_OPTIONS}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
@@ -123,10 +113,8 @@ if (result)
     message(FATAL_ERROR "Janet Ninja build failed: ${result}")
 endif ()
 
-# Restore environment
 set(ENV{CC} "${OLD_ENV_CC}")
 set(ENV{CXX} "${OLD_ENV_CXX}")
-set(ENV{PATH} "${OLD_ENV_PATH}")
 
 add_library(janet_lib STATIC IMPORTED)
 
