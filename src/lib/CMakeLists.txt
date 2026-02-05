@@ -81,11 +81,31 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(janet)
 
+set(MESON_CC "${CMAKE_C_COMPILER}")
+set(MESON_CXX "${CMAKE_CXX_COMPILER}")
+
+if (MSVC)
+    set(JANET_LIB_NAME "janet.lib")
+else ()
+    set(JANET_LIB_NAME "libjanet.a")
+endif ()
+
+set(OLD_ENV_CC $ENV{CC})
+set(OLD_ENV_CXX $ENV{CXX})
+
+set(ENV{CC} "${MESON_CC}")
+set(ENV{CXX} "${MESON_CXX}")
+
 execute_process(
     COMMAND meson setup build --buildtype=release -Ddynamic_modules=false
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
+
+# Restore environment
+set(ENV{CC} "${OLD_ENV_CC}")
+set(ENV{CXX} "${OLD_ENV_CXX}")
+
 if (result)
     message(FATAL_ERROR "Janet Meson setup failed: ${result}")
 endif ()
@@ -100,11 +120,14 @@ if (result)
 endif ()
 
 add_library(janet_lib STATIC IMPORTED)
+
 set_target_properties(janet_lib PROPERTIES
-    IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/libjanet.a
+    IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/${JANET_LIB_NAME}
     INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
 )
+
 target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
+
 if (NOT WIN32)
     target_compile_options(janet_lib INTERFACE -pthread)
 endif ()
@@ -134,7 +157,6 @@ foreach (target IN LISTS CAPNP_TARGETS)
             target_link_options(${target} PRIVATE -w)
         elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
             target_compile_options(${target} PRIVATE /w)
-            target_link_options(${target} PRIVATE /w)
         endif ()
     endif ()
 endforeach ()
@@ -213,6 +235,10 @@ add_library(zelph_lib SHARED
 )
 
 target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)
+if (WIN32)
+    # ws2_32 and Mswsock are required by Janet
+    target_link_libraries(zelph_lib PRIVATE ws2_32 Mswsock)
+endif ()
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -220,7 +246,6 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(zelph_lib PRIVATE -w)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(zelph_lib PRIVATE /w)
-    target_link_options(zelph_lib PRIVATE /w)
 endif ()
 
 # Enable IPO/LTO if available
