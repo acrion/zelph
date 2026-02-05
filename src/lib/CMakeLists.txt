@@ -104,7 +104,7 @@ set_target_properties(janet_lib PROPERTIES
     IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/libjanet.a
     INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
 )
-target_compile_definitions(janet_lib INTERFACE JANET_BUILD="\"amalgam\"")
+target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
 if (NOT WIN32)
     target_compile_options(janet_lib INTERFACE -pthread)
 endif ()
