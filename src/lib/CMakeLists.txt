@@ -83,17 +83,33 @@ FetchContent_MakeAvailable(janet)
 
 set(OLD_ENV_CC $ENV{CC})
 set(OLD_ENV_CXX $ENV{CXX})
+set(OLD_ENV_PATH $ENV{PATH})
 
 if (MSVC)
     set(JANET_LIB_NAME "janet.lib")
     set(MESON_OPTIONS "--vsenv")
-    set(ENV{CCACHE_DISABLE} "1")
+
+    set(CLEAN_PATH_LIST "")
+    file(TO_CMAKE_PATH "$ENV{PATH}" PATH_LIST)
+    foreach (P IN LISTS PATH_LIST)
+        if (NOT "${P}" MATCHES "Strawberry")
+            list(APPEND CLEAN_PATH_LIST "${P}")
+        endif ()
+    endforeach ()
+    list(JOIN CLEAN_PATH_LIST ";" NEW_PATH_STR)
+    file(TO_NATIVE_PATH "${NEW_PATH_STR}" NEW_NATIVE_PATH)
+    set(ENV{PATH} "${NEW_NATIVE_PATH}")
+
+    set(BUILD_COMMAND meson compile -C build --verbose)
+
 else ()
     set(JANET_LIB_NAME "libjanet.a")
     set(MESON_OPTIONS "")
 
     set(ENV{CC} "${CMAKE_C_COMPILER}")
     set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
+
+    set(BUILD_COMMAND ninja -C build)
 endif ()
 
 execute_process(
@@ -106,16 +122,17 @@ if (result)
 endif ()
 
 execute_process(
-    COMMAND ninja -C build
+    COMMAND ${BUILD_COMMAND}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
 if (result)
-    message(FATAL_ERROR "Janet Ninja build failed: ${result}")
+    message(FATAL_ERROR "Janet build failed: ${result}")
 endif ()
 
 set(ENV{CC} "${OLD_ENV_CC}")
 set(ENV{CXX} "${OLD_ENV_CXX}")
+set(ENV{PATH} "${OLD_ENV_PATH}")
 
 add_library(janet_lib STATIC IMPORTED)
 
