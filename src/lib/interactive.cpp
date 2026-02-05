@@ -150,8 +150,8 @@ public:
         _core_node_names[_n->core.IsA]                  = L"~";
         _core_node_names[_n->core.Unequal]              = L"!=";
         _core_node_names[_n->core.Contradiction]        = L"!";
-        _core_node_names[_n->core.FollowedBy]           = L":";
-        _core_node_names[_n->core.PartOf]               = L"∈";
+        _core_node_names[_n->core.FollowedBy]           = L"..";
+        _core_node_names[_n->core.PartOf]               = L"in";
 
         janet_init();
         _janet_env = janet_core_env(NULL);
@@ -438,18 +438,8 @@ std::string console::Interactive::Impl::transform_token(Janet tok) const
         }
         else
         {
-            std::string inner = tok_s;
-
-            if (inner.size() >= 2 && inner.front() == '"' && inner.back() == '"')
-            {
-                inner = inner.substr(1, inner.size() - 2);
-            }
-
-            // Escape inner quotes
-            boost::replace_all(inner, "\"", "\\\"");
-
-            // result: "\"content\"" -> resolve_janet_arg sees "content" (with quotes) -> Node
-            return "\"\\\"" + inner + "\\\"\"";
+            // inner quotes must be escaped, then surround the string with quotes
+            return "\"" + boost::replace_all_copy(tok_s, "\"", "\\\"") + "\"";
         }
     }
     return "";

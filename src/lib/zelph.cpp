@@ -706,7 +706,6 @@ Node Zelph::sequence(const std::vector<std::wstring>& elements)
     {
         // Create a distinct node for this element instance (e.g., the first "t")
         Node current_node = _pImpl->create();
-        set_name(current_node, elem_name, _lang, false);
 
         // Retrieve or create the concept node for the name (e.g., the concept of "t")
         Node concept_node = node(elem_name, _lang);
