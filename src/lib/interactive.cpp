@@ -231,7 +231,7 @@ public:
     void process_zelph_file(const std::string& path, const std::vector<std::string>& args = {}) const;
 
     std::shared_ptr<DataManager> _data_manager;
-    network::Reasoning* const _n;
+    network::Reasoning* const    _n;
 
     std::map<std::string, network::Node> _scoped_variables;
 
@@ -246,8 +246,8 @@ private:
 
     void register_zelph_functions()
     {
-        janet_def(_janet_env, "zelph/fact", janet_wrap_cfunction((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
-        janet_def(_janet_env, "zelph/rule", janet_wrap_cfunction((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
+        janet_def(_janet_env, "zelph/fact", janet_wrap_cfunction((void*)(JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
+        janet_def(_janet_env, "zelph/rule", janet_wrap_cfunction((void*)(JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
     }
 
     network::Node resolve_janet_arg(Janet arg)
@@ -346,7 +346,7 @@ private:
         {
             network::Node o = s_instance->resolve_janet_arg(argv[i]);
             if (o) objs.insert(o);
-    }
+        }
         if (objs.empty()) return janet_wrap_nil();
 
         network::Node f = s_instance->_n->fact(s, p, objs);
