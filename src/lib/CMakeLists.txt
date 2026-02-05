@@ -86,26 +86,30 @@ set(MESON_CXX "${CMAKE_CXX_COMPILER}")
 
 if (MSVC)
     set(JANET_LIB_NAME "janet.lib")
+
+    # Prepend MSVC bin directory to PATH so Meson finds the correct link.exe
+    get_filename_component(MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
 else ()
     set(JANET_LIB_NAME "libjanet.a")
 endif ()
 
 set(OLD_ENV_CC $ENV{CC})
 set(OLD_ENV_CXX $ENV{CXX})
+set(OLD_ENV_PATH $ENV{PATH})
 
 set(ENV{CC} "${MESON_CC}")
 set(ENV{CXX} "${MESON_CXX}")
+
+if (MSVC)
+    # Ensure MSVC compiler dir is first in PATH
+    set(ENV{PATH} "${MSVC_BIN_DIR};$ENV{PATH}")
+endif ()
 
 execute_process(
     COMMAND meson setup build --buildtype=release -Ddynamic_modules=false
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
-
-# Restore environment
-set(ENV{CC} "${OLD_ENV_CC}")
-set(ENV{CXX} "${OLD_ENV_CXX}")
-
 if (result)
     message(FATAL_ERROR "Janet Meson setup failed: ${result}")
 endif ()
@@ -118,6 +122,11 @@ execute_process(
 if (result)
     message(FATAL_ERROR "Janet Ninja build failed: ${result}")
 endif ()
+
+# Restore environment
+set(ENV{CC} "${OLD_ENV_CC}")
+set(ENV{CXX} "${OLD_ENV_CXX}")
+set(ENV{PATH} "${OLD_ENV_PATH}")
 
 add_library(janet_lib STATIC IMPORTED)
 
