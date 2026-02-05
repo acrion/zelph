@@ -232,6 +232,8 @@ add_library(zelph_lib SHARED
     unification.hpp
     platform_utils.cpp
     platform_utils.hpp
+    script_engine.cpp
+    script_engine.hpp
     string_utils.cpp
     string_utils.hpp
     thread_pool.hpp

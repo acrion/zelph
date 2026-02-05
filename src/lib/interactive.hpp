@@ -27,7 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -55,7 +54,7 @@ namespace zelph
 
         private:
             class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
+            Impl* const _pImpl;
         };
     }
 }
