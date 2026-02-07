@@ -160,18 +160,19 @@ public:
     void setup_peg()
     {
         // zelph Grammar:
-        // 1. :atom -> Alphanumeric or Symbols (excluding < > = ,)
+        // 1. :atom -> Alphanumeric or Symbols (excluding < > = , ( ) " )
         // 2. :sequence -> Everything inside < ... >
         // 3. :quoted -> Standard "..."
-        // Returns tagged tuples [:atom "val"] or [:seq "val"] for C++ processing
-        std::string peg_setup = R"(
+        // 4. :nested -> Recursive statements inside ( ... )
+        // Returns tagged tuples like [:atom "val"], [:seq "val"] or [:nested sub-stmt...] for C++ processing
+        std::string peg_setup = R"zph(
             (def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
                 :s* (any :ws)
                 :s+ (some :ws)
 
                 # Reserved chars that cannot start an atom without quotes
-                :reserved (set " \t\r\n\0\v=>,<>\"")
+                :reserved (set " \t\r\n\0\v=>,<>\"()")
 
                 :sep-rule "=>"
                 :sep-cond ","
@@ -193,9 +194,14 @@ public:
                 :tag-atom   (group (* (constant :atom) (choice :quoted :raw-atom)))
                 :tag-seq    (group (* (constant :seq)  (* "<" (not :ws) :seq-content ">")))
 
-                :val-any (choice :tag-var :tag-seq :tag-atom)
+                # Nested facts: ( S P O )
+                # We reuse :stmt-any inside the parens.
+                # The group will produce [:nested val1 val2 val3 ...]
+                :tag-nested (group (* (constant :nested) "(" :s* :stmt-any :s* ")"))
 
-                # Safe value excludes separators
+                :val-any (choice :tag-var :tag-seq :tag-atom :tag-nested)
+
+                # Safe value excludes separators (nested facts are safe as they are encapsulated)
                 :val-safe (if-not (+ :sep-rule :sep-cond) :val-any)
 
                 :stmt-safe (sequence :val-safe :s+ :val-safe (some (sequence :s+ :val-safe)))
@@ -216,7 +222,7 @@ public:
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))
-        )";
+        )zph";
 
         Janet out;
         int   status = janet_dostring(_janet_env, peg_setup.c_str(), "setup", &out);
@@ -349,7 +355,7 @@ public:
     }
 
     // Convert PEG-AST tuple to Janet Source Code String
-    // Input is a tuple: e.g. [:atom "tim"] or [:seq "123"] or [:var "X"]
+    // Input is a tuple: e.g. [:atom "tim"], [:seq "123"], [:var "X"] or [:nested val1 val2...]
     std::string transform_arg(Janet arg_tuple) const
     {
         if (!janet_checktype(arg_tuple, JANET_TUPLE) && !janet_checktype(arg_tuple, JANET_ARRAY)) return "nil";
@@ -357,11 +363,27 @@ public:
         const Janet* data;
         int32_t      len;
         janet_indexed_view(arg_tuple, &data, &len);
-        if (len != 2) return "nil";
+        if (len < 2) return "nil"; // Minimum [:type value...]
 
-        std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0])); // :atom, :seq, :var
+        std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0])); // :atom, :seq, :var, :nested
 
-        // Handle value based on type
+        // Handle nested recursion first
+        if (type == "nested")
+        {
+            // Structure: [:nested val1 val2 val3 ...]
+            // We transform this into (zelph/fact val1 val2 val3 ...)
+            // This enables the returned node to be used as an argument in the parent expression.
+            std::string nested_call = "(zelph/fact";
+            for (int32_t i = 1; i < len; ++i)
+            {
+                nested_call += " " + transform_arg(data[i]);
+            }
+            nested_call += ")";
+            return nested_call;
+        }
+
+        // Handle leaf nodes (atom, var, seq)
+        // These expect data[1] to be the content string/buffer
         std::string val_str = "";
         if (janet_checktype(data[1], JANET_STRING))
         {
@@ -382,9 +404,6 @@ public:
         else if (type == "atom")
         {
             // Atoms are strings in Janet.
-            // If the source was quoted ("foo"), val_str includes quotes.
-            // If raw (tim), val_str is tim.
-            // We need to ensure it's a valid Janet string.
             if (val_str.size() >= 2 && val_str.front() == '"' && val_str.back() == '"')
             {
                 return val_str; // Already quoted
