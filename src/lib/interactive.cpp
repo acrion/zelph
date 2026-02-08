@@ -73,12 +73,12 @@ public:
 
         _n->register_core_node(_n->core.RelationTypeCategory, L"->");
         _n->register_core_node(_n->core.Causes, L"=>");
-        _n->register_core_node(_n->core.And, L",");
         _n->register_core_node(_n->core.IsA, L"~");
         _n->register_core_node(_n->core.Unequal, L"!=");
         _n->register_core_node(_n->core.Contradiction, L"!");
         _n->register_core_node(_n->core.FollowedBy, L"..");
         _n->register_core_node(_n->core.PartOf, L"in");
+        _n->register_core_node(_n->core.Conjunction, L"conjunction");
 
         _script_engine->initialize();
 
@@ -196,9 +196,9 @@ void console::Interactive::process(std::wstring line) const
     _pImpl->_n->set_print([](const std::wstring& str, bool)
                           {
 #ifdef _WIN32
-                              std::wcout << str << std::endl;
+                              std::wcout << string::unmark_identifiers(str) << std::endl;
 #else
-                              std::clog << string::unicode::to_utf8(str) << std::endl;
+                              std::clog << string::unicode::to_utf8(string::unmark_identifiers(str)) << std::endl;
 #endif
                           });
 

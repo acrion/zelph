@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <iostream>
 #include <map>
+#include <unordered_set>
 #include <vector>
 
 using namespace zelph;
@@ -153,17 +154,19 @@ public:
         { return janet_wrap_cfunction(f); };
 #endif
         janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact s p o)\nCreate fact.");
-        janet_def(_janet_env, "zelph/rule", wrap((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule c d)\nCreate rule.");
         janet_def(_janet_env, "zelph/seq", wrap((JanetCFunction)janet_cfun_zelph_seq), "(zelph/seq content)\nCreate sequence node from string content.");
+        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
     }
 
     void setup_peg()
     {
         // zelph Grammar:
-        // 1. :atom -> Alphanumeric or Symbols (excluding < > = , ( ) " )
-        // 2. :sequence -> Everything inside < ... >
-        // 3. :quoted -> Standard "..."
-        // 4. :nested -> Recursive statements inside ( ... )
+        // 1. :atom -> Alphanumeric or Symbols (excluding reserved)
+        // 2. :sequence -> < ... >
+        // 3. :set -> { ... }
+        // 4. :nested -> ( ... ) Recursive statements inside ( ... )
+        // 5. :quoted -> "..."
+        // 6. :focused -> *Element (New: Returns the element instead of the container)
         // Returns tagged tuples like [:atom "val"], [:seq "val"] or [:nested sub-stmt...] for C++ processing
         std::string peg_setup = R"zph(
             (def zelph-grammar
@@ -171,11 +174,11 @@ public:
                 :s* (any :ws)
                 :s+ (some :ws)
 
-                # Reserved chars that cannot start an atom without quotes
-                :reserved (set " \t\r\n\0\v=>,<>\"()")
-
-                :sep-rule "=>"
-                :sep-cond ","
+                # Reserved chars that start special structures:
+                # < (seq), " (quote), ( (nested), { (set), * (focus)
+                # delimiters: ) }
+                # Note: '>' is NOT reserved globally.
+                :reserved (set " \t\r\n\0\v<\"(){}*")
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
@@ -186,39 +189,43 @@ public:
                 :var-token (sequence (choice "_" :var-start) (any :var-rest))
 
                 :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
-                :raw-atom (capture (some (choice :symchars (set "=><"))))
+                :raw-atom (capture (some :symchars))
                 :seq-content (capture (any (if-not ">" 1)))
 
-                # Tagged values for AST
+                # Definitions for structures
                 :tag-var    (group (* (constant :var)  (capture :var-token)))
                 :tag-atom   (group (* (constant :atom) (choice :quoted :raw-atom)))
+                # Special rule for '*' as an atom (since it's now reserved)
+                :star-atom  (group (* (constant :atom) (capture "*")))
+
                 :tag-seq    (group (* (constant :seq)  (* "<" (not :ws) :seq-content ">")))
 
-                # Nested facts: ( S P O )
-                # We reuse :stmt-any inside the parens.
-                # The group will produce [:nested val1 val2 val3 ...]
+                # Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
+                # but Janet PEG handles this via the :val-any choice reference.
+
+                # Focused Value: *Value (e.g. *A or *{...} or *(...))
+                # Returns [:focused value-node]
+                :tag-focused (group (* (constant :focused) "*" :val-any))
+
+                # Nested Facts: ( A B C )
                 :tag-nested (group (* (constant :nested) "(" :s* :stmt-any :s* ")"))
 
-                :val-any (choice :tag-var :tag-seq :tag-atom :tag-nested)
+                # Sets: { A B C }
+                :set-content (any (sequence :s* :val-any))
+                :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
-                # Safe value excludes separators (nested facts are safe as they are encapsulated)
-                :val-safe (if-not (+ :sep-rule :sep-cond) :val-any)
+                # Order matters: check for focus prefix first.
+                # If input is "*", :tag-focused fails (expects val), falls through to :star-atom.
+                :val-any (choice :tag-focused :tag-var :tag-seq :tag-atom :star-atom :tag-nested :tag-set)
 
-                :stmt-safe (sequence :val-safe :s+ :val-safe (some (sequence :s+ :val-safe)))
-                :grp-stmt-safe (group :stmt-safe)
+                # A statement is a sequence of values separated by whitespace
+                # Used inside ( ... ) and at top level for facts
+                :stmt-any (sequence :val-any (any (sequence :s+ :val-any)))
 
-                # Conditions list: stmt , stmt , stmt
-                :cond-list (sequence :grp-stmt-safe (any (sequence :s* :sep-cond :s* :grp-stmt-safe)))
-
-                :rule-def (sequence (constant "rule")
-                                    (group :cond-list)
-                                    :s* :sep-rule :s*
-                                    (group :cond-list))
-
-                :stmt-any (sequence :val-any :s+ :val-any (some (sequence :s+ :val-any)))
-                :fact-def (sequence (constant "fact") :stmt-any)
-
-                :main (sequence :s* (choice :rule-def :fact-def) :s*)})
+                # Top Level Parsing
+                # Everything is captured into a :root group.
+                # C++ logic decides if it's a single value or a fact (S P O) based on element count.
+                :main (sequence :s* (group (* (constant :root) :stmt-any)) :s*)})
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))
@@ -295,42 +302,25 @@ public:
             }
         }
 
-        if (elements.empty()) return janet_wrap_nil(); // Or return empty sequence node?
+        if (elements.empty()) return janet_wrap_nil(); // Empty sequences are not supported
 
         network::Node seq_node = s_instance->_n->sequence(elements);
         return zelph_wrap_node(seq_node);
     }
 
-    static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
+    static Janet janet_cfun_zelph_set(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
 
-        auto extract_nodes = [](Janet val, network::adjacency_set& target)
+        std::unordered_set<network::Node> elements;
+        for (int i = 0; i < argc; ++i)
         {
-            const Janet* arr;
-            int32_t      len;
-            if (janet_indexed_view(val, &arr, &len))
-            {
-                for (int i = 0; i < len; ++i)
-                {
-                    network::Node n = s_instance->resolve_janet_arg(arr[i]);
-                    if (n) target.insert(n);
-                }
-            }
-        };
+            network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (n) elements.insert(n);
+        }
 
-        network::adjacency_set conds, deducs;
-        extract_nodes(argv[0], conds);
-        extract_nodes(argv[1], deducs);
-
-        if (conds.empty() || deducs.empty()) return janet_wrap_nil();
-
-        network::Node cond_node = (conds.size() == 1) ? *conds.begin()
-                                                      : s_instance->_n->condition(s_instance->_n->core.And, conds);
-
-        network::Node rule = s_instance->_n->fact(cond_node, s_instance->_n->core.Causes, deducs);
-        return zelph_wrap_node(rule);
+        network::Node set_node = s_instance->_n->set(elements);
+        return zelph_wrap_node(set_node);
     }
 
     static Janet janet_cfun_zelph_fact(int32_t argc, Janet* argv)
@@ -354,8 +344,73 @@ public:
         return zelph_wrap_node(f);
     }
 
+    // Helper to generate Janet code for a function call with potential focused arguments.
+    // func_name: "zelph/fact" or "zelph/set"
+    // args: Array of Janet tuples (the AST nodes)
+    std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
+    {
+        if (args.empty()) return "nil";
+
+        int                      focused_index = -1;
+        std::vector<std::string> arg_codes;
+        arg_codes.reserve(args.size());
+
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            const Janet* data;
+            int32_t      len;
+            if (!janet_indexed_view(args[i], &data, &len)) return "nil";
+
+            std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+
+            if (type == "focused")
+            {
+                if (focused_index != -1)
+                {
+                    // Error: Multiple foci (handled by returning nil or could throw)
+                    // "Only one element... may have a star"
+                    return "(error \"Zelph: Multiple focus markers (*) in one statement\")";
+                }
+                focused_index = (int)i;
+                // Recursively transform the actual value inside the focus tag
+                // [:focused val] -> data[1] is val
+                arg_codes.push_back(transform_arg(data[1]));
+            }
+            else
+            {
+                arg_codes.push_back(transform_arg(args[i]));
+            }
+        }
+
+        if (focused_index == -1)
+        {
+            // Simple case: No focus, just call the function
+            std::string call = "(" + func_name;
+            for (const auto& code : arg_codes)
+                call += " " + code;
+            call += ")";
+            return call;
+        }
+        else
+        {
+            // Focused case: Use `let` to evaluate args, create side-effect, return focused arg.
+            // (let [$0 arg0 $1 arg1 ... _ (func $0 $1 ...)] $focused_index)
+            std::string let_block = "(let [";
+            for (size_t i = 0; i < arg_codes.size(); ++i)
+            {
+                let_block += "$" + std::to_string(i) + " " + arg_codes[i] + " ";
+            }
+            let_block += "_ (" + func_name;
+            for (size_t i = 0; i < arg_codes.size(); ++i)
+            {
+                let_block += " $" + std::to_string(i);
+            }
+            let_block += ")] $" + std::to_string(focused_index) + ")";
+            return let_block;
+        }
+    }
+
     // Convert PEG-AST tuple to Janet Source Code String
-    // Input is a tuple: e.g. [:atom "tim"], [:seq "123"], [:var "X"] or [:nested val1 val2...]
     std::string transform_arg(Janet arg_tuple) const
     {
         if (!janet_checktype(arg_tuple, JANET_TUPLE) && !janet_checktype(arg_tuple, JANET_ARRAY)) return "nil";
@@ -365,21 +420,29 @@ public:
         janet_indexed_view(arg_tuple, &data, &len);
         if (len < 2) return "nil"; // Minimum [:type value...]
 
-        std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0])); // :atom, :seq, :var, :nested
+        std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
 
-        // Handle nested recursion first
-        if (type == "nested")
+        if (type == "focused")
         {
-            // Structure: [:nested val1 val2 val3 ...]
-            // We transform this into (zelph/fact val1 val2 val3 ...)
-            // This enables the returned node to be used as an argument in the parent expression.
-            std::string nested_call = "(zelph/fact";
+            // If transform_arg is called directly on a focused node (e.g. root level single item),
+            // just return the inner transformation. The focus has no effect if there's no surrounding operation.
+            return transform_arg(data[1]);
+        }
+        else if (type == "nested")
+        {
+            // [:nested val1 val2 ...]
+            std::vector<Janet> args;
             for (int32_t i = 1; i < len; ++i)
-            {
-                nested_call += " " + transform_arg(data[i]);
-            }
-            nested_call += ")";
-            return nested_call;
+                args.push_back(data[i]);
+            return build_smart_call("zelph/fact", args);
+        }
+        else if (type == "set")
+        {
+            // [:set val1 val2 ...]
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/set", args);
         }
 
         // Handle leaf nodes (atom, var, seq)
@@ -422,39 +485,6 @@ public:
             return "(zelph/seq " + content + ")";
         }
         return "nil";
-    }
-
-    std::string transform_subtree(Janet subtree) const
-    {
-        if (!janet_checktype(subtree, JANET_ARRAY) && !janet_checktype(subtree, JANET_TUPLE)) return "";
-
-        const Janet* data;
-        int32_t      len;
-        janet_indexed_view(subtree, &data, &len);
-
-        std::string result = "[";
-        for (int32_t i = 0; i < len; ++i)
-        {
-            if (janet_checktype(data[i], JANET_ARRAY) || janet_checktype(data[i], JANET_TUPLE))
-            {
-                const Janet* fact_data;
-                int32_t      fact_len;
-                janet_indexed_view(data[i], &fact_data, &fact_len);
-
-                if (fact_len < 3) continue;
-
-                // fact_data contains tagged tuples
-                std::string subj = transform_arg(fact_data[0]);
-                std::string pred = transform_arg(fact_data[1]);
-                std::string objs = "";
-                for (int32_t j = 2; j < fact_len; ++j)
-                {
-                    objs += transform_arg(fact_data[j]) + " ";
-                }
-                result += "(zelph/fact " + subj + " " + pred + " " + objs + ") ";
-            }
-        }
-        return result + "]";
     }
 };
 
@@ -499,28 +529,37 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     JanetArray* tree = janet_unwrap_array(result);
     if (tree->count < 1) return "";
 
-    const uint8_t* type_str = janet_unwrap_string(tree->data[0]);
-    std::string    type     = reinterpret_cast<const char*>(type_str);
+    // The PEG now returns `[:root val1 val2 ...]`
+    const Janet* root_data;
+    int32_t      root_len;
+    if (!janet_indexed_view(tree->data[0], &root_data, &root_len)) return "";
 
-    if (type == "fact")
+    std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(root_data[0]));
+    if (type != "root") return "";
+
+    // Check how many items we have
+    // root_data[0] is :root tag
+    // root_data[1..n] are the values
+    int val_count = root_len - 1;
+
+    if (val_count == 0) return "";
+
+    if (val_count == 1)
     {
-        // Tree: ["fact", [:atom "S"], [:atom "P"], [:seq "O"]]
-        std::string subj = _pImpl->transform_arg(tree->data[1]);
-        std::string pred = _pImpl->transform_arg(tree->data[2]);
-        std::string objs = "";
-        for (int32_t i = 3; i < tree->count; ++i)
+        // Single term (e.g. { ... } or just "Atom")
+        // Just return the term itself to be evaluated/printed
+        return _pImpl->transform_arg(root_data[1]);
+    }
+    else
+    {
+        // Fact (S P O...)
+        std::vector<Janet> fact_args;
+        for (int i = 1; i < root_len; ++i)
         {
-            objs += _pImpl->transform_arg(tree->data[i]) + " ";
+            fact_args.push_back(root_data[i]);
         }
-        return "(zelph/fact " + subj + " " + pred + " " + objs + ")";
+        return _pImpl->build_smart_call("zelph/fact", fact_args);
     }
-    else if (type == "rule")
-    {
-        std::string conds  = _pImpl->transform_subtree(tree->data[1]);
-        std::string deducs = _pImpl->transform_subtree(tree->data[2]);
-        return "(zelph/rule " + conds + " " + deducs + ")";
-    }
-    return "";
 }
 
 void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)

@@ -85,9 +85,6 @@ int main(int argc, char** argv)
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #else
         std::cout << "zelph " << interactive.get_version() << std::endl;
-        std::cout << std::endl;
-        if (script_files.empty())
-            std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #endif
 
         std::wcout << L"-- interactive mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
