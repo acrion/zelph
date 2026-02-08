@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string_utils.hpp"
 
+#include "boost/algorithm/string/replace.hpp"
+
 #include <boost/locale/encoding_utf.hpp>
 
 #include <codecvt>
@@ -155,14 +157,23 @@ namespace zelph
         std::wstring mark_identifier(const std::wstring& str)
         {
             if (str.empty()
-                || (str.length() == 1 && std::iswupper(str[0]))
-                || str.front() == L'('
-                || str.back() == L')')
+                || (str.length() == 1 && std::iswupper(str[0])) // variable
+                || str.front() == L'_'                          // variable
+                || str.front() == L'(' || str.back() == L')'    // sub expression
+                || str.front() == L'<' || str.back() == L'>'    // sequence
+                || str.front() == L'{' || str.back() == L'}'    // set
+                || str.front() == L'[' || str.back() == L']')   // currently unused
             {
                 return str;
             }
 
             return L"«" + str + L"»";
+        }
+
+        // Remove all guillemets (« and ») that were added by above function mark_identifier
+        std::wstring unmark_identifiers(const std::wstring& str)
+        {
+            return boost::replace_all_copy(boost::replace_all_copy(str, L"«", L" "), L"»", L" ");
         }
 
         std::wstring sanitize_filename(const std::wstring& name)

@@ -34,6 +34,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <iostream>
 #include <map>
+#include <unordered_set>
+#include <vector>
 
 using namespace zelph;
 
@@ -151,50 +153,84 @@ public:
         auto wrap = [](JanetCFunction f)
         { return janet_wrap_cfunction(f); };
 #endif
-        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact subject predicate object)\nCreate fact in zelph.");
-        janet_def(_janet_env, "zelph/rule", wrap((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conds deducs)\nCreate rule in zelph.");
+        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact s p o)\nCreate fact.");
+        janet_def(_janet_env, "zelph/seq", wrap((JanetCFunction)janet_cfun_zelph_seq), "(zelph/seq content)\nCreate sequence node from string content.");
+        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
     }
 
     void setup_peg()
     {
-        std::string peg_setup = R"(
+        // zelph Grammar:
+        // 1. :atom -> Alphanumeric or Symbols (excluding reserved)
+        // 2. :sequence -> < ... >
+        // 3. :set -> { ... }
+        // 4. :nested -> ( ... ) Recursive statements inside ( ... )
+        // 5. :quoted -> "..."
+        // 6. :focused -> *Element (New: Returns the element instead of the container)
+        // Returns tagged tuples like [:atom "val"], [:seq "val"] or [:nested sub-stmt...] for C++ processing
+        std::string peg_setup = R"zph(
             (def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
                 :s* (any :ws)
                 :s+ (some :ws)
-                :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<>?@^_~") (set "=><,"))
 
-                :sep-rule "=>"
-                :sep-cond ","
+                # Reserved chars that start special structures:
+                # < (seq), " (quote), ( (nested), { (set), * (focus)
+                # delimiters: ) }
+                # Note: '>' is NOT reserved globally.
+                :reserved (set " \t\r\n\0\v<\"(){}*")
 
-                :var (capture (choice (range "AZ") (sequence "_" (any :symchars))))
+                # Identifiers
+                :symchars (if-not :reserved 1)
+                :var-underscore (* "_" (any :symchars))
+                :var-uppercase  (* (range "AZ") (not :symchars))
+
+                # A variable must start with underscore or be a single uppercase letter
+                :var-token (choice :var-underscore :var-uppercase)
+
                 :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
-                :raw-tok (capture (some :symchars))
+                :raw-atom (capture (some :symchars))
+                :seq-content (capture (any (if-not ">" 1)))
 
-                :val-any (choice :quoted :var :raw-tok)
+                # Definitions for structures
+                :tag-var    (group (* (constant :var)  (capture :var-token)))
+                :tag-atom   (group (* (constant :atom) (choice :quoted :raw-atom)))
+                # Special rule for '*' as an atom (since it's now reserved)
+                :star-atom  (group (* (constant :atom) (capture "*")))
 
-                # Safe value excludes => and , to prevent consuming delimiters in rules
-                :val-safe (if-not (+ :sep-rule :sep-cond) :val-any)
+                :tag-seq    (group (* (constant :seq)  (* "<" (not :ws) :seq-content ">")))
 
-                :stmt-safe (sequence :val-safe :s+ :val-safe (some (sequence :s+ :val-safe)))
-                :grp-stmt-safe (group :stmt-safe)
+                # Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
+                # but Janet PEG handles this via the :val-any choice reference.
 
-                # Conditions list: stmt , stmt , stmt
-                :cond-list (sequence :grp-stmt-safe (any (sequence :s* :sep-cond :s* :grp-stmt-safe)))
+                # Focused Value: *Value (e.g. *A or *{...} or *(...))
+                # Returns [:focused value-node]
+                :tag-focused (group (* (constant :focused) "*" :val-any))
 
-                :rule-def (sequence (constant "rule")
-                                    (group :cond-list)
-                                    :s* :sep-rule :s*
-                                    (group :cond-list))
+                # Nested Facts: ( A B C )
+                :tag-nested (group (* (constant :nested) "(" :s* :stmt-any :s* ")"))
 
-                :stmt-any (sequence :val-any :s+ :val-any (some (sequence :s+ :val-any)))
-                :fact-def (sequence (constant "fact") :stmt-any)
+                # Sets: { A B C }
+                :set-content (any (sequence :s* :val-any))
+                :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
-                :main (sequence :s* (choice :rule-def :fact-def) :s*)})
+                # Order matters: check for focus prefix first.
+                # If input is "*", :tag-focused fails (expects val), falls through to :star-atom.
+                # If input is "Alice", :tag-var fails (because length > 1 and no underscore), falls through to :tag-atom.
+                :val-any (choice :tag-focused :tag-var :tag-seq :tag-atom :star-atom :tag-nested :tag-set)
+
+                # A statement is a sequence of values separated by whitespace
+                # Used inside ( ... ) and at top level for facts
+                :stmt-any (sequence :val-any (any (sequence :s+ :val-any)))
+
+                # Top Level Parsing
+                # Everything is captured into a :root group.
+                # C++ logic decides if it's a single value or a fact (S P O) based on element count.
+                :main (sequence :s* (group (* (constant :root) :stmt-any)) :s*)})
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))
-        )";
+        )zph";
 
         Janet out;
         int   status = janet_dostring(_janet_env, peg_setup.c_str(), "setup", &out);
@@ -205,6 +241,7 @@ public:
         janet_gcroot(_zelph_peg);
     }
 
+    // Converts Janet Types to Nodes.
     network::Node resolve_janet_arg(Janet arg)
     {
         if (janet_checktype(arg, JANET_ABSTRACT) || janet_checktype(arg, JANET_NUMBER))
@@ -213,35 +250,14 @@ public:
         }
         else if (janet_checktype(arg, JANET_STRING))
         {
+            // It's a standard named Node (Atom)
             const uint8_t* str  = janet_unwrap_string(arg);
             std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
-
-            // Check if it matches a core node name (unquoted in source)
-            network::Node core_node = _n->get_core_node(wstr);
-            if (core_node != 0)
-            {
-                return core_node;
-            }
-            else if (wstr.size() >= 2 && wstr.front() == L'"' && wstr.back() == L'"')
-            {
-                // It was quoted in the source, so it's a single Node
-                wstr = wstr.substr(1, wstr.size() - 2);
-                return _n->node(wstr, _n->lang());
-            }
-            else
-            {
-                // It was unquoted in the source, so it's a sequence of characters
-                std::vector<std::wstring> chars;
-                chars.reserve(wstr.length());
-                for (wchar_t c : wstr)
-                {
-                    chars.push_back(std::wstring(1, c));
-                }
-                return _n->sequence(chars);
-            }
+            return _n->node(wstr, _n->lang());
         }
         else if (janet_checktype(arg, JANET_SYMBOL))
         {
+            // It's a Variable
             const uint8_t* sym   = janet_unwrap_symbol(arg);
             std::string    s_sym = reinterpret_cast<const char*>(sym);
             if (_scoped_variables.count(s_sym)) return _scoped_variables[s_sym];
@@ -254,37 +270,58 @@ public:
         return 0;
     }
 
-    static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
+    // Handle sequence creation logic (Space vs Char split)
+    static Janet janet_cfun_zelph_seq(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 2);
+        janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
 
-        auto extract_nodes = [](Janet val, network::adjacency_set& target)
+        const uint8_t* str   = janet_getstring(argv, 0);
+        std::string    raw_s = reinterpret_cast<const char*>(str);
+        std::wstring   wstr  = string::unicode::from_utf8(raw_s);
+
+        std::vector<std::wstring> elements;
+
+        // Logic: If it contains a space, split by space. Otherwise, split by character.
+        if (wstr.find(L' ') != std::wstring::npos)
         {
-            const Janet* arr;
-            int32_t      len;
-            if (janet_indexed_view(val, &arr, &len))
+            // Split by whitespace
+            std::vector<std::string> parts;
+            boost::split(parts, raw_s, boost::is_any_of(" \t"), boost::token_compress_on);
+            for (const auto& p : parts)
             {
-                for (int i = 0; i < len; ++i)
-                {
-                    // Use standard resolution to handle Numbers, Strings (Sequences), and Symbols (Vars)
-                    network::Node n = s_instance->resolve_janet_arg(arr[i]);
-                    if (n) target.insert(n);
-                }
+                if (!p.empty()) elements.push_back(string::unicode::from_utf8(p));
             }
-        };
+        }
+        else
+        {
+            // Split by character
+            elements.reserve(wstr.length());
+            for (wchar_t c : wstr)
+            {
+                elements.push_back(std::wstring(1, c));
+            }
+        }
 
-        network::adjacency_set conds, deducs;
-        extract_nodes(argv[0], conds);
-        extract_nodes(argv[1], deducs);
+        if (elements.empty()) return janet_wrap_nil(); // Empty sequences are not supported
 
-        if (conds.empty() || deducs.empty()) return janet_wrap_nil();
+        network::Node seq_node = s_instance->_n->sequence(elements);
+        return zelph_wrap_node(seq_node);
+    }
 
-        network::Node cond_node = (conds.size() == 1) ? *conds.begin()
-                                                      : s_instance->_n->condition(s_instance->_n->core.And, conds);
+    static Janet janet_cfun_zelph_set(int32_t argc, Janet* argv)
+    {
+        if (!s_instance) return janet_wrap_nil();
 
-        network::Node rule = s_instance->_n->fact(cond_node, s_instance->_n->core.Causes, deducs);
-        return zelph_wrap_node(rule);
+        std::unordered_set<network::Node> elements;
+        for (int i = 0; i < argc; ++i)
+        {
+            network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (n) elements.insert(n);
+        }
+
+        network::Node set_node = s_instance->_n->set(elements);
+        return zelph_wrap_node(set_node);
     }
 
     static Janet janet_cfun_zelph_fact(int32_t argc, Janet* argv)
@@ -308,56 +345,147 @@ public:
         return zelph_wrap_node(f);
     }
 
-    std::string transform_token(Janet tok) const
+    // Helper to generate Janet code for a function call with potential focused arguments.
+    // func_name: "zelph/fact" or "zelph/set"
+    // args: Array of Janet tuples (the AST nodes)
+    std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
     {
-        if (janet_checktype(tok, JANET_STRING))
-        {
-            const uint8_t* tok_str = janet_unwrap_string(tok);
-            std::string    tok_s   = reinterpret_cast<const char*>(tok_str);
-            std::wstring   wtok    = string::unicode::from_utf8(tok_s);
+        if (args.empty()) return "nil";
 
-            if (is_var(wtok))
+        int                      focused_index = -1;
+        std::vector<std::string> arg_codes;
+        arg_codes.reserve(args.size());
+
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            const Janet* data;
+            int32_t      len;
+            if (!janet_indexed_view(args[i], &data, &len)) return "nil";
+
+            std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+
+            if (type == "focused")
             {
-                return "'" + tok_s;
+                if (focused_index != -1)
+                {
+                    // Error: Multiple foci (handled by returning nil or could throw)
+                    // "Only one element... may have a star"
+                    return "(error \"Zelph: Multiple focus markers (*) in one statement\")";
+                }
+                focused_index = (int)i;
+                // Recursively transform the actual value inside the focus tag
+                // [:focused val] -> data[1] is val
+                arg_codes.push_back(transform_arg(data[1]));
             }
             else
             {
-                return "\"" + boost::replace_all_copy(tok_s, "\"", "\\\"") + "\"";
+                arg_codes.push_back(transform_arg(args[i]));
             }
         }
-        return "";
+
+        if (focused_index == -1)
+        {
+            // Simple case: No focus, just call the function
+            std::string call = "(" + func_name;
+            for (const auto& code : arg_codes)
+                call += " " + code;
+            call += ")";
+            return call;
+        }
+        else
+        {
+            // Focused case: Use `let` to evaluate args, create side-effect, return focused arg.
+            // (let [$0 arg0 $1 arg1 ... _ (func $0 $1 ...)] $focused_index)
+            std::string let_block = "(let [";
+            for (size_t i = 0; i < arg_codes.size(); ++i)
+            {
+                let_block += "$" + std::to_string(i) + " " + arg_codes[i] + " ";
+            }
+            let_block += "_ (" + func_name;
+            for (size_t i = 0; i < arg_codes.size(); ++i)
+            {
+                let_block += " $" + std::to_string(i);
+            }
+            let_block += ")] $" + std::to_string(focused_index) + ")";
+            return let_block;
+        }
     }
 
-    std::string transform_subtree(Janet subtree) const
+    // Convert PEG-AST tuple to Janet Source Code String
+    std::string transform_arg(Janet arg_tuple) const
     {
-        if (!janet_checktype(subtree, JANET_ARRAY) && !janet_checktype(subtree, JANET_TUPLE)) return "";
+        if (!janet_checktype(arg_tuple, JANET_TUPLE) && !janet_checktype(arg_tuple, JANET_ARRAY)) return "nil";
 
         const Janet* data;
         int32_t      len;
-        janet_indexed_view(subtree, &data, &len);
+        janet_indexed_view(arg_tuple, &data, &len);
+        if (len < 2) return "nil"; // Minimum [:type value...]
 
-        std::string result = "[";
-        for (int32_t i = 0; i < len; ++i)
+        std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+
+        if (type == "focused")
         {
-            if (janet_checktype(data[i], JANET_ARRAY) || janet_checktype(data[i], JANET_TUPLE))
+            // If transform_arg is called directly on a focused node (e.g. root level single item),
+            // just return the inner transformation. The focus has no effect if there's no surrounding operation.
+            return transform_arg(data[1]);
+        }
+        else if (type == "nested")
+        {
+            // [:nested val1 val2 ...]
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/fact", args);
+        }
+        else if (type == "set")
+        {
+            // [:set val1 val2 ...]
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/set", args);
+        }
+
+        // Handle leaf nodes (atom, var, seq)
+        // These expect data[1] to be the content string/buffer
+        std::string val_str = "";
+        if (janet_checktype(data[1], JANET_STRING))
+        {
+            val_str = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
+        }
+        else if (janet_checktype(data[1], JANET_BUFFER))
+        {
+            val_str = reinterpret_cast<const char*>(janet_unwrap_buffer(data[1]));
+        }
+
+        if (type == "var")
+        {
+            // Variables are symbols in Janet (e.g. X, _V).
+            // IMPORTANT: We must quote them (e.g. 'A), otherwise Janet tries
+            // to evaluate 'A' as a bound variable and fails if it's not defined.
+            return "'" + val_str;
+        }
+        else if (type == "atom")
+        {
+            // Atoms are strings in Janet.
+            if (val_str.size() >= 2 && val_str.front() == '"' && val_str.back() == '"')
             {
-                const Janet* fact_data;
-                int32_t      fact_len;
-                janet_indexed_view(data[i], &fact_data, &fact_len);
-
-                if (fact_len < 3) continue;
-
-                std::string subj = transform_token(fact_data[0]);
-                std::string pred = transform_token(fact_data[1]);
-                std::string objs = "";
-                for (int32_t j = 2; j < fact_len; ++j)
-                {
-                    objs += transform_token(fact_data[j]) + " ";
-                }
-                result += "(zelph/fact " + subj + " " + pred + " " + objs + ") ";
+                return val_str; // Already quoted
+            }
+            else
+            {
+                // Wrap in quotes and escape
+                return "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             }
         }
-        return result + "]";
+        else if (type == "seq")
+        {
+            // Convert <123> content to (zelph/seq "123")
+            // Escape the content string for Janet
+            std::string content = "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+            return "(zelph/seq " + content + ")";
+        }
+        return "nil";
     }
 };
 
@@ -402,27 +530,37 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     JanetArray* tree = janet_unwrap_array(result);
     if (tree->count < 1) return "";
 
-    const uint8_t* type_str = janet_unwrap_string(tree->data[0]);
-    std::string    type     = reinterpret_cast<const char*>(type_str);
+    // The PEG now returns `[:root val1 val2 ...]`
+    const Janet* root_data;
+    int32_t      root_len;
+    if (!janet_indexed_view(tree->data[0], &root_data, &root_len)) return "";
 
-    if (type == "fact")
+    std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(root_data[0]));
+    if (type != "root") return "";
+
+    // Check how many items we have
+    // root_data[0] is :root tag
+    // root_data[1..n] are the values
+    int val_count = root_len - 1;
+
+    if (val_count == 0) return "";
+
+    if (val_count == 1)
     {
-        std::string subj = _pImpl->transform_token(tree->data[1]);
-        std::string pred = _pImpl->transform_token(tree->data[2]);
-        std::string objs = "";
-        for (int32_t i = 3; i < tree->count; ++i)
+        // Single term (e.g. { ... } or just "Atom")
+        // Just return the term itself to be evaluated/printed
+        return _pImpl->transform_arg(root_data[1]);
+    }
+    else
+    {
+        // Fact (S P O...)
+        std::vector<Janet> fact_args;
+        for (int i = 1; i < root_len; ++i)
         {
-            objs += _pImpl->transform_token(tree->data[i]) + " ";
+            fact_args.push_back(root_data[i]);
         }
-        return "(zelph/fact " + subj + " " + pred + " " + objs + ")";
+        return _pImpl->build_smart_call("zelph/fact", fact_args);
     }
-    else if (type == "rule")
-    {
-        std::string conds  = _pImpl->transform_subtree(tree->data[1]);
-        std::string deducs = _pImpl->transform_subtree(tree->data[2]);
-        return "(zelph/rule " + conds + " " + deducs + ")";
-    }
-    return "";
 }
 
 void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
@@ -489,15 +627,9 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
 
 bool ScriptEngine::is_var(std::wstring token)
 {
+    // Legacy helper, might still be useful outside of PEG context
     static const std::wstring variable_names(L"ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
-
-    switch (token.size())
-    {
-    case 0:
-        return false;
-    case 1:
-        return variable_names.find(*token.begin()) != std::wstring::npos;
-    default:
-        return *token.begin() == L'_';
-    }
+    if (token.empty()) return false;
+    if (token.size() == 1) return variable_names.find(*token.begin()) != std::wstring::npos;
+    return *token.begin() == L'_';
 }

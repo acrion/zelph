@@ -133,7 +133,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
     auto is_protected = [&](Node n)
     {
-        return n == core.IsA || n == core.And || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.FollowedBy || n == core.PartOf;
+        return n == core.IsA || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.FollowedBy || n == core.PartOf || n == core.Conjunction;
     };
 
     std::clog << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
@@ -448,38 +448,93 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 {
     if (!rule.conditions || rule.index >= rule.conditions->size()) return;
 
-    Node condition  = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
-    auto current_op = _pImpl->get_right(condition);
+    Node condition = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
 
-    // condition points to
-    //    (1) the rule itself (i.e. the relaton node pointing to core.Causes), and
-    //    (2) the type of relation, which may be any relation type (i.e. any node pointing having a core.IsA relation to core.RelationTypeCategory),
-    //        but especially core.And (which makes this rule node a set of conditions)
-    if (current_op.count(core.And) == 1)
+#ifdef _DEBUG
+    std::clog << "[DEBUG evaluate] Processing condition node: " << condition << std::endl;
+#endif
+
+    // A Condition can be a Set which is an instance of core.Conjunction.
+    // Check: (condition ~ conjunction) ?
+    bool is_conjunction = false;
+
+    // Check outgoing relations of 'condition' (Subject -> Relations)
+    if (_pImpl->exists(condition))
     {
-        auto condition_back_link = filter(
-            _pImpl->get_left(condition),
-            [&](const Node nd)
-            { return nd != rule.node; });
+        for (Node rel : _pImpl->get_right(condition))
+        {
+            if (parse_relation(rel) == core.IsA)
+            {
+                adjacency_set targets;
+                parse_fact(rel, targets);
+                if (targets.count(core.Conjunction))
+                {
+                    is_conjunction = true;
+                    break;
+                }
+            }
+        }
+    }
 
-        if (!condition_back_link.empty())
+    if (is_conjunction)
+    {
+#ifdef _DEBUG
+        std::clog << "[DEBUG evaluate] Node " << condition << " identified as Conjunction Set." << std::endl;
+#endif
+        // It is a Conjunction Set.
+        // We need to retrieve its elements. In Zelph topology, elements are subjects of PartOf relations pointing to the set.
+        // Fact: Element PartOf Set
+        // Topology: Set -> RelationNode (Object connects to Relation)
+        // Therefore, we must look in get_right(condition) to find the relations where 'condition' is the object.
+
+        adjacency_set sub_conditions;
+        for (Node rel : _pImpl->get_right(condition))
+        {
+            Node p = parse_relation(rel);
+            if (p == core.PartOf)
+            {
+                adjacency_set objs;
+                Node          element = parse_fact(rel, objs); // subject of the PartOf relation (the element)
+
+                // Verify that 'condition' is indeed one of the objects (it should be, since we found 'rel' via get_right(condition))
+                if (element && objs.count(condition) == 1)
+                {
+#ifdef _DEBUG
+                    std::clog << "[DEBUG evaluate] Found element of conjunction: " << element << " (via relation " << rel << ")" << std::endl;
+#endif
+                    sub_conditions.insert(element);
+                }
+            }
+        }
+
+        if (!sub_conditions.empty())
         {
             // Optimization: Sort conditions to evaluate most constrained ones first
-            // This prevents combinatorial explosion (e.g. evaluating "K P279 Y" before K is bound)
-            auto sorted_conditions = optimize_order(condition_back_link, *rule.variables);
-            // Push next alternative (sibling of current AND-node logic) to stack if applicable
+            auto sorted_conditions = optimize_order(sub_conditions, *rule.variables);
+
+            // Push next alternative (sibling of current Conjunction-node logic) to stack if applicable
             RulePos next_branch(rule);
             if (++next_branch.index < next_branch.conditions->size())
             {
                 ctx.next.push_back(next_branch);
             }
 
+            // Recurse into the conjunction
             evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals}), ctx);
+        }
+        else
+        {
+#ifdef _DEBUG
+            std::clog << "[DEBUG evaluate] Conjunction set " << condition << " appears empty or malformed." << std::endl;
+#endif
         }
     }
     else
     {
-        // here we run into for each part of a condition
+        // Leaf Condition (Atomic Fact)
+#ifdef _DEBUG
+        std::clog << "[DEBUG evaluate] Processing leaf condition: " << condition << std::endl;
+#endif
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
             this, condition, rule.node, rule.variables, rule.unequals, _pool.get());
 

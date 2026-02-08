@@ -1,17 +1,17 @@
 .lang wikidata
 
 # Top 1: concrete object vs abstract entity (93% of the total culprits)
-K "P279" "Q4406616", K "P279" "Q7048977" => !
-X "P31" "Q4406616", X "P31" "Q7048977" => !
+(*{(K "P279" "Q4406616") (K "P279" "Q7048977")} ~ conjunction) => !
+(*{(X "P31" "Q4406616")  (X "P31" "Q7048977")}  ~ conjunction) => !
 
 # Top 2: artificial object vs natural object
-K "P279" "Q16686448", K "P279" "Q1970309" => !
-X "P31" "Q16686448", X "P31" "Q1970309" => !
+(*{(K "P279" "Q16686448") (K "P279" "Q1970309")} ~ conjunction) => !
+(*{(X "P31" "Q16686448")  (X "P31" "Q1970309")}  ~ conjunction) => !
 
 # Top 3: natural physical object vs artificial physical object
-K "P279" "Q16686022", K "P279" "Q8205328" => !
-X "P31" "Q16686022", X "P31" "Q8205328" => !
+(*{(K "P279" "Q16686022") (K "P279" "Q8205328")} ~ conjunction) => !
+(*{(X "P31" "Q16686022")  (X "P31" "Q8205328")}  ~ conjunction) => !
 
 # Top 4: person vs organization
-K "P279" "Q215627", K "P279" "Q43229" => !
-X "P31" "Q215627", X "P31" "Q43229" => !
+(*{(K "P279" "Q215627") (K "P279" "Q43229")} ~ conjunction) => !
+(*{(X "P31" "Q215627")  (X "P31" "Q43229")}  ~ conjunction) => !

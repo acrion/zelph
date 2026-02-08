@@ -168,8 +168,8 @@ namespace zelph
             bool                 has_right_edge(Node a, Node b) const;
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
-            Node                 condition(Node op, const adjacency_set& conditions) const;
             Node                 sequence(const std::vector<std::wstring>& elements);
+            Node                 set(const std::unordered_set<Node>& elements);
             FactComponents       extract_fact_components(Node relation) const;
             void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
             void                 print(const std::wstring&, const bool) const;
@@ -195,12 +195,12 @@ namespace zelph
             {
                 const Node RelationTypeCategory;
                 const Node Causes;
-                const Node And;
                 const Node IsA;
                 const Node Unequal;
                 const Node Contradiction;
                 const Node FollowedBy;
                 const Node PartOf;
+                const Node Conjunction;
             } core;
 
         protected:
