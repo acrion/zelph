@@ -42,13 +42,13 @@ Let’s try a basic example:
 ```
 Berlin "is capital of" Germany
 Germany "is located in" Europe
-X is capital of Y, Y is located in Z => X is located in Z
+(*{(X "is capital of" Y) (Y "is located in" Z)} ~ conjunction) => (X "is located in" Z)
 ```
 
 After entering these statements, zelph will automatically infer that Berlin is located in Europe:
 
 ```
-«Berlin» «is located in» «Europe» ⇐ («Germany» «is located in» «Europe»), («Berlin» «is capital of» «Germany»)
+«Berlin» «is located in» «Europe» ⇐ {(«Germany» «is located in» «Europe») («Berlin» «is capital of» «Germany»)}
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
@@ -144,6 +144,7 @@ Key commands include:
 - `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
 - `.stat`                    – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.auto-run`                – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?
@@ -211,25 +212,48 @@ zelph can work with any type of relation, not just the standard `~` relation.
 Here’s how custom relations work:
 
 ```
-is opposite of ~ ->
-> «is opposite of» «~» «->»
-white is opposite of black
-> «white» «is opposite of» «black»
+zelph> bright "is opposite of" dark
+ bright   is opposite of   dark
 ```
 
-In this example, using the interactive CLI, the first line declares "is opposite of" as a relation type (a member of the `->` category).
-After the `>` symbol, we see zelph’s responses.
+In this example, using the interactive REPL, we enter a subject-predicate-object triple.
+Neither "bright", "dark" nor "is opposite of" is know to zelph prior this command.
+It automatically creates the appropiate nodes and edges in the semantic network.
+After doing so, in the second line this topology is parsed and printed to verify the process ran as expected.
 
-zelph creates new relation types automatically as needed. The explicit declaration of "is opposite of" can actually be omitted:
+Note that when a relation contains spaces, it be enclosed in quotation marks.
+
+### Nested Expressions and Sets
+
+zelph supports advanced grouping and recursion using parentheses `()` and braces `{}`.
+
+#### Parentheses: Nested Facts
+
+Triples can be nested within other triples. A parenthesized expression `(S P O)` evaluates to the **node representing that specific fact** (the relation node). This allows you to make statements about statements:
 
 ```
-white "is opposite of" black
-> «white» «is opposite of» «black»
+(bright "is opposite of" dark) "is a" "symmetric relation"
 ```
 
-Here, zelph automatically recognizes that "is opposite of" must be a relation type.
-Note that when a relation contains spaces and is being used for the first time, it must be enclosed in quotation marks.
-Once the relation is known to zelph, the quotation marks are no longer necessary in subsequent usage.
+Here, the subject of the outer statement is the node representing the fact that bright is opposite of dark.
+
+#### Braces: Sets
+
+Braces `{...}` are used to create sets of nodes or facts. This is primarily used for defining conditions in rules (see below).
+
+```
+{ (A "is part of" B) (B "is part of" C) }
+```
+
+#### The Focus Operator `*`
+
+When defining complex structures, you often need to refer to a specific part of an expression rather than the resulting fact node. The `*` operator allows you to "focus" or "dereference" a specific element to be returned.
+
+- `(A B C)` creates the fact and returns the relation node.
+- `(*A B C)` creates the fact and returns node `A`.
+- `(*{...} ~ conjunction)` creates the fact that the set is a conjunction, but **returns the set node itself**.
+
+This operator is crucial for the rule syntax.
 
 ### Internal Representation of facts
 
@@ -237,32 +261,25 @@ In a conventional semantic network, relations between nodes are labeled, e.g.
 
 ```mermaid
 graph LR
-    white -->|is opposite of| black
+    bright -->|is opposite of| dark
 ```
 
 zelph’s representation of relation types works fundamentally differently.
 As mentioned in the introduction, one of zelph’s distinguishing features is that it treats relation types as first-class nodes rather than as mere edge labels.
 
-At the network level, there is only a single primitive relation type: `~`, which represents a general category relation.
-Far from being a limitation, this is actually one of zelph’s most powerful characteristics.
-Relations that differ from the basic `~` type are not represented as arrow labels in zelph, but as regular nodes with the same status as any other node in the network.
-
-Internally, zelph creates special nodes to represent relations. For example, when defining:
-
-```
-"is opposite of" ~ ->
-```
-
-This tells zelph that "is opposite of" is a relation (represented by `->`, which is the category of all relations).
-zelph creates a special node to represent this fact.
-
-This can be visualized as follows:
+Internally, zelph creates special nodes to represent relations.
+For example,when identifying "is opposite of" as a relation (predicate), this internal structure is created:
 
 ```mermaid
 graph TD
-    A("is opposite of ~ ->") <--> B("is opposite of")
-    C("->") --> A
-    A --> D("~")
+    n_3["(3) ~"]
+    n_1["(1) ->"]
+    n_5688216769861436680["«is opposite of» «~» ->"]
+    n_10["(10) is opposite of"]
+    style n_10 fill:#FFBB00,stroke:#333,stroke-width:2px
+    n_5688216769861436680 <--> n_10
+    n_1 --> n_5688216769861436680
+    n_5688216769861436680 --> n_3
 ```
 
 The nodes `->` and `~` are predefined zelph nodes. `->` represents the category of all relations, while `~` represents a subset of this category, namely the category of categorical relations. Every relation that differs from the standard relation `~` (like "is opposite of") is linked to `->` via a `~` relation.
@@ -282,16 +299,21 @@ This architecture is particularly valuable when working with knowledge bases lik
 Similarly, when stating:
 
 ```
-white "is opposite of" black
+bright "is opposite of" dark
 ```
 
 zelph creates a special relation node that connects the subject "white" bidirectionally, the object "black" in reverse direction, and the relation type "is opposite of" in the forward direction.
 
 ```mermaid
 graph TD
-    A("white is opposite of black") <--> B("white")
-    C("black") --> A
-    A --> D("is opposite of")
+    n_11["dark"]
+    n_9["bright"]
+    n_8445031417147704759["bright is opposite of dark"]
+    n_10["is opposite of"]
+    style n_10 fill:#FFBB00,stroke:#333,stroke-width:2px
+    n_8445031417147704759 --> n_10
+    n_9 <--> n_8445031417147704759
+    n_11 --> n_8445031417147704759
 ```
 
 The directions of the relations are as follows:
@@ -322,43 +344,69 @@ To view the Mermaid graph, open the generated HTML file in a web browser.
 
 One of zelph’s most powerful features is the ability to define inference rules within the same network as facts. Rules are statements containing `=>` with conditions before it and a consequence after it.
 
+### Rule Syntax
+
+A rule in zelph is formally a statement where the subject is a **set of conditions** (marked as a conjunction) and the object is the **consequence**.
+
 Example rule:
 
 ```
-R ~ "transitive relation", X R Y, Y R Z => X R Z
+(*{(R ~ transitive) (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
 ```
 
-This rule states that if R is a transitive relation, and X is related to Y by R, and Y is related to Z by R, then X is also related to Z by R.
-Variables in the zelph syntax are currently single uppercase letters. This restricts the number of variables in a rule to 26.
-Note that the scope of variables always is a single rule. Internally, more complex rules are possible, but this is currently
-only supported via zelph’s API, not via the scripting interface. See [main.cpp](https://github.com/acrion/zelph/blob/main/src/app/main.cpp)
-for an example on how to use the API.
+**Breakdown of the syntax:**
+
+1. `{...}`: Creates a **Set** containing three fact templates:
+
+* `R` is a transitive relation.
+* `X` is related to `Y` via `R`.
+* `Y` is related to `Z` via `R`.
+
+2. `~ conjunction`: Defines that this Set represents a logical "AND" (Conjunction). The inference engine only evaluates sets marked as conjunctions.
+3. `(*...)`: The surrounding parentheses create the fact `Set ~ conjunction`.
+4. `*`: The **Focus Operator** at the beginning ensures that the expression returns the **Set Node** itself, not the fact node `Set ~ conjunction`.
+5. `=>`: The inference operator. It links the condition Set (Subject) to the consequence (Object).
+6. `(X R Z)`: The consequence fact.
+
+This rule states: *If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced.*
+
+### Variables and Logic (A Predicate Logic Perspective)
+
+zelph’s logic system can be viewed through the lens of first-order logic:
+
+- **Variables:** Single uppercase letters (or words starting with `_`) act as variables.
+- **Universal Quantification ($\forall$):** Variables appearing in the rule are implicitly universally quantified. The rule applies to *all* X, Y, Z, R that satisfy the pattern.
+- **Existential Quantification ($\exists$):** A variable that appears *only* in the condition part (and not in the consequence) acts as an existential quantifier. In the rule `(*{(A ~ parent) (A ~ B)} ~ conjunction) => (B ~ child)`, `A` is an intermediate variable. The rule implies: "If there exists an A such that...", effectively $\exists A (...)$.
+- **Conjunction:** The `~ conjunction` tag explicitly defines the set as an AND-operation.
+- **Future Outlook:** This generic set-based topology is designed to support **Disjunction** (`~ disjunction`) and **Negation** in the future, simply by changing the tag or the structure of the condition set, without changing the core parser.
+
+### Examples
 
 Here is a practical example of how this rule works in zelph (which you can also try out in interactive mode):
 
 ```
-R ~ transitive relation, X R Y, Y R Z => X R Z
-> ((Y R Z), (X R Y), (R «~» «transitive relation»)) «=>» (X R Z)
+zelph> (*{(R ~ transitive) (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
+{(X R Y) (R  ~   transitive ) (Y R Z)} => (X R Z)
 ```
 
-After the `>` symbol, we see zelph’s output, which in this case simply confirms the input of the rule.
-The brackets `()` indicate that their content is represented as a separate node - each condition is a separate node in the semantic network.
+After the entered rule, we see zelph’s output, which in this case simply confirms the input of the rule.
 
-Now, let’s declare that the relation `>` (greater than) belongs to the category (`~`) of transitive relations:
+Now, let’s declare that the relation `>` (greater than) is an instance of (`~`) transitive relations:
 
 ```
-> ~ transitive relation
-> «>» «~» «transitive relation»
+zelph> > ~ transitive
+>  ~   transitive
 ```
 
 Next, we provide three elements ("4", "5" and "6") for which the `>` relation applies:
 
 ```
-6 > 5
-> «6» «>» «5»
-5 > 4
-> «5» «>» «4»
-«6» «>» «4» ⇐ («5» «>» «4»), («6» «>» «5»), («>» «~» «transitive relation»)
+zelph> 6 > 5
+ 6  >  5
+zelph> 5 > 4
+ 5  >  4
+ 6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+zelph>
 ```
 
 After entering `5 > 4`, zelph’s unification mechanism takes effect and automatically adds a new fact: `6 > 4`. This demonstrates the power of the transitive relation rule in action.
@@ -366,19 +414,32 @@ After entering `5 > 4`, zelph’s unification mechanism takes effect and automat
 Rules can also define contradictions using `!`:
 
 ```
-X "is opposite of" Y, A ~ X, A ~ Y => !
+zelph> (*{(X "is opposite of" Y) (A ~ X) (A ~ Y)} ~ conjunction) => !
+{(X  is opposite of  Y) (A  ~  X) (A  ~  Y)} =>  !
+zelph> bright "is opposite of" dark
+ bright   is opposite of   dark
+zelph> yellow ~ bright
+ yellow   ~   bright
+zelph> yellow ~ dark
+ yellow   ~   dark
+ !  ⇐ {( bright   is opposite of   dark ) ( yellow   ~   bright ) ( yellow   ~   dark )}
+Found one or more contradictions!
+zelph>
 ```
 
-This rule states that if X is opposite of Y, then an entity A cannot be both an X and a Y, as this would be a contradiction.
+This rule states that if X is opposite of Y, then an entity A cannot be both an instance of X and an instance of Y, as this would be a contradiction.
 
 If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
 
 ### Performing Inference
 
-Facts and rules are added immediately, but inferences are only performed when you explicitly run `.run`.  
-Queries containing variables (e.g., `A "is capital of" Germany`) are answered immediately without `.run`.
+By default, zelph triggers the inference engine immediately after every fact or rule is entered. You can toggle this behaviour using the `.auto-run` command.
 
-After entering facts and rules (interactively or via script), start the inference engine with:
+**Performance Note:** When working with large datasets, continuous inference can be computationally expensive. Therefore, the `.load` command automatically **disables** auto-run mode to ensure efficient data loading. You can re-enable it manually at any time by typing `.auto-run`.
+
+Queries containing variables (e.g., `A "is capital of" Germany`) are always evaluated immediately, regardless of the auto-run setting.
+
+If auto-run is disabled, you can trigger inference manually:
 
 ```
 .run
@@ -412,111 +473,60 @@ Key characteristics of the file output:
 - **Clean format**: No `«»` markup, no parentheses, no additional explanations – only the pure facts.
 - **Console output unchanged**: On the terminal you still see the normal format with `⇐` explanations and markup.
 
-Example session (with `.lang wikidata` active):
+The command is **general-purpose** and works with any language setting. It simply collects all deductions in a clean, machine-readable text file.
+
+Example session:
 
 ```
-> Q1 P1 Q2
-«Q1» «P1» «Q2»
-> Q2 P1 Q3
-«Q2» «P1» «Q3»
-> A P1 B, B P1 C => A P2 C
-((A «P1» B), (B «P1» C)) «=>» (A «P2» C)
-> .run-file /home/stefan/RAMDisk/output2.txt
-Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to /home/stefan/RAMDisk/output2.txt (with Wikidata token encoding).
-...
-«Q1» «P2» «Q3» ⇐ («Q1» «P1» «Q2»), («Q2» «P1» «Q3»)
-...
-> Ready.
+zelph> .lang wikidata
+wikidata> .auto-run
+Auto-run is now disabled.
+wikidata-> Q1 P279 Q2
+ Q1   P279   Q2
+wikidata-> Q2 P279 Q3
+ Q2   P279   Q3
+wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
+{(B  P279  C) (A  P279  B)} => (A  P279  C)
+wikidata-> .run-file /tmp/output.txt
+Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to /tmp/output.txt (with Wikidata token encoding).
+«Q1» «P279» «Q3» ⇐ {(«Q2» «P279» «Q3») («Q1» «P279» «Q2»)}
 ```
 
-Content of `output2.txt`:
+Content of `output.txt`:
 
 ```
 丂 一丂 七, 七 一丂 丄 ⇒ 丂 一七 丄
 ```
 
-Decoding the file:
+When the current language is set to `wikidata` (via `.lang wikidata`), the output is **automatically compressed** using a dense encoding that maps Q/P identifiers to CJK characters.
+This dramatically reduces file size and – crucially – makes the data highly suitable for training or prompting large language models (LLMs).
+Standard tokenizers struggle with long numeric identifiers (Q123456789), often splitting them into many sub-tokens.
+The compact CJK encoding avoids this problem entirely, enabling efficient fine-tuning or continuation tasks on Wikidata-derived logical data.
+
+To read an encoded file back in human-readable form, use `.decode`, e.g.:
 
 ```
-> .decode /home/stefan/RAMDisk/output2.txt
-Q1 P1 Q2, Q2 P1 Q3 ⇒ Q1 P2 Q3
+zelph> .decode /tmp/output.txt
+Q2 P279 Q3 Q1 P279 Q2 ⇒ Q1 P279 Q3
 ```
 
-The command is **general-purpose** and works with any language setting. It simply collects all deductions in a clean, machine-readable text file.
-
-When the current language is set to `wikidata` (via `.lang wikidata`), the output is **automatically compressed** using a dense encoding that maps Q/P identifiers to CJK characters. This dramatically reduces file size and – crucially – makes the data highly suitable for training or prompting large language models (LLMs). Standard tokenizers struggle with long numeric identifiers (Q123456789), often splitting them into many sub-tokens. The compact CJK encoding avoids this problem entirely, enabling efficient fine-tuning or continuation tasks on Wikidata-derived logical data.
-
-To read an encoded (or plain) file back in human-readable form, use:
-
-```
-.decode <path>
-```
-
-This prints each line decoded (if it was encoded) using Wikidata identifiers.
+`.decode` prints each line decoded (if it was encoded) using Wikidata identifiers.
 
 ### Internal representation of rules
 
-Let’s explain the internal representation of rules based on the example rule above.
-The complete rule graph looks like this:
+Rules are not stored in a separate list but are part of the graph. The relation `=>` is a standard relation node.
 
-```mermaid
-graph TD
-    n1["((Y R Z), (X R Y), (R «~» «transitive relation»)) «=>» (X R Z)"] --> n2["=>"]
-    n3["->"] --> n4["R «~» «->»"]
-    n10["transitive relation"] --> n11["R «~» «transitive relation»"]
-    n12["(Y R Z), (X R Y), (R «~» «transitive relation»)"] <--> n1
-    n12 --> n13[","]
-    n4 --> n8["~"]
-    n4 <--> n14["R"]
-    n11 --> n8
-    n11 --> n12
-    n11 <--> n14
-    n15["X R Y"] --> n12
-    n15 --> n14
-    n16["X R Z"] --> n1
-    n16 --> n14
-    n17["X"] <--> n15
-    n17 <--> n16
-    n18["Y R Z"] --> n12
-    n18 --> n14
-    n19["Y"] --> n15
-    n19 <--> n18
-    n20["Z"] --> n16
-    n20 --> n18
-    
-    style n12 fill:#87CEFA
-    style n14 fill:#EEE8AA
-    style n16 fill:#B3EE3A
-```
+When you define:
+`(*{A B} ~ conjunction) => C`
 
-This graph may seem somewhat overwhelming at first glance, but it follows a clear structure.
-Let’s break it down:
+The following topology is created:
 
-1. The three conditions of the rule are connected to the blue condition node, which itself points to the logical operation of the condition: `,` (which represents the logical AND operation):
-    ```mermaid
-    graph TD
-        n12["(Y R Z), (X R Y), (R «~» «transitive relation»)"] --> n13[","]
-        n11["R «~» «transitive relation»"] --> n12
-        n15["X R Y"] --> n12
-        n18["Y R Z"] --> n12
-        
-        style n12 fill:#87CEFA
-    ```
-2. The blue condition node serves as the subject of the rule clause S => O (which is assigned the complete rule statement as a name). The green conclusion node functions as the object of the rule clause:
-    ```mermaid
-    graph TD
-        n1["((Y R Z), (X R Y), (R «~» «transitive relation»)) «=>» (X R Z)"] --> n2["=>"]
-        n12["(Y R Z), (X R Y), (R «~» «transitive relation»)"] <--> n1
-        n16["X R Z"] --> n1
-        
-        style n12 fill:#87CEFA
-        style n16 fill:#B3EE3A
-    ```
+1. A **Set Node** `S` is created.
+2. Facts `A` and `B` are linked to `S` via `PartOf` relations (internally managed).
+3. A fact node `F1` represents `S ~ conjunction`.
+4. A fact node `F_Rule` represents `S => C`.
 
-3. Each condition, as well as the conclusion, is represented exactly like a fact (see the previous section "Internal Representation of facts").
-
-This summarizes the complete diagram shown above. As mentioned earlier, the elegant aspect of this representation method is that the inference system can be applied not only to facts but also to rules.
-Consequently, it becomes possible to formulate rules that generate other rules.
+The inference engine, when scanning for rules, looks for all facts involving the `=>` relation. It takes the subject (which must be a Set `S`), checks if `S` is connected to `conjunction` via `~`, and if so, treats the elements of `S` as the condition patterns.
 
 ### Facts and Rules in One Network: Unique Identification via Topological Semantics
 
@@ -542,46 +552,42 @@ These constraints are not merely aesthetic; they are core to zelph’s reasoning
 Here’s a comprehensive example demonstrating zelph’s capabilities:
 
 ```
-X "is a" Y  => X ~ Y
-X "is an" Y => X "is a" Y
-
-is               "is a" ->
-"has part"       "is a" ->
-"is opposite of" "is a" ->
+(*{(X "is a" Y)}  ~ conjunction) => (X ~ Y)
+(*{(X "is an" Y)} ~ conjunction) => (X "is a" Y)
 
 "is attribute of" "is opposite of" is
 "is part of"      "is opposite of" "has part"
 "is for example"  "is opposite of" "is a"
 
-"has part"      "is transitive"
-"has attribute" "is transitive"
-~               "is transitive"
+"has part"      is transitive
+"has attribute" is transitive
+~               is transitive
 
-R "is transitive", X R Y, Y R Z => X R Z
-X is E, E "is a" K  => X is K
-X "has part" P, P "is a" K  => X "has part" K
-K is E, X "is a" K  => X is E
-K "has part" P, X "is a" K  => X "has part" P
-X "is opposite of" Y, X "is a" K => Y "is a" K
-X "is opposite of" Y => Y "is opposite of" X
-R "is opposite of" S, X R Y => Y S X
+(*{(R is transitive)   (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
+(*{(X is E)               (E "is a" K)} ~ conjunction) => (X is K)
+(*{(X "has part" P)       (P "is a" K)} ~ conjunction) => (X "has part" K)
+(*{(K is E)               (X "is a" K)} ~ conjunction) => (X is E)
+(*{(K "has part" P)       (X "is a" K)} ~ conjunction) => (X "has part" P)
+(*{(X "is opposite of" Y) (X "is a" K)} ~ conjunction) => (Y "is a" K)
+(*{(X "is opposite of" Y)}              ~ conjunction) => (Y "is opposite of" X)
+(*{(R "is opposite of" S) (X R Y)}      ~ conjunction) => (Y S X)
 
-X "is opposite of" Y, A is X, A is Y => !
-X "is opposite of" Y, A "has part" X, A "has part" Y => !
-X "is opposite of" Y, A "is a" X, A "is a" Y => !
-X is E, X "is a" E => !
-X is E, E "is a" X => !
-X is E, E "has part" X => !
-
-generates "is a" ->
-needs "is a" ->
+(*{(X "is opposite of" Y) (A is X)         (A is Y)}         ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "has part" X) (A "has part" Y)} ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "is a" X)     (A "is a" Y)}     ~ conjunction) => !
+(*{(X is E) (X "is a" E)}     ~ conjunction) => !
+(*{(X is E) (E "is a" X)}     ~ conjunction) => !
+(*{(X is E) (E "has part" X)} ~ conjunction) => !
 
 "is needed by" "is opposite of" needs
 "is generated by" "is opposite of" generates
 
-X generates energy => X "is an" "energy source"
-A is hot => A generates heat
-A generates oxygen => A is alive
+"is needed by" "is opposite of" needs
+"is generated by"  "is opposite of" generates
+
+(*{(X generates energy)}   ~ conjunction) => (X "is an" "energy source")
+(*{(A is hot)}             ~ conjunction) => (A generates heat)
+(*{(A generates "oxygen")} ~ conjunction) => (A is alive)
 
 chimpanzee "is an" ape
 ape is alive
@@ -590,78 +596,72 @@ chimpanzee "has part" hand
 hand "has part" finger
 
 "green mint" "is an" mint
+
 "water mint" "is a" mint
-peppermint "is an" mint
+
+peppermint "is a" mint
+
 mint "is a" lamiacea
+
 catnip "is a" lamiacea
+
 "green mint" is sweet
 
-"is ancestor of" "is transitive"
+"is ancestor of" is transitive
 peter "is ancestor of" paul
-paul "is ancestor of" pius
-A "is ancestor of" pius
+paul "is ancestor of" "pius"
+A "is ancestor of" "pius"
+
 ```
 
 When executed, the last line is interpreted as a query, because it contains a variable (single uppercase letter) and is no rule. Here are the results:
 
 ```
-Answer: «paul» «is ancestor of» «pius»
-«catnip» «~» «lamiacea» ⇐ «catnip» «is a» «lamiacea»
-«needs» «~» «->» ⇐ «needs» «is a» «->»
-«water mint» «~» «mint» ⇐ «water mint» «is a» «mint»
-«mint» «~» «lamiacea» ⇐ «mint» «is a» «lamiacea»
-«chimpanzee» «has part» «finger» ⇐ («hand» «has part» «finger»), («chimpanzee» «has part» «hand»), («has part» «is» «transitive»)
-«peter» «is ancestor of» «pius» ⇐ («paul» «is ancestor of» «pius»), («peter» «is ancestor of» «paul»), («is ancestor of» «is» «transitive»)
-«water mint» «~» «lamiacea» ⇐ («mint» «~» «lamiacea»), («water mint» «~» «mint»), («~» «is» «transitive»)
-«peppermint» «is a» «mint» ⇐ «peppermint» «is an» «mint»
-«chimpanzee» «is a» «ape» ⇐ «chimpanzee» «is an» «ape»
-«green mint» «is a» «mint» ⇐ «green mint» «is an» «mint»
-«chimpanzee» «is» «alive» ⇐ («chimpanzee» «is a» «ape»), («ape» «is» «alive»)
-«generates» «is opposite of» «is generated by» ⇐ «is generated by» «is opposite of» «generates»
-«has part» «is opposite of» «is part of» ⇐ «is part of» «is opposite of» «has part»
-«is a» «is opposite of» «is for example» ⇐ «is for example» «is opposite of» «is a»
-«is» «is opposite of» «is attribute of» ⇐ «is attribute of» «is opposite of» «is»
-«needs» «is opposite of» «is needed by» ⇐ «is needed by» «is opposite of» «needs»
-«finger» «is part of» «hand» ⇐ («hand» «has part» «finger»), («has part» «is opposite of» «is part of»)
-«hand» «is part of» «chimpanzee» ⇐ («chimpanzee» «has part» «hand»), («has part» «is opposite of» «is part of»)
-«finger» «is part of» «chimpanzee» ⇐ («chimpanzee» «has part» «finger»), («has part» «is opposite of» «is part of»)
-«sweet» «is attribute of» «green mint» ⇐ («green mint» «is» «sweet»), («is» «is opposite of» «is attribute of»)
-«alive» «is attribute of» «ape» ⇐ («ape» «is» «alive»), («is» «is opposite of» «is attribute of»)
-«transitive» «is attribute of» «is ancestor of» ⇐ («is ancestor of» «is» «transitive»), («is» «is opposite of» «is attribute of»)
-«alive» «is attribute of» «chimpanzee» ⇐ («chimpanzee» «is» «alive»), («is» «is opposite of» «is attribute of»)
-«transitive» «is attribute of» «has part» ⇐ («has part» «is» «transitive»), («is» «is opposite of» «is attribute of»)
-«transitive» «is attribute of» «~» ⇐ («~» «is» «transitive»), («is» «is opposite of» «is attribute of»)
-«transitive» «is attribute of» «has attribute» ⇐ («has attribute» «is» «transitive»), («is» «is opposite of» «is attribute of»)
-«mint» «is for example» «green mint» ⇐ («green mint» «is a» «mint»), («is a» «is opposite of» «is for example»)
-«lamiacea» «is for example» «catnip» ⇐ («catnip» «is a» «lamiacea»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «needs» ⇐ («needs» «is a» «->»), («is a» «is opposite of» «is for example»)
-«mint» «is for example» «water mint» ⇐ («water mint» «is a» «mint»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «is» ⇐ («is» «is a» «->»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «has part» ⇐ («has part» «is a» «->»), («is a» «is opposite of» «is for example»)
-«ape» «is for example» «chimpanzee» ⇐ («chimpanzee» «is a» «ape»), («is a» «is opposite of» «is for example»)
-«lamiacea» «is for example» «mint» ⇐ («mint» «is a» «lamiacea»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «is opposite of» ⇐ («is opposite of» «is a» «->»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «generates» ⇐ («generates» «is a» «->»), («is a» «is opposite of» «is for example»)
-«mint» «is for example» «peppermint» ⇐ («peppermint» «is a» «mint»), («is a» «is opposite of» «is for example»)
-«green mint» «~» «mint» ⇐ «green mint» «is a» «mint»
-«chimpanzee» «~» «ape» ⇐ «chimpanzee» «is a» «ape»
-«peppermint» «~» «mint» ⇐ «peppermint» «is a» «mint»
-«peppermint» «~» «lamiacea» ⇐ («mint» «~» «lamiacea»), («peppermint» «~» «mint»), («~» «is» «transitive»)
-«green mint» «~» «lamiacea» ⇐ («mint» «~» «lamiacea»), («green mint» «~» «mint»), («~» «is» «transitive»)
-«is needed by» «is a» «->» ⇐ («needs» «is a» «->»), («needs» «is opposite of» «is needed by»)
-«is attribute of» «is a» «->» ⇐ («is» «is a» «->»), («is» «is opposite of» «is attribute of»)
-«is part of» «is a» «->» ⇐ («has part» «is a» «->»), («has part» «is opposite of» «is part of»)
-«is generated by» «is a» «->» ⇐ («generates» «is a» «->»), («generates» «is opposite of» «is generated by»)
-«->» «is for example» «is generated by» ⇐ («is generated by» «is a» «->»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «is attribute of» ⇐ («is attribute of» «is a» «->»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «is needed by» ⇐ («is needed by» «is a» «->»), («is a» «is opposite of» «is for example»)
-«->» «is for example» «is part of» ⇐ («is part of» «is a» «->»), («is a» «is opposite of» «is for example»)
-«is generated by» «~» «->» ⇐ «is generated by» «is a» «->»
-«is needed by» «~» «->» ⇐ «is needed by» «is a» «->»
-Ready.
+zelph> .import sample_scripts/english.zph
+Importing file sample_scripts/english.zph...
+[...skipped repition of parsed commands..]
+A  is ancestor of   pius
+Answer:  paul   is ancestor of   pius
+ peter   is ancestor of   pius  ⇐ {( peter   is ancestor of   paul ) ( is ancestor of   is   transitive ) ( paul   is ancestor of   pius )}
+ chimpanzee   has part   finger  ⇐ {( chimpanzee   has part   hand ) ( has part   is   transitive ) ( hand   has part   finger )}
+ needs   is opposite of   is needed by  ⇐ {( is needed by   is opposite of   needs )}
+ has part   is opposite of   is part of  ⇐ {( is part of   is opposite of   has part )}
+ is   is opposite of   is attribute of  ⇐ {( is attribute of   is opposite of   is )}
+ is a   is opposite of   is for example  ⇐ {( is for example   is opposite of   is a )}
+ generates   is opposite of   is generated by  ⇐ {( is generated by   is opposite of   generates )}
+ peppermint   ~   mint  ⇐ {( peppermint   is a   mint )}
+ water mint   ~   mint  ⇐ {( water mint   is a   mint )}
+ mint   ~   lamiacea  ⇐ {( mint   is a   lamiacea )}
+ catnip   ~   lamiacea  ⇐ {( catnip   is a   lamiacea )}
+ chimpanzee   is a   ape  ⇐ {( chimpanzee   is an   ape )}
+ green mint   is a   mint  ⇐ {( green mint   is an   mint )}
+ chimpanzee   is   alive  ⇐ {( ape   is   alive ) ( chimpanzee   is a   ape )}
+ water mint   ~   lamiacea  ⇐ {( water mint   ~   mint ) ( ~   is   transitive ) ( mint   ~   lamiacea )}
+ peppermint   ~   lamiacea  ⇐ {( peppermint   ~   mint ) ( ~   is   transitive ) ( mint   ~   lamiacea )}
+ lamiacea   is for example   mint  ⇐ {( mint   is a   lamiacea ) ( is a   is opposite of   is for example )}
+ lamiacea   is for example   catnip  ⇐ {( catnip   is a   lamiacea ) ( is a   is opposite of   is for example )}
+ mint   is for example   water mint  ⇐ {( water mint   is a   mint ) ( is a   is opposite of   is for example )}
+ ape   is for example   chimpanzee  ⇐ {( chimpanzee   is a   ape ) ( is a   is opposite of   is for example )}
+ mint   is for example   green mint  ⇐ {( green mint   is a   mint ) ( is a   is opposite of   is for example )}
+ mint   is for example   peppermint  ⇐ {( peppermint   is a   mint ) ( is a   is opposite of   is for example )}
+ transitive   is attribute of   has attribute  ⇐ {( has attribute   is   transitive ) ( is   is opposite of   is attribute of )}
+ sweet   is attribute of   green mint  ⇐ {( green mint   is   sweet ) ( is   is opposite of   is attribute of )}
+ transitive   is attribute of   is ancestor of  ⇐ {( is ancestor of   is   transitive ) ( is   is opposite of   is attribute of )}
+ transitive   is attribute of   ~  ⇐ {( ~   is   transitive ) ( is   is opposite of   is attribute of )}
+ alive   is attribute of   chimpanzee  ⇐ {( chimpanzee   is   alive ) ( is   is opposite of   is attribute of )}
+ transitive   is attribute of   has part  ⇐ {( has part   is   transitive ) ( is   is opposite of   is attribute of )}
+ alive   is attribute of   ape  ⇐ {( ape   is   alive ) ( is   is opposite of   is attribute of )}
+ finger   is part of   chimpanzee  ⇐ {( chimpanzee   has part   finger ) ( has part   is opposite of   is part of )}
+ finger   is part of   hand  ⇐ {( hand   has part   finger ) ( has part   is opposite of   is part of )}
+ hand   is part of   chimpanzee  ⇐ {( chimpanzee   has part   hand ) ( has part   is opposite of   is part of )}
+ green mint   ~   mint  ⇐ {( green mint   is a   mint )}
+ chimpanzee   ~   ape  ⇐ {( chimpanzee   is a   ape )}
+ green mint   ~   lamiacea  ⇐ {( green mint   ~   mint ) ( ~   is   transitive ) ( mint   ~   lamiacea )}
+zelph>
 ```
 
-The results demonstrate zelph’s powerful inference capabilities. It not only answers the specific query about who is an ancestor of pius, but also derives numerous other facts based on the rules and base facts provided in the script.
+The results demonstrate zelph’s powerful inference capabilities.
+It not only answers the specific query about who is an ancestor of pius, but it also derives numerous other facts based on the rules and base facts provided in the script.
 
 ## Multi-language Support
 
@@ -747,24 +747,23 @@ Queries are statements that contain variables (single uppercase letters) but no 
 ## Key Features
 
 - **Variables**: Single uppercase letters (A-Z), scoped to the query. Limited to 26 per query.
-- **Multi-Conditions**: Separate conditions with commas (logical AND). zelph unifies across all, binding variables consistently.
+- **Multi-Conditions (Conjunctions)**: Use sets marked as conjunctions `(*{...} ~ conjunction)` to filter results by multiple criteria.
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
 - **Inference Integration**: Run `.run` first to derive new facts, then query the expanded graph.
 - **Output**: Matches are printed with bound values. No matches: Just the query echoed.
-- **Limitations**: No OR/NOT in syntax (use rules for complex logic). No multi-line queries.
+- **Limitations**: No OR/NOT in query syntax (use rules for complex logic). No multi-line queries.
 
 ## General Queries
 
 These examples use a simple geography graph. Load them in zelph (`.lang zelph` mode) for testing:
 
 ```
-Berlin "is capital of" Germany
-Germany "is located in" Europe
-Europe "has part" Germany
-X is capital of Y, Y is located in Z => X is located in Z
-"is located in" ~ transitive relation
-R ~ transitive relation, X R Y, Y R Z => X R Z
-.run  # Infer: Berlin "is located in" Europe
+zelph> Berlin "is capital of" Germany
+zelph> Germany "is located in" Europe
+zelph> Europe "has part" Germany
+zelph> (*{(X "is capital of" Y) (Y "is located in" Z)} ~ conjunction) => (X "is located in" Z)
+ Berlin   is located in   Europe  ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
+zelph>
 ```
 
 ### Single-Condition Queries
@@ -774,47 +773,28 @@ Basic pattern matching.
 - Find capitals: `X "is capital of" Y`  
   Output:
   ```
-  X «is capital of» Y
-  Answer: «Berlin» «is capital of» «Germany»
+  X  is capital of  Y
+  Answer:  Berlin   is capital of   Germany
   ```
 
 - Find locations in Europe: `A "is located in" Europe`  
   Output (post-inference):
   ```
-  A «is located in» «Europe»
-  Answer: «Berlin» «is located in» «Europe»
-  Answer: «Germany» «is located in» «Europe»
+  A  is located in   Europe
+  Answer:  Germany   is located in   Europe
+  Answer:  Berlin   is located in   Europe
   ```
 
 ### Multi-Condition Queries
 
 Combine for intersections.
 
-- Capitals in Europe: `X "is located in" Europe, X "is capital of" Germany`  
+- Capitals in Europe: `(*{(X "is located in" Europe) (X "is capital of" Germany)} ~ conjunction)`  
   Output:
   ```
-  (X «is capital of» «Germany»), (X «is located in» «Europe»)
-  Answer: («Berlin» «is capital of» «Germany»), («Berlin» «is located in» «Europe»)
+  {(X  is capital of   Germany ) (X  is located in   Europe )}
+  Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
   ```
-
-- Parts with opposites: Add `Europe "is opposite of" Asia`, then: `A "is opposite of" B, A "has part" Germany`  
-  Output:
-  ```
-  (A «is opposite of» B), (A «has part» «Germany»)
-  Answer: («Europe» «is opposite of» «Asia»), («Europe» «has part» «Germany»)
-  ```
-
-- No match example: `X "is located in" Europe, X "has part" Germany`  
-  Output: Just the query (no match, as nothing is both located in Europe and has Germany as part).
-
-- Multi-Variable: `X "is located in" Y, Y "has part" Germany, X "is capital of" Z`  
-  Output:
-  ```
-  (X «is located in» Y), (X «is capital of» Z), (Y «has part» «Germany»)
-  Answer: («Berlin» «is located in» «Europe»), («Berlin» «is capital of» «Germany»), («Europe» «has part» «Germany»)
-  ```
-
-Add symmetry for more: `"is opposite of" ~ symmetric relation`, `R ~ symmetric relation, A R B => B R A`, `.run`. Then: `A "is opposite of" B` shows bidirectional matches.
 
 ## Wikidata-Specific Queries
 
@@ -823,7 +803,7 @@ For Wikidata, switch to `.lang wikidata` after loading a dump (`.wikidata path/t
 ### Single-Condition Queries
 
 - Instances of fossil taxon: `X P31 Q23038290`  
-  Output: Many answers, e.g., `Answer: «Q3222766» «P31» «Q23038290»` (Brontosaurus).
+  Output: Many answers, e.g., `Answer: Q3222766 P31 Q23038290` (Brontosaurus).
 
 - Parent taxa: `X P171 Q3222766`  
   Output: Taxa with Brontosaurus as parent (if any).
@@ -832,22 +812,19 @@ For Wikidata, switch to `.lang wikidata` after loading a dump (`.wikidata path/t
 
 Combine for targeted searches.
 
-- Fossil taxa in genus rank: `X P31 Q23038290, X P105 Q34740`  
+- Fossil taxa in genus rank: `(*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)`  
   Output: Matches like Brontosaurus/Apatosaurus.
 
-- Synonyms with parent taxon: `X P460 Q14326, X P171 Q2544161` (Apatosaurus synonyms in Diplodocidae)  
+- Synonyms with parent taxon: `(*{(X P460 Q14326) (X P171 Q2544161)} ~ conjunction)` (Apatosaurus synonyms in Diplodocidae)  
   Output:
   ```
-  (X «P171» «Q2544161»), (X «P460» «Q14326»)
-  Answer: («Q3222766» «P171» «Q2544161»), («Q3222766» «P460» «Q14326»)
+  {(X  P171   Q2544161 ) (X  P460   Q14326 )}
+  Answer: {( Q3222766   P171   Q2544161 ) ( Q3222766   P460   Q14326 )}
   ```
-
-- No-match example: Musical works with taxon: `X P31 Q105543609, X P171 Q3222766`  
-  Output: Just the query (no overlap between music and taxonomy).
+  Since `Q3222766` is [Brontosaurus](https://www.wikidata.org/wiki/Q3222766), this answer means "The [parent taxon](https://www.wikidata.org/wiki/Property:P171) (P171) of [Brontosaurus](https://www.wikidata.org/wiki/Q3222766) is [Apatosaurinae](https://www.wikidata.org/wiki/Q2544161) (Q2544161), which is [said to be the same as](https://www.wikidata.org/wiki/Property:P460) [Apatosaurus](https://www.wikidata.org/wiki/Q14326) (Q14326).
 
 ## Tips and Advanced Usage
 
-- **Pre-Inference**: Always `.run` for derived facts (e.g., transitivity).
 - **Debugging**: Use `.node`, `.out`, `.in` to inspect before querying.
 - **Patterns**: Fixed parts in quotes if spaces; variables anywhere.
 - For complex logic, define rules first, then query the inferred graph.
@@ -932,66 +909,67 @@ The following script demonstrates how zelph connects with Wikidata data:
 # The following facts are not part of wikidata:
 "has quality" ~ transitive relation
 
-X is facet of Y, Y ~ C => X ~ C
-X is facet of Y, Y is subclass of C => X is subclass of C
-X is facet of Y, Y has part P => X has part P
-X is facet of Y, Y is part of P => X is part of P
-X is facet of Y, Y has quality Q => X has quality Q
+(*{(X "is facet of" Y) (Y ~ C)}                ~ conjunction) => (X ~ C)
+(*{(X "is facet of" Y) (Y "is subclass of" C)} ~ conjunction) => (X "is subclass of" C)
+(*{(X "is facet of" Y) (Y "has part" P)}       ~ conjunction) => (X "has part" P)
+(*{(X "is facet of" Y) (Y "is part of" P)}     ~ conjunction) => (X "is part of" P)
+(*{(X "is facet of" Y) (Y "has quality" Q)}    ~ conjunction) => (X "has quality" Q)
 
 # The following fact is not part of wikidata. Wikidata only includes the fact "is subclass of" "subject item of this property" "is for example"
 "is for example"  is inverse of "~"
 
-R ~ transitive relation, X R Y, Y R Z => X R Z
-P ~ transitive relation, P is inverse of Q => Q ~ transitive relation
-X ~ K, K is subclass of U => X ~ U
+(*{(R ~ "transitive relation") (X R Y) (Y R Z)}         ~ conjunction) => (X R Z)
+(*{(P ~ "transitive relation") (P "is inverse of" Q)}   ~ conjunction) => (Q ~ "transitive relation")
+(*{(X ~ K) (K "is subclass of" U)}                      ~ conjunction) => (X ~ U)
 
-X has quality E,   E ~ K                => X has quality K
-X has quality E,   E is subclass of K  => X has quality K
-K has quality E,   X ~ K                => X has quality E
-K has quality E,   X is subclass of K  => X has quality E
-X has part P,      P ~ K                => X has part K
-K has part P,      X is subclass of K  => X has part P
+(*{(X "has quality" E) (E ~ K)}                ~ conjunction) => (X "has quality" K)
+(*{(X "has quality" E) (E "is subclass of" K)} ~ conjunction) => (X "has quality" K)
+(*{(K "has quality" E) (X ~ K)}                ~ conjunction) => (X "has quality" E)
+(*{(K "has quality" E) (X "is subclass of" K)} ~ conjunction) => (X "has quality" E)
+(*{(X "has part" P)    (P ~ K)}                ~ conjunction) => (X "has part" K)
+(*{(K "has part" P)    (X "is subclass of" K)} ~ conjunction) => (X "has part" P)
 
-X is opposite of Y, X ~ K              => Y ~ K
-X is opposite of Y, X is subclass of K => Y is subclass of K
-X is inverse of Y,  X ~ K              => Y ~ K
-X is inverse of Y,  X is subclass of K => Y is subclass of K
+(*{(X "is opposite of" Y) (X ~ K)}                ~ conjunction) => (Y ~ K)
+(*{(X "is opposite of" Y) (X "is subclass of" K)} ~ conjunction) => (Y "is subclass of" K)
+(*{(X "is inverse of" Y)  (X ~ K)}                ~ conjunction) => (Y ~ K)
+(*{(X "is inverse of" Y)  (X "is subclass of" K)} ~ conjunction) => (Y "is subclass of" K)
 
-X is opposite of Y        => Y is opposite of X
-X is inverse of Y         => Y is inverse of X
-R is opposite of S, X R Y => Y S X
-R is inverse of S,  X R Y => Y S X
+# Single rules (no conjunction needed for 1 condition)
+(X "is opposite of" Y) => (Y "is opposite of" X)
+(X "is inverse of" Y)  => (Y "is inverse of" X)
+(*{(R "is opposite of" S) (X R Y)} ~ conjunction) => (Y S X)
+(*{(R "is inverse of" S)  (X R Y)} ~ conjunction) => (Y S X)
 
-X is opposite of Y, A has quality X, A has quality Y => !
-X is inverse of Y,  A has quality X, A has quality Y => !
-X is opposite of Y, A has part X,    A has part Y    => !
-X is inverse of Y,  A has part X,    A has part Y    => !
+(*{(X "is opposite of" Y) (A "has quality" X) (A "has quality" Y)} ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "has quality" X) (A "has quality" Y)} ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "has part" X)    (A "has part" Y)}    ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "has part" X)    (A "has part" Y)}    ~ conjunction) => !
 
-X is opposite of Y, A ~ X,              A ~ Y              => !
-X is opposite of Y, A is subclass of X, A is subclass of Y => !
-X is inverse of Y,  A ~ X,              A ~ Y              => !
-X is inverse of Y,  A is subclass of X, A is subclass of Y => !
+(*{(X "is opposite of" Y) (A ~ X)              (A ~ Y)}              ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "is subclass of" X) (A "is subclass of" Y)} ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A ~ X)              (A ~ Y)}              ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "is subclass of" X) (A "is subclass of" Y)} ~ conjunction) => !
 
-X has quality E, X ~ E              => !
-X has quality E, X is subclass of E => !
-X has quality E, E ~ X              => !
-X has quality E, E is subclass of X => !
-X has quality E, E has part X       => !
+(*{(X "has quality" E) (X ~ E)}              ~ conjunction) => !
+(*{(X "has quality" E) (X "is subclass of" E)} ~ conjunction) => !
+(*{(X "has quality" E) (E ~ X)}              ~ conjunction) => !
+(*{(X "has quality" E) (E "is subclass of" X)} ~ conjunction) => !
+(*{(X "has quality" E) (E "has part" X)}       ~ conjunction) => !
 
-X has part E, X ~ E              => !
-X has part E, X is subclass of E => !
-X has part E, E ~ X              => !
-X has part E, E is subclass of X => !
+(*{(X "has part" E) (X ~ E)}              ~ conjunction) => !
+(*{(X "has part" E) (X "is subclass of" E)} ~ conjunction) => !
+(*{(X "has part" E) (E ~ X)}              ~ conjunction) => !
+(*{(X "has part" E) (E "is subclass of" X)} ~ conjunction) => !
 
 # The following contradiction requires that X cannot be at the same time an instance and a subclass:
-X ~ A, X is subclass of B => !
+(*{(X ~ A) (X "is subclass of" B)} ~ conjunction) => !
 
-A ~ B, B ~ A                           => !
-A is subclass of B, B is subclass of A => !
-A is facet of B, B is facet of A       => !
-A ~ B, B is subclass of A              => !
-A ~ B, B is facet of A                 => !
-A is subclass of B, B is facet of A    => !
+(*{(A ~ B) (B ~ A)}                               ~ conjunction) => !
+(*{(A "is subclass of" B) (B "is subclass of" A)} ~ conjunction) => !
+(*{(A "is facet of" B) (B "is facet of" A)}       ~ conjunction) => !
+(*{(A ~ B) (B "is subclass of" A)}                ~ conjunction) => !
+(*{(A ~ B) (B "is facet of" A)}                   ~ conjunction) => !
+(*{(A "is subclass of" B) (B "is facet of" A)}    ~ conjunction) => !
 ```
 
 This script maps zelph’s relation types to Wikidata properties and items, defines inference rules, and establishes contradiction checks.
@@ -1038,7 +1016,7 @@ Here’s a step-by-step example of zelph’s inference process when working with
 
 1. According to Wikidata, the property [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is an instance of [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515).
 2. Wikidata also states that [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515) is a [facet of (P1269)](https://www.wikidata.org/wiki/Property:P1269) [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
-3. The script contains the rule: `X is facet of Y, Y ~ C => X ~ C`
+3. The script contains the rule: `(*{(X "is facet of" Y) (Y ~ C)} ~ conjunction) => (X ~ C)`
 4. Therefore, zelph infers that [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is also an instance of [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
 
 ## Rules in the Semantic Network

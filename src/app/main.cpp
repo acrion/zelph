@@ -85,17 +85,16 @@ int main(int argc, char** argv)
             std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #else
         std::cout << "zelph " << interactive.get_version() << std::endl;
-        std::cout << std::endl;
-        if (script_files.empty())
-            std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #endif
 
         std::wcout << L"-- interactive mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
         std::wcout << std::endl;
 
         std::wstring line;
-        std::wstring lang_prompt = zelph::string::unicode::from_utf8(interactive.get_lang());
-        std::wcout << lang_prompt << L"> ";
+        std::wstring lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
+        std::wstring prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> "; // Visual indicator
+
+        std::wcout << lang_prompt << prompt_suffix;
         std::wcout.flush();
 
         while (std::getline(std::wcin, line))
@@ -106,8 +105,9 @@ int main(int argc, char** argv)
             if (line.empty())
             {
                 std::wcout << L"type .help for help --" << std::endl;
-                lang_prompt = zelph::string::unicode::from_utf8(interactive.get_lang());
-                std::wcout << lang_prompt << L"> ";
+                lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
+                prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> ";
+                std::wcout << lang_prompt << prompt_suffix;
                 std::wcout.flush();
                 continue;
             }
@@ -121,45 +121,13 @@ int main(int argc, char** argv)
                 std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
             }
 
-            lang_prompt = zelph::string::unicode::from_utf8(interactive.get_lang());
-            std::wcout << lang_prompt << L"> ";
+            lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
+            prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> ";
+            std::wcout << lang_prompt << prompt_suffix;
             std::wcout.flush();
         }
 
         std::wcout << std::endl;
-#if 0
-        n.set_name(n.core.RelationTypeCategory, L"Relationstyp", "de");
-        n.set_name(n.core.Causes,               L"=>",           "de");
-        n.set_name(n.core.And,                  L",",            "de");
-        n.set_name(n.core.IsA,                  L"ist ein",      "de");
-        n.set_name(n.core.Unequal,              L"ungleich",     "de");
-        n.set_name(n.core.Contradiction,        L"Widerspruch",  "de");
-
-        //n.fact(n.node(L"ist Eigenschaft von", "de"), n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat die Eigenschaft", "de") });
-        //n.fact(n.node(L"ist Teil von", "de"),        n.node(L"ist Gegenteil von", "de"),   { n.node(L"hat den Bestandteil", "de") });
-        //n.fact(n.node(L"ist zum Beispiel", "de"),    n.node(L"ist Gegenteil von", "de"),   { n.node(L"ist ein",             "de") });
-        n.fact(n.node(L"hat den Bestandteil", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
-        //n.fact(n.node(L"hat die Eigenschaft", "de"), n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
-        //n.fact(n.node(L"ist ein", "de"),             n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv",           "de") });
-
-        {
-            Node X = n.var();
-            Node R = n.var();
-            Node Y = n.var();
-            Node Z = n.var();
-            Node R_is_transitive = n.fact(R, n.node(L"hat die Eigenschaft", "de"), { n.node(L"transitiv", "de") });
-            Node condition = n.condition(n.core.And, { R_is_transitive, n.fact(X, R, {Y}), n.fact(Y, R, {Z}) });
-            n.fact(condition, n.core.Causes, { n.fact(X, R, {Z}) });
-        }
-
-        n.fact(n.node(L"Haus", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"T\xfcr", "de") });
-        n.fact(n.node(L"T\xfcr", "de"), n.node(L"hat den Bestandteil", "de"), { n.node(L"Griff", "de") });
-        n.gen_dot(n.core.RelationTypeCategory, "test.dot");
-
-        n.run();
-        std::wcout << L"Ready." << std::endl;
-        n.debug();
-#endif
     }
     catch (std::exception& ex)
     {

@@ -1,4 +1,4 @@
 .lang wikidata
 
-C "P2738" S, S "P11260" A, S "P11260" B, K "P279" A, K "P279" B => !
-C "P2738" S, S "P11260" A, S "P11260" B, X "P31" A, X "P31" B => !
+(*{(C "P2738" S) (S "P11260" A) (S "P11260" B) (K "P279" A) (K "P279" B)} ~ conjunction) => !
+(*{(C "P2738" S) (S "P11260" A) (S "P11260" B) (X "P31" A)  (X "P31" B)}  ~ conjunction) => !

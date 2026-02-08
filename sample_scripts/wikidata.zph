@@ -24,63 +24,64 @@
 # The following facts are not part of wikidata:
 "has quality" ~ transitive relation
 
-X is facet of Y, Y ~ C => X ~ C
-X is facet of Y, Y is subclass of C => X is subclass of C
-X is facet of Y, Y has part P => X has part P
-X is facet of Y, Y is part of P => X is part of P
-X is facet of Y, Y has quality Q => X has quality Q
+(*{(X "is facet of" Y) (Y ~ C)}                ~ conjunction) => (X ~ C)
+(*{(X "is facet of" Y) (Y "is subclass of" C)} ~ conjunction) => (X "is subclass of" C)
+(*{(X "is facet of" Y) (Y "has part" P)}       ~ conjunction) => (X "has part" P)
+(*{(X "is facet of" Y) (Y "is part of" P)}     ~ conjunction) => (X "is part of" P)
+(*{(X "is facet of" Y) (Y "has quality" Q)}    ~ conjunction) => (X "has quality" Q)
 
 # The following fact is not part of wikidata. Wikidata only includes the fact "is subclass of" "subject item of this property" "is for example"
 "is for example"  is inverse of "~"
 
-R ~ transitive relation, X R Y, Y R Z => X R Z
-P ~ transitive relation, P is inverse of Q => Q ~ transitive relation
-X ~ K, K is subclass of U => X ~ U
+(*{(R ~ "transitive relation") (X R Y) (Y R Z)}         ~ conjunction) => (X R Z)
+(*{(P ~ "transitive relation") (P "is inverse of" Q)}   ~ conjunction) => (Q ~ "transitive relation")
+(*{(X ~ K) (K "is subclass of" U)}                      ~ conjunction) => (X ~ U)
 
-X has quality E,   E ~ K                => X has quality K
-X has quality E,   E is subclass of K  => X has quality K
-K has quality E,   X ~ K                => X has quality E
-K has quality E,   X is subclass of K  => X has quality E
-X has part P,      P ~ K                => X has part K
-K has part P,      X is subclass of K  => X has part P
+(*{(X "has quality" E) (E ~ K)}                ~ conjunction) => (X "has quality" K)
+(*{(X "has quality" E) (E "is subclass of" K)} ~ conjunction) => (X "has quality" K)
+(*{(K "has quality" E) (X ~ K)}                ~ conjunction) => (X "has quality" E)
+(*{(K "has quality" E) (X "is subclass of" K)} ~ conjunction) => (X "has quality" E)
+(*{(X "has part" P)    (P ~ K)}                ~ conjunction) => (X "has part" K)
+(*{(K "has part" P)    (X "is subclass of" K)} ~ conjunction) => (X "has part" P)
 
-X is opposite of Y, X ~ K              => Y ~ K
-X is opposite of Y, X is subclass of K => Y is subclass of K
-X is inverse of Y,  X ~ K              => Y ~ K
-X is inverse of Y,  X is subclass of K => Y is subclass of K
+(*{(X "is opposite of" Y) (X ~ K)}                ~ conjunction) => (Y ~ K)
+(*{(X "is opposite of" Y) (X "is subclass of" K)} ~ conjunction) => (Y "is subclass of" K)
+(*{(X "is inverse of" Y)  (X ~ K)}                ~ conjunction) => (Y ~ K)
+(*{(X "is inverse of" Y)  (X "is subclass of" K)} ~ conjunction) => (Y "is subclass of" K)
 
-X is opposite of Y        => Y is opposite of X
-X is inverse of Y         => Y is inverse of X
-R is opposite of S, X R Y => Y S X
-R is inverse of S,  X R Y => Y S X
+# Single rules (no conjunction needed for 1 condition)
+(X "is opposite of" Y) => (Y "is opposite of" X)
+(X "is inverse of" Y)  => (Y "is inverse of" X)
+(*{(R "is opposite of" S) (X R Y)} ~ conjunction) => (Y S X)
+(*{(R "is inverse of" S)  (X R Y)} ~ conjunction) => (Y S X)
 
-X is opposite of Y, A has quality X, A has quality Y => !
-X is inverse of Y,  A has quality X, A has quality Y => !
-X is opposite of Y, A has part X,    A has part Y    => !
-X is inverse of Y,  A has part X,    A has part Y    => !
+(*{(X "is opposite of" Y) (A "has quality" X) (A "has quality" Y)} ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "has quality" X) (A "has quality" Y)} ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "has part" X)    (A "has part" Y)}    ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "has part" X)    (A "has part" Y)}    ~ conjunction) => !
 
-X is opposite of Y, A ~ X,              A ~ Y              => !
-X is opposite of Y, A is subclass of X, A is subclass of Y => !
-X is inverse of Y,  A ~ X,              A ~ Y              => !
-X is inverse of Y,  A is subclass of X, A is subclass of Y => !
+(*{(X "is opposite of" Y) (A ~ X)              (A ~ Y)}              ~ conjunction) => !
+(*{(X "is opposite of" Y) (A "is subclass of" X) (A "is subclass of" Y)} ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A ~ X)              (A ~ Y)}              ~ conjunction) => !
+(*{(X "is inverse of" Y)  (A "is subclass of" X) (A "is subclass of" Y)} ~ conjunction) => !
 
-X has quality E, X ~ E              => !
-X has quality E, X is subclass of E => !
-X has quality E, E ~ X              => !
-X has quality E, E is subclass of X => !
-X has quality E, E has part X       => !
+(*{(X "has quality" E) (X ~ E)}              ~ conjunction) => !
+(*{(X "has quality" E) (X "is subclass of" E)} ~ conjunction) => !
+(*{(X "has quality" E) (E ~ X)}              ~ conjunction) => !
+(*{(X "has quality" E) (E "is subclass of" X)} ~ conjunction) => !
+(*{(X "has quality" E) (E "has part" X)}       ~ conjunction) => !
 
-X has part E, X ~ E              => !
-X has part E, X is subclass of E => !
-X has part E, E ~ X              => !
-X has part E, E is subclass of X => !
+(*{(X "has part" E) (X ~ E)}              ~ conjunction) => !
+(*{(X "has part" E) (X "is subclass of" E)} ~ conjunction) => !
+(*{(X "has part" E) (E ~ X)}              ~ conjunction) => !
+(*{(X "has part" E) (E "is subclass of" X)} ~ conjunction) => !
 
 # The following contradiction requires that X cannot be at the same time an instance and a subclass:
-X ~ A, X is subclass of B => !
+(*{(X ~ A) (X "is subclass of" B)} ~ conjunction) => !
 
-A ~ B, B ~ A                           => !
-A is subclass of B, B is subclass of A => !
-A is facet of B, B is facet of A       => !
-A ~ B, B is subclass of A              => !
-A ~ B, B is facet of A                 => !
-A is subclass of B, B is facet of A    => !
+(*{(A ~ B) (B ~ A)}                               ~ conjunction) => !
+(*{(A "is subclass of" B) (B "is subclass of" A)} ~ conjunction) => !
+(*{(A "is facet of" B) (B "is facet of" A)}       ~ conjunction) => !
+(*{(A ~ B) (B "is subclass of" A)}                ~ conjunction) => !
+(*{(A ~ B) (B "is facet of" A)}                   ~ conjunction) => !
+(*{(A "is subclass of" B) (B "is facet of" A)}    ~ conjunction) => !

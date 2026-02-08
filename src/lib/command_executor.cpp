@@ -48,10 +48,12 @@ public:
     Impl(network::Reasoning*            n,
          ScriptEngine*                  se,
          std::shared_ptr<DataManager>&  dm,
+         std::shared_ptr<ReplState>     rs,
          CommandExecutor::LineProcessor lp)
         : _n(n)
         , _script_engine(se)
         , _data_manager(dm)
+        , _repl_state(std::move(rs))
         , _process_line_callback(std::move(lp))
     {
         register_commands();
@@ -78,6 +80,7 @@ private:
     network::Reasoning*            _n;
     ScriptEngine*                  _script_engine;
     std::shared_ptr<DataManager>&  _data_manager;
+    std::shared_ptr<ReplState>     _repl_state;
     CommandExecutor::LineProcessor _process_line_callback;
 
     // --- Dispatch Map ---
@@ -144,6 +147,8 @@ private:
         { cmd_save(c); };
         _command_map[L".import"] = [this](auto& c)
         { cmd_import(c); };
+        _command_map[L".auto-run"] = [this](auto& c)
+        { cmd_auto_run(c); };
     }
 
     // --- Helpers ---
@@ -343,12 +348,19 @@ private:
 
     void import_file(const std::wstring& file) const
     {
+        AutoRunSuspender suspend(_repl_state);
+
         std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
         std::wifstream stream(string::unicode::to_utf8(file));
         if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
         for (std::wstring line; std::getline(stream, line);)
         {
             _process_line_callback(line);
+        }
+
+        if (suspend.was_active())
+        {
+            _n->run(true, false, false, true);
         }
     }
 
@@ -567,6 +579,7 @@ private:
             L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             L".cleanup                    – Remove isolated nodes and clean name mappings",
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            L".auto-run                   – Toggle automatic execution of .run after each input",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
             L"",
             L"Type \".help <command>\" for detailed information about a specific command."};
@@ -715,6 +728,10 @@ private:
                        L"- Total entries in node-of-name mappings\n"
                        L"- Number of languages\n"
                        L"- Number of rules"},
+
+            {L".auto-run", L".auto-run\n"
+                           L"Toggles the automatic execution of the inference engine (.run) after every input.\n"
+                           L"Default is ON. Automatically switches to OFF when .load is used."},
 
             {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                        L"Processes the Wikidata dump and exports constraint scripts\n"
@@ -1127,6 +1144,12 @@ private:
         if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing bin or json file name");
         if (cmd.size() > 2) throw std::runtime_error("Command .load: Unknown argument after file name");
 
+        if (_repl_state->auto_run)
+        {
+            _repl_state->auto_run = false;
+            _n->print(L"Auto-run has been disabled due to loading a large dataset.", true);
+        }
+
         std::ofstream log("load.log");
         _n->set_print([&](const std::wstring& str, bool o)
                       {
@@ -1416,13 +1439,19 @@ private:
         if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
         import_file(path);
     }
+    void cmd_auto_run(const std::vector<std::wstring>&)
+    {
+        _repl_state->auto_run = !_repl_state->auto_run;
+        _n->print(L"Auto-run is now " + std::wstring(_repl_state->auto_run ? L"enabled" : L"disabled") + L".", true);
+    }
 };
 
 console::CommandExecutor::CommandExecutor(network::Reasoning*           reasoning,
                                           ScriptEngine*                 script_engine,
                                           std::shared_ptr<DataManager>& data_manager,
+                                          std::shared_ptr<ReplState>    repl_state,
                                           LineProcessor                 line_processor)
-    : _pImpl(new Impl(reasoning, script_engine, data_manager, std::move(line_processor)))
+    : _pImpl(new Impl(reasoning, script_engine, data_manager, repl_state, std::move(line_processor)))
 {
 }
 

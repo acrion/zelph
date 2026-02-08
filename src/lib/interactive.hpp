@@ -47,6 +47,7 @@ namespace zelph
             void        run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
             std::string get_lang() const;
             std::string get_version() const;
+            bool        is_auto_run_active() const;
             void        process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
 
             Interactive(const Interactive&)            = delete;
