@@ -25,10 +25,42 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <memory>
+
 namespace zelph::console
 {
     struct ReplState
     {
         bool auto_run = true;
+    };
+
+    // Helper RAII struct to temporarily suspend auto-run
+    struct AutoRunSuspender
+    {
+        std::shared_ptr<ReplState> state;
+        bool                       previous_val;
+
+        AutoRunSuspender(std::shared_ptr<ReplState> s)
+            : state(std::move(s))
+        {
+            if (state)
+            {
+                previous_val    = state->auto_run;
+                state->auto_run = false;
+            }
+        }
+
+        ~AutoRunSuspender()
+        {
+            if (state)
+            {
+                state->auto_run = previous_val;
+            }
+        }
+
+        bool was_active() const
+        {
+            return previous_val;
+        }
     };
 }

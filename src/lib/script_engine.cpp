@@ -182,11 +182,11 @@ public:
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
-                :var-start (range "AZ")
-                :var-rest (if-not :reserved 1)
+                :var-underscore (* "_" (any :symchars))
+                :var-uppercase  (* (range "AZ") (not :symchars))
 
-                # A variable must start with Uppercase or underscore
-                :var-token (sequence (choice "_" :var-start) (any :var-rest))
+                # A variable must start with underscore or be a single uppercase letter
+                :var-token (choice :var-underscore :var-uppercase)
 
                 :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
                 :raw-atom (capture (some :symchars))
@@ -216,6 +216,7 @@ public:
 
                 # Order matters: check for focus prefix first.
                 # If input is "*", :tag-focused fails (expects val), falls through to :star-atom.
+                # If input is "Alice", :tag-var fails (because length > 1 and no underscore), falls through to :tag-atom.
                 :val-any (choice :tag-focused :tag-var :tag-seq :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace

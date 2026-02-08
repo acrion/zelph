@@ -9,7 +9,7 @@
 "has attribute" is transitive
 ~               is transitive
 
-(*{(R ~ transitive)    (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
+(*{(R is transitive)   (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
 (*{(X is E)               (E "is a" K)} ~ conjunction) => (X is K)
 (*{(X "has part" P)       (P "is a" K)} ~ conjunction) => (X "has part" K)
 (*{(K is E)               (X "is a" K)} ~ conjunction) => (X is E)

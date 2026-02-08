@@ -116,24 +116,6 @@ private:
     const Interactive* _interactive;
 };
 
-// Helper for suppressing auto-run during batch operations (imports)
-struct AutoRunSuspender
-{
-    std::shared_ptr<console::ReplState> state;
-    bool                                previous_val;
-
-    AutoRunSuspender(std::shared_ptr<console::ReplState> s)
-        : state(s)
-    {
-        previous_val    = state->auto_run;
-        state->auto_run = false;
-    }
-    ~AutoRunSuspender()
-    {
-        state->auto_run = previous_val;
-    }
-};
-
 console::Interactive::Interactive()
     : _pImpl(new Impl(this))
 {
@@ -157,11 +139,17 @@ void console::Interactive::Impl::import_file(const std::wstring& file) const
     {
         _interactive->process(line);
     }
+
+    if (suspend.was_active())
+    {
+        _n->run(true, false, false, true); // silent run at the end
+    }
 }
 
 void console::Interactive::Impl::process_zelph_file(const std::string& path, const std::vector<std::string>& args) const
 {
     AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
+
     _script_engine->set_script_args(args);
 
     std::ifstream file(path);
@@ -173,6 +161,14 @@ void console::Interactive::Impl::process_zelph_file(const std::string& path, con
         if (line.empty() || line[0] == '#') continue;
         std::wstring wline = string::unicode::from_utf8(line);
         _interactive->process(wline);
+    }
+
+    // Note: For process_zelph_file (used by CLI args), we typically rely on explicit .run commands in scripts
+    // or user interaction afterwards, but consistency suggests we could run it here.
+    // However, sticking to the requested behavior for .import specifically:
+    if (suspend.was_active())
+    {
+        _n->run(true, false, false, true); // silent run at the end
     }
 }
 

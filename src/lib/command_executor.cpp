@@ -348,12 +348,19 @@ private:
 
     void import_file(const std::wstring& file) const
     {
+        AutoRunSuspender suspend(_repl_state);
+
         std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
         std::wifstream stream(string::unicode::to_utf8(file));
         if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
         for (std::wstring line; std::getline(stream, line);)
         {
             _process_line_callback(line);
+        }
+
+        if (suspend.was_active())
+        {
+            _n->run(true, false, false, true);
         }
     }
 
