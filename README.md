@@ -144,6 +144,7 @@ Key commands include:
 - `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
 - `.cleanup`                 – Remove isolated nodes
 - `.stat`                    – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.auto-run`                – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 
 ### What’s Next?

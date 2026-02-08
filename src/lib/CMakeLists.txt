@@ -77,7 +77,7 @@ elseif (MSVC)
     # This destroys Janet's NaN-boxing mechanism (same issue as -ffast-math on GCC/Clang),
     # leading to crashes or undefined behavior when handling dynamic types.
     # The default /fp:precise (implied by /O2) is safe.
-    
+
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
 endif ()
@@ -243,17 +243,18 @@ add_library(zelph_lib SHARED
     wikidata_text_compressor.hpp
     wikidata_token_encoder.hpp
     # zelph::console
+    command_executor.cpp
+    command_executor.hpp
     data_manager.hpp
     data_manager.cpp
     interactive.cpp
     interactive.hpp
     read_async.cpp
     read_async.hpp
+    repl_state.hpp
     wikidata.cpp
     wikidata.hpp
     ${CAPNP_SRCS}
-    command_executor.cpp
-    command_executor.hpp
 )
 
 target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)

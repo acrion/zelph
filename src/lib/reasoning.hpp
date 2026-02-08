@@ -62,7 +62,7 @@ namespace zelph::network
     {
     public:
         explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
-        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition);
+        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void set_markdown_subdir(const std::string& subdir);
         void prune_facts(Node pattern, size_t& removed_count);

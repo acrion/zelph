@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "repl_state.hpp"
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -70,6 +72,7 @@ namespace zelph::console
         CommandExecutor(zelph::network::Reasoning*    reasoning,
                         zelph::ScriptEngine*          script_engine,
                         std::shared_ptr<DataManager>& data_manager,
+                        std::shared_ptr<ReplState>    repl_state,
                         LineProcessor                 line_processor);
 
         ~CommandExecutor();

@@ -24,11 +24,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
-#include "command_executor.hpp"
 
+#include "command_executor.hpp"
 #include "network.hpp"
 #include "platform_utils.hpp"
 #include "reasoning.hpp"
+#include "repl_state.hpp"
 #include "script_engine.hpp"
 #include "string_utils.hpp"
 
@@ -62,6 +63,7 @@ public:
                                     }))
         , _interactive(enclosing)
         , _script_engine(new ScriptEngine(_n))
+        , _repl_state(std::make_shared<ReplState>())
     {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_U16TEXT);
@@ -85,6 +87,7 @@ public:
             _n,
             _script_engine.get(),
             _data_manager,
+            _repl_state,
             [this](const std::wstring& line)
             { _interactive->process(line); }));
     }
@@ -104,12 +107,31 @@ public:
     network::Reasoning* const        _n;
     std::unique_ptr<ScriptEngine>    _script_engine;
     std::unique_ptr<CommandExecutor> _command_executor;
+    std::shared_ptr<ReplState>       _repl_state;
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
 
 private:
     const Interactive* _interactive;
+};
+
+// Helper for suppressing auto-run during batch operations (imports)
+struct AutoRunSuspender
+{
+    std::shared_ptr<console::ReplState> state;
+    bool                                previous_val;
+
+    AutoRunSuspender(std::shared_ptr<console::ReplState> s)
+        : state(s)
+    {
+        previous_val    = state->auto_run;
+        state->auto_run = false;
+    }
+    ~AutoRunSuspender()
+    {
+        state->auto_run = previous_val;
+    }
 };
 
 console::Interactive::Interactive()
@@ -124,6 +146,8 @@ console::Interactive::~Interactive()
 
 void console::Interactive::Impl::import_file(const std::wstring& file) const
 {
+    AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
+
     std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
     std::wifstream stream(string::unicode::to_utf8(file));
 
@@ -137,6 +161,7 @@ void console::Interactive::Impl::import_file(const std::wstring& file) const
 
 void console::Interactive::Impl::process_zelph_file(const std::string& path, const std::vector<std::string>& args) const
 {
+    AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
     _script_engine->set_script_args(args);
 
     std::ifstream file(path);
@@ -161,6 +186,11 @@ std::string console::Interactive::get_version() const
     return network::Zelph::get_version();
 }
 
+bool console::Interactive::is_auto_run_active() const
+{
+    return _pImpl->_repl_state->auto_run;
+}
+
 void console::Interactive::process(std::wstring line) const
 {
     _pImpl->_n->set_print([](const std::wstring& str, bool)
@@ -172,6 +202,8 @@ void console::Interactive::process(std::wstring line) const
 #endif
                           });
 
+    bool was_command_or_empty = false;
+
     try
     {
         if (boost::starts_with(line, "#")) return; // comment
@@ -179,6 +211,7 @@ void console::Interactive::process(std::wstring line) const
         size_t first_char_pos = line.find_first_not_of(L" \t");
         if (first_char_pos != std::wstring::npos && line[first_char_pos] == L'.')
         {
+            was_command_or_empty = true;
             // Command processing logic deliberately does not use PEG
             tokenizer<escaped_list_separator<wchar_t>, std::wstring::const_iterator, std::wstring> tok(line, escaped_list_separator<wchar_t>(L"\\", L" \t", L"\""));
             auto                                                                                   it = tok.begin();
@@ -198,6 +231,10 @@ void console::Interactive::process(std::wstring line) const
                 return;
             }
         }
+        else if (first_char_pos == std::wstring::npos)
+        {
+            was_command_or_empty = true;
+        }
 
         std::string utf8_line   = string::unicode::to_utf8(line);
         std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(utf8_line);
@@ -206,21 +243,28 @@ void console::Interactive::process(std::wstring line) const
         if (!transformed.empty())
         {
             _pImpl->_script_engine->process_janet(transformed, true);
-            return;
         }
 
         // 2. Native Janet syntax
-        size_t u_first = utf8_line.find_first_not_of(" \t");
-        if (u_first != std::string::npos && utf8_line[u_first] == '(')
+        else
         {
-            _pImpl->_script_engine->process_janet(utf8_line, false);
-            return;
+            size_t u_first = utf8_line.find_first_not_of(" \t");
+            if (u_first != std::string::npos && utf8_line[u_first] == '(')
+            {
+                _pImpl->_script_engine->process_janet(utf8_line, false);
+            }
+            // 3. Syntax Error
+            else if (u_first != std::string::npos) // Line is not empty
+            {
+                throw std::runtime_error("Syntax error: Could not parse line.");
+            }
         }
 
-        // 3. Syntax Error
-        if (u_first != std::string::npos) // Line is not empty
+        // Auto-run logic: Only if auto_run is on, and it wasn't a command or comment
+        if (_pImpl->_repl_state->auto_run && !was_command_or_empty)
         {
-            throw std::runtime_error("Syntax error: Could not parse line.");
+            // silent = true to suppress standard reasoning logging
+            _pImpl->_n->run(true, false, false, true);
         }
     }
     catch (std::exception& ex)

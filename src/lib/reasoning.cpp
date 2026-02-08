@@ -235,7 +235,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
     }
 }
 
-void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition)
+void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent)
 {
     StopWatch watch;
     watch.start();
@@ -256,7 +256,8 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         _markdown = std::make_unique<wikidata::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
     }
 
-    std::clog << "Starting reasoning with " << _pool->count() << " worker threads." << std::endl;
+    if (!silent)
+        std::clog << "Starting reasoning with " << _pool->count() << " worker threads." << std::endl;
 
     do
     {
@@ -269,8 +270,9 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         _pool->wait();
     } while (_done && !suppress_repetition);
 
-    std::clog << "Reasoning complete. Total unification matches processed: " << _total_matches
-              << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
+    if (!silent)
+        std::clog << "Reasoning complete. Total unification matches processed: " << _total_matches
+                  << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
 
     if (_skipped > 0) print(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
 
@@ -284,11 +286,12 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         print(L"Warning: Additional reasoning iterations are required, but have been suppressed.", true);
     }
 
-    std::clog << "Reasoning summary: " << _total_matches << " matches processed, "
-              << _total_contradictions << " contradictions found." << std::endl;
+    if (!silent)
+        std::clog << "Reasoning summary: " << _total_matches << " matches processed, "
+                  << _total_contradictions << " contradictions found." << std::endl;
     static std::unordered_set<Node> logged_relations;
 
-    if (_pool)
+    if (_pool && !silent)
     {
         std::clog << "Parallel unifications activated for " << logged_relations.size()
                   << " distinct fixed relations." << std::endl;
@@ -298,9 +301,10 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
     watch.stop();
 
-    std::clog << "Reasoning complete in " << watch.format() << " – "
-              << _total_matches << " matches processed, "
-              << _total_contradictions << " contradictions found." << std::endl;
+    if (!silent)
+        std::clog << "Reasoning complete in " << watch.format() << " – "
+                  << _total_matches << " matches processed, "
+                  << _total_contradictions << " contradictions found." << std::endl;
 }
 
 void Reasoning::apply_rule(const Node& rule, Node condition)
