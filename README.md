@@ -872,12 +872,12 @@ Queries are statements that contain variables (single uppercase letters) but no 
 
 ## Key Features
 
-- **Variables**: Single uppercase letters (A-Z), scoped to the query. Limited to 26 per query.
-- **Multi-Conditions (Conjunctions)**: Use sets marked as conjunctions `(*{...} ~ conjunction)` to filter results by multiple criteria.
+- **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query.
+- **Multi-Conditions (Conjunctions)**: Use sets marked as conjunctions `({...} ~ conjunction)` to filter results by multiple criteria.
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
-- **Inference Integration**: Run `.run` first to derive new facts, then query the expanded graph.
+- **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).
 - **Output**: Matches are printed with bound values. No matches: Just the query echoed.
-- **Limitations**: No OR/NOT in query syntax (use rules for complex logic). No multi-line queries.
+- **Limitations**: No multi-line queries.
 
 ## General Queries
 
