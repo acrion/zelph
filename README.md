@@ -313,13 +313,13 @@ zelph distinguishes between two fundamental input modes for sequences, which res
 
 1. **Node Sequences (Space-Separated):** `<item1 item2 item3>`
 
-* **Syntax:** Elements are separated by whitespace.
+* **Syntax:** At least one whitespace between the brackets.
 * **Semantics:** The existing nodes `item1`, `item2`, and `item3` become the direct elements of the sequence.
 * **Use Case:** Lists of known entities, e.g., `<Berlin Paris London>`.
 
-2. **Compact Sequences (Continuous):** `<123>` or `<"abc">`
+2. **Compact Sequences (Continuous):** `<123>` or `<abc>`
 
-* **Syntax:** No spaces between characters (or within a quoted string inside the brackets).
+* **Syntax:** No spaces between characters.
 * **Semantics:** The input is split into individual characters. For each character, zelph uses (or creates) a **Concept Node**.
 * **The "Proxy" Mechanism:** Since a sequence might contain the same character multiple times (e.g., `<101>`), zelph cannot simply link the concept "1" twice. Instead, for every position in the sequence, zelph creates a unique **Instance Node** (a proxy).
     * This Instance Node is linked to the Concept Node via `~` (IsA).
