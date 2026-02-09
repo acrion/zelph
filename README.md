@@ -198,7 +198,7 @@ This unique approach enables powerful meta-reasoning about relations.
 
 A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
 
-In many traditional semantic web stacks (like OWL/RDF), the ontology is *descriptive*. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., HermiT or Pellet). The operational semantics are external to the data.
+In many traditional semantic web stacks (like OWL/RDF), the ontology is *descriptive*. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., [HermiT](http://www.hermit-reasoner.com) or [Pellet](https://github.com/stardog-union/pellet)). The operational semantics are external to the data.
 
 In zelph, **the logic is intrinsic to the data**.
 *   **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
