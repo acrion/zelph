@@ -1,4 +1,4 @@
-A + B => (A + B) = C
+(A + B) => ((A + B) = C)
 
 first X -> Y: Y in X, !(Z .. Y)
 last X -> Y: Y in X, !(Y .. Z)

@@ -154,7 +154,10 @@ public:
         { return janet_wrap_cfunction(f); };
 #endif
         janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact s p o)\nCreate fact.");
-        janet_def(_janet_env, "zelph/seq", wrap((JanetCFunction)janet_cfun_zelph_seq), "(zelph/seq content)\nCreate sequence node from string content.");
+
+        janet_def(_janet_env, "zelph/seq", wrap((JanetCFunction)janet_cfun_zelph_seq), "(zelph/seq nodes...)\nCreate sequence from nodes.");
+
+        janet_def(_janet_env, "zelph/seq-chars", wrap((JanetCFunction)janet_cfun_zelph_seq_chars), "(zelph/seq-chars str)\nCreate sequence from string characters.");
         janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
     }
 
@@ -174,11 +177,9 @@ public:
                 :s* (any :ws)
                 :s+ (some :ws)
 
-                # Reserved chars that start special structures:
-                # < (seq), " (quote), ( (nested), { (set), * (focus)
-                # delimiters: ) }
-                # Note: '>' is NOT reserved globally.
-                :reserved (set " \t\r\n\0\v<\"(){}*")
+                # > and < are reserved to act as delimiters.
+                # To use them as atoms, we define specific rules below.
+                :reserved (set " \t\r\n\0\v<\"(){}*>")
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
@@ -188,17 +189,32 @@ public:
                 # A variable must start with underscore or be a single uppercase letter
                 :var-token (choice :var-underscore :var-uppercase)
 
+                # Atoms
                 :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
-                :raw-atom (capture (some :symchars))
-                :seq-content (capture (any (if-not ">" 1)))
 
-                # Definitions for structures
+                # Normal atoms (sequences of non-reserved chars)
+                :raw-atom (capture (some :symchars))
+
+                # Multi-char Arrows containing reserved chars (must be checked before raw-atom/ops)
+                :arrow-multi (capture (choice "=>" "->" "<=>" "<=" ">="))
+
+                # Single-char Operators (from reserved set)
+                :op-single (capture (choice ">" "<"))
+
+                # Structure Tags
                 :tag-var    (group (* (constant :var)  (capture :var-token)))
-                :tag-atom   (group (* (constant :atom) (choice :quoted :raw-atom)))
-                # Special rule for '*' as an atom (since it's now reserved)
+
+                # Atom Definition Order:
+                # 1. Quoted (always safe)
+                # 2. Multi-char arrows (e.g. "=>"). Must be before raw-atom because "=" is a symchar.
+                # 3. Raw atoms (e.g. "abc", "=")
+                # 4. Single ops (e.g. ">"). Checked last to prefer longer matches or delimiters.
+                :tag-atom   (group (* (constant :atom) (choice :quoted :arrow-multi :raw-atom :op-single)))
+
                 :star-atom  (group (* (constant :atom) (capture "*")))
 
-                :tag-seq    (group (* (constant :seq)  (* "<" (not :ws) :seq-content ">")))
+                # 1. Compact Sequence: <abc>
+                :tag-seq-compact (group (* (constant :seq-compact) (* "<" (capture (some (if-not (set "> \t\r\n") 1))) ">")))
 
                 # Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
                 # but Janet PEG handles this via the :val-any choice reference.
@@ -214,10 +230,17 @@ public:
                 :set-content (any (sequence :s* :val-any))
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
-                # Order matters: check for focus prefix first.
-                # If input is "*", :tag-focused fails (expects val), falls through to :star-atom.
-                # If input is "Alice", :tag-var fails (because length > 1 and no underscore), falls through to :tag-atom.
-                :val-any (choice :tag-focused :tag-var :tag-seq :tag-atom :star-atom :tag-nested :tag-set)
+                # 2. Node Sequence: < a b >
+                # The loop (if-not ">" :val-any) ensures we don't consume the closing delimiter.
+                # This works for "=>" because the first char "=" passes the check,
+                # and then :arrow-multi consumes the whole "=>".
+                # An unquoted ">" atom inside a sequence is impossible here (it acts as delimiter).
+                :seq-content (any (sequence :s* (if-not ">" :val-any)))
+                :tag-seq-nodes (group (* (constant :seq-nodes) (* "<" :seq-content :s* ">")))
+
+                # Value order:
+                # Check sequences first so "<" starts a sequence if possible.
+                :val-any (choice :tag-focused :tag-var :tag-seq-compact :tag-seq-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -270,8 +293,8 @@ public:
         return 0;
     }
 
-    // Handle sequence creation logic (Space vs Char split)
-    static Janet janet_cfun_zelph_seq(int32_t argc, Janet* argv)
+    // Split string into chars (for compact <abc> syntax)
+    static Janet janet_cfun_zelph_seq_chars(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
@@ -280,30 +303,35 @@ public:
         std::string    raw_s = reinterpret_cast<const char*>(str);
         std::wstring   wstr  = string::unicode::from_utf8(raw_s);
 
+        // Compact mode always splits by character
         std::vector<std::wstring> elements;
-
-        // Logic: If it contains a space, split by space. Otherwise, split by character.
-        if (wstr.find(L' ') != std::wstring::npos)
+        elements.reserve(wstr.length());
+        for (wchar_t c : wstr)
         {
-            // Split by whitespace
-            std::vector<std::string> parts;
-            boost::split(parts, raw_s, boost::is_any_of(" \t"), boost::token_compress_on);
-            for (const auto& p : parts)
-            {
-                if (!p.empty()) elements.push_back(string::unicode::from_utf8(p));
-            }
-        }
-        else
-        {
-            // Split by character
-            elements.reserve(wstr.length());
-            for (wchar_t c : wstr)
-            {
-                elements.push_back(std::wstring(1, c));
-            }
+            elements.push_back(std::wstring(1, c));
         }
 
         if (elements.empty()) return janet_wrap_nil(); // Empty sequences are not supported
+
+        network::Node seq_node = s_instance->_n->sequence(elements);
+        return zelph_wrap_node(seq_node);
+    }
+
+    // Sequence of Nodes (for < A B > syntax)
+    static Janet janet_cfun_zelph_seq(int32_t argc, Janet* argv)
+    {
+        if (!s_instance) return janet_wrap_nil();
+
+        std::vector<network::Node> elements;
+        elements.reserve(argc);
+
+        for (int i = 0; i < argc; ++i)
+        {
+            network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (n) elements.push_back(n);
+        }
+
+        if (elements.empty()) return janet_wrap_nil();
 
         network::Node seq_node = s_instance->_n->sequence(elements);
         return zelph_wrap_node(seq_node);
@@ -445,6 +473,13 @@ public:
                 args.push_back(data[i]);
             return build_smart_call("zelph/set", args);
         }
+        else if (type == "seq-nodes")
+        {
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/seq", args);
+        }
 
         // Handle leaf nodes (atom, var, seq)
         // These expect data[1] to be the content string/buffer
@@ -478,13 +513,14 @@ public:
                 return "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             }
         }
-        else if (type == "seq")
+        else if (type == "seq-compact")
         {
             // Convert <123> content to (zelph/seq "123")
             // Escape the content string for Janet
             std::string content = "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
-            return "(zelph/seq " + content + ")";
+            return "(zelph/seq-chars " + content + ")";
         }
+
         return "nil";
     }
 };
