@@ -632,7 +632,7 @@ When executed, the last line is interpreted as a query, because it contains a va
 ```
 zelph> .import sample_scripts/english.zph
 Importing file sample_scripts/english.zph...
-[...skipped repition of parsed commands..]
+[...skipped repetition of parsed commands..]
 A  is ancestor of   pius
 Answer:  paul   is ancestor of   pius
  peter   is ancestor of   pius  ⇐ {( peter   is ancestor of   paul ) ( is ancestor of   is   transitive ) ( paul   is ancestor of   pius )}
