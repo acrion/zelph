@@ -194,6 +194,18 @@ Unlike traditional semantic networks where relations are labeled edges,
 zelph treats relation types as first-class nodes themselves.
 This unique approach enables powerful meta-reasoning about relations.
 
+### Homoiconicity: The Executable Graph
+
+A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
+
+In many traditional semantic web stacks (like OWL/RDF), the ontology is *descriptive*. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., HermiT or Pellet). The operational semantics are external to the data.
+
+In zelph, **the logic is intrinsic to the data**.
+*   **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
+*   **Math is Data:** Numbers are not opaque literals but graph sequences that interact with semantic entities.
+
+This means the graph doesn't just *describe* knowledge; it *structures the execution* of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior or the arithmetic logic of the system, creating a system that is not just a database, but an **executable graph**.
+
 ### Facts and Relations
 
 Facts in zelph are represented as triples consisting of a subject, relation type, and object.
