@@ -124,8 +124,8 @@ Key commands include:
 - `.node <name|id>`          – Show detailed node information (names, connections, representation, Wikidata URL)
 - `.list <count>`            – List first N existing nodes (internal order, with details)
 - `.clist <count>`           – List first N nodes named in current language (sorted by ID if feasible)
-- `.out <name|id> [count]`   – List outgoing connected nodes (default 20)
-- `.in <name|id> [count]`    – List incoming connected nodes (default 20)
+- `.out <name|id> [count]`   – List outgoing connected nodes (default: 20)
+- `.in <name|id> [count]`    – List incoming connected nodes (default: 20)
 - `.mermaid <name> [depth]`  – Generate Mermaid HTML file for a node (default depth 3)
 - `.run`                     – Full inference
 - `.run-once`                – Single inference pass
@@ -225,7 +225,7 @@ Note that when a relation contains spaces, it be enclosed in quotation marks.
 
 ### Nested Expressions and Sets
 
-zelph supports advanced grouping and recursion using parentheses `()` and braces `{}`.
+zelph supports advanced grouping and recursion using parentheses `()`, braces `{}`, and angle brackets `<>`.
 
 #### Parentheses: Nested Facts
 
@@ -239,11 +239,18 @@ Here, the subject of the outer statement is the node representing the fact that 
 
 #### Braces: Sets
 
-Braces `{...}` are used to create sets of nodes or facts. This is primarily used for defining conditions in rules (see below).
+Braces `{...}` are used to create **unordered sets** of nodes or facts. This is primarily used for defining conditions in rules (see below).
 
 ```
 { (A "is part of" B) (B "is part of" C) }
 ```
+
+#### Angle Brackets: Sequences
+
+Angle brackets `<...>` create **ordered sequences**. Unlike sets, the order of elements is preserved using the `FollowedBy` relation. Sequences support two input modes:
+
+* **Continuous:** `<123>` is parsed as the sequence `1` -> `2` -> `3`. This allows representing numbers as graph structures.
+* **Space-Separated:** `<item1 item2 item3>` is parsed as the sequence `item1` -> `item2` -> `item3`.
 
 #### The Focus Operator `*`
 
@@ -254,6 +261,12 @@ When defining complex structures, you often need to refer to a specific part of 
 - `(*{...} ~ conjunction)` creates the fact that the set is a conjunction, but **returns the set node itself**.
 
 This operator is crucial for the rule syntax.
+
+### Semantic Math
+
+A unique feature of zelph is its approach to numbers. Instead of treating integers as opaque literals handled by an arithmetic logic unit (ALU), zelph represents them as **sequences of digits** within the graph (e.g., `<123>`).
+
+This topology allows for **Symbolic Math**: arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. By merging these digit nodes with semantic entities (e.g., from Wikidata), zelph effectively moves from *calculating* numbers to *reasoning* about them.
 
 ### Internal Representation of facts
 
@@ -357,11 +370,9 @@ Example rule:
 **Breakdown of the syntax:**
 
 1. `{...}`: Creates a **Set** containing three fact templates:
-
-* `R` is a transitive relation.
-* `X` is related to `Y` via `R`.
-* `Y` is related to `Z` via `R`.
-
+    * `R` is a transitive relation.
+    * `X` is related to `Y` via `R`.
+    * `Y` is related to `Z` via `R`.
 2. `~ conjunction`: Defines that this Set represents a logical "AND" (Conjunction). The inference engine only evaluates sets marked as conjunctions.
 3. `(*...)`: The surrounding parentheses create the fact `Set ~ conjunction`.
 4. `*`: The **Focus Operator** at the beginning ensures that the expression returns the **Set Node** itself, not the fact node `Set ~ conjunction`.
