@@ -712,6 +712,34 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     return answer.relation();
 }
 
+Node Zelph::sequence(const std::vector<Node>& elements)
+{
+    if (elements.empty()) return 0;
+
+    // Create the super-node representing the sequence itself
+    Node seq_node = _pImpl->create();
+
+    Node prev_node = 0;
+
+    for (const Node current_node : elements)
+    {
+        if (current_node == 0) continue;
+
+        // Link to the sequence container
+        fact(current_node, core.PartOf, {seq_node});
+
+        // Maintain order
+        if (prev_node != 0)
+        {
+            fact(prev_node, core.FollowedBy, {current_node});
+        }
+
+        prev_node = current_node;
+    }
+
+    return seq_node;
+}
+
 Node Zelph::sequence(const std::vector<std::wstring>& elements)
 {
     if (elements.empty()) return 0;
@@ -773,8 +801,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
         // Check for bidirectional link (characteristic of Subject <-> Relation connection)
         if (_pImpl->get_left(nd).count(rule) == 1)
         {
-            // Existing check: ignore if 'nd' is being used as a condition (Subject of Causes)
-            if (_pImpl->get_right(nd).count(core.Causes) == 0)
+            if (nd != parent)
             {
                 candidates.insert(nd);
             }
@@ -918,38 +945,69 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
 
-    if (history->find(fact) != history->end())
+    // Helper to resolve variables
+    auto resolve_var = [&](Node n) -> Node
+    {
+        int  limit = 0;
+        Node curr  = n;
+        while (_pImpl->is_var(curr) && limit++ < 100)
+        {
+            Node next = string::get(variables, curr, 0);
+            if (next == 0 || next == curr) break;
+            curr = next;
+        }
+        return curr;
+    };
+
+    // 1. Variable Substitution
+    Node resolved = resolve_var(fact);
+
+    if (history->find(resolved) != history->end())
     {
 #ifdef _DEBUG
-        std::clog << indent << "[DEBUG format_fact] HIT HISTORY for fact=" << fact << " -> returning '?'" << std::endl;
+        std::clog << indent << "[DEBUG format_fact] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
 #endif
         result = L"?";
         return;
     }
 
-    // --- Container Detection (Set / Sequence) ---
-    // Check if 'fact' acts as a container (Object in a PartOf relation).
-    // We assume that if a node has incoming PartOf relations, it should be displayed as a Set/Sequence.
+    // 2. Name Check
+    // If the node has a direct name, use it.
+    std::wstring name = get_formatted_name(resolved, lang);
+    if (!name.empty())
+    {
+#ifdef _DEBUG
+        std::clog << indent << "[DEBUG format_fact] Found name '" << string::unicode::to_utf8(name) << "' for node " << resolved << std::endl;
+#endif
+        result = string::mark_identifier(name);
+        return;
+    }
+
+    // 3. Container Detection (Set / Sequence)
+    // Check if 'resolved' acts as a container (Object in a PartOf relation).
+    // We prioritize Container over Proxy/Fact because a Set might also IsA "Set", but we want to see content.
     std::unordered_set<Node> elements;
 
-    // Iterate over all relations 'fact' is connected to.
-    // Based on zelph topology, objects are connected to the relation node.
-    // _pImpl->connect(object, relation) implies 'fact' -> 'relation'.
-    if (_pImpl->exists(fact))
+    if (_pImpl->exists(resolved))
     {
-        for (Node rel : _pImpl->get_right(fact))
+        for (Node rel : _pImpl->get_right(resolved))
         {
-            // We are looking for: (Element PartOf fact)
-            // So 'rel' must be the relation node.
-            // Check predicate
+            // If the relation describing the element membership IS the fact
+            // we are currently formatting (passed as parent), ignore it.
+            // This prevents the subject of "A in <123>" from appearing inside "<123>".
+            if (rel == parent) continue;
+
             Node p = parse_relation(rel);
             if (p == core.PartOf)
             {
                 adjacency_set objs;
                 Node          s = parse_fact(rel, objs, 0);
+                // Resolve variables (e.g. 'A') to their values (e.g. '1') before inserting into the set.
+                // This ensures that if a variable is bound to an existing element, it is deduplicated
+                // and doesn't appear twice (once as element, once as variable).
+                if (s != 0) s = resolve_var(s);
 
-                // If 'fact' is one of the objects of this relation, then 's' is an element.
-                if (s != 0 && objs.count(fact) > 0)
+                if (s != 0 && objs.count(resolved) > 0)
                 {
                     elements.insert(s);
                 }
@@ -962,33 +1020,34 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #ifdef _DEBUG
         std::clog << indent << "[DEBUG format_fact] DETECTED CONTAINER with " << elements.size() << " elements." << std::endl;
 #endif
-        history->insert(fact);
+        history->insert(resolved);
 
-        // It is a container. Now distinguish between Set and Sequence.
-        // A sequence has FollowedBy relations between its elements.
-        // We map: Predecessor -> Successor
         std::map<Node, Node>     sequence_next;
-        std::unordered_set<Node> sequence_targets; // Nodes that are objects of FollowedBy
+        std::unordered_set<Node> sequence_targets;
 
         for (Node elem : elements)
         {
-            // Check if 'elem' is a subject in a FollowedBy relation pointing to another element
             for (Node rel : _pImpl->get_right(elem))
             {
                 if (parse_relation(rel) == core.FollowedBy)
                 {
                     adjacency_set objs;
                     Node          s = parse_fact(rel, objs, 0);
+
+                    // Also resolve subjects of FollowedBy to ensure sequence logic works on resolved nodes
+                    if (s != 0) s = resolve_var(s);
+
                     if (s == elem)
                     {
-                        // elem FollowedBy object(s)
                         for (Node o : objs)
                         {
+                            // Resolve objects of FollowedBy
+                            if (_pImpl->is_var(o)) o = resolve_var(o);
+
                             if (elements.count(o))
                             {
                                 sequence_next[elem] = o;
                                 sequence_targets.insert(o);
-                                // We assume simple linear sequences for display; take the first relevant one
                                 break;
                             }
                         }
@@ -1005,21 +1064,22 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
         if (is_sequence)
         {
-            // Find start node(s): elements not in sequence_targets
             for (Node elem : elements)
             {
                 if (sequence_targets.find(elem) == sequence_targets.end())
                 {
-                    Node current = elem;
+                    Node                     current = elem;
+                    std::unordered_set<Node> seq_visited;
                     while (true)
                     {
+                        if (seq_visited.count(current)) break;
+                        seq_visited.insert(current);
+
                         sorted_elements.push_back(current);
                         auto it = sequence_next.find(current);
                         if (it != sequence_next.end())
                         {
                             current = it->second;
-                            // Prevent infinite loops in cyclic graphs
-                            if (std::find(sorted_elements.begin(), sorted_elements.end(), current) != sorted_elements.end()) break;
                         }
                         else
                         {
@@ -1028,7 +1088,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                     }
                 }
             }
-            // Add any isolated elements that weren't part of the chain (though unlikely in a valid sequence)
+            // Add orphans
             for (Node elem : elements)
             {
                 if (std::find(sorted_elements.begin(), sorted_elements.end(), elem) == sorted_elements.end())
@@ -1039,68 +1099,29 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         }
         else
         {
-            // Just a Set, arbitrary order (but consistent for display)
             sorted_elements.insert(sorted_elements.end(), elements.begin(), elements.end());
-            // Sort by ID to ensure stable output
             std::sort(sorted_elements.begin(), sorted_elements.end());
         }
-
-        // --- Helper to get name or generic concept ---
-        auto get_element_display = [&](Node n) -> std::wstring
-        {
-#ifdef _DEBUG
-            std::clog << indent << "  [DEBUG element] Processing element node=" << n << std::endl;
-#endif
-            // 1. Try variable substitution
-            n = string::get(variables, n);
-
-            // 2. Try direct name
-            std::wstring name = get_formatted_name(n, lang);
-
-            // 3. If no name, check IsA relation (Proxy Node case)
-            if (name.empty())
-            {
-                for (Node rel : _pImpl->get_right(n))
-                {
-                    if (parse_relation(rel) == core.IsA)
-                    {
-                        adjacency_set type_objs;
-                        Node          type_subj = parse_fact(rel, type_objs, 0);
-                        if (type_subj == n && !type_objs.empty())
-                        {
-                            Node concept_node = *type_objs.begin();
-                            name              = get_formatted_name(concept_node, lang);
-#ifdef _DEBUG
-                            std::clog << indent << "  [DEBUG element] Found IsA proxy to concept=" << concept_node << " name='" << string::unicode::to_utf8(name) << "'" << std::endl;
-#endif
-                            if (!name.empty()) break;
-                        }
-                    }
-                }
-            }
-
-            // 4. If still empty, recurse (it might be a nested fact/set)
-            if (name.empty())
-            {
-#ifdef _DEBUG
-                std::clog << indent << "  [DEBUG element] Name empty, RECURSING for node=" << n << std::endl;
-#endif
-                format_fact(name, lang, n, max_objects, variables, fact, history);
-                if (!name.empty()) return L"(" + name + L")";
-            }
-
-#ifdef _DEBUG
-            if (name.empty()) std::clog << indent << "  [DEBUG element] FAILED to resolve name for node=" << n << std::endl;
-#endif
-            return name.empty() ? L"?" : string::mark_identifier(name);
-        };
 
         result     = is_sequence ? L"<" : L"{";
         bool first = true;
         for (Node e : sorted_elements)
         {
             if (!first) result += L" ";
-            result += get_element_display(e);
+            std::wstring elem_str;
+            format_fact(elem_str, lang, e, max_objects, variables, resolved, history);
+
+            // Wrap in parentheses if it has spaces and isn't just a simple name.
+            if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos && elem_str.front() != L'<' && elem_str.front() != L'{')
+            {
+                Node eff_e = resolve_var(e);
+                if (elem_str != get_formatted_name(eff_e, lang))
+                {
+                    elem_str = L"(" + elem_str + L")";
+                }
+            }
+
+            result += elem_str;
             first = false;
         }
         result += is_sequence ? L">" : L"}";
@@ -1108,16 +1129,55 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
-    // --- Standard Fact Formatting ---
+    // 4. Proxy / Instance Detection
+    // If a node is anonymous and not a container, check if it is an instance of a concept (IsA).
+    // If so, display the concept instead of the structural fact "Node IsA Concept".
+    if (_pImpl->exists(resolved))
+    {
+        for (Node rel : _pImpl->get_right(resolved))
+        {
+            if (parse_relation(rel) == core.IsA)
+            {
+                adjacency_set type_objs;
+                Node          type_subj = parse_fact(rel, type_objs, 0);
+
+                // Ensure 'resolved' is the subject (The Instance)
+                if (type_subj == resolved && !type_objs.empty())
+                {
+                    Node concept_node = *type_objs.begin();
+
+                    // Avoid self-reference loops
+                    if (concept_node != resolved)
+                    {
+#ifdef _DEBUG
+                        std::clog << indent << "[DEBUG format_fact] Found IsA proxy to concept=" << concept_node << std::endl;
+#endif
+                        format_fact(result, lang, concept_node, max_objects, variables, parent, history);
+
+                        if (!result.empty() && result != L"?")
+                        {
+#ifdef _DEBUG
+                            std::clog << indent << "[DEBUG format_fact] Proxy resolved to: " << string::unicode::to_utf8(result) << std::endl;
+#endif
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Standard Fact Formatting (S P O)
+    // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
 #ifdef _DEBUG
-    std::clog << indent << "[DEBUG format_fact] Standard path (not a container)." << std::endl;
+    std::clog << indent << "[DEBUG format_fact] Standard path (Statement/Fact)." << std::endl;
 #endif
 
     adjacency_set objects;
-    Node          subject = parse_fact(fact, objects, parent);
+    Node          subject = parse_fact(resolved, objects, parent);
 
-    bool is_condition = false; // TODO old code: _pImpl->get_right(fact).count(core.And) == 1; // if fact is a condition node (having relation type core.And), there is no subject
+    bool is_condition = false;
 
 #ifdef _DEBUG
     std::clog << indent << "[DEBUG format_fact] parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
@@ -1128,60 +1188,60 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #ifdef _DEBUG
         std::clog << indent << "[DEBUG format_fact] INVALID: Subject is 0 and not condition. Returning '??'" << std::endl;
 #endif
-        result = L"??";
+        result = string::mark_identifier(L"??");
         return;
     }
-    history->insert(fact);
+
+    history->insert(resolved);
     std::wstring subject_name, relation_name;
 
     if (!is_condition || subject)
     {
-#if _DEBUG
-        Node subject_before = subject;
-#endif
-        subject      = string::get(variables, subject);
-        subject_name = subject ? get_formatted_name(subject, lang) : (is_condition ? L"" : L"?");
-#if _DEBUG
-        if (subject_name == L"?")
-        {
-            std::clog << "[DEBUG format_fact] subject_name='?' for fact=" << fact
-                      << ", subject_before_subst=" << subject_before
-                      << ", is_var=" << _pImpl->is_var(subject_before)
-                      << ", subject_after_subst=" << subject
-                      << ", variables.size()=" << variables.size();
+        // Recursion for Subject
+        std::wstring s_str;
+        format_fact(s_str, lang, subject, max_objects, variables, resolved, history);
 
-            std::clog << ", variables={";
-            for (const auto& v : variables)
-            {
-                std::clog << v.first << "->" << v.second << " ";
-            }
-            std::clog << "}" << std::endl;
-        }
-#endif
-        if (subject_name.empty())
+        // Wrap subject only if it's a composite fact, not a named atom
+        bool needs_parens = false;
+        if (!s_str.empty() && s_str.find(L' ') != std::wstring::npos && s_str.front() != L'<' && s_str.front() != L'{')
         {
-#ifdef _DEBUG
-            std::clog << indent << "[DEBUG format_fact] subject_name empty, recursing for subject=" << subject << std::endl;
-#endif
-            format_fact(subject_name, lang, subject, max_objects, variables, fact, history);
-            if (!subject_name.empty() && subject_name[0] != L'<' && subject_name[0] != L'{')
+            Node         eff_subj = resolve_var(subject);
+            std::wstring raw_name = get_formatted_name(eff_subj, lang);
+            // Compare the formatted string with the MARKED raw name
+            if (s_str != string::mark_identifier(raw_name))
             {
-                // Wrap standard facts in parens, but maybe not sets/sequences if they already have delimiters?
-                // Current logic wraps everything nested in parens.
-                subject_name = L"(" + subject_name + L")";
+                needs_parens = true;
             }
         }
 
-        Node relation = parse_relation(fact);
-        relation      = string::get(variables, relation);
-        relation_name = relation ? get_formatted_name(relation, lang) : L"?";
-        if (relation_name.empty())
+        if (needs_parens)
+            subject_name = L"(" + s_str + L")";
+        else
+            subject_name = s_str.empty() ? (is_condition ? L"" : string::mark_identifier(L"?")) : s_str;
+
+        Node relation = parse_relation(resolved);
+        // Recursion for Relation (usually just get name, but handle complex relations)
+        // Here we can assume relations are mostly named or simple, preventing deep noise
+        relation = resolve_var(relation);
+
+        std::wstring raw_rel_name = get_formatted_name(relation, lang);
+        if (!raw_rel_name.empty())
         {
-#ifdef _DEBUG
-            std::clog << indent << "[DEBUG format_fact] relation_name empty, recursing for relation=" << relation << std::endl;
-#endif
-            format_fact(relation_name, lang, relation, max_objects, variables, fact, history);
-            relation_name = L"(" + relation_name + L")";
+            // Relation has a name -> mark it manually, as we didn't recurse
+            relation_name = string::mark_identifier(raw_rel_name);
+        }
+        else
+        {
+            // Recurse -> returns marked string
+            std::wstring r_str;
+            format_fact(r_str, lang, relation, max_objects, variables, resolved, history);
+            relation_name = r_str.empty() ? string::mark_identifier(L"?") : r_str;
+
+            // Optional: Wrap complex unnamed relations in parens too?
+            // For consistency with subject/object, we usually assume relations are simple,
+            // but if r_str has spaces and isn't a container, wrap it.
+            if (relation_name.find(L' ') != std::wstring::npos && relation_name.front() != L'<' && relation_name.front() != L'{')
+                relation_name = L"(" + relation_name + L")";
         }
     }
 
@@ -1189,32 +1249,37 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (objects.size() > max_objects)
     {
-        objects_name = L"(... " + std::to_wstring(objects.size()) + L" objects ...)";
+        objects_name = string::mark_identifier(L"(... " + std::to_wstring(objects.size()) + L" objects ...)");
     }
     else
     {
         for (Node object : objects)
         {
-            object = string::get(variables, object);
-            // TODO old code: if (!objects_name.empty()) objects_name += get_formatted_name(core.And, lang) + L" ";
-            std::wstring object_name = object ? get_formatted_name(object, lang) : L"?";
-            if (object_name.empty())
+            std::wstring o_str;
+            format_fact(o_str, lang, object, max_objects, variables, resolved, history);
+
+            // Wrap object only if it's a composite fact, not a named atom
+            if (!o_str.empty() && o_str.find(L' ') != std::wstring::npos && o_str.front() != L'<' && o_str.front() != L'{')
             {
-#ifdef _DEBUG
-                std::clog << indent << "[DEBUG format_fact] object_name empty, recursing for object=" << object << std::endl;
-#endif
-                format_fact(object_name, lang, object, max_objects, variables, fact, history);
-                if (!object_name.empty() && object_name[0] != L'<' && object_name[0] != L'{')
+                Node         eff_obj  = resolve_var(object);
+                std::wstring raw_name = get_formatted_name(eff_obj, lang);
+                // Compare formatted string with MARKED raw name
+                if (o_str != string::mark_identifier(raw_name))
                 {
-                    object_name = L"(" + object_name + L")";
+                    o_str = L"(" + o_str + L")";
                 }
             }
-            objects_name += object_name;
+
+            if (o_str.empty()) o_str = string::mark_identifier(L"?");
+
+            if (!objects_name.empty()) objects_name += L" ";
+            objects_name += o_str;
         }
-        if (objects_name.empty()) objects_name = L"?";
+        if (objects_name.empty()) objects_name = string::mark_identifier(L"?");
     }
 
-    result = string::mark_identifier(subject_name) + L" " + string::mark_identifier(relation_name) + L" " + string::mark_identifier(objects_name);
+    // The components (subject_name, relation_name, objects_name) are already marked.
+    result = subject_name + L" " + relation_name + L" " + objects_name;
 
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");

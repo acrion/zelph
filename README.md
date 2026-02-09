@@ -194,6 +194,23 @@ Unlike traditional semantic networks where relations are labeled edges,
 zelph treats relation types as first-class nodes themselves.
 This unique approach enables powerful meta-reasoning about relations.
 
+### Predefined Core Nodes
+
+zelph initializes with a small set of fundamental nodes that define the ontology of the system. These nodes are available in every language setting (though their names can be localized).
+
+| Core Node                | Symbol        | Internal Name          | Description                                                                                                                              |
+|:-------------------------|:--------------|:-----------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
+| **RelationTypeCategory** | `->`          | `RelationTypeCategory` | The meta-category of all relations. Every relation predicate in zelph is an instance (`~`) of this node.                                 |
+| **IsA**                  | `~`           | `IsA`                  | The fundamental categorical relation. Used for classification ("Socrates ~ Human") and to link proxies to concepts in compact sequences. |
+| **Causes**               | `=>`          | `Causes`               | Defines inference rules. Connects a condition set to a consequence.                                                                      |
+| **PartOf**               | `in`          | `PartOf`               | Defines membership in containers (Sets and Sequences).                                                                                   |
+| **FollowedBy**           | `..`          | `FollowedBy`           | Defines the successor relationship in ordered sequences.                                                                                 |
+| **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                           |
+| **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                                |
+| **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                               |
+
+These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an instance of `->` (i.e., "IsA" is a "Relation Type"). This self-referential bootstrapping allows zelph to reason about its own structure.
+
 ### Homoiconicity: The Executable Graph
 
 A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
@@ -201,8 +218,9 @@ A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.o
 In many traditional semantic web stacks (like OWL/RDF), the ontology is *descriptive*. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., [HermiT](http://www.hermit-reasoner.com) or [Pellet](https://github.com/stardog-union/pellet)). The operational semantics are external to the data.
 
 In zelph, **the logic is intrinsic to the data**.
-*   **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
-*   **Math is Data:** Numbers are not opaque literals but graph sequences that interact with semantic entities.
+
+* **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
+* **Math is Data:** Numbers are not opaque literals but graph sequences that interact with semantic entities.
 
 This means the graph doesn't just *describe* knowledge; it *structures the execution* of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior or the arithmetic logic of the system, creating a system that is not just a database, but an **executable graph**.
 
@@ -257,12 +275,95 @@ Braces `{...}` are used to create **unordered sets** of nodes or facts. This is 
 { (A "is part of" B) (B "is part of" C) }
 ```
 
+Example session:
+
+```
+zelph> { elem1 elem2 elem3 }
+{ elem1   elem2   elem3 }
+zelph> A in { elem1 elem2 elem3 }
+A  in  { elem1   elem2   elem3 }
+Answer:   elem3    in  { elem1   elem2   elem3 }
+Answer:   elem2    in  { elem1   elem2   elem3 }
+Answer:   elem1    in  { elem1   elem2   elem3 }
+zelph> (*{ (A "is part of" B) (B "is part of" C) } ~ conjunction) => (A "is part of" C)
+{B  is part of  C A  is part of  B} => (A  is part of  C)
+zelph> earth "is part of" "solar system"
+  earth    is part of  ( solar system )
+zelph> "solar system" "is part of" universe
+( solar system )  is part of    universe
+  earth    is part of    universe   ⇐ {( solar system )  is part of    universe     earth    is part of  ( solar system )}
+zelph>
+```
+
+##### Set Topology
+
+A set `{A B C}` creates a **Super-Node** (representing the set itself).
+The elements are linked to this super-node via the `in` (PartOf) relation.
+
+* **Syntax:** `{A B}`
+* **Facts created:**
+    * `A in SetNode`
+    * `B in SetNode`
+
 #### Angle Brackets: Sequences
 
-Angle brackets `<...>` create **ordered sequences**. Unlike sets, the order of elements is preserved using the `FollowedBy` relation. Sequences support two input modes:
+Angle brackets `<...>` create **ordered sequences**. Unlike sets, the order of elements is preserved using the `FollowedBy` (internally `..`) relation.
 
-* **Continuous:** `<123>` is parsed as the sequence `1` → `2` → `3`. This allows representing numbers as graph structures.
-* **Space-Separated:** `<item1 item2 item3>` is parsed as the sequence `item1` → `item2` → `item3`.
+zelph distinguishes between two fundamental input modes for sequences, which result in different internal topologies:
+
+1. **Node Sequences (Space-Separated):** `<item1 item2 item3>`
+
+* **Syntax:** Elements are separated by whitespace.
+* **Semantics:** The existing nodes `item1`, `item2`, and `item3` become the direct elements of the sequence.
+* **Use Case:** Lists of known entities, e.g., `<Berlin Paris London>`.
+
+2. **Compact Sequences (Continuous):** `<123>` or `<"abc">`
+
+* **Syntax:** No spaces between characters (or within a quoted string inside the brackets).
+* **Semantics:** The input is split into individual characters. For each character, zelph uses (or creates) a **Concept Node**.
+* **The "Proxy" Mechanism:** Since a sequence might contain the same character multiple times (e.g., `<101>`), zelph cannot simply link the concept "1" twice. Instead, for every position in the sequence, zelph creates a unique **Instance Node** (a proxy).
+    * This Instance Node is linked to the Concept Node via `~` (IsA).
+    * The Instance Node is part of the sequence structure.
+* **Use Case:** Symbolic Math and String Processing. When you write `<123>`, zelph treats this not as the number "one hundred twenty-three", but as a sequence of the concept "1", followed by "2", followed by "3". This allows you to attach semantic meaning to digits (e.g., mapping the concept "1" to the Wikidata entity [Q199](https://www.wikidata.org/wiki/Q199)) and define arithmetic rules as graph transformations.
+
+Example session:
+
+```
+zelph> <123>
+< 1   2   3 >
+zelph> A in <123>
+A  in  < 1   2   3 >
+Answer:   1    in  < 1   2   3 >
+Answer:   2    in  < 1   2   3 >
+Answer:   3    in  < 1   2   3 >
+zelph>
+```
+
+##### Sequence Topology
+
+A sequence combines membership (`in`) with ordering (`..` / `FollowedBy`).
+
+**Topology of a Node Sequence `<A B>`:**
+Here, the nodes A and B are directly linked.
+
+* `A in SeqNode`
+* `B in SeqNode`
+* `A .. B` (A is followed by B)
+
+**Topology of a Compact Sequence `<11>`:**
+Here, the Proxy/Instance mechanism is used because the concept "1" appears twice.
+
+1. **Concept Node:** `1` (The abstract concept of the digit 1).
+2. **Instance 1:** `n_Inst1` (Represents the first digit).
+    * `n_Inst1 ~ 1` (It is an instance of 1)
+    * `n_Inst1 in SeqNode`
+3. **Instance 2:** `n_Inst2` (Represents the second digit).
+    * `n_Inst2 ~ 1` (It is also an instance of 1)
+    * `n_Inst2 in SeqNode`
+4. **Ordering:**
+    * `n_Inst1 .. n_Inst2`
+
+This strict topological definition allows the unification engine to match patterns effectively against both sets and sequences.
 
 #### The Focus Operator `*`
 

@@ -51,7 +51,6 @@ demo_out.*
 sample_scripts/*.dot
 sample_scripts/*.png
 log.txt
-*.log
 xcode/*
 *.crdownload
 latest-all*.json

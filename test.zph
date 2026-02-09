@@ -1,0 +1,40 @@
+(*{(R ~ transitive) (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
+> ~ transitive
+
+6 > 5
+5 > 4
+4 < 5
+
+atom_A => atom_B
+atom_C <= atom_D
+(A <=> B) is_type equivalence
+
+special_atoms list_contains < <= => >= < > >
+
+"solar system" "is part of" "milky way"
+(earth "is part of" "solar system") is_truth true
+
+seq_compact is_defined_as <123>
+seq_spaced is_defined_as < 1 2 3 >
+
+A in <123>
+B in < 1 2 3 >
+
+nested_set_in_seq holds < {A B} {C D} >
+nested_seq_in_set holds { <A B> <C D> }
+
+container_test stores <(tim ancestor tom) just_a_new_node (tom ancestor paul) ((*{(X ancestor Y) (Y ancestor Z)} ~ conjunction) => (X ancestor Z))>
+
+mixed_container content < (A => B) (C <= D) { E F } "literal string" >
+
+_Variable with_underscore _V
+
+quoted_sequence ~ < "a" "b" "c" >
+
+deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object)
+
+set_logic ~ { (A IsA B) (B IsA C) }
+
+(*tim ~ human) ~ male
+
+tim _predicate _object

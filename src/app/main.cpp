@@ -75,59 +75,59 @@ int main(int argc, char** argv)
             interactive.process_file(file, script_args);
         }
 
-        if (!script_files.empty())
-            std::wcout << L"Ready." << std::endl;
-
-#ifdef _WIN32
-        std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
-        std::wcout << std::endl;
         if (script_files.empty())
-            std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
+        {
+#ifdef _WIN32
+            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
+            std::wcout << std::endl;
+            if (script_files.empty())
+                std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #else
-        std::cout << "zelph " << interactive.get_version() << std::endl;
+            std::cout << "zelph " << interactive.get_version() << std::endl;
 #endif
 
-        std::wcout << L"-- interactive mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
-        std::wcout << std::endl;
+            std::wcout << L"-- REPL mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
+            std::wcout << std::endl;
 
-        std::wstring line;
-        std::wstring lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
-        std::wstring prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> "; // Visual indicator
+            std::wstring line;
+            std::wstring lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
+            std::wstring prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> "; // Visual indicator
 
-        std::wcout << lang_prompt << prompt_suffix;
-        std::wcout.flush();
+            std::wcout << lang_prompt << prompt_suffix;
+            std::wcout.flush();
 
-        while (std::getline(std::wcin, line))
-        {
-            if (line == exit_command)
-                break;
-
-            if (line.empty())
+            while (std::getline(std::wcin, line))
             {
-                std::wcout << L"type .help for help --" << std::endl;
+                if (line == exit_command)
+                    break;
+
+                if (line.empty())
+                {
+                    std::wcout << L"type .help for help --" << std::endl;
+                    lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
+                    prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> ";
+                    std::wcout << lang_prompt << prompt_suffix;
+                    std::wcout.flush();
+                    continue;
+                }
+
+                try
+                {
+                    interactive.process(line);
+                }
+                catch (const std::exception& e)
+                {
+                    std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
+                }
+
                 lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
                 prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> ";
                 std::wcout << lang_prompt << prompt_suffix;
                 std::wcout.flush();
-                continue;
             }
 
-            try
-            {
-                interactive.process(line);
-            }
-            catch (const std::exception& e)
-            {
-                std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
-            }
-
-            lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
-            prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> ";
-            std::wcout << lang_prompt << prompt_suffix;
-            std::wcout.flush();
+            std::wcout << std::endl;
         }
-
-        std::wcout << std::endl;
     }
     catch (std::exception& ex)
     {
