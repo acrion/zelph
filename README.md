@@ -249,8 +249,8 @@ Braces `{...}` are used to create **unordered sets** of nodes or facts. This is 
 
 Angle brackets `<...>` create **ordered sequences**. Unlike sets, the order of elements is preserved using the `FollowedBy` relation. Sequences support two input modes:
 
-* **Continuous:** `<123>` is parsed as the sequence `1` -> `2` -> `3`. This allows representing numbers as graph structures.
-* **Space-Separated:** `<item1 item2 item3>` is parsed as the sequence `item1` -> `item2` -> `item3`.
+* **Continuous:** `<123>` is parsed as the sequence `1` → `2` → `3`. This allows representing numbers as graph structures.
+* **Space-Separated:** `<item1 item2 item3>` is parsed as the sequence `item1` → `item2` → `item3`.
 
 #### The Focus Operator `*`
 
