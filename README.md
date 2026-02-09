@@ -233,7 +233,7 @@ Neither "bright", "dark" nor "is opposite of" is know to zelph prior this comman
 It automatically creates the appropiate nodes and edges in the semantic network.
 After doing so, in the second line this topology is parsed and printed to verify the process ran as expected.
 
-Note that when a relation contains spaces, it be enclosed in quotation marks.
+Note that when a relation contains spaces, it must be enclosed in quotation marks.
 
 ### Nested Expressions and Sets
 
