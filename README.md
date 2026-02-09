@@ -431,7 +431,44 @@ This rule states that if X is opposite of Y, then an entity A cannot be both an 
 
 If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
 
-### Performing Inference
+### Internal representation of rules
+
+Rules are not stored in a separate list; they are an integral part of the semantic network. The implication operator `=>` is treated as a standard relation node.
+
+When you define:
+`(*{A B} ~ conjunction) => C`
+
+The following topology is created in the graph:
+
+1. A node `S` is created to represent the set of conditions.
+2. The conditions `A` and `B` are linked to `S` via `PartOf` relations.
+3. A fact node represents `S ~ conjunction` (defining the logical AND).
+4. A fact node represents `S => C` (the rule itself).
+
+When the inference engine scans for rules, it looks for all facts involving the `=>` relation. It examines the subject (the set `S`), verifies that `S` is connected to `conjunction` via `~`, and if so, treats the elements of `S` as the condition patterns.
+
+This means that **a rule is completely represented by standard subject-predicate-object triples**, with `=>` serving as a standard predicate.
+
+### Facts and Rules in One Network: Unique Identification via Topological Semantics
+
+A distinctive aspect of **zelph** is that **facts and rules live in the same semantic network**. That raises a natural question: how does the unification engine avoid confusing ordinary entities with statement nodes, and how does it keep rule matching unambiguous?
+
+The answer lies in the network’s **strict topological semantics** (see [Internal Representation of facts](#internal-representation-of-facts) and [Internal representation of rules](#internal-representation-of-rules)). In zelph, a _statement node_ is not “just a node with a long label”; it has a **unique structural signature**:
+
+- **Bidirectional** connection to its **subject**
+- **Forward** connection to its **relation type** (a first-class node)
+- **Backward** connection to its **object**
+
+The unification engine is **hard-wired to search only for this pattern** when matching a rule’s conditions. In other words, a variable that ranges over “statements” can only unify with nodes that expose exactly this subject/rel/type/object wiring. Conversely, variables intended to stand for ordinary entities cannot accidentally match a statement node, because ordinary entities **lack** that tri-partite signature.
+
+Two immediate consequences follow:
+
+1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
+2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
+
+These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
+
+## Performing Inference
 
 By default, zelph triggers the inference engine immediately after every fact or rule is entered. You can toggle this behaviour using the `.auto-run` command.
 
@@ -463,7 +500,7 @@ This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the 
 It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
 For normal interactive or script use, `.run` is the standard command.
 
-#### Exporting Deduced Facts to File
+### Exporting Deduced Facts to File
 
 The command `.run-file <path>` performs full inference (like `.run`) but additionally writes every deduced fact (positive deductions and contradictions) to the specified file – one per line.
 
@@ -511,41 +548,6 @@ Q2 P279 Q3 Q1 P279 Q2 ⇒ Q1 P279 Q3
 ```
 
 `.decode` prints each line decoded (if it was encoded) using Wikidata identifiers.
-
-### Internal representation of rules
-
-Rules are not stored in a separate list but are part of the graph. The relation `=>` is a standard relation node.
-
-When you define:
-`(*{A B} ~ conjunction) => C`
-
-The following topology is created:
-
-1. A **Set Node** `S` is created.
-2. Facts `A` and `B` are linked to `S` via `PartOf` relations (internally managed).
-3. A fact node `F1` represents `S ~ conjunction`.
-4. A fact node `F_Rule` represents `S => C`.
-
-The inference engine, when scanning for rules, looks for all facts involving the `=>` relation. It takes the subject (which must be a Set `S`), checks if `S` is connected to `conjunction` via `~`, and if so, treats the elements of `S` as the condition patterns.
-
-### Facts and Rules in One Network: Unique Identification via Topological Semantics
-
-A distinctive aspect of **zelph** is that **facts and rules live in the same semantic network**. That raises a natural question: how does the unification engine avoid confusing ordinary entities with statement nodes, and how does it keep rule matching unambiguous?
-
-The answer lies in the network’s **strict topological semantics** (see [Internal Representation of facts](#internal-representation-of-facts) and [Internal representation of rules](#internal-representation-of-rules)). In zelph, a _statement node_ is not “just a node with a long label”; it has a **unique structural signature**:
-
-- **Bidirectional** connection to its **subject**
-- **Forward** connection to its **relation type** (a first-class node)
-- **Backward** connection to its **object**
-
-The unification engine is **hard-wired to search only for this pattern** when matching a rule’s conditions. In other words, a variable that ranges over “statements” can only unify with nodes that expose exactly this subject/rel/type/object wiring. Conversely, variables intended to stand for ordinary entities cannot accidentally match a statement node, because ordinary entities **lack** that tri-partite signature.
-
-Two immediate consequences follow:
-
-1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
-2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
-
-These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
 
 ## Example Script
 
