@@ -202,6 +202,7 @@ namespace zelph
                 const Node FollowedBy;
                 const Node PartOf;
                 const Node Conjunction;
+                const Node HasValue;
             } core;
 
         protected:

@@ -79,6 +79,7 @@ public:
         _n->register_core_node(_n->core.FollowedBy, L"..");
         _n->register_core_node(_n->core.PartOf, L"in");
         _n->register_core_node(_n->core.Conjunction, L"conjunction");
+        _n->register_core_node(_n->core.HasValue, L"has_value");
 
         _script_engine->initialize();
 

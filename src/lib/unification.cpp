@@ -30,8 +30,293 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <iostream>
 #include <unordered_set>
+#include <vector>
+
+#ifdef _DEBUG
+    #include <string>
+static void u_log(int depth, const std::string& msg)
+{
+    if (depth < 10)
+    {
+        std::string indent(depth * 2, ' ');
+        std::clog << indent << "[Unify] " << msg << std::endl;
+    }
+}
+// Helper for Node representation in Debug mode
+static std::string u_node_str(zelph::network::Zelph* z, zelph::network::Node n)
+{
+    if (n == 0) return "0";
+    if (z->_pImpl->is_var(n)) return "VAR(" + std::to_string(n) + ")";
+    std::string name = zelph::string::unicode::to_utf8(z->get_name(n, "zelph", true));
+    if (name.empty()) name = zelph::string::unicode::to_utf8(z->get_name(n, "en", false));
+    if (name.empty()) return std::to_string(n);
+    return name + "(" + std::to_string(n) + ")";
+}
+    #define U_LOG(depth, msg) u_log(depth, msg)
+    #define U_NODE(n)         u_node_str(_n, n)
+#else
+    #define U_LOG(depth, msg) \
+        do                    \
+        {                     \
+        } while (0)
+    #define U_NODE(n) ""
+#endif
 
 using namespace zelph::network;
+
+// --- Helper Functions ---
+
+static Node get_value_concept(Zelph* n, Node node)
+{
+    if (node == 0 || !n->exists(node)) return 0;
+
+    adjacency_set outgoing = n->get_right(node);
+    for (Node rel : outgoing)
+    {
+        if (n->get_right(rel).count(n->core.HasValue) == 1)
+        {
+            adjacency_set targets = n->get_left(rel);
+            for (Node t : targets)
+            {
+                if (t != node) return t;
+            }
+        }
+    }
+    return 0;
+}
+
+struct FactStructure
+{
+    Node                     subject;
+    Node                     predicate;
+    std::unordered_set<Node> objects;
+};
+
+// Determines all possible structural interpretations of a node.
+static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
+{
+    std::vector<FactStructure> structures;
+    if (fact == 0 || !n->exists(fact)) return structures;
+
+    // Zelph Topology:
+    // S <-> F (Subject is bidirectional)
+    // F -> P  (Predicate is outgoing)
+    // O -> F  (Object is incoming)
+
+    adjacency_set right = n->get_right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
+    adjacency_set left  = n->get_left(fact);  // Contains O and S (and Parent-Facts P')
+
+    adjacency_set predicates;
+    for (Node p : right)
+    {
+        if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
+        {
+            predicates.insert(p);
+        }
+    }
+
+    if (predicates.empty()) return structures;
+
+    for (Node p : predicates)
+    {
+        for (Node s : right)
+        {
+            if (s == p) continue;
+            if (left.count(s) == 0) continue; // Subject must be bidirectional
+
+            FactStructure fs;
+            fs.subject   = s;
+            fs.predicate = p;
+
+            // Objects are in 'left', but must NOT be in 'right'.
+            // (S is in both, Parent is in both, O is only in left)
+            for (Node o : left)
+            {
+                if (o != s && o != p)
+                {
+                    if (right.count(o) == 0)
+                    {
+                        fs.objects.insert(o);
+                    }
+                }
+            }
+
+            if (!fs.objects.empty())
+            {
+                structures.push_back(fs);
+            }
+        }
+    }
+
+    // Disambiguation: Prefer structures with atomic (Non-Hash) subjects to avoid confusion with parent nodes.
+    if (structures.size() > 1)
+    {
+        std::vector<FactStructure> filtered;
+        bool                       has_non_hash = false;
+
+        for (const auto& fs : structures)
+        {
+            if (!n->_pImpl->is_hash(fs.subject)) has_non_hash = true;
+        }
+
+        if (has_non_hash)
+        {
+            for (const auto& fs : structures)
+            {
+                if (!n->_pImpl->is_hash(fs.subject)) filtered.push_back(fs);
+            }
+            return filtered;
+        }
+    }
+
+    return structures;
+}
+
+// Recursive Unification Algorithm with Cycle Detection
+static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& local_bindings, const Variables& global_bindings, std::vector<std::pair<Node, Node>>& history, int depth = 0)
+{
+    //    if (depth > 50) return false; // Hard limit fallback
+    if (rule_node == 0 || graph_node == 0) return false;
+
+#ifdef _DEBUG
+    U_LOG(depth, "Comparing " + u_node_str(n, rule_node) + " vs " + u_node_str(n, graph_node));
+#endif
+
+    // 0. Cycle Check
+    // If we already check this exact pair (rule, graph) in this path, the cycle is closed
+    // and we have not found any contradictions so far -> Success.
+    for (const auto& pair : history)
+    {
+        if (pair.first == rule_node && pair.second == graph_node)
+        {
+            U_LOG(depth, "  -> Cycle detected (already visiting), assuming match.");
+            return true;
+        }
+    }
+    history.push_back({rule_node, graph_node});
+
+    bool result = false; // Default result
+
+    // Scope for RAII-like pop (manually at the end)
+    do
+    {
+        // 1. Variable Binding
+        if (n->_pImpl->is_var(rule_node))
+        {
+            if (local_bindings.count(rule_node))
+            {
+                U_LOG(depth, "  Var local bound -> recursing");
+                result = unify_nodes(n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth);
+                break;
+            }
+            if (global_bindings.count(rule_node))
+            {
+                Node bound = zelph::string::get(global_bindings, rule_node, 0);
+                U_LOG(depth, "  Var global bound -> recursing");
+                result = unify_nodes(n, bound, graph_node, local_bindings, global_bindings, history, depth);
+                break;
+            }
+
+            local_bindings[rule_node] = graph_node;
+#ifdef _DEBUG
+            U_LOG(depth, "  -> Bound " + u_node_str(n, rule_node) + " to " + u_node_str(n, graph_node));
+#endif
+            result = true;
+            break;
+        }
+
+        // 2. Direct identity
+        if (rule_node == graph_node)
+        {
+            U_LOG(depth, "  -> Identical");
+            result = true;
+            break;
+        }
+
+        // 3. Value equivalence
+        Node v_rule  = get_value_concept(n, rule_node);
+        Node v_graph = get_value_concept(n, graph_node);
+
+        if (v_rule != 0 && v_graph != 0)
+        {
+            bool match = (v_rule == v_graph);
+            U_LOG(depth, match ? "  -> HasValue Match" : "  -> HasValue Mismatch");
+            result = match;
+            break;
+        }
+        if (v_rule != 0 || v_graph != 0)
+        {
+            result = false;
+            break;
+        }
+
+        // 4. Structural equivalence
+        auto rule_structs = get_fact_structures(n, rule_node);
+        if (rule_structs.empty())
+        {
+            U_LOG(depth, "  -> Rule node is atom, but not identical. Fail.");
+            result = false;
+            break;
+        }
+
+        auto graph_structs = get_fact_structures(n, graph_node);
+        if (graph_structs.empty())
+        {
+            U_LOG(depth, "  -> Graph node is atom, but rule expects structure. Fail.");
+            result = false;
+            break;
+        }
+
+        for (const auto& rs : rule_structs)
+        {
+            for (const auto& gs : graph_structs)
+            {
+                // A. Predicate
+                if (!unify_nodes(n, rs.predicate, gs.predicate, local_bindings, global_bindings, history, depth + 1)) continue;
+
+                // B. Subject
+                if (!unify_nodes(n, rs.subject, gs.subject, local_bindings, global_bindings, history, depth + 1)) continue;
+
+                // C. Objekte
+                if (rs.objects.empty() != gs.objects.empty()) continue;
+
+                bool      objects_match = true;
+                Variables temp_bindings = local_bindings;
+
+                // Greedy Match for Objects
+                for (Node r_obj : rs.objects)
+                {
+                    bool found = false;
+                    for (Node g_obj : gs.objects)
+                    {
+                        if (unify_nodes(n, r_obj, g_obj, temp_bindings, global_bindings, history, depth + 1))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        objects_match = false;
+                        break;
+                    }
+                }
+
+                if (objects_match)
+                {
+                    local_bindings = temp_bindings;
+                    U_LOG(depth, "    -> Structure Match SUCCESS");
+                    result = true;
+                    goto end_loop; // Break out of nested loops
+                }
+            }
+        }
+    end_loop:;
+    } while (0);
+
+    history.pop_back();
+    return result;
+}
 
 Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool)
     : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool)
@@ -44,6 +329,8 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     {
         Node relation = *relations.begin(); // there is always only 1 relation
         _subject      = _n->parse_fact(condition, _objects, _parent);
+
+        U_LOG(0, "Init Unification: " + U_NODE(condition));
 
         if (_n->_pImpl->is_var(relation))
         {
@@ -87,6 +374,8 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     _relation_index         = _relation_list.begin();
     _fact_index_initialized = false;
 
+// Optimization for Release mode only: Subject/Object Driven Indexing
+#ifndef _DEBUG
     // parallel only with fixed relation
     // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
     bool subject_is_bound = false;
@@ -94,18 +383,23 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     {
         Node s = _subject;
         if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
-        if (!_n->_pImpl->is_var(s)) subject_is_bound = true;
+        // Only optimize if s is an ATOM (not a structure), because complex structures
+        // cannot be looked up simply via get_right(s) in a deep unification context.
+        if (!_n->_pImpl->is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
     }
 
-    // NEW OPTIMIZATION: Do NOT use parallel if the object is bound (const or bound var).
+    // Do not use parallel if the object is bound (const or bound var).
     // In this case, an object-driven index lookup (in sequential mode) is much faster than scanning the relation.
     bool object_is_bound = false;
     for (Node o : _objects)
     {
         if (!_n->_pImpl->is_var(o))
         {
-            object_is_bound = true;
-            break;
+            if (get_fact_structures(_n, o).empty())
+            {
+                object_is_bound = true;
+                break;
+            }
         }
         else if (_variables->find(o) != _variables->end())
         {
@@ -139,14 +433,12 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         if (snapshot.size() > 0)
         {
             _use_parallel = true;
+            _snapshot_vec.assign(snapshot.begin(), snapshot.end());
 
             size_t threads    = std::thread::hardware_concurrency();
             size_t chunks     = std::min(threads * 4, snapshot.size());
             size_t chunk_size = snapshot.size() / chunks;
-
-            _snapshot_vec.assign(snapshot.begin(), snapshot.end());
-
-            _active_tasks = chunks;
+            _active_tasks     = chunks;
 
             for (size_t c = 0; c < chunks; ++c)
             {
@@ -158,22 +450,16 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
-
-                                       if (_n->_pImpl->get_left(fact).count(fixed_rel) == 1) continue;
-
                                        adjacency_set objects;
-                                       Node          subject = _n->parse_fact(fact, objects, fixed_rel);
-
+                                       Node subject = _n->parse_fact(fact, objects, fixed_rel);
                                        auto result = extract_bindings(subject, objects, fixed_rel);
                                        if (result)
                                        {
-
                                            std::lock_guard<std::mutex> l(_queue_mtx);
                                            _match_queue.push(std::move(result));
                                            _queue_cv.notify_one();
                                        }
                                    }
-
                                    {
                                        std::lock_guard<std::mutex> l(_queue_mtx);
                                        --_active_tasks;
@@ -182,6 +468,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
             }
         }
     }
+#endif
 }
 
 bool Unification::increment_fact_index()
@@ -200,21 +487,24 @@ bool Unification::increment_fact_index()
             bool optimized_snapshot = false;
             Node current_rel        = *_relation_index;
 
+#ifndef _DEBUG
             // Check if Subject is bound
             Node s = _subject;
             if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
 
-            if (s != 0 && !_n->_pImpl->is_var(s))
+            // Only optimize if subject is atomic (see constructor comments)
+            if (s != 0 && !_n->_pImpl->is_var(s) && get_fact_structures(_n, s).empty())
             {
                 // Strategy: Subject Driven
                 // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
                 // So get_right(Subject) contains the Facts involving this subject.
                 adjacency_set candidates = _n->get_right(s);
-
                 _facts_snapshot.clear();
                 // Filter candidates: we only want facts that are of type 'current_rel'
                 for (Node fact : candidates)
                 {
+                    if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+
                     // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
                     // So get_right(Fact) contains RelationType.
                     if (_n->get_right(fact).count(current_rel) == 1)
@@ -230,15 +520,16 @@ bool Unification::increment_fact_index()
                 Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
                 if (_n->_pImpl->is_var(o)) o = string::get(*_variables, o, o);
 
-                if (o != 0 && !_n->_pImpl->is_var(o))
+                if (o != 0 && !_n->_pImpl->is_var(o) && get_fact_structures(_n, o).empty())
                 {
                     // Strategy: Object Driven
                     // Zelph::fact -> connect(Object, Fact). Object points to Fact.
                     adjacency_set candidates = _n->get_right(o);
-
                     _facts_snapshot.clear();
                     for (Node fact : candidates)
                     {
+                        if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+
                         if (_n->get_right(fact).count(current_rel) == 1)
                         {
                             _facts_snapshot.insert(fact);
@@ -247,6 +538,7 @@ bool Unification::increment_fact_index()
                     optimized_snapshot = true;
                 }
             }
+#endif
 
             if (!optimized_snapshot)
             {
@@ -293,8 +585,7 @@ std::shared_ptr<Variables> Unification::Next()
     }
     else
     {
-        if (_relation_variable == 0
-            || string::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
+        if (_relation_variable == 0 || string::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
         {
             while (increment_fact_index()) // iterate over all matching facts (in snapshot)
             {
@@ -323,12 +614,16 @@ std::shared_ptr<Variables> Unification::Next()
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
 std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const
 {
-    if (objects.empty() // a fact requires at least one object
-        || subject == 0
-        || _n->_pImpl->is_var(subject)                             // the given "fact" is not a fact, but a rule, because it contains a variable as subject
-        || (!_n->_pImpl->is_var(_subject) && _subject != subject)  // the rule _subject is not a variable and differs from the given subject
-        || string::get(*_variables, _subject, subject) != subject) // The rule _subject is a bound variable that does not point to the given subject (no unification possible)
+    if (objects.empty() || subject == 0 || _n->_pImpl->is_var(subject)) return nullptr;
+
+    auto result = std::make_shared<Variables>();
+
+    U_LOG(0, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
+
+    std::vector<std::pair<Node, Node>> history; // Cycle detection
+    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history))
     {
+        U_LOG(0, "  -> Subject Failed");
         return nullptr;
     }
 
@@ -345,60 +640,23 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     // or one of the objects matches the fixed object from the rule (else-clause).
     bool object_matches   = false;
     Node rule_object_node = *_objects.begin();
-    Node matched_object   = 0;
 
-    bool rule_has_var_in_objects = false;
-    for (auto o : _objects)
+    for (auto fact_obj : objects)
     {
-        if (_n->_pImpl->is_var(o))
+        Variables temp_bindings = *result;
+        history.clear(); // Reset history for cycle detection
+        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history))
         {
-            // TODO There are several cases here. The current implementation
-            // treats the presence of a variable in the list of rule objects
-            // like as if the variable was the only object.
-            rule_has_var_in_objects = true;
-            rule_object_node        = o;
+            *result        = temp_bindings;
+            object_matches = true;
             break;
-        }
-    }
-
-    if (rule_has_var_in_objects) // either the object used in the rule is a variable...
-    {
-        // check if variable is already bound
-        auto it = _variables->find(rule_object_node);
-        if (it != _variables->end())
-        {
-            matched_object = it->second;
-            // variable is bound, check if this bound value exists in the facts objects
-            if (objects.count(matched_object) == 1)
-            {
-                object_matches = true;
-            }
-        }
-        else
-        {
-            // variable is unbound, we pick the first one (standard behavior for binary logic)
-            // TODO: for full n-ary support, this logic would need to fork/iterate, but we assume binary matching logic here.
-            matched_object = *objects.begin();
-            object_matches = true;
-        }
-    }
-    else // ... or the object used in the rule is a fixed object (e.g. "human" in "S R human")
-    {
-        // We support several objects in a fact (arity > 1), e.g. car (S) has-color (P) { red, black } (O).
-        // Therefore, we check if rule_object_node is anywhere in objects (using `count`).
-        if (objects.count(rule_object_node) == 1)
-        {
-            matched_object = rule_object_node;
-            object_matches = true;
         }
     }
 
     if (object_matches)
     {
-        auto result = std::make_shared<Variables>();
-        if (_n->_pImpl->is_var(_subject)) (*result)[_subject] = subject;
-        if (rule_has_var_in_objects && _variables->count(rule_object_node) == 0) (*result)[rule_object_node] = matched_object;
-        if (_relation_variable != 0 && _variables->count(_relation_variable) == 0) (*result)[_relation_variable] = relation;
+        if (_relation_variable != 0 && _variables->count(_relation_variable) == 0 && result->count(_relation_variable) == 0)
+            (*result)[_relation_variable] = relation;
         return result;
     }
     return nullptr;

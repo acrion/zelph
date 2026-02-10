@@ -3,6 +3,8 @@
  6  >  5 
  5  >  4 
  4  <  5 
+ g   ..   h 
+ h   ..   i 
  atom_A  =>  atom_B 
  atom_C  <=  atom_D 
 (A { = } B)  is_type   equivalence 
@@ -10,27 +12,41 @@
  solar system   is part of   milky way 
 ( earth   is part of   solar system )  is_truth   true 
  seq_compact   is_defined_as  < 1   2   3 >
- seq_spaced   is_defined_as  < 1   2   3 >
+ seq_spaced   is_defined_as  < seqItem1   seqItem2   seqItem3 >
 A  in  < 1   2   3 >
 Answer:  3   in  < 1   2   3 >
 Answer:  2   in  < 1   2   3 >
 Answer:  1   in  < 1   2   3 >
 B  in  < 1   2   3 >
-Answer:  3   in  < 1   2   3 >
 Answer:  2   in  < 1   2   3 >
+Answer:  3   in  < 1   2   3 >
 Answer:  1   in  < 1   2   3 >
- nested_set_in_seq   holds  <{B A} {D C}>
- nested_seq_in_set   holds  {<A B> <C D>}
- container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(X  ancestor  Y) (Y  ancestor  Z)} => (X  ancestor  Z)>
- mixed_container   content  <(A => B) (C <= D) {F E} ( literal string )>
+ nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
+ nested_seq_in_set   holds  {< setElem1   setElem2 > < setElem3   setElem4 >}
+ container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z)>
+ mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
 _Variable  with_underscore  _V
  quoted_sequence   ~  < a   b   c >
  deep_nesting   ~  ( Level1  ->  Level1Object )
- set_logic   ~  {(A  IsA  B) (B  IsA  C)}
+ set_logic   ~  {( myItem2   IsA   myItem3 ) ( myItem1   IsA   myItem2 )}
  tim   ~   male 
  tim  _predicate _object
 Answer:  tim   ~   human 
 Answer:  tim   ~   male 
 Answer:  tim   ancestor   tom 
- tim   ancestor   paul  ⇐ {( tim   ancestor   tom ) ( tom   ancestor   paul )}
+((A  +  B)  =  C) => ( test  A B)
+( 4   +   5 )  =   9 
+( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
+ subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
+{(A  instanceof  B) ( a   subclassof  B)} =>  ! 
+ gene   instanceof   geneclass 
+ gene   subclassof   geneclass 
+{(B  followed-by  D) (C  followed-by  E) ((A  +  B)  =  C)} => ((A  +  D)  =  E)
+(A  followed-by  B) => { 1 }  +  A  =  B
+{ 0 }  followed-by  { 1 }
+{ 1 }  +  { 0 }  =  { 1 } ⇐ { 0 }  followed-by  { 1 }
+ test  { 1 } { 0 } ⇐ { 1 }  +  { 0 }  =  { 1 }
+ test   4   5  ⇐ ( 4   +   5 )  =   9 
+ success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
+ tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
  6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}

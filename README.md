@@ -208,6 +208,7 @@ zelph initializes with a small set of fundamental nodes that define the ontology
 | **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                           |
 | **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                                |
 | **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                               |
+| **HasValue**             | `has_value`   | `HasValue`             | Connects a Sequence Node to its abstract value concept (e.g., connecting `<123>` to the concept "123").                                  |
 
 These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an instance of `->` (i.e., "IsA" is a "Relation Type"). This self-referential bootstrapping allows zelph to reason about its own structure.
 
@@ -320,11 +321,25 @@ zelph distinguishes between two fundamental input modes for sequences, which res
 2. **Compact Sequences (Continuous):** `<123>` or `<abc>`
 
 * **Syntax:** No spaces between characters.
-* **Semantics:** The input is split into individual characters. For each character, zelph uses (or creates) a **Concept Node**.
-* **The "Proxy" Mechanism:** Since a sequence might contain the same character multiple times (e.g., `<101>`), zelph cannot simply link the concept "1" twice. Instead, for every position in the sequence, zelph creates a unique **Instance Node** (a proxy).
-    * This Instance Node is linked to the Concept Node via `~` (IsA).
-    * The Instance Node is part of the sequence structure.
-* **Use Case:** Symbolic Math and String Processing. When you write `<123>`, zelph treats this not as the number "one hundred twenty-three", but as a sequence of the concept "1", followed by "2", followed by "3". This allows you to attach semantic meaning to digits (e.g., mapping the concept "1" to the Wikidata entity [Q199](https://www.wikidata.org/wiki/Q199)) and define arithmetic rules as graph transformations.
+* **Semantics:** The input is split into individual characters.
+* **The Instance/Concept Mechanism:**
+    * The actual nodes *inside* the sequence are anonymous (unnamed) **Instance Nodes**.
+    * Each Instance Node is linked via `~` (IsA) to a named **Concept Node** representing the character (e.g., "1", "a").
+    * **Wikidata Integration:** These Concept Nodes map directly to external knowledge. For example, in a numeric sequence, the Concept Node for "1" corresponds exactly to the Wikidata item for the digit 1 ([Q199](https://www.wikidata.org/wiki/Q199)). This connects the structural position in a sequence directly to semantic knowledge about the character.
+
+##### Value Binding (HasValue) and Semantic Math
+
+While a sequence like `<113>` is structurally composed of digits, semantically it represents a single value. zelph bridges this gap via **Value Binding**.
+
+1. **Canonical Name:** zelph calculates the combined name ("113") from the elements.
+2. **Value Concept:** It retrieves (or creates) the abstract Concept Node for "113". In a Wikidata context, this node corresponds exactly to the item for the number 113 ([Q715432](https://www.wikidata.org/wiki/Q715432)).
+3. **The Link:** The Sequence Node is connected to this Value Concept via the `has_value` relation.
+
+**Why is this powerful?**
+This architecture allows mathematical knowledge from Wikidata (e.g., "113 is a prime number") to flow directly into numerical calculations or symbolic logic.
+
+* **Symbolic Math:** You can define arithmetic rules (like addition) based on the *sequence structure* (manipulating digits).
+* **Semantic Reasoning:** The result of that calculation (a new sequence) automatically points to its Value Concept, triggering any semantic rules known about that number.
 
 Example session:
 
@@ -341,29 +356,25 @@ zelph>
 
 ##### Sequence Topology
 
-A sequence combines membership (`in`) with ordering (`..` / `FollowedBy`).
+A compact sequence like `<11>` combines membership, ordering, instantiation, and value binding.
 
-**Topology of a Node Sequence `<A B>`:**
-Here, the nodes A and B are directly linked.
+**Topology of `<11>`:**
 
-* `A in SeqNode`
-* `B in SeqNode`
-* `A .. B` (A is followed by B)
+1. **Sequence Node:** `Seq` (The container).
+2. **Concept Node (Digit):** `1` (Named "1", e.g., Wikidata Q199).
+3. **Value Concept (Number):** `11` (Named "11", e.g., Wikidata Q3056).
+4. **Structure:**
 
-**Topology of a Compact Sequence `<11>`:**
-Here, the Proxy/Instance mechanism is used because the concept "1" appears twice.
+* `Seq` is linked to `11` via `has_value`.
+* **Instance 1:** `n_Inst1` (Anonymous node).
+    * `n_Inst1 ~ 1` (Instance of concept "1")
+    * `n_Inst1 in Seq`
+* **Instance 2:** `n_Inst2` (Anonymous node).
+    * `n_Inst2 ~ 1` (Instance of concept "1")
+    * `n_Inst2 in Seq`
+* `n_Inst1 .. n_Inst2` (Ordering).
 
-1. **Concept Node:** `1` (The abstract concept of the digit 1).
-2. **Instance 1:** `n_Inst1` (Represents the first digit).
-    * `n_Inst1 ~ 1` (It is an instance of 1)
-    * `n_Inst1 in SeqNode`
-3. **Instance 2:** `n_Inst2` (Represents the second digit).
-    * `n_Inst2 ~ 1` (It is also an instance of 1)
-    * `n_Inst2 in SeqNode`
-4. **Ordering:**
-    * `n_Inst1 .. n_Inst2`
-
-This strict topological definition allows the unification engine to match patterns effectively against both sets and sequences.
+This topology ensures that while `<11>` contains two distinct nodes (positions), they are semantically identified as the same digit, and the whole structure is identified as the number 11.
 
 #### The Focus Operator `*`
 
@@ -380,6 +391,39 @@ This operator is crucial for the rule syntax.
 A unique feature of zelph is its approach to numbers. Instead of treating integers as opaque literals handled by an arithmetic logic unit (ALU), zelph represents them as **sequences of digits** within the graph (e.g., `<123>`).
 
 This topology allows for **Symbolic Math**: arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. By merging these digit nodes with semantic entities (e.g., from Wikidata), zelph effectively moves from *calculating* numbers to *reasoning* about them.
+
+#### Example: Defining Addition
+
+In zelph, "math" is just a set of topological rules. Here is how you can teach the network to add 1 to a number, simply by defining the successor relationship `..` and a logical rule:
+
+```
+zelph> <0> .. <1>
+{ 0 }  ..  { 1 }
+zelph> <1> .. <2>
+{ 1 }  ..  { 2 }
+zelph> <2> .. <3>
+{ 2 }  ..  { 3 }
+zelph> <3> .. <4>
+{ 3 }  ..  { 4 }
+zelph> <4> .. <5>
+{ 4 }  ..  { 5 }
+... (defining up to 9) ...
+
+zelph> (A .. B) => ((<1> + A) = B)
+(A  ..  B) => { 1 }  +  A  =  B
+```
+
+The rule states: *If A is followed by B (in the number sequence), then '1 + A' equals 'B'.*
+Zelph immediately applies this rule to the facts we just entered:
+
+```
+{ 1 }  +  { 5 }  =  { 6 } ⇐ { 5 }  ..  { 6 }
+{ 1 }  +  { 2 }  =  { 3 } ⇐ { 2 }  ..  { 3 }
+{ 1 }  +  { 3 }  =  { 4 } ⇐ { 3 }  ..  { 4 }
+...
+```
+
+The network has effectively "learned" addition by understanding the sequence of numbers.
 
 ### Internal Representation of facts
 
@@ -493,6 +537,21 @@ Example rule:
 6. `(X R Z)`: The consequence fact.
 
 This rule states: *If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced.*
+
+### Deep Unification (Nested Matching)
+
+zelph's unification engine supports **Deep Unification**, meaning it can match patterns against arbitrarily nested structures. This is essential for advanced reasoning where statements themselves are the subjects of other statements.
+
+Consider a rule that transforms an arithmetic structure:
+
+```
+((A + B) = C) => (test A B)
+```
+
+This rule matches any fact where the *subject* is itself a fact `(A + B)` and the relation is `=`.
+If the network contains `(3 + 5) = 8`, zelph recursively unifies `A` with `3`, `B` with `5`, and `C` with `8`.
+
+This capability allows zelph to perform symbolic manipulation and structural transformation of data, treating "code" (like mathematical expressions) as graph data that can be queried and transformed.
 
 ### Variables and Logic (A Predicate Logic Perspective)
 

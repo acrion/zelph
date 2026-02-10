@@ -31,8 +31,138 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm> // For std::sort
 #include <cassert>
 #include <iostream> // For std::clog
+#include <vector>
 
 using namespace zelph::network;
+
+struct FactStructure
+{
+    Node                     subject;
+    Node                     predicate;
+    std::unordered_set<Node> objects;
+};
+
+// Find the right structure for instantiation. Use history to exclude parent nodes (cycles).
+static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vector<Node>& history)
+{
+    FactStructure preferred;
+    preferred.subject = 0;
+
+    std::vector<FactStructure> structures;
+
+    if (fact == 0 || !n->exists(fact)) return preferred;
+
+    adjacency_set right = n->get_right(fact);
+    adjacency_set left  = n->get_left(fact);
+
+    adjacency_set predicates;
+    for (Node p : right)
+    {
+        if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
+            predicates.insert(p);
+    }
+
+    if (predicates.empty()) return preferred;
+
+    for (Node p : predicates)
+    {
+        for (Node s : right)
+        {
+            if (s == p || left.count(s) == 0) continue;
+
+            // If `s` (the candidate for the subject) is already in the history,
+            // `s` is a parent node that is currently instantiating `fact`.
+            // We must not return to it.
+            bool is_parent = false;
+            for (Node visited : history)
+            {
+                if (visited == s)
+                {
+                    is_parent = true;
+                    break;
+                }
+            }
+            if (is_parent) continue;
+
+            FactStructure fs;
+            fs.subject   = s;
+            fs.predicate = p;
+
+            for (Node o : left)
+            {
+                if (o != s && o != p && right.count(o) == 0)
+                {
+                    fs.objects.insert(o);
+                }
+            }
+
+            if (!fs.objects.empty()) structures.push_back(fs);
+        }
+    }
+
+    if (!structures.empty())
+    {
+        preferred = structures[0];
+        for (const auto& fs : structures)
+        {
+            if (!n->_pImpl->is_hash(fs.subject))
+            {
+                // Prefer non-hash subjects (atoms/variables)
+                preferred = fs;
+                break;
+            }
+        }
+    }
+
+    return preferred;
+}
+
+static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, std::vector<Node>& history)
+{
+    // 1. Variable substitution
+    if (z->_pImpl->is_var(pattern))
+    {
+        return zelph::string::get(variables, pattern, pattern);
+    }
+
+    // 2. Cycle Check (Safety net)
+    for (Node visited : history)
+    {
+        if (visited == pattern) return pattern; // Should be caught by get_preferred_structure, but safe is safe
+    }
+    history.push_back(pattern);
+
+    // 3. Structural recursion
+    FactStructure fs = get_preferred_structure(z, pattern, history);
+
+    if (fs.subject == 0)
+    {
+        history.pop_back();
+        return pattern; // Atomic / No structure found
+    }
+
+    Node inst_subject  = instantiate_fact(z, fs.subject, variables, history);
+    Node inst_relation = instantiate_fact(z, fs.predicate, variables, history);
+
+    adjacency_set inst_objects;
+    bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);
+
+    for (Node o : fs.objects)
+    {
+        Node io = instantiate_fact(z, o, variables, history);
+        inst_objects.insert(io);
+        if (io != o) changed = true;
+    }
+
+    history.pop_back();
+
+    if (!changed)
+    {
+        return pattern;
+    }
+
+    return z->fact(inst_subject, inst_relation, inst_objects);
+}
 
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(print)
@@ -336,7 +466,6 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
         catch (const contradiction_error& error)
         {
             std::lock_guard<std::mutex> lock(_mtx_output);
-
             _contradiction = true;
             ++_total_contradictions;
 
@@ -370,9 +499,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
     // Copy to a temporary list we can destructively consume
     std::vector<Node> pending(conditions.begin(), conditions.end());
-
-    // Track local variables as we simulate the binding process
-    Variables simulated_vars = current_vars;
+    Variables         simulated_vars = current_vars;
 
     while (!pending.empty())
     {
@@ -381,9 +508,8 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
         for (auto it = pending.begin(); it != pending.end(); ++it)
         {
-            Node cond  = *it;
-            int  score = 0;
-
+            Node          cond  = *it;
+            int           score = 0;
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
@@ -402,7 +528,6 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             {
                 bool o_is_var = _pImpl->is_var(obj);
                 bool o_bound  = o_is_var && simulated_vars.count(obj);
-
                 if (!o_is_var)
                     score += 50; // Object is constant (Good)
                 else if (o_bound)
@@ -440,7 +565,6 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             break;
         }
     }
-
     return sorted;
 }
 
@@ -609,17 +733,15 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 {
                     adjacency_set objects;
                     Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
-
-                    subject       = string::get(*joined, subject, subject);
-                    Node relation = parse_relation(ctx_copy.current_condition);
-                    relation      = string::get(*joined, relation, relation);
+                    subject               = string::get(*joined, subject, subject);
+                    Node relation         = parse_relation(ctx_copy.current_condition);
+                    relation              = string::get(*joined, relation, relation);
 
                     adjacency_set targets;
                     for (Node obj : objects)
                     {
                         Node iobj = string::get(*joined, obj, obj);
-                        if (iobj && !_pImpl->is_var(iobj))
-                            targets.insert(iobj);
+                        if (iobj && !_pImpl->is_var(iobj)) targets.insert(iobj);
                     }
 
                     if (subject && relation && !targets.empty() && !_pImpl->is_var(subject) && !_pImpl->is_var(relation))
@@ -628,7 +750,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                         if (ans.is_known() && ans.relation())
                         {
                             _facts_to_prune.insert(ans.relation());
-
                             if (_prune_nodes_mode)
                             {
                                 if (_pImpl->is_var(parse_fact(ctx_copy.current_condition, objects)))
@@ -656,7 +777,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
             // We now launch consumer tasks in the same pool. They will execute concurrently with producers.
 
             size_t num_threads = _pool->count();
-
             for (size_t i = 0; i < num_threads; ++i)
             {
                 _pool->enqueue([&, u_ptr = u.get()]()
@@ -742,9 +862,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
                 if (!var_targets.empty())
                 {
-                    const Node source = _pImpl->is_var(var_source)
-                                          ? string::get(variables, var_source, 0ull)
-                                          : var_source;
+                    std::vector<Node> history;
+                    const Node        source = instantiate_fact(this, var_source, variables, history);
 
                     if (source)
                     {
@@ -752,9 +871,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                         bool          done = true;
                         for (Node var_t : var_targets)
                         {
-                            Node t = _pImpl->is_var(var_t)
-                                       ? string::get(variables, var_t, 0ull)
-                                       : var_t;
+                            history.clear();
+                            Node t = instantiate_fact(this, var_t, variables, history);
 
                             if (t)
                             {

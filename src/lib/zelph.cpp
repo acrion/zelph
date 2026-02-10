@@ -43,7 +43,7 @@ std::string Zelph::get_version()
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
-    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
+    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
     , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
@@ -51,6 +51,7 @@ Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});
     fact(core.FollowedBy, core.IsA, {core.RelationTypeCategory});
     fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
+    fact(core.HasValue, core.IsA, {core.RelationTypeCategory});
 }
 
 Zelph::~Zelph()
@@ -746,6 +747,19 @@ Node Zelph::sequence(const std::vector<std::wstring>& elements)
 
     // Create the super-node representing the sequence itself
     Node seq_node = _pImpl->create();
+
+    // --- Value-Binding ---
+    // 1. Forming the canonical name
+    std::wstring seq_name;
+    for (const auto& el : elements)
+        seq_name += el;
+
+    // 2. Get or create concept node (this node is unique per value)
+    Node value_concept = node(seq_name, _lang);
+
+    // 3. Building the bridge: seq_node --[HasValue]--> value_concept
+    fact(seq_node, core.HasValue, {value_concept});
+    // --------------------------
 
     Node prev_node = 0;
 
