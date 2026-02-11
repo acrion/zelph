@@ -22,44 +22,46 @@
 # along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 cmake_minimum_required(VERSION 3.25.2)
-cmake_policy(VERSION 3.25.2)
+
+if(NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
+    find_program(CLANG_EXE clang)
+    find_program(CLANGXX_EXE clang++)
+    if(CLANG_EXE AND CLANGXX_EXE)
+        message(STATUS "Defaulting to Clang: ${CLANGXX_EXE}")
+        set(CMAKE_C_COMPILER "${CLANG_EXE}")
+        set(CMAKE_CXX_COMPILER "${CLANGXX_EXE}")
+    endif()
+endif()
+
+project(zelph VERSION 0.9.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-project(zelph)
-include(GenerateExportHeader)
-
-# set compiler flags
-if (WIN32)
-    message(STATUS "CMake platform: WIN32")
-    if (MSVC)
-        if (CMAKE_CXX_FLAGS MATCHES "/W[0-4]")
-            string(REGEX REPLACE "/W[0-4]" "/W4" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-        else ()
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
-        endif ()
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4251 /wd4275 /utf-8")
-    else ()
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -Wall -pedantic")
-    endif ()
-    message(STATUS "${CMAKE_CXX_FLAGS}")
-else ()
-    message(STATUS "CMake platform: NOT WIN32")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++1z -Wall -pedantic")
-endif ()
-
-message("CMAKE_SYSTEM_NAME: '${CMAKE_SYSTEM_NAME}'")
-message("CMAKE_BUILD_TYPE:  '${CMAKE_BUILD_TYPE}'")
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    add_definitions(-D_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-endif ()
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # Wichtig für KDevelop/LSP
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-add_subdirectory(lib)
-add_subdirectory(app)
+add_library(project_options INTERFACE)
 
-install(FILES ${CMAKE_SOURCE_DIR}/../LICENSE DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})
+if(MSVC)
+    target_compile_options(project_options INTERFACE
+        /W4 /wd4251 /wd4275 /utf-8
+        $<$<CONFIG:Debug>:-D_DEBUG>
+    )
+else()
+    target_compile_options(project_options INTERFACE
+        -fexceptions -Wall -pedantic
+    )
+
+    # Debug Info
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_options(project_options INTERFACE -g)
+    endif()
+endif()
+
+add_subdirectory(src/lib)
+add_subdirectory(src/app)
+
+install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})

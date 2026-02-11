@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S src
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S .
 
       - name: Build zelph
         run: cmake --build build --config Release
