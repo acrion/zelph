@@ -21,68 +21,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
-cmake_minimum_required(VERSION 3.25.2)
-cmake_policy(VERSION 3.25.2)
-
-option(USE_CLANG "Build with clang instead of default compiler" OFF)
-
-if (USE_CLANG)
-    find_program(CLANG clang REQUIRED)
-    find_program(CLANGXX clang++ REQUIRED)
-    set(CMAKE_C_COMPILER "${CLANG}")
-    set(CMAKE_CXX_COMPILER "${CLANGXX}")
-    message(STATUS "Using Clang compiler at ${CLANGXX}")
-endif ()
-
+include(GenerateExportHeader)
 include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
-
-if (NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif ()
-
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(OPTIMIZATION_FLAGS "-O3")
-
-    if (COMPILER_SUPPORTS_MARCH_NATIVE)
-        set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -march=native")
-    endif ()
-
-    # CRITICAL: Do NOT use -ffast-math!
-    # Janet uses NaN-boxing on 64-bit systems to pack type information and pointers into double-precision floats.
-    # -ffast-math enables -ffinite-math-only, which assumes NaNs do not exist. This causes the compiler to
-    # optimize away the bitwise checks Janet uses to distinguish objects (NaNs) from numbers, breaking
-    # the type system completely and leading to undefined behavior (e.g. strings treated as 0.0).
-
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -flto=auto")
-    set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -funroll-loops")
-
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -fomit-frame-pointer")
-
-        if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9.0)
-            set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -fno-semantic-interposition")
-        endif ()
-    elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        set(OPTIMIZATION_FLAGS "${OPTIMIZATION_FLAGS} -fomit-frame-pointer")
-    endif ()
-
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${OPTIMIZATION_FLAGS}")
-    message(STATUS "Optimization flags: ${OPTIMIZATION_FLAGS}")
-elseif (MSVC)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /Ot /GL")
-
-    # CRITICAL: Do NOT use /fp:fast!
-    # /fp:fast breaks IEEE-754 compliance and assumes no NaNs exist.
-    # This destroys Janet's NaN-boxing mechanism (same issue as -ffast-math on GCC/Clang),
-    # leading to crashes or undefined behavior when handling dynamic types.
-    # The default /fp:precise (implied by /O2) is safe.
-
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
-    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
-endif ()
-
 include(FetchContent)
+include(CheckIPOSupported)
 
 FetchContent_Declare(
     janet
@@ -257,6 +199,42 @@ add_library(zelph_lib SHARED
     ${CAPNP_SRCS}
 )
 
+
+target_link_libraries(zelph_lib PUBLIC project_options)
+
+set(ZELPH_OPT_FLAGS "")
+check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    list(APPEND ZELPH_OPT_FLAGS "-O3")
+    if (COMPILER_SUPPORTS_MARCH_NATIVE)
+        list(APPEND ZELPH_OPT_FLAGS "-march=native")
+    endif ()
+
+    # CRITICAL: Do NOT use -ffast-math!
+    # Janet uses NaN-boxing on 64-bit systems to pack type information and pointers into double-precision floats.
+    # -ffast-math enables -ffinite-math-only, which assumes NaNs do not exist. This causes the compiler to
+    # optimize away the bitwise checks Janet uses to distinguish objects (NaNs) from numbers, breaking
+    # the type system completely and leading to undefined behavior (e.g. strings treated as 0.0).
+    list(APPEND ZELPH_OPT_FLAGS "-flto=auto" "-funroll-loops")
+
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        list(APPEND ZELPH_OPT_FLAGS "-fomit-frame-pointer")
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9.0)
+            list(APPEND ZELPH_OPT_FLAGS "-fno-semantic-interposition")
+        endif ()
+    elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        list(APPEND ZELPH_OPT_FLAGS "-fomit-frame-pointer")
+    endif ()
+
+elseif (MSVC)
+    list(APPEND ZELPH_OPT_FLAGS "/O2" "/Oi" "/Ot" "/GL")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
+    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
+endif ()
+
+target_compile_options(zelph_lib PRIVATE $<$<CONFIG:Release>:${ZELPH_OPT_FLAGS}>)
+
 target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)
 if (WIN32)
     # ws2_32 and Mswsock are required by Janet
@@ -266,13 +244,11 @@ endif ()
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(zelph_lib PRIVATE -w -fpermissive)
-    target_link_options(zelph_lib PRIVATE -w)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(zelph_lib PRIVATE /w)
 endif ()
 
 # Enable IPO/LTO if available
-include(CheckIPOSupported)
 check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_OUTPUT)
 if (IPO_SUPPORTED)
     message(STATUS "IPO/LTO enabled")
@@ -285,9 +261,16 @@ generate_export_header(zelph_lib
     BASE_NAME ZELPH
     EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/zelph_export.h
 )
-target_include_directories(zelph_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE .)
-add_definitions(-DBOOST_ALL_NO_LIB) # disable boost auto linking under MSVC
-include_directories(
+
+target_include_directories(zelph_lib PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/zelph>
+)
+
+target_compile_definitions(zelph_lib PRIVATE BOOST_ALL_NO_LIB)
+
+target_include_directories(zelph_lib PRIVATE
     "../boost/algorithm/include"       # used in interactive.cpp and zelph.cpp
     "../boost/bimap/include"           # used in interactive.cpp
     "../boost/locale/include"          # used in string_utils.cpp

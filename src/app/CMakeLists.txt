@@ -23,16 +23,16 @@
 
 add_executable(zelph main.cpp)
 
-install(TARGETS zelph
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+target_link_libraries(zelph PRIVATE project_options)
+
+install(TARGETS zelph RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 message(STATUS "CMAKE_CXX_COMPILER_ID = ${CMAKE_CXX_COMPILER_ID}")
 
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-    add_definitions(-DBOOST_LIB_DIAGNOSTIC)
+if (MSVC)
+    target_compile_definitions(zelph PRIVATE BOOST_LIB_DIAGNOSTIC)
     target_link_libraries(zelph PRIVATE zelph_lib)
-elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
     target_link_libraries(zelph PRIVATE Threads::Threads zelph_lib stdc++fs)
