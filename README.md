@@ -436,7 +436,7 @@ The seamless integration of semantic knowledge and computation means that algori
 X P31 Q49008
 ```
 
-With a Wikidata dataset loaded (for example, [wikidata-20251222-pruned.bin](https://huggingface.co/datasets/acrion/zelph/resolve/main/wikidata-20251222-pruned.bin)), this query lists all prime numbers recorded in Wikidata — 10,018 in this dataset. The only requirement for an algorithm to work with prime numbers is to reference the correct node (`Q49008`); everything else works out of the box because the knowledge is already part of the graph.
+With a Wikidata dataset loaded (for example, [wikidata-20251222-pruned.bin](https://huggingface.co/datasets/acrion/zelph/tree/main)), this query lists all prime numbers recorded in Wikidata — 10,018 in this dataset. The only requirement for an algorithm to work with prime numbers is to reference the correct node (`Q49008`); everything else works out of the box because the knowledge is already part of the graph.
 
 This illustrates a key design principle of zelph: knowledge and computation are not separate layers. Any arithmetic rule that produces a number automatically inherits all semantic facts known about that number, and any semantic query can draw on structurally computed results.
 
