@@ -61,3 +61,4 @@ mkdocs/site
 /*.html
 perf.data
 constraints*/
+load.log

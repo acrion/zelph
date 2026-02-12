@@ -28,7 +28,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 
-#include <algorithm> // For std::sort
 #include <cassert>
 #include <iostream> // For std::clog
 #include <vector>
@@ -37,8 +36,8 @@ using namespace zelph::network;
 
 struct FactStructure
 {
-    Node                     subject;
-    Node                     predicate;
+    Node                     subject{};
+    Node                     predicate{};
     std::unordered_set<Node> objects;
 };
 
@@ -105,7 +104,7 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
         preferred = structures[0];
         for (const auto& fs : structures)
         {
-            if (!n->_pImpl->is_hash(fs.subject))
+            if (!Zelph::Impl::is_hash(fs.subject))
             {
                 // Prefer non-hash subjects (atoms/variables)
                 preferred = fs;
@@ -120,7 +119,7 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
 static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, std::vector<Node>& history)
 {
     // 1. Variable substitution
-    if (z->_pImpl->is_var(pattern))
+    if (Zelph::Impl::is_var(pattern))
     {
         return zelph::string::get(variables, pattern, pattern);
     }
@@ -167,7 +166,6 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
-    , _markdown_subdir("")
 {
 }
 
@@ -513,25 +511,21 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
-            bool s_is_var = _pImpl->is_var(subject);
+            bool s_is_var = Zelph::Impl::is_var(subject);
             bool s_bound  = s_is_var && simulated_vars.count(subject);
 
-            if (!s_is_var)
-                score += 100; // Subject is constant (Great!)
-            else if (s_bound)
-                score += 100; // Subject is bound variable (Great!)
+            if (!s_is_var || s_bound)
+                score += 100; // Subject is constant or bound variable (Great!)
             else
                 score -= 10; // Subject is unbound variable (Bad)
 
             // Heuristic for objects (simplified, assumes 1 object usually)
             for (Node obj : objects)
             {
-                bool o_is_var = _pImpl->is_var(obj);
+                bool o_is_var = Zelph::Impl::is_var(obj);
                 bool o_bound  = o_is_var && simulated_vars.count(obj);
-                if (!o_is_var)
-                    score += 50; // Object is constant (Good)
-                else if (o_bound)
-                    score += 50; // Object is bound variable (Good)
+                if (!o_is_var || o_bound)
+                    score += 50; // Object is constant or bound variable (Good)
                 else
                     score -= 10; // Object is unbound variable (Bad)
             }
@@ -551,10 +545,10 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // "Bind" variables for next iteration
             adjacency_set objects;
             Node          subject = parse_fact(best_cond, objects);
-            if (_pImpl->is_var(subject)) simulated_vars[subject] = 1; // Dummy bind
+            if (Zelph::Impl::is_var(subject)) simulated_vars[subject] = 1; // Dummy bind
             for (Node obj : objects)
             {
-                if (_pImpl->is_var(obj)) simulated_vars[obj] = 1; // Dummy bind
+                if (Zelph::Impl::is_var(obj)) simulated_vars[obj] = 1; // Dummy bind
             }
 
             pending.erase(best_it);
@@ -741,10 +735,10 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     for (Node obj : objects)
                     {
                         Node iobj = string::get(*joined, obj, obj);
-                        if (iobj && !_pImpl->is_var(iobj)) targets.insert(iobj);
+                        if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
                     }
 
-                    if (subject && relation && !targets.empty() && !_pImpl->is_var(subject) && !_pImpl->is_var(relation))
+                    if (subject && relation && !targets.empty() && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
                     {
                         Answer ans = check_fact(subject, relation, targets);
                         if (ans.is_known() && ans.relation())
@@ -752,7 +746,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                             _facts_to_prune.insert(ans.relation());
                             if (_prune_nodes_mode)
                             {
-                                if (_pImpl->is_var(parse_fact(ctx_copy.current_condition, objects)))
+                                if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
                                     _nodes_to_prune.insert(subject);
                                 else if (objects.size() == 1)
                                     _nodes_to_prune.insert(*targets.begin());
@@ -807,12 +801,12 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
     }
 }
 
-bool Reasoning::contradicts(const Variables& variables, const Variables& unequals) const
+bool Reasoning::contradicts(const Variables& variables, const Variables& unequals)
 {
     for (const auto& var : unequals)
     {
         Node item1 = var.first;
-        if (_pImpl->is_var(item1))
+        if (Zelph::Impl::is_var(item1))
         {
             auto it = variables.find(item1);
             if (it != variables.end())
@@ -822,7 +816,7 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
         }
 
         Node item2 = var.second;
-        if (_pImpl->is_var(item2))
+        if (Zelph::Impl::is_var(item2))
         {
             auto it = variables.find(item2);
             if (it != variables.end())
@@ -851,7 +845,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
         if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
         {
-            Node rel = _pImpl->is_var(*relations.begin())
+            Node rel = Zelph::Impl::is_var(*relations.begin())
                          ? string::get(variables, *relations.begin(), 0ull)
                          : *relations.begin();
 

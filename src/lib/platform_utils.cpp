@@ -31,37 +31,34 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <string>
 #endif
 
-namespace zelph
+namespace zelph::platform
 {
-    namespace platform
+    size_t get_process_memory_usage()
     {
-        size_t get_process_memory_usage()
-        {
 #ifdef __linux__
-            std::ifstream status("/proc/self/status");
-            if (!status.is_open())
-            {
-                return 0; // Fallback if file not accessible
-            }
-            std::string line;
-            size_t      rss_kb  = 0;
-            size_t      swap_kb = 0;
-            while (std::getline(status, line))
-            {
-                if (line.compare(0, 6, "VmRSS:") == 0)
-                {
-                    std::istringstream iss(line.substr(6));
-                    iss >> rss_kb;
-                }
-                else if (line.compare(0, 7, "VmSwap:") == 0)
-                {
-                    std::istringstream iss(line.substr(7));
-                    iss >> swap_kb;
-                }
-            }
-            return (rss_kb + swap_kb) * 1024; // Convert total kB to Bytes
-#endif
-            return 0; // Non-Linux
+        std::ifstream status("/proc/self/status");
+        if (!status.is_open())
+        {
+            return 0; // Fallback if file not accessible
         }
+        std::string line;
+        size_t      rss_kb  = 0;
+        size_t      swap_kb = 0;
+        while (std::getline(status, line))
+        {
+            if (line.compare(0, 6, "VmRSS:") == 0)
+            {
+                std::istringstream iss(line.substr(6));
+                iss >> rss_kb;
+            }
+            else if (line.compare(0, 7, "VmSwap:") == 0)
+            {
+                std::istringstream iss(line.substr(7));
+                iss >> swap_kb;
+            }
+        }
+        return (rss_kb + swap_kb) * 1024; // Convert total kB to Bytes
+#endif
+        return 0; // Non-Linux
     }
 }

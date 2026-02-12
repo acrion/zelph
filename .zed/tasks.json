@@ -1,0 +1,30 @@
+[
+  {
+    "label": "CMake Configure (Debug)",
+    "command": "cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S .",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
+  {
+    "label": "CMake Build (Debug)",
+    "command": "cmake --build build-debug --parallel",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
+  {
+    "label": "CMake Configure (Release)",
+    "command": "cmake -B build-release -DCMAKE_BUILD_TYPE=Release -S .",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
+  {
+    "label": "CMake Build (Release)",
+    "command": "cmake --build build-release --parallel",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
+]

@@ -33,7 +33,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <zelph_export.h>
 
 #include <atomic>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -71,7 +70,7 @@ namespace zelph::network
 
     private:
         void                               evaluate(RulePos rule, ReasoningContext& ctx);
-        bool                               contradicts(const Variables& variables, const Variables& unequals) const;
+        static bool                        contradicts(const Variables& variables, const Variables& unequals);
         void                               deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars);
 

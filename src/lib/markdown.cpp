@@ -115,7 +115,7 @@ namespace zelph::wikidata
         return node == 0 ? "" : string::unicode::to_utf8(_zelph->get_name(node, "wikidata", true));
     }
 
-    std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message) const
+    std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message)
     {
         // Converts the formatted fact string (from format_fact) to Markdown.
         // Parses tokens within « », extracts ID and text if " - " present (Wikidata mode), else assumes token is the Wikidata ID or fallback name.
@@ -125,7 +125,7 @@ namespace zelph::wikidata
         std::wstring           markdownContent = message;
 
         // Find the position of the '⇐' character
-        size_t       cutoffPos    = *message.begin() == '!' ? std::wstring::npos : message.find(L"⇐");
+        size_t       cutoffPos    = *message.begin() == '!' ? std::wstring::npos : message.find(L'⇐');
         std::wstring processRange = (cutoffPos != std::wstring::npos) ? message.substr(0, cutoffPos) : message;
 
         // Regular expression to find tokens enclosed in «» characters
@@ -273,7 +273,7 @@ namespace zelph::wikidata
                             ++i;
                             while (i < state.lines.size() && !state.lines[i].starts_with(L"## "))
                                 ++i;
-                            std::vector<std::wstring> block(state.lines.begin() + start, state.lines.begin() + i);
+                            std::vector<std::wstring> block(state.lines.begin() + static_cast<std::ptrdiff_t>(start), state.lines.begin() + static_cast<std::ptrdiff_t>(i));
                             state.block_hashes.insert(hash_block(block));
                         }
                         else
@@ -299,8 +299,8 @@ namespace zelph::wikidata
 
                     // Build full block: heading + empty line + markdown lines
                     std::vector<std::wstring> new_block;
-                    new_block.push_back(L"## " + heading);
-                    new_block.push_back(L"");
+                    new_block.emplace_back(L"## " + heading);
+                    new_block.emplace_back(L"");
                     new_block.insert(new_block.end(), markdown_lines.begin(), markdown_lines.end());
 
                     uint64_t block_hash = hash_block(new_block);
@@ -314,7 +314,9 @@ namespace zelph::wikidata
                     {
                         // New heading → append at end
                         if (!state.lines.empty() && !state.lines.back().empty())
-                            state.lines.push_back(L"");
+                        {
+                            state.lines.emplace_back(L"");
+                        }
                         state.lines.insert(state.lines.end(), new_block.begin(), new_block.end());
                     }
                     else
@@ -322,7 +324,9 @@ namespace zelph::wikidata
                         // Existing heading → insert after heading + empty line
                         auto insert_pos = std::next(it);
                         while (insert_pos != state.lines.end() && insert_pos->empty())
+                        {
                             ++insert_pos;
+                        }
                         state.lines.insert(insert_pos, new_block.begin() + 2, new_block.end()); // skip heading & empty
                     }
 

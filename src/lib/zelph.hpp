@@ -34,7 +34,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <functional>
 #include <memory>
-#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -137,7 +136,7 @@ namespace zelph
             void                     register_core_node(Node n, const std::wstring& name);
             Node                     get_core_node(const std::wstring& name) const;
             std::wstring             get_core_name(Node n) const;
-            bool                     exists(uint64_t nd);
+            bool                     exists(uint64_t nd) const;
             bool                     has_name(Node node, const std::string& lang) const;
             std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false) const;
             name_of_node_map         get_nodes_in_language(const std::string& lang) const;
@@ -147,8 +146,8 @@ namespace zelph
             std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors);
             void                     set_name(Node node, const std::wstring& name, std::string lang, bool merge_on_conflict);
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
-            void                     cleanup_isolated(size_t& removed_count);
-            size_t                   cleanup_names();
+            void                     cleanup_isolated(size_t& removed_count) const;
+            size_t                   cleanup_names() const;
             size_t                   get_name_of_node_size(const std::string& lang) const;
             size_t                   get_node_of_name_size(const std::string& lang) const;
             size_t                   language_count() const;
@@ -175,14 +174,14 @@ namespace zelph
             void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
             void                 print(const std::wstring&, const bool) const;
             static std::string   get_version();
-            void                 save_to_file(const std::string& filename);
-            void                 load_from_file(const std::string& filename);
+            void                 save_to_file(const std::string& filename) const;
+            void                 load_from_file(const std::string& filename) const;
 
             Node              count() const;
             void              remove_name(Node node, std::string lang = "");
             adjacency_set     get_rules() const;
-            void              remove_rules();
-            void              remove_node(Node node);
+            void              remove_rules() const;
+            void              remove_node(Node node) const;
             AllNodeView       get_all_nodes_view() const;
             LangNodeView      get_lang_nodes_view(const std::string& lang) const;
             void              unset_name(Node node, std::string lang = "");

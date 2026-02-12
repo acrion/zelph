@@ -30,54 +30,51 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <memory>
 
-namespace zelph
+namespace zelph::console
 {
-    namespace console
+    enum class DataType
     {
-        enum class DataType
-        {
-            Generic,
-            Wikidata
-        };
+        Generic,
+        Wikidata
+    };
 
-        // An abstract strategy class responsible for populating a Zelph network from external files.
-        // It handles file path resolution (e.g., finding a source file for a cache file), detects the
-        // data schema (e.g., Wikidata vs. Generic), and orchestrates the import/loading process.
-        // It serves as a factory to create the appropriate specific manager (Wikidata or Generic).
-        class DataManager
-        {
-        public:
-            virtual ~DataManager() = default;
+    // An abstract strategy class responsible for populating a Zelph network from external files.
+    // It handles file path resolution (e.g., finding a source file for a cache file), detects the
+    // data schema (e.g., Wikidata vs. Generic), and orchestrates the import/loading process.
+    // It serves as a factory to create the appropriate specific manager (Wikidata or Generic).
+    class DataManager
+    {
+    public:
+        virtual ~DataManager() = default;
 
-            // Factory method: Determines the correct DataManager type based on the input path
-            // and returns a shared_ptr to the specific instance (Wikidata or Generic).
-            static std::shared_ptr<DataManager> create(network::Zelph* n, const std::filesystem::path& input_path);
+        // Factory method: Determines the correct DataManager type based on the input path
+        // and returns a shared_ptr to the specific instance (Wikidata or Generic).
+        static std::shared_ptr<DataManager> create(network::Zelph* n, const std::filesystem::path& input_path);
 
-            // Loads the data into the network (either from cache or source)
-            virtual void load() = 0;
+        // Loads the data into the network (either from cache or source)
+        virtual void load() = 0;
 
-            // Optional: Set logging verbosity
-            virtual void set_logging(bool do_log) {}
+        // Optional: Set logging verbosity
+        virtual void set_logging(bool do_log) {}
 
-            virtual DataType get_type() const = 0;
+        virtual DataType get_type() const = 0;
 
-        protected:
-            DataManager(network::Zelph* n, const std::filesystem::path& input_path);
+    protected:
+        DataManager(network::Zelph* n, const std::filesystem::path& input_path);
 
-            // Helper to find the original source file (json/bz2) corresponding to the input.
-            // If input is .bin and no source is found, returns an empty path.
-            static std::filesystem::path resolve_original_source_path(const std::filesystem::path& input_path);
+        // Helper to find the original source file (json/bz2) corresponding to the input.
+        // If input is .bin and no source is found, returns an empty path.
+        static std::filesystem::path resolve_original_source_path(const std::filesystem::path& input_path);
 
-            network::Zelph*       _n;
-            std::filesystem::path _input_path;
-        };
+        network::Zelph*       _n;
+        std::filesystem::path _input_path;
+    };
 
-        class GenericDataManager : public DataManager
-        {
-        public:
-            GenericDataManager(network::Zelph* n, const std::filesystem::path& input_path);
-            void     load() override;
-            DataType get_type() const override { return DataType::Generic; }
-        };
-    }
+    class GenericDataManager : public DataManager
+    {
+    public:
+        GenericDataManager(network::Zelph* n, const std::filesystem::path& input_path);
+        void     load() override;
+        DataType get_type() const override { return DataType::Generic; }
+    };
 }

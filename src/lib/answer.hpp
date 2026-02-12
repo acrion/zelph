@@ -29,37 +29,29 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
-#include <algorithm>
-#include <map>
-#include <stdexcept>
-#include <string>
-
-namespace zelph
+namespace zelph::network
 {
-    namespace network
+    struct ZELPH_EXPORT Answer
     {
-        struct ZELPH_EXPORT Answer
+    protected:
+        enum class State
         {
-        protected:
-            enum class State
-            {
-                Known,
-                Unknown
-            } state{State::Unknown};
+            Known,
+            Unknown
+        } state{State::Unknown};
 
-            long double _probability{1};
-            Node        _relation{0};
+        long double _probability{1};
+        Node        _relation{0};
 
-        public:
-            Answer(State state, long double probability, Node relation = 0);
-            Answer(long double probability, Node relation);
-            explicit Answer(Node relation);
+    public:
+        Answer(State state, long double probability, Node relation = 0);
+        Answer(long double probability, Node relation);
+        explicit Answer(Node relation);
 
-            Node relation() const;
-            bool is_known() const;
-            bool is_correct() const;
-            bool is_wrong() const;
-            bool is_impossible() const;
-        };
-    }
+        Node relation() const;
+        bool is_known() const;
+        bool is_correct() const;
+        bool is_wrong() const;
+        bool is_impossible() const;
+    };
 }

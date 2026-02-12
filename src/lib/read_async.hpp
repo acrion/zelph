@@ -26,25 +26,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <filesystem>
-#include <iosfwd>
 #include <string>
 
-namespace zelph
+namespace zelph::console
 {
-    namespace console
+    class ReadAsync
     {
-        class ReadAsync
-        {
-        public:
-            ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 2);
-            ~ReadAsync();
-            std::streamsize get_total_size() const;
-            bool            get_line(std::wstring& line, std::streamoff& streampos) const;
-            std::string     error_text() const;
+    public:
+        explicit ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 2);
+        ~ReadAsync();
+        std::streamsize get_total_size() const;
+        bool            get_line(std::wstring& line, std::streamoff& streampos) const;
+        std::string     error_text() const;
 
-        private:
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
-    }
+    private:
+        class Impl;
+        Impl* const _pImpl; // must stay at top of members list because of initialization order
+    };
 }

@@ -30,9 +30,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <bitset>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <sstream>
+
+using std::ranges::all_of;
 
 using namespace zelph::network;
 
@@ -104,14 +105,14 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
             Node from = existing->second;
             Node into = node;
 
-            if (_pImpl->is_var(from) != _pImpl->is_var(into))
+            if (Impl::is_var(from) != Impl::is_var(into))
             {
                 std::stringstream s;
                 s << "Requested name '" << string::unicode::to_utf8(name) << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
                 throw std::runtime_error(s.str());
             }
 
-            if (!_pImpl->is_var(from))
+            if (!Impl::is_var(from))
             {
                 std::wclog << L"Warning: Merging Node " << from
                            << L" into Node " << into
@@ -210,14 +211,14 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
                 Node from = result_node;
                 Node into = conflicting_node;
 
-                if (_pImpl->is_var(from) != _pImpl->is_var(into))
+                if (Impl::is_var(from) != Impl::is_var(into))
                 {
                     std::stringstream s;
                     s << "Requested name '" << string::unicode::to_utf8(name_in_current_lang) << "' is already used by node " << into << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
                     throw std::runtime_error(s.str());
                 }
 
-                if (!_pImpl->is_var(from))
+                if (!Impl::is_var(from))
                 {
                     std::wclog << L"Warning: Merging Node " << from
                                << L" into Node " << into
@@ -244,14 +245,14 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
     return result_node; // The (possibly newly created or merged) node
 }
 
-void Zelph::cleanup_isolated(size_t& removed_count)
+void Zelph::cleanup_isolated(size_t& removed_count) const
 {
     removed_count = 0;
 
     _pImpl->remove_isolated_nodes(removed_count);
 }
 
-size_t Zelph::cleanup_names()
+size_t Zelph::cleanup_names() const
 {
     return _pImpl->cleanup_dangling_names();
 }
@@ -335,7 +336,7 @@ std::wstring Zelph::get_core_name(Node n) const
     return (it != _core_names.left.end()) ? it->second : L"";
 }
 
-bool Zelph::exists(uint64_t nd)
+bool Zelph::exists(uint64_t nd) const
 {
     return _pImpl->exists(nd);
 }
@@ -477,7 +478,7 @@ adjacency_set Zelph::get_sources(const Node relationType, const Node target, con
     for (Node relation : _pImpl->get_right(target))
         if (_pImpl->get_right(relation).count(relationType) == 1)
             for (Node source : _pImpl->get_left(relation))
-                if (source != target && (!exclude_vars || !_pImpl->is_var(source)))
+                if (source != target && (!exclude_vars || !Impl::is_var(source)))
                     sources.insert(source);
 
     return sources;
@@ -556,7 +557,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
 {
     bool known = false;
 
-    Node relation = _pImpl->create_hash(predicate, subject, objects);
+    Node relation = Impl::create_hash(predicate, subject, objects);
 
     if (_pImpl->exists(relation))
     {
@@ -565,40 +566,24 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
 
         known = connectedFromRelation.count(subject) == 1
              && connectedToRelation.count(subject) == 1 // subject must be connected from and to <--> relation node (i.e. bidirectional, to distinguish it from objects)
-             && [&]()
-        {
-            for (Node t : objects)
-                if (connectedToRelation.count(t) == 0) return false;
-            return true;
-        }() // objects must all be connected to relation
-             && [&]()
-        {
-            for (Node t : objects)
-                if (connectedFromRelation.count(t) == 1) return false;
-            return true;
-        }(); // no object must be connected from relation node
+             && std::all_of(objects.begin(), objects.end(), [&](Node t)
+                            { return connectedToRelation.count(t) != 0; }) // objects must all be connected to relation
+             && std::all_of(objects.begin(), objects.end(), [&](Node t)
+                            { return connectedFromRelation.count(t) == 0; }); // no object must be connected from relation node
 
         if (!_pImpl->_format_fact_level
             && !known
-            && !_pImpl->is_var(subject)
-            && !_pImpl->is_var(predicate)
-            && [&]()
-            { for (const Node t : objects) if (_pImpl->is_var(t)) return false; return true; }())
+            && !Impl::is_var(subject)
+            && !Impl::is_var(predicate)
+            && std::all_of(objects.begin(), objects.end(), [&](const Node t)
+                           { return Impl::is_var(t); }))
         {
-            const bool relationConnectsToSubject   = connectedFromRelation.count(subject) == 1;
-            const bool subjectConnectsToRelation   = connectedToRelation.count(subject) == 1;
-            const bool allObjectsConnectToRelation = [&]()
-            {
-                for (Node t : objects)
-                    if (connectedToRelation.count(t) == 0) return false;
-                return true;
-            }();
-            const bool noObjectsAreConnectedFromRelation = [&]()
-            {
-                for (Node t : objects)
-                    if (connectedFromRelation.count(t) == 1) return false;
-                return true;
-            }();
+            const bool relationConnectsToSubject         = connectedFromRelation.count(subject) == 1;
+            const bool subjectConnectsToRelation         = connectedToRelation.count(subject) == 1;
+            const bool allObjectsConnectToRelation       = std::all_of(objects.begin(), objects.end(), [&](Node t)
+                                                                 { return connectedToRelation.count(t) != 0; });
+            const bool noObjectsAreConnectedFromRelation = std::all_of(objects.begin(), objects.end(), [&](Node t)
+                                                                       { return connectedFromRelation.count(t) == 1; });
 
             // inconsistent state => debug output TODO
             std::wstring output;
@@ -964,7 +949,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     {
         int  limit = 0;
         Node curr  = n;
-        while (_pImpl->is_var(curr) && limit++ < 100)
+        while (Impl::is_var(curr) && limit++ < 100)
         {
             Node next = string::get(variables, curr, 0);
             if (next == 0 || next == curr) break;
@@ -1056,7 +1041,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                         for (Node o : objs)
                         {
                             // Resolve objects of FollowedBy
-                            if (_pImpl->is_var(o)) o = resolve_var(o);
+                            if (Impl::is_var(o)) o = resolve_var(o);
 
                             if (elements.count(o))
                             {
@@ -1354,7 +1339,7 @@ adjacency_set Zelph::get_rules() const
     return rules;
 }
 
-void Zelph::remove_rules()
+void Zelph::remove_rules() const
 {
     adjacency_set rules = get_rules();
     for (Node rule : rules)
@@ -1382,7 +1367,7 @@ void Zelph::remove_rules()
     }
 }
 
-void Zelph::remove_node(Node node)
+void Zelph::remove_node(Node node) const
 {
     if (!_pImpl->exists(node))
     {
@@ -1454,7 +1439,7 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors)
 
     if (name.empty())
     {
-        if (_pImpl->is_var(node))
+        if (Impl::is_var(node))
         {
             name = std::to_string(static_cast<int>(node));
         }
@@ -1465,7 +1450,7 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors)
             name = string::unicode::to_utf8(output);
         }
     }
-    else if (prepend_num && !_pImpl->is_hash(node) && !_pImpl->is_var(node))
+    else if (prepend_num && !Impl::is_hash(node) && !Impl::is_var(node))
     {
         name = "(" + std::to_string(static_cast<unsigned long long>(node)) + ") " + name;
     }
@@ -1502,7 +1487,7 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
     for (size_t i = 0; i < limit_left; ++i, ++left_it)
     {
         Node left = *left_it;
-        Node hash = _pImpl->create_hash({current, left});
+        Node hash = Impl::create_hash({current, left});
 
         if (processed_edge_hashes.insert(hash).second)
         {
@@ -1533,7 +1518,7 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
     for (size_t i = 0; i < limit_right; ++i, ++right_it)
     {
         Node right = *right_it;
-        Node hash  = _pImpl->create_hash({current, right});
+        Node hash  = Impl::create_hash({current, right});
 
         if (processed_edge_hashes.insert(hash).second)
         {
@@ -1663,7 +1648,7 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
             {
                 fill_color = "#FFBB00"; // Special color for start node
             }
-            else if (_pImpl->is_var(node))
+            else if (Impl::is_var(node))
             {
                 fill_color = "#eee8dc"; // cornsilk2
             }
@@ -1689,6 +1674,7 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
 
     // Edges
     std::vector<std::string> edge_lines;
+    edge_lines.reserve(raw_edges.size());
     for (const auto& [from, to, arrow] : raw_edges)
     {
         edge_lines.push_back("    " + node_ids[from] + " " + arrow + " " + node_ids[to]);
@@ -1749,12 +1735,12 @@ void Zelph::print(const std::wstring& msg, const bool o) const
     _print(msg, o);
 }
 
-void Zelph::save_to_file(const std::string& filename)
+void Zelph::save_to_file(const std::string& filename) const
 {
     _pImpl->saveToFile(filename);
 }
 
-void Zelph::load_from_file(const std::string& filename)
+void Zelph::load_from_file(const std::string& filename) const
 {
     _pImpl->loadFromFile(filename);
 }

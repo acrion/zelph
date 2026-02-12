@@ -51,6 +51,7 @@ using namespace zelph::console;
 using namespace zelph::network;
 using boost::escaped_list_separator;
 using boost::tokenizer;
+using std::chrono::duration_cast;
 
 // #define SINGLE_THREADED_IMPORT
 
@@ -200,6 +201,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
         };
 
         // Start worker threads
+        workers.reserve(num_threads);
         for (unsigned int i = 0; i < num_threads; ++i)
         {
             workers.emplace_back(worker_func);
@@ -214,13 +216,13 @@ void Wikidata::import_all(const std::string& constraints_dir)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
             auto current_time           = std::chrono::steady_clock::now();
-            auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count() / 1000.0;
+            auto time_since_last_update = std::chrono::duration<double>(current_time - last_update_time).count();
 
             if (time_since_last_update >= 1.0)
             {
                 std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
-                double         current_percentage = (static_cast<double>(current_bytes) / total_size) * 100.0;
-                double         progress_fraction  = static_cast<double>(current_bytes) / total_size;
+                double         current_percentage = (static_cast<double>(current_bytes) / static_cast<double>(total_size)) * 100.0;
+                double         progress_fraction  = static_cast<double>(current_bytes) / static_cast<double>(total_size);
                 auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
                                            current_time - start_time)
                                            .count();
@@ -230,7 +232,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 if (elapsed_seconds > 0 && current_bytes > 0)
                 {
                     speed       = static_cast<double>(current_bytes) / elapsed_seconds;
-                    eta_seconds = static_cast<int>((total_size - current_bytes) / speed);
+                    eta_seconds = static_cast<int>((static_cast<double>(total_size) - current_bytes) / speed);
                 }
 
                 size_t current_memory = zelph::platform::get_process_memory_usage();

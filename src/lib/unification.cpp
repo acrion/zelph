@@ -43,7 +43,7 @@ static void u_log(int depth, const std::string& msg)
     }
 }
 // Helper for Node representation in Debug mode
-static std::string u_node_str(zelph::network::Zelph* z, zelph::network::Node n)
+static std::string u_node_str(Zelph* z, zelph::network::Node n)
 {
     if (n == 0) return "0";
     if (z->_pImpl->is_var(n)) return "VAR(" + std::to_string(n) + ")";
@@ -87,8 +87,8 @@ static Node get_value_concept(Zelph* n, Node node)
 
 struct FactStructure
 {
-    Node                     subject;
-    Node                     predicate;
+    Node                     subject{};
+    Node                     predicate{};
     std::unordered_set<Node> objects;
 };
 
@@ -156,14 +156,14 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
 
         for (const auto& fs : structures)
         {
-            if (!n->_pImpl->is_hash(fs.subject)) has_non_hash = true;
+            if (!Zelph::Impl::is_hash(fs.subject)) has_non_hash = true;
         }
 
         if (has_non_hash)
         {
             for (const auto& fs : structures)
             {
-                if (!n->_pImpl->is_hash(fs.subject)) filtered.push_back(fs);
+                if (!Zelph::Impl::is_hash(fs.subject)) filtered.push_back(fs);
             }
             return filtered;
         }
@@ -193,7 +193,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             return true;
         }
     }
-    history.push_back({rule_node, graph_node});
+    history.emplace_back(rule_node, graph_node);
 
     bool result = false; // Default result
 
@@ -201,7 +201,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
     do
     {
         // 1. Variable Binding
-        if (n->_pImpl->is_var(rule_node))
+        if (Zelph::Impl::is_var(rule_node))
         {
             if (local_bindings.count(rule_node))
             {
@@ -312,7 +312,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             }
         }
     end_loop:;
-    } while (0);
+    } while (false);
 
     history.pop_back();
     return result;
@@ -332,7 +332,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
 
         U_LOG(0, "Init Unification: " + U_NODE(condition));
 
-        if (_n->_pImpl->is_var(relation))
+        if (Zelph::Impl::is_var(relation))
         {
             // the relation is a variable, so fill _relation_list with all possible relations (excluding variables)
             _relation_list     = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
@@ -382,10 +382,10 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     if (_subject != 0)
     {
         Node s = _subject;
-        if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
+        if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
         // Only optimize if s is an ATOM (not a structure), because complex structures
         // cannot be looked up simply via get_right(s) in a deep unification context.
-        if (!_n->_pImpl->is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
+        if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
     }
 
     // Do not use parallel if the object is bound (const or bound var).
@@ -393,7 +393,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     bool object_is_bound = false;
     for (Node o : _objects)
     {
-        if (!_n->_pImpl->is_var(o))
+        if (!Zelph::Impl::is_var(o))
         {
             if (get_fact_structures(_n, o).empty())
             {
@@ -490,10 +490,10 @@ bool Unification::increment_fact_index()
 #ifndef _DEBUG
             // Check if Subject is bound
             Node s = _subject;
-            if (_n->_pImpl->is_var(s)) s = string::get(*_variables, s, s);
+            if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
 
             // Only optimize if subject is atomic (see constructor comments)
-            if (s != 0 && !_n->_pImpl->is_var(s) && get_fact_structures(_n, s).empty())
+            if (s != 0 && !Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty())
             {
                 // Strategy: Subject Driven
                 // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
@@ -518,9 +518,9 @@ bool Unification::increment_fact_index()
             else if (!_objects.empty())
             {
                 Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
-                if (_n->_pImpl->is_var(o)) o = string::get(*_variables, o, o);
+                if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
 
-                if (o != 0 && !_n->_pImpl->is_var(o) && get_fact_structures(_n, o).empty())
+                if (o != 0 && !Zelph::Impl::is_var(o) && get_fact_structures(_n, o).empty())
                 {
                     // Strategy: Object Driven
                     // Zelph::fact -> connect(Object, Fact). Object points to Fact.
@@ -614,7 +614,7 @@ std::shared_ptr<Variables> Unification::Next()
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
 std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const
 {
-    if (objects.empty() || subject == 0 || _n->_pImpl->is_var(subject)) return nullptr;
+    if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject)) return nullptr;
 
     auto result = std::make_shared<Variables>();
 
@@ -629,7 +629,7 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
 
     for (auto o : objects)
     {
-        if (_n->_pImpl->is_var(o))
+        if (Zelph::Impl::is_var(o))
         {
             // the given "fact" is not a fact, but a rule, because it contains a variable in at least one of its objects
             return nullptr;

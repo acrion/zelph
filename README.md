@@ -327,7 +327,7 @@ zelph distinguishes between two fundamental input modes for sequences, which res
     * Each Instance Node is linked via `~` (IsA) to a named **Concept Node** representing the character (e.g., "1", "a").
     * **Wikidata Integration:** These Concept Nodes map directly to external knowledge. For example, in a numeric sequence, the Concept Node for "1" corresponds exactly to the Wikidata item for the digit 1 ([Q199](https://www.wikidata.org/wiki/Q199)). This connects the structural position in a sequence directly to semantic knowledge about the character.
 
-##### Value Binding (HasValue) and Semantic Math
+##### Value Binding (HasValue)
 
 While a sequence like `<113>` is structurally composed of digits, semantically it represents a single value. zelph bridges this gap via **Value Binding**.
 
@@ -336,7 +336,7 @@ While a sequence like `<113>` is structurally composed of digits, semantically i
 3. **The Link:** The Sequence Node is connected to this Value Concept via the `has_value` relation.
 
 **Why is this powerful?**
-This architecture allows mathematical knowledge from Wikidata (e.g., "113 is a prime number") to flow directly into numerical calculations or symbolic logic.
+This architecture connects the structural representation of numbers to semantic knowledge. A sequence like `<113>` is not just a string of digits — through its Value Concept, it is linked to everything known about the number 113 (e.g., from Wikidata: that it is a prime number). This enables the seamless integration of arithmetic and reasoning described in [Semantic Math](#semantic-math).
 
 * **Symbolic Math:** You can define arithmetic rules (like addition) based on the *sequence structure* (manipulating digits).
 * **Semantic Reasoning:** The result of that calculation (a new sequence) automatically points to its Value Concept, triggering any semantic rules known about that number.
@@ -388,9 +388,11 @@ This operator is crucial for the rule syntax.
 
 ### Semantic Math
 
-A unique feature of zelph is its approach to numbers. Instead of treating integers as opaque literals handled by an arithmetic logic unit (ALU), zelph represents them as **sequences of digits** within the graph (e.g., `<123>`).
+As described in [Angle Brackets: Sequences](#angle-brackets-sequences), zelph represents numbers as ordered sequences of digit nodes within the graph (e.g., `<123>`). Each sequence is linked to its Value Concept via `has_value`, connecting it to semantic knowledge about that number. This architecture has two powerful consequences:
 
-This topology allows for **Symbolic Math**: arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. By merging these digit nodes with semantic entities (e.g., from Wikidata), zelph effectively moves from *calculating* numbers to *reasoning* about them.
+1. **Symbolic Math:** Arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. Since numbers are topological structures, you can write inference rules that manipulate them — effectively teaching the network to compute.
+
+2. **Semantic Integration:** Because every computed result automatically points to its Value Concept, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows that 113 is a prime number, that fact becomes available the moment a calculation produces the sequence `<113>`. The boundary between *calculating* numbers and *reasoning* about them is removed.
 
 #### Example: Defining Addition
 
@@ -424,6 +426,19 @@ Zelph immediately applies this rule to the facts we just entered:
 ```
 
 The network has effectively "learned" addition by understanding the sequence of numbers.
+
+#### Example: Querying Prime Numbers from Wikidata
+
+The seamless integration of semantic knowledge and computation means that algorithms operating on numbers can leverage facts from external knowledge bases — without any special glue code. For instance, if the Wikidata graph is loaded, every number that Wikidata classifies as a [prime number (Q49008)](https://www.wikidata.org/wiki/Q49008) is already connected to the corresponding Value Concept nodes in zelph. A simple query is all it takes:
+
+```
+.lang wikidata
+X P31 Q49008
+```
+
+With a Wikidata dataset loaded (for example, [wikidata-20251222-pruned.bin](https://huggingface.co/datasets/acrion/zelph/resolve/main/wikidata-20251222-pruned.bin)), this query lists all prime numbers recorded in Wikidata — 10,018 in this dataset. The only requirement for an algorithm to work with prime numbers is to reference the correct node (`Q49008`); everything else works out of the box because the knowledge is already part of the graph.
+
+This illustrates a key design principle of zelph: knowledge and computation are not separate layers. Any arithmetic rule that produces a number automatically inherits all semantic facts known about that number, and any semantic query can draw on structurally computed results.
 
 ### Internal Representation of facts
 

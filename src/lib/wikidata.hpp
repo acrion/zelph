@@ -26,35 +26,30 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "data_manager.hpp"
-#include "string_utils.hpp"
 #include "zelph.hpp"
 
 #include <filesystem>
-#include <iosfwd>
 
-namespace zelph
+namespace zelph::console
 {
-    namespace console
+    class Wikidata : public DataManager
     {
-        class Wikidata : public DataManager
-        {
-        public:
-            // input_path can be a raw source file (.json, .bz2) or a cache file (.bin)
-            Wikidata(network::Zelph* n, const std::filesystem::path& input_path);
-            ~Wikidata();
+    public:
+        // input_path can be a raw source file (.json, .bz2) or a cache file (.bin)
+        Wikidata(network::Zelph* n, const std::filesystem::path& input_path);
+        ~Wikidata() override;
 
-            void     load() override;
-            void     import_all(const std::string& constraints_dir = "");
-            void     set_logging(bool do_log) override;
-            DataType get_type() const override { return DataType::Wikidata; }
+        void     load() override;
+        void     import_all(const std::string& constraints_dir = "");
+        void     set_logging(bool do_log) override;
+        DataType get_type() const override { return DataType::Wikidata; }
 
-        private:
-            void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
-            void process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
-            void process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
+    private:
+        void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
+        void process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
+        void process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
 
-            class Impl;
-            Impl* const _pImpl; // must stay at top of members list because of initialization order
-        };
-    }
+        class Impl;
+        Impl* const _pImpl; // must stay at top of members list because of initialization order
+    };
 }

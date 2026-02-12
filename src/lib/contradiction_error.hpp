@@ -25,7 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "string_utils.hpp"
+#include "network_types.hpp"
 
 #include <exception>
 

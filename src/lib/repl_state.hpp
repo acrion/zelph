@@ -40,7 +40,7 @@ namespace zelph::console
         std::shared_ptr<ReplState> state;
         bool                       previous_val;
 
-        AutoRunSuspender(std::shared_ptr<ReplState> s)
+        explicit AutoRunSuspender(std::shared_ptr<ReplState> s)
             : state(std::move(s))
         {
             if (state)
