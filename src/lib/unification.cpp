@@ -32,6 +32,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <unordered_set>
 #include <vector>
 
+using namespace zelph::network;
+
 #ifdef _DEBUG
     #include <string>
 static void u_log(int depth, const std::string& msg)
@@ -43,10 +45,10 @@ static void u_log(int depth, const std::string& msg)
     }
 }
 // Helper for Node representation in Debug mode
-static std::string u_node_str(Zelph* z, zelph::network::Node n)
+static std::string u_node_str(Zelph* z, Node n)
 {
     if (n == 0) return "0";
-    if (z->_pImpl->is_var(n)) return "VAR(" + std::to_string(n) + ")";
+    if (Zelph::Impl::is_var(n)) return "VAR(" + std::to_string(n) + ")";
     std::string name = zelph::string::unicode::to_utf8(z->get_name(n, "zelph", true));
     if (name.empty()) name = zelph::string::unicode::to_utf8(z->get_name(n, "en", false));
     if (name.empty()) return std::to_string(n);
@@ -61,8 +63,6 @@ static std::string u_node_str(Zelph* z, zelph::network::Node n)
         } while (0)
     #define U_NODE(n) ""
 #endif
-
-using namespace zelph::network;
 
 // --- Helper Functions ---
 

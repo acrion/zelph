@@ -163,6 +163,215 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
     return z->fact(inst_subject, inst_relation, inst_objects);
 }
 
+// Recursively collect all variable nodes from a fact pattern.
+// Used to detect "fresh variables" — variables that appear only in rule
+// consequences and need to be bound to newly created nodes.
+static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, std::vector<Node>& history)
+{
+    if (pattern == 0) return;
+
+    if (Zelph::Impl::is_var(pattern))
+    {
+        vars.insert(pattern);
+        return;
+    }
+
+    // Cycle check
+    for (Node visited : history)
+    {
+        if (visited == pattern) return;
+    }
+    history.push_back(pattern);
+
+    FactStructure fs = get_preferred_structure(z, pattern, history);
+    if (fs.subject == 0)
+    {
+        history.pop_back();
+        return; // Atomic, non-variable node
+    }
+
+    collect_variables(z, fs.subject, vars, history);
+    collect_variables(z, fs.predicate, vars, history);
+    for (Node o : fs.objects)
+    {
+        collect_variables(z, o, vars, history);
+    }
+
+    history.pop_back();
+}
+
+// =============================================================================
+// New member function: is_negated_condition
+// =============================================================================
+
+bool Reasoning::is_negated_condition(Node condition)
+{
+    if (!_pImpl->exists(condition))
+    {
+#ifdef _DEBUG
+        std::clog << "[NEG-CHECK] condition " << condition << " does not exist!" << std::endl;
+#endif
+        return false;
+    }
+
+    Answer ans    = check_fact(condition, core.IsA, {core.Negation});
+    bool   result = ans.is_known();
+
+#ifdef _DEBUG
+    std::clog << "[NEG-CHECK] condition=" << condition
+              << " name='" << string::unicode::to_utf8(get_name(condition, _lang, true))
+              << "' IsA Negation? " << (result ? "YES" : "NO")
+              << " (Negation core node=" << core.Negation << ")" << std::endl;
+#endif
+
+    return result;
+}
+
+// =============================================================================
+// New member function: consequences_already_exist
+//
+// Checks whether all deduction patterns of a fresh-variable rule are already
+// satisfied in the network. Condition-bound variables are substituted; fresh
+// variables act as wildcards. Bindings discovered for one deduction carry
+// over to subsequent deductions, ensuring consistency across shared fresh
+// variables (e.g. the same N in multiple consequences).
+//
+// Returns true only if ALL deductions already have matching facts.
+//
+// NOTE: Under concurrent reasoning, a parallel thread may create the same
+// consequences between the check and the subsequent creation. This is
+// benign: fact() itself is idempotent (check_fact prevents duplicates),
+// but orphaned fresh nodes may result. Use .cleanup to remove them.
+// =============================================================================
+
+bool Reasoning::consequences_already_exist(
+    const Variables&     condition_bindings,
+    const adjacency_set& deductions,
+    Node                 parent)
+{
+    Variables working = condition_bindings;
+
+    for (Node deduction : deductions)
+    {
+        if (deduction == core.Contradiction) continue;
+
+        adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
+        if (relations.size() != 1) return false;
+
+        Node rel = Zelph::Impl::is_var(*relations.begin())
+                     ? string::get(working, *relations.begin(), *relations.begin())
+                     : *relations.begin();
+        if (Zelph::Impl::is_var(rel)) return false;
+
+        adjacency_set var_targets;
+        Node          var_source = parse_fact(deduction, var_targets, parent);
+
+        // Instantiate subject and objects with current working bindings
+        std::vector<Node> history;
+        Node              source = instantiate_fact(this, var_source, working, history);
+
+        adjacency_set targets;
+        for (Node vt : var_targets)
+        {
+            history.clear();
+            Node t = instantiate_fact(this, vt, working, history);
+            if (t == 0) return false;
+            targets.insert(t);
+        }
+
+        if (source == 0 || targets.empty()) return false;
+
+        bool source_is_var = Zelph::Impl::is_var(source);
+
+        // Determine if any target is still a variable (fresh)
+        bool has_var_target = false;
+        for (Node t : targets)
+        {
+            if (Zelph::Impl::is_var(t))
+            {
+                has_var_target = true;
+                break;
+            }
+        }
+
+        if (!source_is_var && !has_var_target)
+        {
+            // Fully concrete — direct check
+            if (!check_fact(source, rel, targets).is_known()) return false;
+        }
+        else if (!source_is_var && has_var_target)
+        {
+            // Source concrete, target is fresh wildcard — search from subject side
+            // Topology: subject <-> fact_node -> predicate, objects -> fact_node
+            Node fresh_target = *targets.begin();
+            bool found        = false;
+
+            for (Node fn : _pImpl->get_right(source))
+            {
+                if (fn == source) continue;
+                adjacency_set fn_right = _pImpl->get_right(fn);
+                adjacency_set fn_left  = _pImpl->get_left(fn);
+
+                // fact_node must have: rel in right, source in right AND left (bidirectional subject)
+                if (fn_right.count(rel) == 0 || fn_right.count(source) == 0 || fn_left.count(source) == 0) continue;
+
+                // Find object: in left but not in right, and not source
+                for (Node obj : fn_left)
+                {
+                    if (obj != source && fn_right.count(obj) == 0)
+                    {
+                        working[fresh_target] = obj;
+                        found                 = true;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            if (!found) return false;
+        }
+        else if (source_is_var && !has_var_target)
+        {
+            // Target concrete, source is fresh wildcard — search from object side
+            // Topology: object -> fact_node, fact_node -> predicate
+            Node target = *targets.begin();
+            bool found  = false;
+
+            for (Node fn : _pImpl->get_right(target))
+            {
+                if (fn == target) continue;
+                adjacency_set fn_right = _pImpl->get_right(fn);
+                adjacency_set fn_left  = _pImpl->get_left(fn);
+
+                // fact_node must have: rel in right
+                if (fn_right.count(rel) == 0) continue;
+
+                // target must be object: in left but NOT in right (not bidirectional)
+                if (fn_left.count(target) == 0 || fn_right.count(target) != 0) continue;
+
+                // Find subject: in both right and left (bidirectional), not rel, not target
+                for (Node subj : fn_right)
+                {
+                    if (subj != rel && fn_left.count(subj) != 0)
+                    {
+                        working[source] = subj;
+                        found           = true;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            if (!found) return false;
+        }
+        else
+        {
+            // Both subject and object are fresh — conservative: assume not existing
+            return false;
+        }
+    }
+
+    return true; // All deductions already exist in the network
+}
+
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
     : Zelph(print)
     , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
@@ -530,6 +739,11 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
                     score -= 10; // Object is unbound variable (Bad)
             }
 
+            // Negated conditions must be evaluated last to ensure
+            // maximum variable binding before the existence check.
+            if (is_negated_condition(cond))
+                score -= 1000;
+
             if (score > max_score)
             {
                 max_score = score;
@@ -637,8 +851,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 ctx.next.push_back(next_branch);
             }
 
+            // Build exclusion set: the conjunction set node and all its
+            // element nodes are part of the rule topology and must not
+            // be matched as data facts by the Unification engine.
+            auto excluded = std::make_shared<std::unordered_set<Node>>();
+            excluded->insert(condition); // The conjunction set node
+            for (Node elem : sub_conditions)
+            {
+                excluded->insert(elem); // Each condition pattern node
+            }
+
             // Recurse into the conjunction
-            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals}), ctx);
+            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded}), ctx);
         }
         else
         {
@@ -653,12 +877,265 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 #ifdef _DEBUG
         std::clog << "[DEBUG evaluate] Processing leaf condition: " << condition << std::endl;
 #endif
+        bool is_negated = is_negated_condition(condition);
+
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
-            this, condition, rule.node, rule.variables, rule.unequals, _pool.get());
+            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get());
+
+        // --- Negation Handling ---
+        // A condition tagged with `negation` succeeds if and only if
+        // no match exists. Variables bound by earlier conditions are
+        // used; no new bindings are produced by a negated condition.
+        if (is_negated)
+        {
+            // Lambda: proceed after a successful negation (advance to next
+            // condition, pop stacked conjunction branch, or reach terminal).
+            auto proceed_with_bindings = [&](std::shared_ptr<Variables> bindings)
+            {
+                size_t next_index = rule.index + 1;
+
+                if (next_index < rule.conditions->size())
+                {
+                    RulePos next              = rule;
+                    next.variables            = bindings;
+                    next.index                = next_index;
+                    ReasoningContext ctx_copy = ctx;
+                    evaluate(next, ctx_copy);
+                }
+                else if (!ctx.next.empty())
+                {
+                    RulePos next   = ctx.next.back();
+                    next.variables = bindings;
+                    ctx.next.pop_back();
+                    ReasoningContext ctx_copy = ctx;
+                    evaluate(next, ctx_copy);
+                }
+                else
+                {
+                    // Terminal: all conditions satisfied
+                    ReasoningContext ctx_copy = ctx;
+
+                    if (!ctx_copy.rule_deductions.empty())
+                    {
+                        try
+                        {
+                            deduce(*bindings, rule.node, ctx_copy);
+                        }
+                        catch (const contradiction_error& error)
+                        {
+                            std::lock_guard<std::mutex> lock(_mtx_output);
+                            _contradiction = true;
+                            ++_total_contradictions;
+
+                            std::wstring output;
+                            format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                            std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
+
+                            if (_print_deductions) print(message, true);
+                            if (_generate_markdown) _markdown->add(L"Contradictions", message);
+                        }
+                    }
+                    else if (_prune_mode)
+                    {
+                        adjacency_set objects;
+                        Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
+                        subject               = string::get(*bindings, subject, subject);
+                        Node relation         = parse_relation(ctx_copy.current_condition);
+                        relation              = string::get(*bindings, relation, relation);
+
+                        adjacency_set targets;
+                        for (Node obj : objects)
+                        {
+                            Node iobj = string::get(*bindings, obj, obj);
+                            if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
+                        }
+
+                        if (subject && relation && !targets.empty()
+                            && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
+                        {
+                            Answer ans = check_fact(subject, relation, targets);
+                            if (ans.is_known() && ans.relation())
+                            {
+                                _facts_to_prune.insert(ans.relation());
+                                if (_prune_nodes_mode)
+                                {
+                                    if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
+                                        _nodes_to_prune.insert(subject);
+                                    else if (objects.size() == 1)
+                                        _nodes_to_prune.insert(*targets.begin());
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Normal query output
+                        std::lock_guard<std::mutex> lock(_mtx_output);
+                        std::wstring                output;
+                        format_fact(output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
+                        print(L"Answer: " + output, true);
+                    }
+                }
+            };
+
+            // No match => negation succeeds => continue with current bindings
+
+#ifdef _DEBUG
+            std::clog << "[NEG-EVAL] === Processing negated condition ===" << std::endl;
+            std::clog << "[NEG-EVAL] condition=" << condition << std::endl;
+
+            // Show what the negated pattern actually is
+            {
+                std::wstring cond_str;
+                format_fact(cond_str, _lang, condition, 3, *rule.variables, rule.node);
+                std::clog << "[NEG-EVAL] Formatted condition: "
+                          << string::unicode::to_utf8(cond_str) << std::endl;
+            }
+
+            std::clog << "[NEG-EVAL] Current variable bindings:" << std::endl;
+            for (const auto& [var, val] : *rule.variables)
+            {
+                std::clog << "[NEG-EVAL]   "
+                          << string::unicode::to_utf8(get_name(var, _lang, true))
+                          << " (id=" << var << ") -> "
+                          << string::unicode::to_utf8(get_name(val, _lang, true))
+                          << " (id=" << val << ")" << std::endl;
+            }
+#endif
+
+            // --- Step 1: Try standard Unification ---
+            // This handles the common case where all variables are already
+            // bound by prior positive conditions.
+            std::shared_ptr<Variables> match = u->Next();
+            u->wait_for_completion();
+
+            if (match)
+            {
+#ifdef _DEBUG
+                std::clog << "[NEG-EVAL] MATCH FOUND => negation FAILS. Bindings:" << std::endl;
+                for (const auto& [var, val] : *match)
+                {
+                    std::clog << "[NEG-EVAL]   "
+                              << string::unicode::to_utf8(get_name(var, _lang, true))
+                              << " (id=" << var << ") -> "
+                              << string::unicode::to_utf8(get_name(val, _lang, true))
+                              << " (id=" << val << ")" << std::endl;
+                }
+#endif
+                // Match found => negation fails => prune this branch
+                return;
+            }
+#ifdef _DEBUG
+            std::clog << "[NEG-EVAL] NO MATCH => negation SUCCEEDS" << std::endl;
+#endif
+
+            // --- Step 2: No positive match. Determine how to proceed. ---
+            // Parse the negated pattern to inspect its subject.
+            adjacency_set pattern_objects;
+            Node          pattern_subject = parse_fact(condition, pattern_objects, rule.node);
+
+            bool subject_is_unbound = Zelph::Impl::is_var(pattern_subject)
+                                   && rule.variables->find(pattern_subject) == rule.variables->end();
+
+            if (!subject_is_unbound)
+            {
+                // Subject is bound or constant. The Unification already
+                // checked all facts correctly (iterating by relation,
+                // matching the bound subject). No match → negation
+                // genuinely succeeds with the current bindings.
+                proceed_with_bindings(rule.variables);
+            }
+            else
+            {
+                // Subject is unbound. The Unification couldn't produce
+                // matches because it requires ALL parts to unify
+                // simultaneously. We use complementary enumeration:
+                // iterate all facts of this relation, collect unique
+                // subjects (= the domain), and for each check whether
+                // the full pattern holds. Those where it does NOT hold
+                // are successful negation bindings.
+
+                adjacency_set rels = filter(condition, core.IsA, core.RelationTypeCategory);
+                if (rels.empty()) { return; }
+                Node pattern_rel = *rels.begin();
+                if (Zelph::Impl::is_var(pattern_rel))
+                    pattern_rel = string::get(*rule.variables, pattern_rel, pattern_rel);
+                if (Zelph::Impl::is_var(pattern_rel)) { return; }
+
+                adjacency_set rel_facts;
+                if (!_pImpl->snapshot_left_of(pattern_rel, rel_facts)) { return; }
+
+                std::unordered_set<Node> processed_subjects;
+
+                for (Node fn : rel_facts)
+                {
+                    // Skip nodes belonging to the rule's own topology
+                    if (rule.excluded && rule.excluded->count(fn)) continue;
+
+                    adjacency_set fact_objs;
+                    Node          fact_subj = parse_fact(fn, fact_objs, pattern_rel);
+                    if (fact_subj == 0 || Zelph::Impl::is_var(fact_subj)) continue;
+                    if (processed_subjects.count(fact_subj)) continue;
+                    processed_subjects.insert(fact_subj);
+
+                    // Substitute the unbound subject with this candidate
+                    Variables test        = *rule.variables;
+                    test[pattern_subject] = fact_subj;
+
+                    // Fully instantiate the pattern with the test bindings
+                    std::vector<Node> hist;
+                    Node              inst_subj = instantiate_fact(this, pattern_subject, test, hist);
+
+                    adjacency_set inst_objs;
+                    bool          resolved = true;
+                    for (Node po : pattern_objects)
+                    {
+                        hist.clear();
+                        Node io = instantiate_fact(this, po, test, hist);
+                        if (io && !Zelph::Impl::is_var(io))
+                            inst_objs.insert(io);
+                        else
+                        {
+                            resolved = false;
+                            break;
+                        }
+                    }
+
+                    if (!resolved || !inst_subj || Zelph::Impl::is_var(inst_subj)) continue;
+
+                    // Check if the positive fact exists in the network
+                    Answer ans = check_fact(inst_subj, pattern_rel, inst_objs);
+                    if (!ans.is_known())
+                    {
+                        // The positive pattern does NOT hold for this entity
+                        // → negation succeeds with this binding
+                        proceed_with_bindings(std::make_shared<Variables>(test));
+                    }
+                }
+            }
+
+            return;
+        }
 
         // Define the processing logic for a single match (extracted to be usable in both serial and parallel loops)
         auto process_match = [&](std::shared_ptr<Variables> match)
         {
+            // Reject matches that bind variables to nodes belonging to
+            // the current rule's own topology (conjunction set, condition
+            // pattern nodes). Without this check, PartOf facts connecting
+            // condition patterns to their conjunction set would be matched
+            // by conditions like (A in _Seq), causing spurious deductions.
+            if (rule.excluded && !rule.excluded->empty())
+            {
+                for (const auto& [k, v] : *match)
+                {
+                    if (rule.excluded->count(v))
+                    {
+                        return;
+                    }
+                }
+            }
+
             std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
             std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u->Unequals());
 
@@ -834,19 +1311,64 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
 
 void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningContext& ctx)
 {
+    // --- Fresh Variable Detection ---
+    // Variables that appear in consequences but are not bound by conditions
+    // are "fresh variables": each rule firing creates a new node for them.
+    // This allows rules to construct new graph topology, enabling general-
+    // purpose structural transformations such as arithmetic.
+
+    std::unordered_set<Node> deduction_vars;
+    for (const Node deduction : ctx.rule_deductions)
+    {
+        if (deduction == core.Contradiction) continue;
+        std::vector<Node> history;
+        collect_variables(this, deduction, deduction_vars, history);
+    }
+
+    std::unordered_set<Node> fresh_vars;
+    for (Node var : deduction_vars)
+    {
+        if (variables.find(var) == variables.end())
+            fresh_vars.insert(var);
+    }
+
+    // --- Termination Check ---
+    // If fresh variables exist, check whether these consequences have already
+    // been created for the current condition bindings. Without this check,
+    // each reasoning iteration would create new fresh nodes indefinitely.
+    // The check is done against the live network, so it survives serialization.
+    if (!fresh_vars.empty())
+    {
+        if (consequences_already_exist(variables, ctx.rule_deductions, parent))
+            return;
+    }
+
+    // --- Create Fresh Nodes ---
+    Variables augmented = variables;
+    for (Node var : fresh_vars)
+    {
+        Node fresh;
+        {
+            std::lock_guard<std::mutex> lock(_mtx_network);
+            fresh = _pImpl->create();
+        }
+        augmented[var] = fresh;
+    }
+
+    // --- Process Deductions ---
     for (const Node deduction : ctx.rule_deductions)
     {
         if (deduction == core.Contradiction)
         {
-            throw contradiction_error(ctx.current_condition, variables, parent);
+            throw contradiction_error(ctx.current_condition, augmented, parent);
         }
 
         adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
 
-        if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
+        if (relations.size() == 1)
         {
             Node rel = Zelph::Impl::is_var(*relations.begin())
-                         ? string::get(variables, *relations.begin(), 0ull)
+                         ? string::get(augmented, *relations.begin(), 0ull)
                          : *relations.begin();
 
             if (rel)
@@ -857,7 +1379,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                 if (!var_targets.empty())
                 {
                     std::vector<Node> history;
-                    const Node        source = instantiate_fact(this, var_source, variables, history);
+                    const Node        source = instantiate_fact(this, var_source, augmented, history);
 
                     if (source)
                     {
@@ -866,7 +1388,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                         for (Node var_t : var_targets)
                         {
                             history.clear();
-                            Node t = instantiate_fact(this, var_t, variables, history);
+                            Node t = instantiate_fact(this, var_t, augmented, history);
 
                             if (t)
                             {
@@ -885,11 +1407,11 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
                             if (answer.is_wrong())
                             {
-                                throw contradiction_error(ctx.current_condition, variables, parent);
+                                throw contradiction_error(ctx.current_condition, augmented, parent);
                             }
                             else if (!answer.is_known()
-                                     && targets.count(rel) == 0     // ignore deductions with same relation and target type as we do not support these
-                                     && targets.count(source) == 0) // ignore deductions with the same subject and object as we do not support these
+                                     && targets.count(rel) == 0
+                                     && targets.count(source) == 0)
                             {
                                 try
                                 {
@@ -923,7 +1445,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                                             if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
 
                                             std::wstring input, output;
-                                            format_fact(input, _lang, ctx.current_condition, 3, variables, parent);
+                                            format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
                                             format_fact(output, _lang, d, 3, {}, parent);
 
                                             std::wstring message = output + L" ⇐ " + input;
@@ -944,7 +1466,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                                 }
                                 catch (const std::exception&)
                                 {
-                                    throw contradiction_error(ctx.current_condition, variables, parent);
+                                    throw contradiction_error(ctx.current_condition, augmented, parent);
                                 }
                             }
                         }

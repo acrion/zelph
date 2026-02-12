@@ -43,11 +43,12 @@ namespace zelph::network
 {
     struct RulePos
     {
-        Node                               node;
-        std::shared_ptr<std::vector<Node>> conditions;
-        size_t                             index;
-        std::shared_ptr<Variables>         variables{std::make_shared<Variables>()};
-        std::shared_ptr<Variables>         unequals{std::make_shared<Variables>()};
+        Node                                      node;
+        std::shared_ptr<std::vector<Node>>        conditions;
+        size_t                                    index;
+        std::shared_ptr<Variables>                variables{std::make_shared<Variables>()};
+        std::shared_ptr<Variables>                unequals{std::make_shared<Variables>()};
+        std::shared_ptr<std::unordered_set<Node>> excluded{std::make_shared<std::unordered_set<Node>>()};
     };
 
     struct ReasoningContext
@@ -73,6 +74,10 @@ namespace zelph::network
         static bool                        contradicts(const Variables& variables, const Variables& unequals);
         void                               deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars);
+        bool                               is_negated_condition(Node condition);
+        bool                               consequences_already_exist(const Variables&     condition_bindings,
+                                                                      const adjacency_set& deductions,
+                                                                      Node                 parent);
 
         std::atomic<bool>                   _done{false};
         std::unique_ptr<wikidata::Markdown> _markdown;

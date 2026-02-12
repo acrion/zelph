@@ -207,6 +207,7 @@ zelph initializes with a small set of fundamental nodes that define the ontology
 | **FollowedBy**           | `..`          | `FollowedBy`           | Defines the successor relationship in ordered sequences.                                                                                 |
 | **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                           |
 | **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                                |
+| **Negation**             | `negation`    | `Negation`             | Used to mark a condition in a rule as negative (match if the fact does *not* exist).                                                     |
 | **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                               |
 | **HasValue**             | `has_value`   | `HasValue`             | Connects a Sequence Node to its abstract value concept (e.g., connecting `<123>` to the concept "123").                                  |
 
@@ -286,7 +287,7 @@ A  in  { elem1   elem2   elem3 }
 Answer:   elem3    in  { elem1   elem2   elem3 }
 Answer:   elem2    in  { elem1   elem2   elem3 }
 Answer:   elem1    in  { elem1   elem2   elem3 }
-zelph> (*{ (A "is part of" B) (B "is part of" C) } ~ conjunction) => (A "is part of" C)
+zelph> (*{(A "is part of" B) (B "is part of" C) } ~ conjunction) => (A "is part of" C)
 {B  is part of  C A  is part of  B} => (A  is part of  C)
 zelph> earth "is part of" "solar system"
   earth    is part of  ( solar system )
@@ -394,7 +395,7 @@ As described in [Angle Brackets: Sequences](#angle-brackets-sequences), zelph re
 
 2. **Semantic Integration:** Because every computed result automatically points to its Value Concept, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows that 113 is a prime number, that fact becomes available the moment a calculation produces the sequence `<113>`. The boundary between *calculating* numbers and *reasoning* about them is removed.
 
-#### Example: Defining Addition
+#### Example: Defining Addition (Peano)
 
 In zelph, "math" is just a set of topological rules. Here is how you can teach the network to add 1 to a number, simply by defining the successor relationship `..` and a logical rule:
 
@@ -426,6 +427,38 @@ Zelph immediately applies this rule to the facts we just entered:
 ```
 
 The network has effectively "learned" addition by understanding the sequence of numbers.
+
+#### Advanced Arithmetic with Fresh Variables and Negation
+
+While the above example demonstrates basic Peano-style addition, zelph's advanced features—fresh variables and negation—enable more complex computations, such as digit-wise addition for arbitrary-sized numbers. These features are not specific to arithmetic; they are general-purpose tools for constructive reasoning and absence-based conditions. However, they shine in arithmetic applications by allowing the dynamic creation of new sequence structures and checks for structural termination (e.g., the last digit in a number).
+
+**Conceptual Implementation of Digit-Wise Addition:**
+
+To implement digit-wise addition, we first need rules to extract digits, handle carry, and construct the result sequence. This leverages specific patterns:
+
+1. **Define Digit Concepts:** Establish the digits and a basic lookup table for single-digit addition (including carry logic).
+
+   ```
+   <0> ~ digit
+   <1> ~ digit
+   ...
+   (<0> + <1>) = <1> carry <0>
+   ```
+
+2. **Find the Last Digit:** Use **Negation** to find the digit that has no successor in the sequence.
+
+   ```
+   (*{(A in _Num) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last digit of" _Num)
+   ```
+
+3. **Compute and Generate Results:** Use **Fresh Variables** to create new result nodes. Variables that appear *only* in the consequence (e.g., `R` for a new result sequence node) trigger the creation of new entities.
+
+   ```
+   (*{(A "is last digit of" _Num1) (B "is last digit of" _Num2) ( (A + B) = S )} ~ conjunction) 
+   => (I ~ S) (I in R) (_Num1 + _Num2 = R)
+   ```
+
+To handle multi-digit numbers with carry, recursive rules would process the number from right to left, stripping the last digit and propagating the carry to the next "tail" of the sequence. This approach demonstrates how zelph can perform arbitrary precision arithmetic purely through graph transformations.
 
 #### Example: Querying Prime Numbers from Wikidata
 
@@ -553,6 +586,61 @@ Example rule:
 
 This rule states: *If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced.*
 
+### Negation in Rules
+
+Negation allows rules to check for the **absence** of a fact pattern. This is achieved by linking a fact pattern to the `negation` core node using `~`.
+
+**Syntax:** `(*(Pattern) ~ negation)`
+
+The engine evaluates this by checking if **no** facts match the specified pattern given the current variable bindings.
+
+**Example 1: Logical Negation**
+"If the sun is yellow, and there is no fact stating it is green, deduce it is not green."
+
+```
+zelph> sun is yellow
+ sun   is   yellow
+zelph> (*(A is green) ~ negation) => (A "is not" green)
+ negation  => (A  is not   green )
+ sun   is not   green  ⇐  negation
+```
+
+**Example 2: Topological Querying (Finding the end of a sequence)**
+Negation is essential for analyzing structures, such as lists or numbers. To find the last element of a sequence, we look for an element `A` that is in the sequence but has **no** successor `X`.
+
+```
+zelph> <1 2 3>
+< 1   2   3 >
+zelph> (*{(A in _Seq) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last of" _Seq)
+{ negation  (A  in  _Seq)} => (A  is last of  _Seq)
+ 3   is last of  < 1   2   3 > ⇐ { negation  ( 3   in  < 1   2   3 >)}
+```
+
+This feature is general-purpose: it can be used for endpoint detection (as in sequences), constraints (e.g., "no conflicts"), or any absence-based logic.
+
+### Fresh Variables (Node Generation)
+
+zelph supports **Generative Rules**, which create entirely new nodes (entities) in the graph.
+
+**Mechanism:**
+Variables that appear **only in the consequence** of a rule (and are not bound in the condition part) are treated as "fresh variables." During inference, these trigger the automatic creation of new nodes. This enables constructive reasoning, where rules build new structures dynamically.
+
+**Termination Guarantee:**
+The semantics ensure termination: Before creating a new node, zelph checks if the deduced facts (with the fresh variable as a wildcard) already exist in the network. If they do, no new deduction occurs. This check is performed within the live network, so it persists across serialization and loading.
+
+**Example:**
+"Every human has a name." (Where the 'name' is a distinct entity generated by the rule).
+
+```
+zelph> (A is human) => (B nameof A)
+(A  is   human ) => (B  nameof  A)
+zelph> tim is human
+ tim   is   human
+ ??   nameof   tim  ⇐  tim   is   human
+```
+
+In the output, `??` represents the newly generated anonymous node. This feature is fundamental for constructive logic, such as building new number sequences in arithmetic or simulating biological reproduction.
+
 ### Deep Unification (Nested Matching)
 
 zelph's unification engine supports **Deep Unification**, meaning it can match patterns against arbitrarily nested structures. This is essential for advanced reasoning where statements themselves are the subjects of other statements.
@@ -574,9 +662,9 @@ zelph’s logic system can be viewed through the lens of first-order logic:
 
 - **Variables:** Single uppercase letters (or words starting with `_`) act as variables.
 - **Universal Quantification ($\forall$):** Variables appearing in the rule are implicitly universally quantified. The rule applies to *all* X, Y, Z, R that satisfy the pattern.
-- **Existential Quantification ($\exists$):** A variable that appears *only* in the condition part (and not in the consequence) acts as an existential quantifier. In the rule `(*{(A ~ parent) (A ~ B)} ~ conjunction) => (B ~ child)`, `A` is an intermediate variable. The rule implies: "If there exists an A such that...", effectively $\exists A (...)$.
+- **Existential Quantification ($\exists$):** A variable that appears *only* in the consequence acts as an existential quantifier (generates a fresh node).
 - **Conjunction:** The `~ conjunction` tag explicitly defines the set as an AND-operation.
-- **Future Outlook:** This generic set-based topology is designed to support **Disjunction** (`~ disjunction`) and **Negation** in the future, simply by changing the tag or the structure of the condition set, without changing the core parser.
+- **Negation:** The `~ negation` tag explicitly defines a condition as a NOT-operation.
 
 ### Examples
 
@@ -663,8 +751,6 @@ Two immediate consequences follow:
 
 1. **Unambiguous matching.** The matcher cannot mistake an entity for a statement or vice versa; they occupy disjoint topological roles.
 2. **Network stability.** Because statementhood is encoded structurally, rules cannot “drift” into unintended parts of the graph. This design prevents spurious matches and the sort of runaway growth that would result if arbitrary nodes could pose as statements.
-
-These constraints are not merely aesthetic; they are core to zelph’s reasoning guarantees and underpin the termination argument below.
 
 ## Performing Inference
 

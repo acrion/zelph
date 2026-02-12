@@ -44,7 +44,7 @@ std::string Zelph::get_version()
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     : _pImpl{new Impl}
-    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
+    , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
     , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
@@ -828,7 +828,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
         // If it points to a structural predicate (PartOf, FollowedBy, And), it's likely a container wrapper.
         for (Node pred : _pImpl->get_right(cand))
         {
-            if (pred == core.PartOf || pred == core.FollowedBy)
+            if (pred == core.PartOf || pred == core.FollowedBy || pred == core.IsA)
             {
                 is_structural = true;
                 break;
