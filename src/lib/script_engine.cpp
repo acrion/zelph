@@ -24,7 +24,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "script_engine.hpp"
-#include "network.hpp"
 #include "reasoning.hpp"
 #include "string_utils.hpp"
 
@@ -32,7 +31,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <boost/algorithm/string.hpp>
 
-#include <iostream>
 #include <map>
 #include <unordered_set>
 #include <vector>
@@ -64,19 +62,19 @@ static void zelph_node_tostring(void* p, JanetBuffer* buffer)
 
 static const JanetAbstractType zelph_node_type = {
     "zelph/node",
-    NULL,                // gc
-    NULL,                // gcmark
-    NULL,                // get
-    NULL,                // put
-    NULL,                // marshal
-    NULL,                // unmarshal
+    nullptr,             // gc
+    nullptr,             // gcmark
+    nullptr,             // get
+    nullptr,             // put
+    nullptr,             // marshal
+    nullptr,             // unmarshal
     zelph_node_tostring, // tostring
     zelph_node_compare,  // compare
     zelph_node_hash,     // hash
-    NULL,                // next
-    NULL,                // call
-    NULL,                // length
-    NULL,                // bytes
+    nullptr,             // next
+    nullptr,             // call
+    nullptr,             // length
+    nullptr,             // bytes
 };
 
 static Janet zelph_wrap_node(network::Node n)
@@ -112,12 +110,12 @@ public:
 
     network::Reasoning* _n;
     JanetTable*         _janet_env = nullptr;
-    Janet               _zelph_peg;
+    Janet               _zelph_peg{};
 
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
 
-    Impl(network::Reasoning* n)
+    explicit Impl(network::Reasoning* n)
         : _n(n)
     {
         s_instance = this;
@@ -136,12 +134,12 @@ public:
     void init()
     {
         janet_init();
-        _janet_env = janet_core_env(NULL);
+        _janet_env = janet_core_env(nullptr);
         register_zelph_functions();
         setup_peg();
     }
 
-    void register_zelph_functions()
+    void register_zelph_functions() const
     {
 // Helper to handle platform-specific Janet definitions
 // On Linux/x64, it's a macro expecting void*.
@@ -257,7 +255,7 @@ public:
 
         Janet out;
         int   status = janet_dostring(_janet_env, peg_setup.c_str(), "setup", &out);
-        if (status != JANET_SIGNAL_OK) janet_stacktrace(NULL, out);
+        if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
 
         janet_dostring(_janet_env, "(def zelph-peg (peg/compile zelph-grammar))", "init", &out);
         _zelph_peg = out;
@@ -308,7 +306,7 @@ public:
         elements.reserve(wstr.length());
         for (wchar_t c : wstr)
         {
-            elements.push_back(std::wstring(1, c));
+            elements.emplace_back(1, c);
         }
 
         if (elements.empty()) return janet_wrap_nil(); // Empty sequences are not supported
@@ -483,7 +481,7 @@ public:
 
         // Handle leaf nodes (atom, var, seq)
         // These expect data[1] to be the content string/buffer
-        std::string val_str = "";
+        std::string val_str;
         if (janet_checktype(data[1], JANET_STRING))
         {
             val_str = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
@@ -554,7 +552,7 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     Janet          args[2]   = {_pImpl->_zelph_peg, janet_cstringv(input.c_str())};
     Janet          result;
 
-    if (janet_pcall(match_fun, 2, args, &result, NULL) != JANET_SIGNAL_OK)
+    if (janet_pcall(match_fun, 2, args, &result, nullptr) != JANET_SIGNAL_OK)
     {
         return "";
     }
@@ -608,7 +606,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 
     if (status != JANET_SIGNAL_OK)
     {
-        janet_stacktrace(NULL, out);
+        janet_stacktrace(nullptr, out);
     }
     else
     {
@@ -645,7 +643,7 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);
     if (status != JANET_SIGNAL_OK)
     {
-        janet_stacktrace(NULL, out);
+        janet_stacktrace(nullptr, out);
         throw std::runtime_error("Error evaluating janet expression");
     }
     return zelph_unwrap_node(out);
@@ -653,7 +651,7 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
 
 void ScriptEngine::set_script_args(const std::vector<std::string>& args)
 {
-    JanetArray* jargs = janet_array(args.size());
+    JanetArray* jargs = janet_array(static_cast<int32_t>(args.size()));
     for (const auto& arg : args)
     {
         janet_array_push(jargs, janet_cstringv(arg.c_str()));

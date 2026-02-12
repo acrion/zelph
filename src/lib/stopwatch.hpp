@@ -25,9 +25,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "zelph.hpp"
-
 #include <zelph_export.h>
+
+#include <cstdint>
+#include <string>
 
 namespace zelph::network
 {

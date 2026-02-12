@@ -52,7 +52,10 @@ StopWatch::StopWatch(const StopWatch& stopWatch)
 
 StopWatch& StopWatch::operator=(const StopWatch& stopWatch)
 {
-    *_pImpl = *stopWatch._pImpl; // memberwise copy of CImpl members (which include no pointers)
+    if (this != &stopWatch)
+    {
+        *_pImpl = *stopWatch._pImpl; // memberwise copy of CImpl members (which include no pointers)
+    }
     return *this;
 }
 

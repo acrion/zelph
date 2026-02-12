@@ -26,8 +26,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 
 #include "command_executor.hpp"
-#include "network.hpp"
-#include "platform_utils.hpp"
 #include "reasoning.hpp"
 #include "repl_state.hpp"
 #include "script_engine.hpp"
@@ -38,6 +36,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <fstream>
 #include <iostream>
+#include <memory>
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT
@@ -52,7 +51,7 @@ using boost::tokenizer;
 class console::Interactive::Impl
 {
 public:
-    Impl(Interactive* enclosing)
+    explicit Impl(Interactive* enclosing)
         : _n(new network::Reasoning([](const std::wstring& str, const bool)
                                     {
 #ifdef _WIN32
@@ -84,13 +83,13 @@ public:
         _script_engine->initialize();
 
         // Initialize CommandExecutor with references to our state
-        _command_executor.reset(new CommandExecutor(
+        _command_executor = std::make_unique<CommandExecutor>(
             _n,
             _script_engine.get(),
             _data_manager,
             _repl_state,
             [this](const std::wstring& line)
-            { _interactive->process(line); }));
+            { _interactive->process(line); });
     }
 
     ~Impl()
@@ -178,7 +177,7 @@ void console::Interactive::process_file(const std::wstring& file, const std::vec
     _pImpl->process_zelph_file(string::unicode::to_utf8(file), args);
 }
 
-std::string console::Interactive::get_version() const
+std::string console::Interactive::get_version()
 {
     return network::Zelph::get_version();
 }

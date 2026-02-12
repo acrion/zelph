@@ -26,12 +26,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "adjacency_set.hpp"
-#include "string_utils.hpp"
 
 #include <ankerl/unordered_dense.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <map>

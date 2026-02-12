@@ -62,9 +62,9 @@ namespace zelph
         private:
             void writer_loop() const;
 
-            std::pair<std::list<std::string>, std::wstring> convert_to_md(const std::wstring& message) const;
-            std::string                                     get_wikidata_id(const std::wstring& token, const std::string& lang) const;
-            std::string                                     get_template(const std::string& id) const;
+            static std::pair<std::list<std::string>, std::wstring> convert_to_md(const std::wstring& message);
+            std::string                                            get_wikidata_id(const std::wstring& token, const std::string& lang) const;
+            std::string                                            get_template(const std::string& id) const;
 
             static uint64_t hash_block(const std::vector<std::wstring>& block_lines);
 

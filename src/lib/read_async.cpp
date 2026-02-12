@@ -62,7 +62,7 @@ public:
         {
             std::lock_guard<std::mutex> lck(_mtx);
             _error_text = std::string("Could not open file '") + _file_name.string() + "' to get size";
-            _EOF        = true;
+            _eof        = true;
         }
     }
 
@@ -79,7 +79,7 @@ public:
     bool                    _compressed;
     std::thread             _t;
     std::queue<Entry>       _lines;
-    bool                    _EOF{false};
+    bool                    _eof{false};
     std::string             _error_text;
     std::mutex              _mtx;
     std::condition_variable _cv_not_empty;
@@ -112,7 +112,7 @@ bool ReadAsync::get_line(std::wstring& line, std::streamoff& streampos) const
 {
     std::unique_lock<std::mutex> lock(_pImpl->_mtx);
     _pImpl->_cv_not_empty.wait(lock, [&]
-                               { return !_pImpl->_lines.empty() || _pImpl->_EOF; });
+                               { return !_pImpl->_lines.empty() || _pImpl->_eof; });
 
     if (_pImpl->_lines.empty())
         return false;
@@ -132,9 +132,9 @@ void ReadAsync::Impl::put_line(Entry entry)
 {
     std::unique_lock<std::mutex> lock(_mtx);
     _cv_not_full.wait(lock, [&]
-                      { return _lines.size() < _sufficient_size || _EOF; });
+                      { return _lines.size() < _sufficient_size || _eof; });
 
-    if (_EOF) return;
+    if (_eof) return;
 
     _lines.push(std::move(entry));
     lock.unlock();
@@ -150,7 +150,7 @@ void ReadAsync::Impl::read_thread()
         {
             std::lock_guard<std::mutex> lck(_mtx);
             _error_text = "Could not open compressed file '" + _file_name.string() + "'";
-            _EOF        = true;
+            _eof        = true;
             _cv_not_empty.notify_all();
             _cv_not_full.notify_all();
             return;
@@ -166,7 +166,7 @@ void ReadAsync::Impl::read_thread()
         {
             std::lock_guard<std::mutex> lck(_mtx);
             _error_text = "BZ2_bzDecompressInit failed";
-            _EOF        = true;
+            _eof        = true;
             _cv_not_empty.notify_all();
             _cv_not_full.notify_all();
             return;
@@ -202,7 +202,7 @@ void ReadAsync::Impl::read_thread()
             {
                 std::lock_guard<std::mutex> lck(_mtx);
                 _error_text = "BZ2_bzDecompress error";
-                _EOF        = true;
+                _eof        = true;
                 BZ2_bzDecompressEnd(&strm);
                 _cv_not_empty.notify_all();
                 _cv_not_full.notify_all();
@@ -240,7 +240,7 @@ void ReadAsync::Impl::read_thread()
         {
             std::lock_guard<std::mutex> lck(_mtx);
             _error_text = std::string("Could not open file '") + _file_name.string() + "'";
-            _EOF        = true;
+            _eof        = true;
             _cv_not_empty.notify_all();
             _cv_not_full.notify_all();
             return;
@@ -259,7 +259,7 @@ void ReadAsync::Impl::read_thread()
 
     {
         std::lock_guard<std::mutex> lck(_mtx);
-        _EOF = true;
+        _eof = true;
     }
     _cv_not_empty.notify_all();
     _cv_not_full.notify_all();

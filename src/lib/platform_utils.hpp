@@ -27,10 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstddef>
 
-namespace zelph
+namespace zelph::platform
 {
-    namespace platform
-    {
-        size_t get_process_memory_usage();
-    }
+    size_t get_process_memory_usage();
 }

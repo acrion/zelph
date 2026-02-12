@@ -30,32 +30,29 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <string>
 #include <vector>
 
-namespace zelph
+namespace zelph::console
 {
-    namespace console
+    // The command-line interface (REPL). It manages user input, translates commands into operations
+    // on the DataManager or Zelph instance, and visualizes results. It holds the current state of
+    // how the data was loaded via the DataManager.
+    class ZELPH_EXPORT Interactive
     {
-        // The command-line interface (REPL). It manages user input, translates commands into operations
-        // on the DataManager or Zelph instance, and visualizes results. It holds the current state of
-        // how the data was loaded via the DataManager.
-        class ZELPH_EXPORT Interactive
-        {
-        public:
-            Interactive();
-            ~Interactive();
-            void        import_file(const std::wstring& file) const;
-            void        process(std::wstring line) const;
-            void        run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
-            std::string get_lang() const;
-            std::string get_version() const;
-            bool        is_auto_run_active() const;
-            void        process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
+    public:
+        Interactive();
+        ~Interactive();
+        void               import_file(const std::wstring& file) const;
+        void               process(std::wstring line) const;
+        void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
+        std::string        get_lang() const;
+        static std::string get_version();
+        bool               is_auto_run_active() const;
+        void               process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
 
-            Interactive(const Interactive&)            = delete;
-            Interactive& operator=(const Interactive&) = delete;
+        Interactive(const Interactive&)            = delete;
+        Interactive& operator=(const Interactive&) = delete;
 
-        private:
-            class Impl;
-            Impl* const _pImpl;
-        };
-    }
+    private:
+        class Impl;
+        Impl* const _pImpl;
+    };
 }

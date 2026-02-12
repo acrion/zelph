@@ -934,8 +934,8 @@ private:
     {
         if (cmd.size() < 2) throw std::runtime_error(std::string("Command ") + string::unicode::to_utf8(cmd[0]) + ": Missing node argument");
 
-        std::wstring  arg     = cmd[1];
-        network::Node base_nd = resolve_node(arg, _n->lang()); // same resolve logic as .node/.remove
+        const std::wstring& arg     = cmd[1];
+        network::Node       base_nd = resolve_node(arg, _n->lang()); // same resolve logic as .node/.remove
 
         if (base_nd == 0)
         {
@@ -969,8 +969,8 @@ private:
     {
         if (cmd.size() != 2) throw std::runtime_error("Command .remove requires exactly one argument: name or ID");
 
-        std::wstring  arg = cmd[1];
-        network::Node nd  = resolve_single_node(arg, true); // prioritize ID
+        const std::wstring& arg = cmd[1];
+        network::Node       nd  = resolve_single_node(arg, true); // prioritize ID
 
         if (nd == 0)
         {
@@ -1001,8 +1001,8 @@ private:
     void cmd_mermaid(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .mermaid: Missing node name to visualise");
-        std::wstring  arg = cmd[1];
-        network::Node nd  = resolve_single_node(arg, true);
+        const std::wstring& arg = cmd[1];
+        network::Node       nd  = resolve_single_node(arg, true);
         if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
         int max_depth = 3; // Default
         if (cmd.size() == 3)
@@ -1117,7 +1117,8 @@ private:
 
         _n->print(L"Ready.", true);
     }
-    void cmd_decode(const std::vector<std::wstring>& cmd)
+
+    static void cmd_decode(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() != 2)
             throw std::runtime_error("Command .decode requires exactly one argument: the input file path");
@@ -1270,8 +1271,8 @@ private:
         if (cmd.size() < 2 || cmd.size() > 3)
             throw std::runtime_error("Command .list-predicate-value-usage requires one required argument (<predicate>) and one optional (max entries)");
 
-        size_t       limit    = 0;
-        std::wstring pred_arg = cmd[1];
+        size_t              limit    = 0;
+        const std::wstring& pred_arg = cmd[1];
         if (cmd.size() == 3)
         {
             try
@@ -1311,7 +1312,7 @@ private:
         std::wstring pattern_str;
         for (size_t i = 1; i < cmd.size(); ++i)
         {
-            std::wstring token = cmd[i];
+            const std::wstring& token = cmd[i];
             // If it's a variable, keep as is (A). If not, quote it ("is") so PEG treats it as value.
             // Note: Since cmd is already tokenized by escaped_list_separator, quotes were stripped.
             // We re-add them for non-vars to be safe for parse_zelph_to_janet.
@@ -1424,7 +1425,7 @@ private:
         if (cmd.size() != 2)
             throw std::runtime_error("Command .save requires exactly one argument: the output file (must end with .bin)");
 
-        std::wstring file = cmd[1];
+        const std::wstring& file = cmd[1];
         if (!boost::algorithm::ends_with(file, L".bin"))
             throw std::runtime_error("Command .save: filename must end with '.bin'");
 
@@ -1435,7 +1436,7 @@ private:
     void cmd_import(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
-        std::wstring path = cmd[1];
+        const std::wstring& path = cmd[1];
         if (!boost::algorithm::ends_with(path, L".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
         import_file(path);
     }

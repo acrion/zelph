@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "network.hpp"
+#include "string_utils.hpp"
 #include "zelph.hpp"
 
 #include "zelph.capnp.h"
@@ -37,7 +38,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <kj/io.h>
 
 #include <cstdint>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>

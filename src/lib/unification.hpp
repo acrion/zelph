@@ -25,66 +25,60 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "string_utils.hpp"
 #include "thread_pool.hpp"
 #include "zelph.hpp"
 
 #include <atomic>
 #include <condition_variable>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <unordered_set>
 
-namespace zelph
+namespace zelph::network
 {
-    namespace network
+    class Unification
     {
-        class Unification
+    public:
+        Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool = nullptr);
+        std::shared_ptr<Variables> Next();
+        std::shared_ptr<Variables> Unequals();
+        bool                       uses_parallel() const { return _use_parallel; }
+
+        void wait_for_completion()
         {
-        public:
-            Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool = nullptr);
-            std::shared_ptr<Variables> Next();
-            std::shared_ptr<Variables> Unequals();
-            bool                       uses_parallel() const { return _use_parallel; }
+            if (!_use_parallel) return;
 
-            void wait_for_completion()
-            {
-                if (!_use_parallel) return;
+            std::unique_lock<std::mutex> lock(_queue_mtx);
+            _queue_cv.wait(lock, [this]
+                           { return _active_tasks.load() == 0; });
+        }
 
-                std::unique_lock<std::mutex> lock(_queue_mtx);
-                _queue_cv.wait(lock, [this]
-                               { return _active_tasks.load() == 0; });
-            }
+    private:
+        bool                       increment_fact_index();
+        std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const;
 
-        private:
-            bool                       increment_fact_index();
-            std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const;
+        Zelph* const               _n;
+        Node                       _parent;
+        std::shared_ptr<Variables> _variables;
+        std::shared_ptr<Variables> _unequals;
+        adjacency_set              _relation_list;
+        Node                       _relation_variable{0};
+        Node                       _subject{0};
+        adjacency_set              _objects;
 
-            Zelph* const               _n;
-            Node                       _parent;
-            std::shared_ptr<Variables> _variables;
-            std::shared_ptr<Variables> _unequals;
-            adjacency_set              _relation_list;
-            Node                       _relation_variable{0};
-            Node                       _subject{0};
-            adjacency_set              _objects;
+        // Parallel mode
+        ThreadPool*                            _pool{nullptr};
+        bool                                   _use_parallel{false};
+        std::queue<std::shared_ptr<Variables>> _match_queue;
+        std::mutex                             _queue_mtx;
+        std::condition_variable                _queue_cv;
+        std::atomic<size_t>                    _active_tasks{0};
+        std::vector<Node>                      _snapshot_vec;
 
-            // Parallel mode
-            ThreadPool*                            _pool{nullptr};
-            bool                                   _use_parallel{false};
-            std::queue<std::shared_ptr<Variables>> _match_queue;
-            std::mutex                             _queue_mtx;
-            std::condition_variable                _queue_cv;
-            std::atomic<size_t>                    _active_tasks{0};
-            std::vector<Node>                      _snapshot_vec;
-
-            // Sequential fallback
-            adjacency_set::iterator _relation_index;
-            adjacency_set::iterator _fact_index;
-            adjacency_set           _facts_snapshot;
-            bool                    _fact_index_initialized{false};
-        };
-    }
+        // Sequential fallback
+        adjacency_set::iterator _relation_index;
+        adjacency_set::iterator _fact_index;
+        adjacency_set           _facts_snapshot;
+        bool                    _fact_index_initialized{false};
+    };
 }
