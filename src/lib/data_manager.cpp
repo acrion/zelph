@@ -49,7 +49,7 @@ namespace zelph::console
         {
             if (!fs::exists(input_path))
             {
-                return std::filesystem::path();
+                return {};
             }
             return input_path;
         }
@@ -79,7 +79,7 @@ namespace zelph::console
         if (fs::exists(candidate_bz2)) return candidate_bz2;
 
         // Source not found.
-        return std::filesystem::path();
+        return {};
     }
 
     std::shared_ptr<DataManager> DataManager::create(network::Zelph* n, const std::filesystem::path& input_path)

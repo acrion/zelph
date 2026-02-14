@@ -27,7 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "platform_utils.hpp"
 #include "read_async.hpp"
-#include "stopwatch.hpp"
 #include "string_utils.hpp"
 
 #include <capnp/message.h>
@@ -170,7 +169,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
         const unsigned int          num_threads = std::thread::hardware_concurrency();
         std::atomic<unsigned int>   active_threads{num_threads};
         std::vector<std::thread>    workers;
-#ifdef _DEBUG
+#ifndef NDEBUG
         const bool log = true;
 #else
         const bool log = false;
@@ -231,8 +230,8 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
                 if (elapsed_seconds > 0 && current_bytes > 0)
                 {
-                    speed       = static_cast<double>(current_bytes) / elapsed_seconds;
-                    eta_seconds = static_cast<int>((static_cast<double>(total_size) - current_bytes) / speed);
+                    speed       = static_cast<double>(current_bytes) / static_cast<double>(elapsed_seconds);
+                    eta_seconds = static_cast<int>(static_cast<double>(total_size - current_bytes) / speed);
                 }
 
                 size_t current_memory = zelph::platform::get_process_memory_usage();
@@ -333,10 +332,10 @@ std::vector<std::wstring> extract_ids(const std::wstring& str, const std::wstrin
         size_t start = str.find(id_tag, pos);
         if (start == std::wstring::npos) break;
         start += id_tag.size();
-        size_t end = str.find(L"\"", start);
+        size_t end = str.find(L'\"', start);
         if (end == std::wstring::npos) break;
         std::wstring id = str.substr(start, end - start);
-        if (id.find(L"$") == std::wstring::npos)
+        if (id.find(L'$') == std::wstring::npos)
         {
             ids.push_back(id);
         }
@@ -368,7 +367,7 @@ std::map<std::wstring, ConstraintInfo> get_supported_constraints()
             {
                 return L"# No P2306 (conflict property) found";
             }
-            std::wstring conflict_p = conflict_props[0]; // e.g. "P31"
+            const std::wstring& conflict_p = conflict_props[0]; // e.g. "P31"
 
             // Extract conflict values from P2305 (can be multiple or none)
             auto conflict_qs = extract_ids(json, L"\"P2305\"");
@@ -451,8 +450,8 @@ std::map<std::wstring, ConstraintInfo> get_supported_constraints()
             if (numeric_start == std::wstring::npos) return L"# No second numeric-id found for qualifier";
 
             numeric_start += numeric_id_tag.size();
-            size_t numeric_end = json.find(L",", numeric_start);
-            if (numeric_end == std::wstring::npos) numeric_end = json.find(L"}", numeric_start);
+            size_t numeric_end = json.find(L',', numeric_start);
+            if (numeric_end == std::wstring::npos) numeric_end = json.find(L'}', numeric_start);
 
             if (numeric_end == std::wstring::npos) return L"# Invalid numeric-id end";
 
@@ -549,7 +548,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
             if (type_start != std::wstring::npos)
             {
                 type_start += mainsnak_type_tag.size();
-                size_t type_end = stmt_json.find(L",", type_start);
+                size_t type_end = stmt_json.find(L',', type_start);
                 if (type_end != std::wstring::npos)
                 {
                     std::wstring numeric_id     = stmt_json.substr(type_start, type_end - type_start);
@@ -624,7 +623,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
                     if (descriptions == std::wstring::npos || language0 < descriptions)
                     {
-                        id1                         = line.find(L"\"", language0 + language_tag.size() + 1);
+                        id1                         = line.find(L'\"', language0 + language_tag.size() + 1);
                         name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
                     }
                 }
@@ -640,7 +639,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
     while ((property0 = line.find(property_tag, id1 + 1)) != std::wstring::npos)
     {
-        size_t       property1    = line.find(L"\"", property0 + property_tag.size());
+        size_t       property1    = line.find(L'\"', property0 + property_tag.size());
         std::wstring property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
 
         if (property_str.empty() || property_str[0] != L'P')
@@ -670,7 +669,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                 if (line.substr(id0 + 1, object_tag.size()) == object_tag)
                 {
                     id0 += object_tag.size() + 1;
-                    id1                     = line.find(L"\"", id0);
+                    id1                     = line.find(L'\"', id0);
                     std::wstring object_str = line.substr(id0, id1 - id0);
 
                     Node object_node_handle = 0;
@@ -762,7 +761,7 @@ void Wikidata::process_entry(const std::wstring& line, const std::string& additi
 
     if (id0 != std::wstring::npos)
     {
-        size_t       id1 = line.find(L"\"", id0 + id_tag.size() + 1);
+        size_t       id1 = line.find(L'\"', id0 + id_tag.size() + 1);
         std::wstring id_str(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
 
         if (export_constraints)

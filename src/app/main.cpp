@@ -26,7 +26,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "string_utils.hpp"
 
-#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -65,7 +64,7 @@ int main(int argc, char** argv)
 #ifdef _WIN32
             std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
 #else
-            std::cout << "zelph " << interactive.get_version() << std::endl;
+            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
 #endif
             return 0;
         }
@@ -83,7 +82,7 @@ int main(int argc, char** argv)
             if (script_files.empty())
                 std::wcout << L"You may specify script files that will be processed before entering interactive mode." << std::endl;
 #else
-            std::cout << "zelph " << interactive.get_version() << std::endl;
+            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
 #endif
 
             std::wcout << L"-- REPL mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;

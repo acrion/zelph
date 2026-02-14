@@ -27,14 +27,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 #include "zelph_impl.hpp"
 
-#include <chrono>
 #include <iostream>
 #include <unordered_set>
 #include <vector>
 
 using namespace zelph::network;
 
-#ifdef _DEBUG
+#ifndef NDEBUG
     #include <string>
 static void u_log(int depth, const std::string& msg)
 {
@@ -178,7 +177,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
     //    if (depth > 50) return false; // Hard limit fallback
     if (rule_node == 0 || graph_node == 0) return false;
 
-#ifdef _DEBUG
+#ifndef NDEBUG
     U_LOG(depth, "Comparing " + u_node_str(n, rule_node) + " vs " + u_node_str(n, graph_node));
 #endif
 
@@ -218,7 +217,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             }
 
             local_bindings[rule_node] = graph_node;
-#ifdef _DEBUG
+#ifndef NDEBUG
             U_LOG(depth, "  -> Bound " + u_node_str(n, rule_node) + " to " + u_node_str(n, graph_node));
 #endif
             result = true;
@@ -375,7 +374,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     _fact_index_initialized = false;
 
 // Optimization for Release mode only: Subject/Object Driven Indexing
-#ifndef _DEBUG
+#ifdef NDEBUG
     // parallel only with fixed relation
     // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
     bool subject_is_bound = false;
@@ -487,7 +486,7 @@ bool Unification::increment_fact_index()
             bool optimized_snapshot = false;
             Node current_rel        = *_relation_index;
 
-#ifndef _DEBUG
+#ifdef NDEBUG
             // Check if Subject is bound
             Node s = _subject;
             if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);

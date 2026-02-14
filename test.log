@@ -18,12 +18,12 @@ Answer:  3   in  < 1   2   3 >
 Answer:  2   in  < 1   2   3 >
 Answer:  1   in  < 1   2   3 >
 B  in  < 1   2   3 >
+Answer:  1   in  < 1   2   3 >
 Answer:  2   in  < 1   2   3 >
 Answer:  3   in  < 1   2   3 >
-Answer:  1   in  < 1   2   3 >
  nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
  nested_seq_in_set   holds  {< setElem1   setElem2 > < setElem3   setElem4 >}
- container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z)>
+ container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(X  ancestor  Y) (Y  ancestor  Z)} => (X  ancestor  Z)>
  mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
 _Variable  with_underscore  _V
  quoted_sequence   ~  < a   b   c >
@@ -38,15 +38,29 @@ Answer:  tim   ancestor   tom
 ( 4   +   5 )  =   9 
 ( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
-{(A  instanceof  B) ( a   subclassof  B)} =>  ! 
+{( a   subclassof  B) (A  instanceof  B)} =>  ! 
  gene   instanceof   geneclass 
  gene   subclassof   geneclass 
 {(B  followed-by  D) (C  followed-by  E) ((A  +  B)  =  C)} => ((A  +  D)  =  E)
 (A  followed-by  B) => { 1 }  +  A  =  B
 { 0 }  followed-by  { 1 }
-{ 1 }  +  { 0 }  =  { 1 } ⇐ { 0 }  followed-by  { 1 }
- test  { 1 } { 0 } ⇐ { 1 }  +  { 0 }  =  { 1 }
+(A  is   human ) => (B  nameof  A)
+ tim   is   human 
+ elem1  -->  elem2 
+ elem2  -->  elem3 
+ elem3  -->  elem4 
+ elem4  -->  elem5 
+ elem1   partoflist   mylist 
+ elem2   partoflist   mylist 
+ elem3   partoflist   mylist 
+ elem4   partoflist   mylist 
+ elem5   partoflist   mylist 
+{ negation  (A  partoflist  L)} => (A  is last of  L)
+ ??   nameof   tim  ⇐  tim   is   human 
  test   4   5  ⇐ ( 4   +   5 )  =   9 
- success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
- tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
+ elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
+ tim   ancestor   paul  ⇐ {( tim   ancestor   tom ) ( tom   ancestor   paul )}
+{ 1 }  +  { 0 }  =  { 1 } ⇐ { 0 }  followed-by  { 1 }
  6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+ success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
+ test  { 1 } { 0 } ⇐ { 1 }  +  { 0 }  =  { 1 }

@@ -507,7 +507,7 @@ namespace zelph
                 return it->second;
             }
 
-#ifndef _DEBUG
+#ifdef NDEBUG
         protected:
 #endif
             adjacency_map _left;
@@ -520,7 +520,7 @@ namespace zelph
             mutable std::shared_mutex   _smtx_left;
             mutable std::shared_mutex   _smtx_right;
 
-#ifndef _DEBUG
+#ifdef NDEBUG
         private:
 #endif
             static constexpr Node shift_inc           = 5;

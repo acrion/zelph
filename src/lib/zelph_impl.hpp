@@ -107,13 +107,13 @@ namespace zelph
                         }
                         _left[pair.getNode()] = std::move(adj);
                     }
-#ifdef _DEBUG
+#ifndef NDEBUG
                     std::cerr << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size() << std::endl;
 #else
                     std::cerr << "." << std::flush;
 #endif
                 }
-#ifndef _DEBUG
+#ifdef NDEBUG
                 std::cerr << std::endl;
 #endif
 
@@ -137,13 +137,13 @@ namespace zelph
                         }
                         _right[pair.getNode()] = std::move(adj);
                     }
-#ifdef _DEBUG
+#ifndef NDEBUG
                     std::cerr << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size() << std::endl;
 #else
                     std::cerr << "." << std::flush;
 #endif
                 }
-#ifndef _DEBUG
+#ifdef NDEBUG
                 std::cerr << std::endl;
 #endif
             }
@@ -384,13 +384,13 @@ namespace zelph
                                 std::cerr << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey() << std::endl;
                             }
                         }
-#ifdef _DEBUG
+#ifndef NDEBUG
                         std::cerr << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount << std::endl;
 #else
                         std::cerr << "." << std::flush;
 #endif
                     }
-#ifndef _DEBUG
+#ifdef NDEBUG
                     std::cerr << std::endl;
 #endif
 
@@ -416,13 +416,13 @@ namespace zelph
                                 std::cerr << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue() << std::endl;
                             }
                         }
-#ifdef _DEBUG
+#ifndef NDEBUG
                         std::cerr << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount << std::endl;
 #else
                         std::cerr << "." << std::flush;
 #endif
                     }
-#ifndef _DEBUG
+#ifdef NDEBUG
                     std::cerr << std::endl;
 #endif
                 }

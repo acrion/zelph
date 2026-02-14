@@ -208,7 +208,7 @@ bool Reasoning::is_negated_condition(Node condition)
 {
     if (!_pImpl->exists(condition))
     {
-#ifdef _DEBUG
+#ifndef NDEBUG
         std::clog << "[NEG-CHECK] condition " << condition << " does not exist!" << std::endl;
 #endif
         return false;
@@ -217,7 +217,7 @@ bool Reasoning::is_negated_condition(Node condition)
     Answer ans    = check_fact(condition, core.IsA, {core.Negation});
     bool   result = ans.is_known();
 
-#ifdef _DEBUG
+#ifndef NDEBUG
     std::clog << "[NEG-CHECK] condition=" << condition
               << " name='" << string::unicode::to_utf8(get_name(condition, _lang, true))
               << "' IsA Negation? " << (result ? "YES" : "NO")
@@ -782,7 +782,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
     Node condition = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
 
-#ifdef _DEBUG
+#ifndef NDEBUG
     std::clog << "[DEBUG evaluate] Processing condition node: " << condition << std::endl;
 #endif
 
@@ -810,7 +810,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
     if (is_conjunction)
     {
-#ifdef _DEBUG
+#ifndef NDEBUG
         std::clog << "[DEBUG evaluate] Node " << condition << " identified as Conjunction Set." << std::endl;
 #endif
         // It is a Conjunction Set.
@@ -831,7 +831,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 // Verify that 'condition' is indeed one of the objects (it should be, since we found 'rel' via get_right(condition))
                 if (element && objs.count(condition) == 1)
                 {
-#ifdef _DEBUG
+#ifndef NDEBUG
                     std::clog << "[DEBUG evaluate] Found element of conjunction: " << element << " (via relation " << rel << ")" << std::endl;
 #endif
                     sub_conditions.insert(element);
@@ -866,7 +866,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
         }
         else
         {
-#ifdef _DEBUG
+#ifndef NDEBUG
             std::clog << "[DEBUG evaluate] Conjunction set " << condition << " appears empty or malformed." << std::endl;
 #endif
         }
@@ -874,7 +874,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
     else
     {
         // Leaf Condition (Atomic Fact)
-#ifdef _DEBUG
+#ifndef NDEBUG
         std::clog << "[DEBUG evaluate] Processing leaf condition: " << condition << std::endl;
 #endif
         bool is_negated = is_negated_condition(condition);
@@ -980,7 +980,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
             // No match => negation succeeds => continue with current bindings
 
-#ifdef _DEBUG
+#ifndef NDEBUG
             std::clog << "[NEG-EVAL] === Processing negated condition ===" << std::endl;
             std::clog << "[NEG-EVAL] condition=" << condition << std::endl;
 
@@ -1011,7 +1011,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
             if (match)
             {
-#ifdef _DEBUG
+#ifndef NDEBUG
                 std::clog << "[NEG-EVAL] MATCH FOUND => negation FAILS. Bindings:" << std::endl;
                 for (const auto& [var, val] : *match)
                 {
@@ -1025,7 +1025,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 // Match found => negation fails => prune this branch
                 return;
             }
-#ifdef _DEBUG
+#ifndef NDEBUG
             std::clog << "[NEG-EVAL] NO MATCH => negation SUCCEEDS" << std::endl;
 #endif
 

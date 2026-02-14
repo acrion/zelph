@@ -91,9 +91,9 @@ std::string StopWatch::format() const
     double total_seconds = static_cast<double>(duration()) / 1000.0;
 
     long   hours             = static_cast<long>(total_seconds / 3600);
-    double remaining_seconds = total_seconds - hours * 3600.0;
+    double remaining_seconds = total_seconds - static_cast<double>(hours) * 3600.0;
     long   minutes           = static_cast<long>(remaining_seconds / 60);
-    double seconds           = remaining_seconds - minutes * 60.0;
+    double seconds           = remaining_seconds - static_cast<double>(minutes) * 60.0;
 
     std::ostringstream oss;
     oss << hours << "h" << minutes << "m"

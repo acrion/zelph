@@ -61,3 +61,17 @@ gene subclassof geneclass
 # numbers
 (A followed-by B) => ((<1> + A) = B)
 <0> followed-by <1>
+
+(A is human) => (B nameof A)
+tim is human
+
+elem1 --> elem2
+elem2 --> elem3
+elem3 --> elem4
+elem4 --> elem5
+elem1 partoflist mylist
+elem2 partoflist mylist
+elem3 partoflist mylist
+elem4 partoflist mylist
+elem5 partoflist mylist
+(*{(A partoflist L) (*(A --> X) ~ negation)} ~ conjunction) => (A "is last of" L)

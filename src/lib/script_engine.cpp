@@ -194,7 +194,7 @@ public:
                 :raw-atom (capture (some :symchars))
 
                 # Multi-char Arrows containing reserved chars (must be checked before raw-atom/ops)
-                :arrow-multi (capture (choice "=>" "->" "<=>" "<=" ">="))
+                :arrow-multi (capture (choice "=>" "->" "-->" "<=>" "<=" ">="))
 
                 # Single-char Operators (from reserved set)
                 :op-single (capture (choice ">" "<"))
