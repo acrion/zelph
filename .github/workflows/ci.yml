@@ -81,11 +81,18 @@ jobs:
         run: echo "EXTRA_FLAGS=" >> $GITHUB_ENV
 
       - name: Configure CMake
+        env:
+          CC: ${{ matrix.name == 'linux-arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX: ${{ matrix.name == 'linux-arm64' && 'aarch64-linux-gnu-g++' || '' }}
+          QEMU_LD_PREFIX: ${{ matrix.name == 'linux-arm64' && '/usr/aarch64-linux-gnu' || '' }}
         run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S .
 
       - name: Build zelph
         env:
-          QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
+          QEMU_LD_PREFIX: ${{ matrix.name == 'linux-arm64' && '/usr/aarch64-linux-gnu' || '' }}
+          CC: ${{ matrix.name == 'linux-arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX: ${{ matrix.name == 'linux-arm64' && 'aarch64-linux-gnu-g++' || '' }}
+          AR: ${{ matrix.name == 'linux-arm64' && 'aarch64-linux-gnu-ar' || '' }}
         run: cmake --build build --config Release
 
       - name: Package build artifacts (Zip)
