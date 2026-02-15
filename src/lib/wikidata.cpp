@@ -634,6 +634,11 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
     size_t                    property0;
     static const std::wstring property_tag(LR"(":[{"mainsnak":{"snaktype":"value","property":")");
+    static const std::wstring numeric_id_tag(LR"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
+    static const std::wstring object_tag(LR"("id":")");
+    // Prefix shared by all claims in a property array
+    static const std::wstring mainsnak_value_prefix(LR"("mainsnak":{"snaktype":"value","property":")");
+
 #ifdef SINGLE_THREADED_IMPORT
     std::unique_lock lock(_pImpl->_mtx_network, std::defer_lock);
 #endif
@@ -648,11 +653,20 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
             throw std::runtime_error("Invalid property '" + string::unicode::to_utf8(property_str) + "' in " + string::unicode::to_utf8(line));
         }
 
-        static const std::wstring numeric_id_tag(LR"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
+        // Pattern to match each claim's mainsnak item value for this property.
+        // This matches: "mainsnak":{"snaktype":"value","property":"Pxxx","datavalue":{"value":{"entity-type":"item","numeric-id":
+        // It does not match qualifier or reference snaks (they lack the "mainsnak":{} wrapper).
+        std::wstring claim_value_tag = mainsnak_value_prefix + property_str + numeric_id_tag;
 
-        if (line.substr(property1, numeric_id_tag.size()) == numeric_id_tag)
+        // Boundary: start of the next property's array (next property_tag occurrence)
+        size_t next_property0 = line.find(property_tag, property0 + property_tag.size());
+        size_t boundary       = (next_property0 != std::wstring::npos) ? next_property0 : line.size();
+
+        size_t search_pos = property0;
+
+        while ((search_pos = line.find(claim_value_tag, search_pos)) != std::wstring::npos && search_pos < boundary)
         {
-            size_t id0 = property1 + numeric_id_tag.size();
+            size_t id0 = search_pos + claim_value_tag.size();
 
             bool success = true;
             while (++id0 < line.size() && line[id0] != L',')
@@ -666,14 +680,11 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
             if (success)
             {
-                static const std::wstring object_tag(LR"("id":")");
                 if (line.substr(id0 + 1, object_tag.size()) == object_tag)
                 {
                     id0 += object_tag.size() + 1;
                     id1                     = line.find(L'\"', id0);
                     std::wstring object_str = line.substr(id0, id1 - id0);
-
-                    Node object_node_handle = 0;
 
                     try
                     {
@@ -691,10 +702,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                             }
                         }
 
-                        if (object_node_handle == 0)
-                        {
-                            object_node_handle = _pImpl->_n->node(object_str, "wikidata");
-                        }
+                        Node object_node_handle = _pImpl->_n->node(object_str, "wikidata");
 
                         auto fact = _pImpl->_n->fact(
                             subject,
@@ -705,30 +713,30 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                         {
                             std::wstring output;
                             _pImpl->_n->format_fact(output, "en", fact, 3);
-                            _pImpl->_n->print(id_str + L":       en> " + output, false);
+                            _pImpl->_n->print(id_str + L":       en> " + output, true);
                             _pImpl->_n->format_fact(output, "wikidata", fact, 3);
-                            _pImpl->_n->print(id_str + L": wikidata> " + output, false);
+                            _pImpl->_n->print(id_str + L": wikidata> " + output, true);
                         }
                     }
                     catch (std::exception& ex)
                     {
                         _pImpl->_n->print(string::unicode::from_utf8(ex.what()), true);
                     }
+
+                    search_pos = id1;
                 }
                 else
                 {
-                    id1 = id0 + object_tag.size() + 1;
+                    search_pos = id0 + 1;
                 }
             }
             else
             {
-                id1 = property1 + numeric_id_tag.size();
+                search_pos = id0;
             }
         }
-        else
-        {
-            id1 += property_tag.size();
-        }
+
+        id1 = (next_property0 != std::wstring::npos) ? next_property0 - 1 : line.size() - 1;
     }
 
     if (subject == 0)
@@ -817,7 +825,7 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
     std::streamoff compressed_pos     = 0;
     size_t         decompressed_bytes = 0;
 
-    const std::string id_tag = "\"id\":\"";
+    const std::string id_tag = R"("id":")";
     std::string       line;
     std::streamoff    streampos;
 
@@ -842,7 +850,7 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
                     std::ofstream out(filename, std::ios::binary);
                     if (out)
                     {
-                        out.write(line.data(), line.size());
+                        out.write(line.data(), static_cast<std::streamsize>(line.size()));
                         out << '\n';
                         found++;
                         remaining.erase(it);
@@ -856,19 +864,19 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
         if (std::chrono::duration<double>(now - last_update).count() >= 1.0)
         {
             // Percentage based on file position (Compressed)
-            double percent = total_compressed_size ? 100.0 * compressed_pos / total_compressed_size : 0.0;
+            double percent = total_compressed_size ? 100.0 * static_cast<double>(compressed_pos) / static_cast<double>(total_compressed_size) : 0.0;
 
             // Speed based on throughput (Decompressed)
             auto   elapsed_sec = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-            double speed_mib   = elapsed_sec ? (decompressed_bytes / (1024.0 * 1024.0 * elapsed_sec)) : 0.0;
+            double speed_mib   = elapsed_sec ? (static_cast<double>(decompressed_bytes) / (1024.0 * 1024.0 * static_cast<double>(elapsed_sec))) : 0.0;
 
             // ETA based on PERCENTAGE (reliable) vs Time
             // If we did X% in Y seconds, we need (100-X)% more time.
             int eta = 0;
             if (percent > 0 && elapsed_sec > 0)
             {
-                double total_time_est = elapsed_sec / (percent / 100.0);
-                eta                   = static_cast<int>(total_time_est - elapsed_sec);
+                double total_time_est = static_cast<double>(elapsed_sec) / (percent / 100.0);
+                eta                   = static_cast<int>(total_time_est - static_cast<double>(elapsed_sec));
             }
 
             std::clog << "Progress: " << std::fixed << std::setprecision(2) << percent << "% "

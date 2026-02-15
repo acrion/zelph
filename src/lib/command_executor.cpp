@@ -698,7 +698,7 @@ private:
             {L".load", L".load <file>\n"
                        L"Loads a previously saved network state.\n"
                        L"- If <file> ends with '.bin': loads the serialized network directly (fast).\n"
-                       L"- If <file> ends with '.json' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
+                       L"- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
                        L"  in the same directory for faster future loads."},
 
             {L".save", L".save <file.bin>\n"

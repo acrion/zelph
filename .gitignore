@@ -63,3 +63,4 @@ perf.data
 constraints*/
 load.log
 /*.json
+/*.bin

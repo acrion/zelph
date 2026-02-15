@@ -924,6 +924,8 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     }
 }
 
+// #define DEBUG_FORMAT_FACT
+
 void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
 {
     // Formats a fact into a string representation.
@@ -937,7 +939,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     };
 
     IncDec incDec(_pImpl->_format_fact_level);
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
     std::string indent(_pImpl->_format_fact_level * 2, ' ');
     std::clog << indent << "[DEBUG format_fact] ENTRY fact=" << fact << " parent=" << parent << std::endl;
 #endif
@@ -963,7 +965,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (history->find(resolved) != history->end())
     {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
 #endif
         result = L"?";
@@ -975,7 +977,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     std::wstring name = get_formatted_name(resolved, lang);
     if (!name.empty())
     {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] Found name '" << string::unicode::to_utf8(name) << "' for node " << resolved << std::endl;
 #endif
         result = string::mark_identifier(name);
@@ -1016,7 +1018,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (!elements.empty())
     {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] DETECTED CONTAINER with " << elements.size() << " elements." << std::endl;
 #endif
         history->insert(resolved);
@@ -1056,7 +1058,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         }
 
         bool is_sequence = !sequence_next.empty();
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] Container type: " << (is_sequence ? "SEQUENCE" : "SET") << std::endl;
 #endif
         std::vector<Node> sorted_elements;
@@ -1148,14 +1150,14 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                     // Avoid self-reference loops
                     if (concept_node != resolved)
                     {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
                         std::clog << indent << "[DEBUG format_fact] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
                         format_fact(result, lang, concept_node, max_objects, variables, parent, history);
 
                         if (!result.empty() && result != L"?")
                         {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
                             std::clog << indent << "[DEBUG format_fact] Proxy resolved to: " << string::unicode::to_utf8(result) << std::endl;
 #endif
                             return;
@@ -1169,7 +1171,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     // 5. Standard Fact Formatting (S P O)
     // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
     std::clog << indent << "[DEBUG format_fact] Standard path (Statement/Fact)." << std::endl;
 #endif
 
@@ -1178,13 +1180,13 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     bool is_condition = false;
 
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
     std::clog << indent << "[DEBUG format_fact] parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
 #endif
 
     if (subject == 0 && !is_condition)
     {
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] INVALID: Subject is 0 and not condition. Returning '??'" << std::endl;
 #endif
         result = string::mark_identifier(L"??");
@@ -1283,7 +1285,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");
     boost::trim(result);
-#ifndef NDEBUG
+#ifdef DEBUG_FORMAT_FACT
     std::clog << indent << "[DEBUG format_fact] EXIT result='" << string::unicode::to_utf8(result) << "'" << std::endl;
 #endif
 }
