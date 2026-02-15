@@ -33,11 +33,19 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up QEMU
+        if: matrix.name == 'linux-arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Install dependencies (Linux Global)
         if: runner.os == 'Linux'
         run: |
           sudo apt update
           sudo apt install clang lld meson ninja-build -y
+          clang --version
+          ld.lld --version
 
       - name: Install Cross-Compilation dependencies (Linux ARM64)
         if: matrix.name == 'linux-arm64'
