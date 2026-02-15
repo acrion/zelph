@@ -149,6 +149,8 @@ private:
         { cmd_import(c); };
         _command_map[L".auto-run"] = [this](auto& c)
         { cmd_auto_run(c); };
+        _command_map[L".export-wikidata"] = [this](auto& c)
+        { cmd_export_wikidata(c); };
     }
 
     // --- Helpers ---
@@ -581,6 +583,7 @@ private:
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
             L".auto-run                   – Toggle automatic execution of .run after each input",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
+            L".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
             L"",
             L"Type \".help <command>\" for detailed information about a specific command."};
 
@@ -735,7 +738,13 @@ private:
 
             {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                        L"Processes the Wikidata dump and exports constraint scripts\n"
-                                       L"to the specified output directory."}};
+                                       L"to the specified output directory."},
+
+            {L".export-wikidata", L".export-wikidata <wikidata-dump.json> <Qid1> [Qid2 ...]\n"
+                                  L"Extracts the exact JSON line for each given Wikidata ID (Q…)\n"
+                                  L"from the dump and writes it to <id>.json in the current directory.\n"
+                                  L"The dump can be .json or .json.bz2.\n"
+                                  L"No import, no .bin cache, no network – pure extraction."}};
 
         if (cmd[0] == L".help")
         {
@@ -1215,6 +1224,23 @@ private:
         }
 
         _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+    }
+    void cmd_export_wikidata(const std::vector<std::wstring>& cmd)
+    {
+        if (cmd.size() < 3)
+            throw std::runtime_error("Usage: .export-wikidata <wikidata-dump.json> <Q...> [Q...]");
+
+        const std::wstring&       json_file = cmd[1];
+        std::vector<std::wstring> ids(cmd.begin() + 2, cmd.end());
+
+        auto dm       = DataManager::create(_n, json_file);
+        auto wikidata = std::dynamic_pointer_cast<Wikidata>(dm);
+
+        if (!wikidata)
+            throw std::runtime_error("File is not recognized as Wikidata JSON (no matching .json/.json.bz2 found).");
+
+        wikidata->export_entities(ids);
+        _n->print(L"Export finished. *.json files are in the current directory.", true);
     }
     void cmd_list_rules(const std::vector<std::wstring>&)
     {

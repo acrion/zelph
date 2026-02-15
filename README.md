@@ -146,6 +146,7 @@ Key commands include:
 - `.stat`                    – Show network statistics (nodes, RAM usage, name entries, languages, rules)
 - `.auto-run`                – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
+- `.export-wikidata <json> <id1> [id2 ...]` – Extracts exact JSON lines for Q-IDs (no import)
 
 ### What’s Next?
 

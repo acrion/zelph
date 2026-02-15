@@ -43,6 +43,13 @@ namespace zelph::console
         void     import_all(const std::string& constraints_dir = "");
         void     set_logging(bool do_log) override;
         DataType get_type() const override { return DataType::Wikidata; }
+        /**
+         * @brief Extracts the exact JSON lines for the given Wikidata IDs
+         *        (Q…) from the dump and writes them as <id>.json
+         *        into the current working directory.
+         *        No import, no cache, no network activity.
+         */
+        void export_entities(const std::vector<std::wstring>& entity_ids);
 
     private:
         void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);

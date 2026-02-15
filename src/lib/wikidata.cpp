@@ -44,6 +44,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 using namespace zelph::console;
@@ -154,7 +155,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
             _pImpl->_n->print(L"Importing file " + _pImpl->_original_source_path.wstring(), true);
         }
 
-        ReadAsync read_async(_pImpl->_original_source_path, 100000);
+        ReadAsync read_async(_pImpl->_original_source_path, 1000); // 1000 lines buffer
         if (!read_async.error_text().empty())
         {
             throw std::runtime_error(read_async.error_text());
@@ -781,4 +782,107 @@ void Wikidata::process_entry(const std::wstring& line, const std::string& additi
 void Wikidata::set_logging(bool do_log)
 {
     _pImpl->_logging = do_log;
+}
+
+void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
+{
+    if (entity_ids.empty()) return;
+
+    std::unordered_set<std::string> remaining;
+    for (const auto& wid : entity_ids)
+        remaining.insert(string::unicode::to_utf8(wid));
+    const size_t total_requested = remaining.size();
+
+    const auto& source = _pImpl->_original_source_path;
+    if (source.empty() || !std::filesystem::exists(source))
+        throw std::runtime_error("No original Wikidata JSON found.");
+
+    std::clog << "Exporting " << total_requested << " entities from " << source << " ..." << std::endl;
+
+    // Buffer size doesn't matter much with batching, just needs to be enough to keep busy
+    ReadAsync read_async(source, 100);
+
+    if (!read_async.error_text().empty())
+        throw std::runtime_error(read_async.error_text());
+
+    // Total size of the compressed file
+    const std::streamsize total_compressed_size = read_async.get_total_size();
+
+    auto start_time  = std::chrono::steady_clock::now();
+    auto last_update = start_time;
+
+    size_t found = 0;
+
+    // Track BOTH compressed pos (for %) and decompressed bytes (for Speed)
+    std::streamoff compressed_pos     = 0;
+    size_t         decompressed_bytes = 0;
+
+    const std::string id_tag = "\"id\":\"";
+    std::string       line;
+    std::streamoff    streampos;
+
+    while (read_async.get_line_utf8(line, streampos))
+    {
+        compressed_pos = streampos;
+        decompressed_bytes += line.size() + 1; // +1 for newline
+
+        // Fast string search
+        size_t id_pos = line.find(id_tag);
+        if (id_pos != std::string::npos)
+        {
+            size_t s = id_pos + id_tag.size();
+            size_t e = line.find('\"', s);
+            if (e != std::string::npos)
+            {
+                std::string id_str = line.substr(s, e - s);
+                auto        it     = remaining.find(id_str);
+                if (it != remaining.end())
+                {
+                    std::string   filename = id_str + ".json";
+                    std::ofstream out(filename, std::ios::binary);
+                    if (out)
+                    {
+                        out.write(line.data(), line.size());
+                        out << '\n';
+                        found++;
+                        remaining.erase(it);
+                        std::clog << "→ " << filename << std::endl;
+                    }
+                }
+            }
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration<double>(now - last_update).count() >= 1.0)
+        {
+            // Percentage based on file position (Compressed)
+            double percent = total_compressed_size ? 100.0 * compressed_pos / total_compressed_size : 0.0;
+
+            // Speed based on throughput (Decompressed)
+            auto   elapsed_sec = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            double speed_mib   = elapsed_sec ? (decompressed_bytes / (1024.0 * 1024.0 * elapsed_sec)) : 0.0;
+
+            // ETA based on PERCENTAGE (reliable) vs Time
+            // If we did X% in Y seconds, we need (100-X)% more time.
+            int eta = 0;
+            if (percent > 0 && elapsed_sec > 0)
+            {
+                double total_time_est = elapsed_sec / (percent / 100.0);
+                eta                   = static_cast<int>(total_time_est - elapsed_sec);
+            }
+
+            std::clog << "Progress: " << std::fixed << std::setprecision(2) << percent << "% "
+                      << (compressed_pos / (1024 * 1024)) << " MiB (cmp)"
+                      << " | Speed: " << std::fixed << std::setprecision(1) << speed_mib << " MiB/s (dec)"
+                      << " | ETA: " << (eta / 3600) << "h " << ((eta % 3600) / 60) << "m " << (eta % 60) << "s"
+                      << " | Found: " << found << "/" << total_requested << std::endl;
+
+            last_update = now;
+        }
+
+        if (remaining.empty()) break;
+    }
+
+    // ... (rest same) ...
+    std::clog << "Export completed." << std::endl;
 }

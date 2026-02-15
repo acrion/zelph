@@ -62,3 +62,4 @@ mkdocs/site
 perf.data
 constraints*/
 load.log
+/*.json
