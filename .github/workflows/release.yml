@@ -16,11 +16,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            name: linux
+            name: linux-x64
+            arch: x86_64
+          - os: ubuntu-latest
+            name: linux-arm64
+            arch: aarch64
           - os: windows-latest
             name: windows
+            arch: x86_64
           - os: macos-latest
             name: macos
+            arch: x86_64
 
     steps:
       - name: Checkout repository with submodules
@@ -28,13 +34,22 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies (Linux)
+      - name: Set up QEMU
+        if: matrix.name == 'linux-arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install dependencies (Linux Global)
         if: runner.os == 'Linux'
         run: |
           sudo apt update
           sudo apt install clang lld meson ninja-build -y
-          clang --version
-          ld.lld --version
+
+      - name: Install Cross-Compilation dependencies (Linux ARM64)
+        if: matrix.name == 'linux-arm64'
+        run: |
+          sudo apt install g++-aarch64-linux-gnu -y
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -44,19 +59,32 @@ jobs:
         if: runner.os == 'Windows'
         run: pip install meson ninja
 
-      - name: Set extra CMake flags
+      - name: Set CMake flags (Linux x64)
+        if: matrix.name == 'linux-x64'
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Linux" ]; then
-            echo "EXTRA_FLAGS=-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=\"-fuse-ld=lld\" -DCMAKE_SHARED_LINKER_FLAGS=\"-fuse-ld=lld\"" >> $GITHUB_ENV
-          else
-            echo "EXTRA_FLAGS=" >> $GITHUB_ENV
-          fi
+          echo "EXTRA_FLAGS=-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=\"-fuse-ld=lld\" -DCMAKE_SHARED_LINKER_FLAGS=\"-fuse-ld=lld\"" >> $GITHUB_ENV
+
+      - name: Set CMake flags (Linux ARM64 Cross-Compile)
+        if: matrix.name == 'linux-arm64'
+        shell: bash
+        run: |
+          echo "EXTRA_FLAGS=-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER_TARGET=aarch64-linux-gnu \
+          -DCMAKE_CXX_COMPILER_TARGET=aarch64-linux-gnu \
+          -DCMAKE_EXE_LINKER_FLAGS=\"-fuse-ld=lld\"" >> $GITHUB_ENV
+
+      - name: Set CMake flags (Non-Linux defaults)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: echo "EXTRA_FLAGS=" >> $GITHUB_ENV
 
       - name: Configure CMake
         run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S .
 
       - name: Build zelph
+        env:
+          QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
         run: cmake --build build --config Release
 
       - name: Package build artifacts (Zip)
@@ -64,17 +92,20 @@ jobs:
         run: |
           import shutil
           import os
-          
+
           if os.name == 'nt':
               source_dir = "build/bin/Release"
           else:
               source_dir = "build/bin"
-          
-          output_filename = "zelph-${{ matrix.name }}"
 
+          output_filename = "zelph-${{ matrix.name }}"
           print(f"Zipping content of {source_dir} to {output_filename}.zip")
 
-          shutil.make_archive(output_filename, 'zip', source_dir)
+          if os.path.exists(source_dir):
+              shutil.make_archive(output_filename, 'zip', source_dir)
+          else:
+              print(f"Error: Directory {source_dir} not found!")
+              exit(1)
 
       - name: Upload Release Asset
         env:
