@@ -51,6 +51,17 @@ jobs:
         run: |
           sudo apt install g++-aarch64-linux-gnu -y
 
+      - name: Setup ARM Compiler Aliases
+        if: matrix.name == 'linux-arm64'
+        run: |
+          mkdir -p arm_wrappers
+          ln -s /usr/bin/aarch64-linux-gnu-gcc arm_wrappers/cc
+          ln -s /usr/bin/aarch64-linux-gnu-gcc arm_wrappers/gcc
+          ln -s /usr/bin/aarch64-linux-gnu-g++ arm_wrappers/c++
+          ln -s /usr/bin/aarch64-linux-gnu-g++ arm_wrappers/g++
+          ln -s /usr/bin/aarch64-linux-gnu-ar arm_wrappers/ar
+          echo "$(pwd)/arm_wrappers" >> $GITHUB_PATH
+
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install meson
@@ -80,11 +91,13 @@ jobs:
         run: echo "EXTRA_FLAGS=" >> $GITHUB_ENV
 
       - name: Configure CMake
+        env:
+          QEMU_LD_PREFIX: ${{ matrix.name == 'linux-arm64' && '/usr/aarch64-linux-gnu' || '' }}
         run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ${{ env.EXTRA_FLAGS }} -B build -S .
 
       - name: Build zelph
         env:
-          QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
+          QEMU_LD_PREFIX: ${{ matrix.name == 'linux-arm64' && '/usr/aarch64-linux-gnu' || '' }}
         run: cmake --build build --config Release
 
       - name: Package build artifacts (Zip)
