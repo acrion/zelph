@@ -66,8 +66,29 @@ else ()
     set(BUILD_COMMAND ninja -C build)
 endif ()
 
+if(CMAKE_C_COMPILER_TARGET)
+    # Generate a Meson cross file for cross-compilation
+    set(MESON_CROSS_FILE "${janet_SOURCE_DIR}/cross_file.ini")
+    file(WRITE ${MESON_CROSS_FILE}
+"[binaries]\n\
+c = ['${CMAKE_C_COMPILER}', '--target=${CMAKE_C_COMPILER_TARGET}']\n\
+cpp = ['${CMAKE_CXX_COMPILER}', '--target=${CMAKE_CXX_COMPILER_TARGET}']\n\
+ar = 'aarch64-linux-gnu-ar'\n\
+strip = 'aarch64-linux-gnu-strip'\n\
+\n\
+[host_machine]\n\
+system = 'linux'\n\
+cpu_family = 'aarch64'\n\
+cpu = 'aarch64'\n\
+endian = 'little'\n"
+    )
+    set(MESON_CROSS_ARGS "--cross-file" "${MESON_CROSS_FILE}")
+else()
+    set(MESON_CROSS_ARGS "")
+endif()
+
 execute_process(
-    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false ${MESON_OPTIONS}
+    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false ${MESON_OPTIONS} ${MESON_CROSS_ARGS}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
