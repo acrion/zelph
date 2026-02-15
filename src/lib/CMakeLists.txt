@@ -132,8 +132,10 @@ FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
     GIT_TAG v1.3.0
-    CMAKE_ARGS -DBUILD_TESTING=OFF
 )
+
+set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(unordered_dense CapnProto)
 
