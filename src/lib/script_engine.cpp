@@ -169,6 +169,13 @@ public:
         janet_def(_janet_env, "zelph/sources", wrap((JanetCFunction)janet_cfun_zelph_sources), "(zelph/sources predicate target)\nFind all subjects connected to target via predicate. Read-only.");
 
         janet_def(_janet_env, "zelph/targets", wrap((JanetCFunction)janet_cfun_zelph_targets), "(zelph/targets subject predicate)\nFind all objects connected from subject via predicate. Read-only.");
+
+        janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)janet_cfun_zelph_negate), "(zelph/negate pattern)\nMark a fact pattern as negation. Returns the pattern node.\nEquivalent to (*(pattern) ~ negation) in zelph syntax.");
+
+        janet_def(_janet_env, "zelph/rule", wrap((JanetCFunction)janet_cfun_zelph_rule), "(zelph/rule conditions & consequences)\nCreate an inference rule.\n"
+                                                                                         "conditions: array of fact nodes (the conjunction).\n"
+                                                                                         "consequences: one or more fact nodes to deduce.\n"
+                                                                                         "Returns the condition set node.");
     }
 
     void setup_peg()
@@ -443,6 +450,77 @@ public:
             janet_array_push(result, zelph_wrap_node(nd));
         }
         return janet_wrap_array(result);
+    }
+
+    // Mark a fact pattern as negation and return the pattern node.
+    // This is the Janet equivalent of (*(pattern) ~ negation) in zelph syntax.
+    // The tagged node can then be used as a condition in zelph/rule.
+    static Janet janet_cfun_zelph_negate(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node n = zelph_unwrap_node(argv[0]);
+        if (!n) return janet_wrap_nil();
+
+        s_instance->_n->fact(n, s_instance->_n->core.IsA, {s_instance->_n->core.Negation});
+
+        return zelph_wrap_node(n); // Return the pattern node (like focus *)
+    }
+
+    // Create a complete inference rule: conjunction of conditions => consequence(s).
+    // First argument: array or tuple of condition fact nodes.
+    // Remaining arguments: one or more consequence fact nodes.
+    // Returns the condition set node (the rule's identity in the graph).
+    //
+    // Equivalent zelph syntax:
+    //   (*{cond1 cond2 ...} ~ conjunction) => consequence1
+    //   (*{cond1 cond2 ...} ~ conjunction) => consequence2
+    //
+    // Janet usage:
+    //   (zelph/rule [cond1 cond2] consequence1 consequence2)
+    static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 2, -1); // At least conditions + 1 consequence
+        if (!s_instance) return janet_wrap_nil();
+
+        // First argument: indexed collection of condition fact nodes
+        const Janet* cond_data;
+        int32_t      cond_len;
+        if (!janet_indexed_view(argv[0], &cond_data, &cond_len) || cond_len == 0)
+        {
+            janet_panicf("zelph/rule: first argument must be a non-empty array or tuple of conditions");
+            return janet_wrap_nil();
+        }
+
+        // Collect condition nodes
+        std::unordered_set<network::Node> condition_nodes;
+        for (int32_t i = 0; i < cond_len; ++i)
+        {
+            network::Node n = zelph_unwrap_node(cond_data[i]);
+            if (n)
+                condition_nodes.insert(n);
+            else
+                janet_panicf("zelph/rule: condition at index %d is not a valid zelph/node", i);
+        }
+
+        if (condition_nodes.empty()) return janet_wrap_nil();
+
+        // Create condition set and mark as conjunction
+        network::Node condition_set = s_instance->_n->set(condition_nodes);
+        s_instance->_n->fact(condition_set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
+
+        // Link each consequence via =>
+        for (int32_t i = 1; i < argc; ++i)
+        {
+            network::Node consequence = zelph_unwrap_node(argv[i]);
+            if (consequence)
+                s_instance->_n->fact(condition_set, s_instance->_n->core.Causes, {consequence});
+            else
+                janet_panicf("zelph/rule: consequence at index %d is not a valid zelph/node", i - 1);
+        }
+
+        return zelph_wrap_node(condition_set);
     }
 
     // Split string into chars (for compact <abc> syntax)

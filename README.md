@@ -1406,13 +1406,18 @@ These functions traverse the graph along a specific relation, returning arrays o
 
 ##### Practical Example: Inspecting a Sequence
 
-Combining all four functions to walk a compact sequence:
+Combining all four functions to walk a compact sequence. Note that `zelph/resolve` on a sequence name (e.g. `"42"`) returns the **Value Concept** node, not the sequence node itself. The actual sequence is linked to its Value Concept via `has_value`, so an extra step is needed:
 
 ```
 zelph> <42>
 < 4   2 >
 %
-(def seq-node (zelph/resolve "42"))
+# zelph/resolve "42" returns the Value Concept, not the sequence
+(def value-concept (zelph/resolve "42"))
+
+# Find the sequence node(s) linked to this Value Concept
+(def seq-nodes (zelph/sources "has_value" value-concept))
+(def seq-node (first seq-nodes))
 
 # Find all instance nodes in the sequence
 (def elements (zelph/sources "in" seq-node))
@@ -1484,6 +1489,128 @@ Combining Janet's macro system with zelph's API, you can create domain-specific 
 
 The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Since Janet is a full programming language, this can be extended with `OPTIONAL` (using negation), `FILTER`, and other SPARQL features — each mapped to the appropriate zelph construct.
 
+#### Rule Construction: `zelph/rule` and `zelph/negate`
+
+These functions simplify the creation of inference rules from Janet. While rules can always be built manually using `zelph/set`, `zelph/fact`, and `let` bindings (see [Rules in Janet: The `let` Pattern](#rules-in-janet-the-let-pattern)), `zelph/rule` encapsulates the entire pattern in a single call.
+
+##### `zelph/negate`
+
+Marks a fact pattern as a negation condition. Returns the pattern node itself (equivalent to the focus operator `*` in `(*(pattern) ~ negation)`):
+
+```
+%(zelph/negate (zelph/fact 'A ".." 'X))
+```
+
+This is equivalent to the zelph syntax fragment `(*(A .. X) ~ negation)` inside a condition set.
+
+##### `zelph/rule`
+
+Creates a complete inference rule: a conjunction of conditions linked to one or more consequences via `=>`.
+
+```
+(zelph/rule conditions consequence1 consequence2 ...)
+```
+
+- **conditions**: An array or tuple of fact nodes (the conjunction).
+- **consequences**: One or more fact nodes to deduce when conditions match.
+- **Returns**: The condition set node (the rule's identity in the graph).
+
+**Example — Transitivity rule:**
+
+```
+# zelph syntax:
+(*{(X R Y) (Y R Z) (R ~ transitive)} ~ conjunction) => (X R Z)
+
+# Janet equivalent using zelph/rule:
+%(zelph/rule
+   [(zelph/fact 'X 'R 'Y)
+    (zelph/fact 'Y 'R 'Z)
+    (zelph/fact 'R "~" "transitive")]
+   (zelph/fact 'X 'R 'Z))
+```
+
+**Example — Negation (finding the last element of a sequence):**
+
+```
+# zelph syntax:
+(*{(A in _Num) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last digit of" _Num)
+
+# Janet equivalent:
+%(zelph/rule
+   [(zelph/fact 'A "in" '_Num)
+    (zelph/negate (zelph/fact 'A ".." 'X))]
+   (zelph/fact 'A "is last digit of" '_Num))
+```
+
+**Example — Multiple consequences:**
+
+```
+%(zelph/rule
+   [(zelph/fact 'A "~" "human")]
+   (zelph/fact 'A "has" "consciousness")
+   (zelph/fact 'A "has" "mortality"))
+```
+
+##### Parameterized Rules with `zelph/rule`
+
+Combined with Janet functions, `zelph/rule` enables concise parameterized rule generation:
+
+```
+%
+(defn transitive-rule [rel]
+  (zelph/rule
+    [(zelph/fact 'X rel 'Y)
+     (zelph/fact 'Y rel 'Z)]
+    (zelph/fact 'X rel 'Z)))
+
+(transitive-rule "is part of")
+(transitive-rule "is ancestor of")
+(transitive-rule "is located in")
+%
+```
+
+Compare this to the manual `let` pattern from [Parameterized Rules](#parameterized-rules) — `zelph/rule` eliminates the boilerplate of creating the set, tagging it as a conjunction, and linking the consequence.
+
+##### Setting Up Digit-Wise Addition
+
+As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops to set up a domain for the reasoning engine, here is the setup for single-digit arithmetic. All reasoning happens purely within zelph's inference engine — Janet only generates the initial facts and rules:
+
+```
+%
+# Digit successor relationships
+(for i 0 9
+  (zelph/fact (zelph/seq-chars (string i)) ".." (zelph/seq-chars (string (+ i 1)))))
+
+# Mark all single digits
+(for i 0 10
+  (zelph/fact (zelph/seq-chars (string i)) "~" "digit"))
+
+# Single-digit addition lookup table (100 entries)
+(for a 0 10
+  (for b 0 10
+    (let [sum (+ a b)
+          d (% sum 10)
+          c (math/floor (/ sum 10))
+          addition-fact (zelph/fact (zelph/seq-chars (string a)) "+" (zelph/seq-chars (string b)))]
+      (zelph/fact addition-fact "digit-sum" (zelph/seq-chars (string d)))
+      (zelph/fact addition-fact "digit-carry" (zelph/seq-chars (string c))))))
+
+# Rule: find the last element of any sequence
+(zelph/rule
+  [(zelph/fact 'A "in" '_Seq)
+   (zelph/negate (zelph/fact 'A ".." 'X))]
+  (zelph/fact 'A "is last of" '_Seq))
+
+# Rule: find the first element of any sequence
+(zelph/rule
+  [(zelph/fact 'A "in" '_Seq)
+   (zelph/negate (zelph/fact 'X ".." 'A))]
+  (zelph/fact 'A "is first of" '_Seq))
+%
+```
+
+The rules above are general-purpose (they work on any sequence, not just numbers). The lookup table encodes digit arithmetic as graph facts. From here, additional rules can process multi-digit numbers by walking sequences from right to left, extracting digits, applying the lookup table, handling carries, and constructing new result sequences using fresh variables — all within zelph's reasoning engine.
+
 ### Summary: zelph Syntax and Janet Equivalents
 
 | zelph Syntax | Janet Equivalent | Description |
@@ -1504,6 +1631,8 @@ The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Si
 | *(no equivalent)* | `(zelph/name node)` | Get the name of a node as a string |
 | *(no equivalent)* | `(zelph/sources "~" "city")` | Find all subjects for a predicate–object pair |
 | *(no equivalent)* | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
+| `(*(P) ~ negation)` | `(zelph/negate (zelph/fact ...))` | Mark a pattern as negation condition |
+| `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)` | Create inference rule |
 
 ## Project Status
 
