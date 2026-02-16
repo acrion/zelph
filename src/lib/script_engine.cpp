@@ -161,6 +161,14 @@ public:
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name)\nResolve a string to its node in the current language, creating it if needed.");
 
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
+
+        janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether a fact exists without creating it. Returns boolean.");
+
+        janet_def(_janet_env, "zelph/name", wrap((JanetCFunction)janet_cfun_zelph_name), "(zelph/name node &opt lang)\nReturn the name of a node as a string, or nil if unnamed.");
+
+        janet_def(_janet_env, "zelph/sources", wrap((JanetCFunction)janet_cfun_zelph_sources), "(zelph/sources predicate target)\nFind all subjects connected to target via predicate. Read-only.");
+
+        janet_def(_janet_env, "zelph/targets", wrap((JanetCFunction)janet_cfun_zelph_targets), "(zelph/targets subject predicate)\nFind all objects connected from subject via predicate. Read-only.");
     }
 
     void setup_peg()
@@ -298,6 +306,143 @@ public:
             return v;
         }
         return 0;
+    }
+
+    // Read-only variant: resolves strings to existing nodes without creating new ones.
+    // Returns 0 if the node does not exist. Used by zelph/exists, zelph/sources, zelph/targets.
+    network::Node resolve_janet_arg_no_create(Janet arg)
+    {
+        if (janet_checktype(arg, JANET_ABSTRACT) || janet_checktype(arg, JANET_NUMBER))
+        {
+            return zelph_unwrap_node(arg);
+        }
+        else if (janet_checktype(arg, JANET_STRING))
+        {
+            const uint8_t* str  = janet_unwrap_string(arg);
+            std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+
+            // Check regular named nodes
+            network::Node n = _n->get_node(wstr, _n->lang());
+            if (n) return n;
+
+            // Check core nodes (e.g. "~", "=>", "in", "..")
+            return _n->get_core_node(wstr);
+        }
+        return 0;
+    }
+
+    // --- Add these static functions after janet_cfun_zelph_query ---
+
+    // Check whether a fact exists in the graph without creating it.
+    // Returns true if the fact (subject predicate object...) is known.
+    static Janet janet_cfun_zelph_exists(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, -1);
+        if (!s_instance) return janet_wrap_boolean(0);
+
+        network::Node s = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node p = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!s || !p) return janet_wrap_boolean(0);
+
+        network::adjacency_set objs;
+        for (int32_t i = 2; i < argc; ++i)
+        {
+            network::Node o = s_instance->resolve_janet_arg_no_create(argv[i]);
+            if (!o) return janet_wrap_boolean(0);
+            objs.insert(o);
+        }
+
+        network::Answer ans = s_instance->_n->check_fact(s, p, objs);
+        return janet_wrap_boolean(ans.is_known() ? 1 : 0);
+    }
+
+    // Return the name of a node as a string, or nil if unnamed.
+    // Optional second argument specifies the language (defaults to current).
+    static Janet janet_cfun_zelph_name(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node n = zelph_unwrap_node(argv[0]);
+        if (!n) return janet_wrap_nil();
+
+        std::string lang = s_instance->_n->lang();
+        if (argc >= 2 && janet_checktype(argv[1], JANET_STRING))
+        {
+            lang = reinterpret_cast<const char*>(janet_unwrap_string(argv[1]));
+        }
+
+        std::wstring name = s_instance->_n->get_name(n, lang, true);
+        if (name.empty()) return janet_wrap_nil();
+
+        std::string utf8 = string::unicode::to_utf8(name);
+        return janet_cstringv(utf8.c_str());
+    }
+
+    // Find all subjects connected to target via predicate.
+    // (zelph/sources "in" seq-node) → elements of the sequence/set
+    // (zelph/sources "~" concept)   → instances of that concept
+    static Janet janet_cfun_zelph_sources(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_array(janet_array(0));
+
+        network::Node predicate = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node target    = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!predicate || !target) return janet_wrap_array(janet_array(0));
+
+        network::adjacency_set sources = s_instance->_n->get_sources(predicate, target);
+
+        JanetArray* result = janet_array(static_cast<int32_t>(sources.size()));
+        for (network::Node src : sources)
+        {
+            janet_array_push(result, zelph_wrap_node(src));
+        }
+        return janet_wrap_array(result);
+    }
+
+    // Find all objects connected from subject via predicate.
+    // (zelph/targets elem-node "..") → successor in sequence
+    // (zelph/targets inst-node "~")  → concept node
+    // (zelph/targets node "in")      → container (set/sequence)
+    static Janet janet_cfun_zelph_targets(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_array(janet_array(0));
+
+        network::Node subject   = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node predicate = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!subject || !predicate) return janet_wrap_array(janet_array(0));
+
+        network::adjacency_set targets;
+
+        // Traverse: subject → relation_nodes → find objects
+        // Topology: subject <-> relation_node (bidirectional), object -> relation_node, relation_node -> predicate
+        for (network::Node rel : s_instance->_n->get_right(subject))
+        {
+            network::adjacency_set rel_right = s_instance->_n->get_right(rel);
+            network::adjacency_set rel_left  = s_instance->_n->get_left(rel);
+
+            // Validate: predicate in right, subject bidirectional (in both left and right)
+            if (rel_right.count(predicate) && rel_right.count(subject) && rel_left.count(subject))
+            {
+                // Objects: in left but NOT in right (unidirectional connection)
+                for (network::Node obj : rel_left)
+                {
+                    if (obj != subject && rel_right.count(obj) == 0)
+                    {
+                        targets.insert(obj);
+                    }
+                }
+            }
+        }
+
+        JanetArray* result = janet_array(static_cast<int32_t>(targets.size()));
+        for (network::Node nd : targets)
+        {
+            janet_array_push(result, zelph_wrap_node(nd));
+        }
+        return janet_wrap_array(result);
     }
 
     // Split string into chars (for compact <abc> syntax)

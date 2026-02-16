@@ -1327,6 +1327,143 @@ This generates and executes the equivalent of:
 (*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)
 ```
 
+#### Read-Only Graph Inspection
+
+The following functions inspect the graph without modifying it. Unlike `zelph/fact`, they never create nodes or facts as a side effect. If a referenced name does not exist in the graph, the functions return `false`, `nil`, or an empty array as appropriate.
+
+##### Existence Check: `zelph/exists`
+
+`zelph/exists` checks whether a fact is present in the graph:
+
+```
+%(zelph/exists "Berlin" "is located in" "Germany")   # → true
+%(zelph/exists "Berlin" "is located in" "France")     # → false
+%(zelph/exists "Tokyo" "is located in" "Japan")       # → false (if Tokyo was never added)
+```
+
+This is the read-only counterpart to `zelph/fact`. While `zelph/fact` creates facts as a side effect (and is therefore unsuitable for conditional checks), `zelph/exists` purely queries the graph.
+
+Like `zelph/fact`, it accepts strings (resolved in the current language), `zelph/node` values, or a mix:
+
+```
+%(def berlin (zelph/resolve "Berlin"))
+%(zelph/exists berlin "~" "city")
+```
+
+##### Node Names: `zelph/name`
+
+`zelph/name` returns the name of a node as a string, or `nil` if the node has no name:
+
+```
+%(def results (zelph/query (zelph/fact 'X "is located in" 'Y)))
+%(each r results
+   (printf "%s is located in %s"
+     (zelph/name (get r 'X))
+     (zelph/name (get r 'Y))))
+```
+
+An optional second argument specifies the language:
+
+```
+%(zelph/name some-node)          # current language (as set by .lang)
+%(zelph/name some-node "en")     # English
+%(zelph/name some-node "wikidata") # Wikidata ID
+```
+
+If no name exists in the requested language, `zelph/name` falls back through English, zelph, and other available languages before returning `nil`.
+
+##### Graph Traversal: `zelph/sources` and `zelph/targets`
+
+These functions traverse the graph along a specific relation, returning arrays of `zelph/node` values:
+
+- **`zelph/sources`** finds all **subjects** connected to a target via a predicate.
+- **`zelph/targets`** finds all **objects** connected from a subject via a predicate.
+
+```
+# Given: Berlin "is located in" Germany, Potsdam "is located in" Germany
+%(zelph/sources "is located in" "Germany")   # → @[<Berlin> <Potsdam>]
+%(zelph/targets "Berlin" "is located in")    # → @[<Germany>]
+```
+
+**Common patterns with sets and sequences:**
+
+```
+# Elements of a set or sequence (elements are linked via "in")
+%(zelph/sources "in" my-set)        # → all elements
+
+# Instances of a concept
+%(zelph/sources "~" "city")         # → all nodes that are instances of "city"
+
+# Successor in a sequence
+%(zelph/targets elem-node "..")     # → next element
+
+# What concept an instance represents
+%(zelph/targets inst-node "~")      # → @[<concept-node>]
+
+# Which container a node belongs to
+%(zelph/targets elem-node "in")     # → @[<set-or-sequence-node>]
+```
+
+##### Practical Example: Inspecting a Sequence
+
+Combining all four functions to walk a compact sequence:
+
+```
+zelph> <42>
+< 4   2 >
+%
+(def seq-node (zelph/resolve "42"))
+
+# Find all instance nodes in the sequence
+(def elements (zelph/sources "in" seq-node))
+(printf "Sequence has %d elements" (length elements))
+
+# For each element, find its concept (digit)
+(each elem elements
+  (let [concepts (zelph/targets elem "~")]
+    (when (not (empty? concepts))
+      (printf "  element %v is digit '%s'" elem (zelph/name (first concepts))))))
+
+# Walk the sequence in order: find the first element (has no predecessor)
+(def first-elem
+  (find (fn [e] (empty? (zelph/sources ".." e))) elements))
+
+(var current first-elem)
+(while current
+  (let [concepts (zelph/targets current "~")
+        digit-name (if (empty? concepts) "?" (zelph/name (first concepts)))]
+    (prin digit-name))
+  (let [nexts (zelph/targets current "..")]
+    (set current (if (empty? nexts) nil (first nexts)))))
+(print) # newline
+# Output: 42
+%
+```
+
+##### Combining with Query Results
+
+Read-only functions are especially useful for processing query results:
+
+```
+%
+(def results (zelph/query (zelph/fact 'X "is located in" 'Y)))
+
+# Filter using zelph/exists (no side effects!)
+(def germany (zelph/resolve "Germany"))
+(def in-germany
+  (filter (fn [r] (= (get r 'Y) germany)) results))
+
+# Alternatively, check a different relation for each result
+(def cities-that-are-capitals
+  (filter (fn [r] (zelph/exists (get r 'X) "~" "capital"))
+    results))
+
+# Display with names
+(each r in-germany
+  (printf "%s" (zelph/name (get r 'X))))
+%
+```
+
 #### Building a SPARQL-like Interface
 
 Combining Janet's macro system with zelph's API, you can create domain-specific query languages. Here is a sketch of a `SELECT ... WHERE` syntax:
@@ -1362,8 +1499,11 @@ The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Si
 | `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value |
 | `% code` | — | Execute Janet inline |
 | `%` (bare) | — | Toggle Janet block mode |
-| `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query (find matches for pattern) |
-| Rule with `*` and `=>` | `let` + `zelph/fact` (see [Rules in Janet](#rules-in-janet-the-let-pattern)) | Inference rule |
+| `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query — returns array of `@{symbol node}` tables |
+| *(no equivalent)* | `(zelph/exists "sun" "is" "yellow")` | Check if a fact exists (read-only) |
+| *(no equivalent)* | `(zelph/name node)` | Get the name of a node as a string |
+| *(no equivalent)* | `(zelph/sources "~" "city")` | Find all subjects for a predicate–object pair |
+| *(no equivalent)* | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
 
 ## Project Status
 
