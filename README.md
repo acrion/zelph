@@ -960,6 +960,354 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 
 This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata").
 
+## Scripting with Janet
+
+zelph embeds [Janet](https://janet-lang.org), a lightweight functional programming language, as its scripting layer. Janet serves as the programmatic backbone behind zelph's syntax: every zelph statement is parsed into a Janet expression before execution. This integration enables users to go beyond zelph's declarative syntax and use loops, conditionals, macros, and data structures to generate facts, rules, and queries programmatically.
+
+Importantly, Janet operates exclusively at *input time* — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside.
+
+### Entering Janet Code
+
+There are three ways to write Janet code in zelph:
+
+#### Inline Prefix `%`
+
+Prefix a line with `%` to execute it as Janet:
+
+```
+%(print "Hello from Janet!")
+```
+
+Whitespace after `%` is optional. If the expression spans multiple lines (i.e., has unbalanced delimiters), zelph automatically accumulates subsequent lines until the expression is complete:
+
+```
+%(defn make-facts [items relation target]
+   (each item items
+     (zelph/fact item relation target)))
+```
+
+All four lines are collected and executed as a single Janet expression.
+
+#### Block Mode `%`
+
+A bare `%` on its own line toggles between zelph mode and Janet mode. In Janet mode, all lines are accumulated and executed together when the block is closed:
+
+```
+%
+(def cities ["Berlin" "Paris" "London"])
+(def relation "is capital of")
+(def countries ["Germany" "France" "England"])
+
+(each i (range (length cities))
+  (zelph/fact (cities i) relation (countries i)))
+%
+```
+
+This is convenient for longer scripts with multiple definitions and function calls. When closing a Janet block, zelph automatically triggers the reasoning engine (if [auto-run](#full-command-reference) is enabled), so any rules created in the block take effect immediately.
+
+#### Comments and Commands
+
+Lines starting with `#` (comments) and `.` (commands like `.lang`, `.run`, `.save`) work identically in both modes. They are never interpreted as Janet or zelph statements.
+
+### The zelph API for Janet
+
+zelph registers a set of functions in the Janet environment that mirror zelph's syntactic constructs. These functions operate directly on the semantic network, creating nodes, facts, sequences, and sets.
+
+#### Nodes and Names: `zelph/resolve`
+
+Every named entity in zelph's graph is a *node*. The function `zelph/resolve` takes a string and returns the corresponding node in the current language (as set by `.lang`), creating it if it does not yet exist:
+
+```
+%(def berlin (zelph/resolve "Berlin"))
+%(def germany (zelph/resolve "Germany"))
+```
+
+The returned value is a `zelph/node` abstract type — an opaque handle to the internal node. This is the Janet equivalent of simply writing `Berlin` in zelph syntax.
+
+**When to use `zelph/resolve`:** Whenever you need to refer to a node by name from Janet code. The node is resolved in the currently active language, which matters when working with Wikidata IDs vs. human-readable names.
+
+#### Facts: `zelph/fact`
+
+`zelph/fact` creates a subject–predicate–object triple in the graph and returns the relation node. It accepts three or more arguments (multiple objects create multiple facts with the same subject and predicate):
+
+```
+%(zelph/fact "Berlin" "is capital of" "Germany")
+```
+
+This is equivalent to the zelph statement:
+
+```
+Berlin "is capital of" Germany
+```
+
+String arguments are automatically resolved as node names (identical to `zelph/resolve`). You can also pass `zelph/node` values directly:
+
+```
+%(def city (zelph/resolve "Berlin"))
+%(zelph/fact city "~" "city")
+```
+
+The function also accepts quoted Janet symbols (`'X`, `'_Var`) for zelph variables — single uppercase letters or underscore-prefixed identifiers. This is used when building rules and queries (see below).
+
+#### Queries: `zelph/query`
+
+In zelph syntax, a statement containing variables is automatically treated as a query. In Janet, this distinction must be made explicitly using `zelph/query`. It takes a single `zelph/node` argument (typically the return value of a `zelph/fact` call containing variables), prints the query pattern, and triggers the matching engine:
+
+```
+%(zelph/query (zelph/fact 'A "is located in" 'B))
+```
+
+This is equivalent to the zelph query:
+
+```
+A "is located in" B
+```
+
+Each `zelph/query` call resets the variable scope, so consecutive calls create independent queries with fresh variable bindings.
+
+**Why a separate function?** When building rules, `zelph/fact` is called with variables as inner building blocks (e.g., to construct conditions). These calls must *not* trigger query evaluation. `zelph/query` marks the point where a pattern should be evaluated against the graph — the distinction between "build this structure" and "search for this pattern."
+
+#### Rules in Janet: The `let` Pattern
+
+In zelph syntax, the [focus operator `*`](#the-focus-operator-) controls what a parenthesized expression returns. For example, `(*{...} ~ conjunction)` creates the conjunction fact but returns the **set node** itself, which is then used as the subject of `=>`. In Janet, this is achieved naturally using `let` bindings:
+
+```
+# zelph syntax:
+(*{(X "is capital of" Y) (Y "is located in" Z)} ~ conjunction) => (X "is located in" Z)
+
+# Janet equivalent:
+%
+(let [condition
+      (zelph/set
+        (zelph/fact 'X "is capital of" 'Y)
+        (zelph/fact 'Y "is located in" 'Z))]
+  (zelph/fact condition "~" "conjunction")
+  (zelph/fact condition "=>" (zelph/fact 'X "is located in" 'Z)))
+%
+```
+
+The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](#full-command-reference)).
+
+#### Sequences: `zelph/seq` and `zelph/seq-chars`
+
+zelph has two sequence syntaxes, each with a Janet counterpart:
+
+**Node sequences** (`< a b c >` in zelph) create an ordered sequence of existing nodes:
+
+```
+%(zelph/seq "Berlin" "Paris" "London")
+```
+
+Equivalent to:
+
+```
+< Berlin Paris London >
+```
+
+**Compact sequences** (`<abc>` in zelph) split a string into individual characters, creating instance nodes linked to concept nodes for each character:
+
+```
+%(zelph/seq-chars "42")
+```
+
+Equivalent to:
+
+```
+<42>
+```
+
+This is the foundation of zelph's [Semantic Math](#semantic-math) system, where numbers are topological structures within the graph.
+
+#### Sets: `zelph/set`
+
+`zelph/set` creates an unordered set of nodes, returning the set's super-node:
+
+```
+%(zelph/set "red" "green" "blue")
+```
+
+Equivalent to:
+
+```
+{ red green blue }
+```
+
+### Referencing Janet Variables in zelph: Unquote `,`
+
+The `,` (comma) operator bridges the two languages in the opposite direction: it allows zelph statements to reference values defined in Janet. Prefix any Janet variable name with `,` inside zelph syntax:
+
+```
+%(def my-city (zelph/resolve "Berlin"))
+%(def my-relation "is capital of")
+
+,my-city ,my-relation Germany
+```
+
+This is equivalent to writing `Berlin "is capital of" Germany`, but the subject and predicate come from Janet variables.
+
+#### How Unquote Works
+
+The unquoted variable name is emitted directly into the generated Janet code. At runtime, zelph's argument resolver handles the value based on its Janet type:
+
+- **`zelph/node`** — used directly as a graph node (language-independent, unambiguous).
+- **String** — resolved as a node name in the current language (identical to writing the name in zelph syntax).
+
+This means you can use either form depending on your needs:
+
+```
+%(def node-a (zelph/resolve "Berlin"))   # zelph/node: precise, language-independent
+%(def node-b "Berlin")                    # string: resolved at use time
+
+,node-a ~ city    # Uses the node directly
+,node-b ~ city    # Resolves "Berlin" in current .lang
+```
+
+For Wikidata work where IDs are language-independent, both forms are equivalent. For multilingual scenarios, `zelph/resolve` gives you explicit control over *when* the name is resolved.
+
+#### Unquote in Complex Structures
+
+The `,` operator works anywhere a value is expected — in facts, sets, sequences, and nested expressions:
+
+```
+%(def pred "P31")
+%(def obj (zelph/resolve "Q5"))
+
+# Query: find all instances of Q5 (human)
+X ,pred ,obj
+
+# In a set
+{ ,node-a ,node-b ,node-c }
+
+# In a nested expression
+(,subject ,pred ,obj)
+```
+
+### Practical Patterns
+
+#### Generating Facts from Data
+
+A common pattern is defining data in Janet and generating zelph facts programmatically:
+
+```
+%
+(def taxonomy
+  [["Brontosaurus" "Apatosaurinae"]
+   ["Apatosaurus" "Apatosaurinae"]
+   ["Diplodocus" "Diplodocinae"]
+   ["Apatosaurinae" "Diplodocidae"]
+   ["Diplodocinae" "Diplodocidae"]])
+
+(each [child parent] taxonomy
+  (zelph/fact child "parent taxon" parent))
+%
+
+# Now use zelph's inference:
+(*{(X "parent taxon" Y) (Y "parent taxon" Z)} ~ conjunction) => (X "parent taxon" Z)
+```
+
+After inference, zelph deduces that Brontosaurus and Apatosaurus have Diplodocidae as an ancestor — entirely from data generated by a Janet loop.
+
+#### Parameterized Rules
+
+Janet functions can encapsulate common rule patterns:
+
+```
+%
+(defn transitive-rule [rel]
+  (let [condition
+        (zelph/set
+          (zelph/fact 'X rel 'Y)
+          (zelph/fact 'Y rel 'Z))]
+    (zelph/fact condition "~" "conjunction")
+    (zelph/fact condition "=>" (zelph/fact 'X rel 'Z))))
+
+(transitive-rule "is part of")
+(transitive-rule "is ancestor of")
+(transitive-rule "is located in")
+%
+```
+
+A single function generates a transitive inference rule for any relation. The `let` pattern captures the condition set and reuses it — the Janet equivalent of the focus operator `*` in zelph syntax.
+
+#### Parameterized Queries
+
+Similarly, queries can be wrapped in reusable functions:
+
+```
+%
+(defn find-all [relation target]
+  (zelph/query (zelph/fact 'X relation target)))
+
+(find-all "is located in" "Europe")
+(find-all "parent taxon" "Diplodocidae")
+%
+```
+
+Each `zelph/query` call resets the variable scope, so the two calls produce independent results.
+
+#### Wikidata Query Helpers
+
+Janet functions can provide a higher-level query interface for Wikidata:
+
+```
+%
+(defn wikidata-query [& clauses]
+  "Generate and execute a conjunction query from S-P-O triples."
+  (let [facts (map (fn [[s p o]] (zelph/fact s p o)) clauses)
+        condition-set (zelph/set ;facts)]
+    (zelph/fact condition-set "~" "conjunction")
+    (zelph/query condition-set)))
+
+# Find fossil taxa at genus rank
+(wikidata-query ["X" "P31" "Q23038290"]
+                ["X" "P105" "Q34740"])
+%
+```
+
+This generates and executes the equivalent of:
+
+```
+(*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)
+```
+
+#### Building a SPARQL-like Interface
+
+Combining Janet's macro system with zelph's API, you can create domain-specific query languages. Here is a sketch of a `SELECT ... WHERE` syntax:
+
+```
+%
+(defmacro sparql-select [vars & where-clauses]
+  ~(wikidata-query ,;(map (fn [clause] clause) where-clauses)))
+
+# Usage:
+# "Select ?x where { ?x P31 Q5 . ?x P27 Q183 }"
+# becomes:
+(sparql-select [X]
+  ["X" "P31" "Q5"]
+  ["X" "P27" "Q183"])
+%
+```
+
+The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Since Janet is a full programming language, this can be extended with `OPTIONAL` (using negation), `FILTER`, and other SPARQL features — each mapped to the appropriate zelph construct.
+
+### Summary: zelph Syntax and Janet Equivalents
+
+| zelph Syntax | Janet Equivalent | Description |
+|:---|:---|:---|
+| `Berlin` | `(zelph/resolve "Berlin")` | Resolve a name to a node |
+| `X`, `_Var` | `'X`, `'_Var` | Variable (single uppercase letter or `_`-prefixed) |
+| `sun is yellow` | `(zelph/fact "sun" "is" "yellow")` | Create a fact (triple) |
+| `(sun is yellow)` | `(zelph/fact "sun" "is" "yellow")` | Nested fact (returns relation node) |
+| `{ red green blue }` | `(zelph/set "red" "green" "blue")` | Unordered set |
+| `< Berlin Paris >` | `(zelph/seq "Berlin" "Paris")` | Ordered node sequence |
+| `<abc>` | `(zelph/seq-chars "abc")` | Compact character sequence |
+| `*expr` | `let` binding to capture and reuse a sub-expression | Focus operator |
+| `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value |
+| `% code` | — | Execute Janet inline |
+| `%` (bare) | — | Toggle Janet block mode |
+| `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query (find matches for pattern) |
+| Rule with `*` and `=>` | `let` + `zelph/fact` (see [Rules in Janet](#rules-in-janet-the-let-pattern)) | Inference rule |
+
 ## Project Status
 
 The project is currently in **Version 0.9.4 (Beta)**. Core functionality is operational and has been rigorously tested against the full Wikidata dataset.

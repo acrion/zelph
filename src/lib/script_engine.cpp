@@ -157,6 +157,10 @@ public:
 
         janet_def(_janet_env, "zelph/seq-chars", wrap((JanetCFunction)janet_cfun_zelph_seq_chars), "(zelph/seq-chars str)\nCreate sequence from string characters.");
         janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
+
+        janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name)\nResolve a string to its node in the current language, creating it if needed.");
+
+        janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query: print the pattern and find all matches. Takes a zelph/fact containing variables.");
     }
 
     void setup_peg()
@@ -167,7 +171,8 @@ public:
         // 3. :set -> { ... }
         // 4. :nested -> ( ... ) Recursive statements inside ( ... )
         // 5. :quoted -> "..."
-        // 6. :focused -> *Element (New: Returns the element instead of the container)
+        // 6. :focused -> *Element (Returns the element instead of the container)
+        // 7. :unquote -> ,identifier (Reference to a Janet variable)
         // Returns tagged tuples like [:atom "val"], [:seq "val"] or [:nested sub-stmt...] for C++ processing
         std::string peg_setup = R"zph(
             (def zelph-grammar
@@ -176,8 +181,9 @@ public:
                 :s+ (some :ws)
 
                 # > and < are reserved to act as delimiters.
+                # , is reserved for unquoting Janet variables.
                 # To use them as atoms, we define specific rules below.
-                :reserved (set " \t\r\n\0\v<\"(){}*>")
+                :reserved (set " \t\r\n\0\v<\"(){}*>,")
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
@@ -201,6 +207,9 @@ public:
 
                 # Structure Tags
                 :tag-var    (group (* (constant :var)  (capture :var-token)))
+
+                # Unquote: ,identifier references a Janet variable
+                :tag-unquote (group (* (constant :unquote) "," (capture (some :symchars))))
 
                 # Atom Definition Order:
                 # 1. Quoted (always safe)
@@ -238,7 +247,7 @@ public:
 
                 # Value order:
                 # Check sequences first so "<" starts a sequence if possible.
-                :val-any (choice :tag-focused :tag-var :tag-seq-compact :tag-seq-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-var :tag-unquote :tag-seq-compact :tag-seq-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -371,6 +380,48 @@ public:
         return zelph_wrap_node(f);
     }
 
+    // Resolve a name to a node in the current language (convenience for Janet code)
+    static Janet janet_cfun_zelph_resolve(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        const uint8_t* str  = janet_getstring(argv, 0);
+        std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+        network::Node  n    = s_instance->_n->node(wstr, s_instance->_n->lang());
+        return zelph_wrap_node(n);
+    }
+
+    // Execute a query: print the pattern and trigger matching via apply_rule.
+    // This is the Janet equivalent of entering a zelph statement that contains
+    // variables (e.g. "X ~ human"). Takes a single zelph/node argument
+    // (typically the return value of a zelph/fact call containing variables).
+    static Janet janet_cfun_zelph_query(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node n = zelph_unwrap_node(argv[0]);
+        if (!n) return janet_wrap_nil();
+
+        // Print the query pattern
+        std::wstring output;
+        s_instance->_n->format_fact(output, s_instance->_n->lang(), n, 3);
+        if (!output.empty() && output != L"??")
+            s_instance->_n->print(output, false);
+
+        // Trigger query evaluation
+        if (!s_instance->_scoped_variables.empty())
+        {
+            s_instance->_n->apply_rule(0, n);
+        }
+
+        // Reset variable scope for the next query
+        s_instance->_scoped_variables.clear();
+
+        return zelph_wrap_node(n);
+    }
+
     // Helper to generate Janet code for a function call with potential focused arguments.
     // func_name: "zelph/fact" or "zelph/set"
     // args: Array of Janet tuples (the AST nodes)
@@ -479,7 +530,7 @@ public:
             return build_smart_call("zelph/seq", args);
         }
 
-        // Handle leaf nodes (atom, var, seq)
+        // Handle leaf nodes (atom, var, seq, unquote)
         // These expect data[1] to be the content string/buffer
         std::string val_str;
         if (janet_checktype(data[1], JANET_STRING))
@@ -491,7 +542,14 @@ public:
             val_str = reinterpret_cast<const char*>(janet_unwrap_buffer(data[1]));
         }
 
-        if (type == "var")
+        if (type == "unquote")
+        {
+            // Janet variable reference: emit the variable name directly.
+            // At runtime, resolve_janet_arg handles both string values
+            // (resolved as node names) and zelph/node abstract values.
+            return val_str;
+        }
+        else if (type == "var")
         {
             // Variables are symbols in Janet (e.g. X, _V).
             // IMPORTANT: We must quote them (e.g. 'A), otherwise Janet tries
@@ -657,6 +715,58 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
         janet_array_push(jargs, janet_cstringv(arg.c_str()));
     }
     janet_table_put(_pImpl->_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
+}
+
+bool ScriptEngine::is_expression_complete(const std::string& code) const
+{
+    int  depth      = 0;
+    bool in_string  = false;
+    bool escape     = false;
+    bool in_comment = false;
+
+    for (size_t i = 0; i < code.size(); ++i)
+    {
+        char c = code[i];
+
+        if (in_comment)
+        {
+            if (c == '\n') in_comment = false;
+            continue;
+        }
+
+        if (escape)
+        {
+            escape = false;
+            continue;
+        }
+
+        if (in_string)
+        {
+            if (c == '\\')
+            {
+                escape = true;
+                continue;
+            }
+            if (c == '"') in_string = false;
+            continue;
+        }
+
+        if (c == '#')
+        {
+            in_comment = true;
+            continue;
+        }
+        if (c == '"')
+        {
+            in_string = true;
+            continue;
+        }
+
+        if (c == '(' || c == '[' || c == '{') depth++;
+        if (c == ')' || c == ']' || c == '}') depth--;
+    }
+
+    return depth <= 0;
 }
 
 bool ScriptEngine::is_var(std::wstring token)

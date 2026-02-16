@@ -104,6 +104,10 @@ public:
     // Member function to delegate to CommandExecutor
     void process_command(const std::vector<std::wstring>& cmd) const;
 
+    // Flush any pending Janet code in the buffer and reset accumulation state.
+    // Called at the end of file imports and when switching modes.
+    void flush_janet_buffer() const;
+
     std::shared_ptr<DataManager>     _data_manager;
     network::Reasoning* const        _n;
     std::unique_ptr<ScriptEngine>    _script_engine;
@@ -127,6 +131,17 @@ console::Interactive::~Interactive()
     delete _pImpl;
 }
 
+void console::Interactive::Impl::flush_janet_buffer() const
+{
+    if (!_repl_state->janet_buffer.empty())
+    {
+        _script_engine->process_janet(_repl_state->janet_buffer, false);
+        _repl_state->janet_buffer.clear();
+    }
+    _repl_state->accumulating_inline_janet = false;
+    _repl_state->script_mode               = ScriptMode::Zelph;
+}
+
 void console::Interactive::Impl::import_file(const std::wstring& file) const
 {
     AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
@@ -140,6 +155,9 @@ void console::Interactive::Impl::import_file(const std::wstring& file) const
     {
         _interactive->process(line);
     }
+
+    // Flush any remaining Janet buffer at end of file
+    flush_janet_buffer();
 
     if (suspend.was_active())
     {
@@ -164,9 +182,9 @@ void console::Interactive::Impl::process_zelph_file(const std::string& path, con
         _interactive->process(wline);
     }
 
-    // Note: For process_zelph_file (used by CLI args), we typically rely on explicit .run commands in scripts
-    // or user interaction afterwards, but consistency suggests we could run it here.
-    // However, sticking to the requested behavior for .import specifically:
+    // Flush any remaining Janet buffer at end of file
+    flush_janet_buffer();
+
     if (suspend.was_active())
     {
         _n->run(true, false, false, true); // silent run at the end
@@ -199,17 +217,16 @@ void console::Interactive::process(std::wstring line) const
 #endif
                           });
 
-    bool was_command_or_empty = false;
-
     try
     {
-        if (boost::starts_with(line, "#")) return; // comment
+        // --- 1. Comments (work in all modes) ---
+        if (boost::starts_with(line, L"#")) return;
 
         size_t first_char_pos = line.find_first_not_of(L" \t");
+
+        // --- 2. Commands starting with '.' (work in all modes) ---
         if (first_char_pos != std::wstring::npos && line[first_char_pos] == L'.')
         {
-            was_command_or_empty = true;
-            // Command processing logic deliberately does not use PEG
             tokenizer<escaped_list_separator<wchar_t>, std::wstring::const_iterator, std::wstring> tok(line, escaped_list_separator<wchar_t>(L"\\", L" \t", L"\""));
             auto                                                                                   it = tok.begin();
             while (it != tok.end() && it->empty())
@@ -228,39 +245,107 @@ void console::Interactive::process(std::wstring line) const
                 return;
             }
         }
-        else if (first_char_pos == std::wstring::npos)
+
+        // --- 3. Empty lines ---
+        if (first_char_pos == std::wstring::npos) return;
+
+        auto& state = _pImpl->_repl_state;
+
+        // --- 4. Accumulating an incomplete inline Janet expression (from a previous % line) ---
+        if (state->accumulating_inline_janet)
         {
-            was_command_or_empty = true;
+            std::string utf8_line = string::unicode::to_utf8(line);
+            state->janet_buffer += utf8_line + "\n";
+
+            if (_pImpl->_script_engine->is_expression_complete(state->janet_buffer))
+            {
+                _pImpl->_script_engine->process_janet(state->janet_buffer, false);
+                state->janet_buffer.clear();
+                state->accumulating_inline_janet = false;
+
+                if (state->auto_run)
+                    _pImpl->_n->run(true, false, false, true);
+            }
+            return;
         }
 
+        std::string trimmed_utf8 = string::unicode::to_utf8(line);
+        boost::trim(trimmed_utf8);
+
+        // --- 5. Mode toggle: bare '%' on a line ---
+        if (trimmed_utf8 == "%")
+        {
+            if (state->script_mode == ScriptMode::Janet)
+            {
+                // Leaving Janet block mode: execute accumulated code
+                if (!state->janet_buffer.empty())
+                {
+                    _pImpl->_script_engine->process_janet(state->janet_buffer, false);
+                    state->janet_buffer.clear();
+
+                    if (state->auto_run)
+                        _pImpl->_n->run(true, false, false, true);
+                }
+                state->script_mode = ScriptMode::Zelph;
+            }
+            else
+            {
+                state->script_mode = ScriptMode::Janet;
+            }
+            return;
+        }
+
+        // --- 6. Inline Janet: '%' followed by code ---
+        if (trimmed_utf8[0] == '%')
+        {
+            std::string janet_code = trimmed_utf8.substr(1);
+            boost::trim_left(janet_code);
+
+            if (janet_code.empty()) return;
+
+            if (_pImpl->_script_engine->is_expression_complete(janet_code))
+            {
+                _pImpl->_script_engine->process_janet(janet_code, false);
+
+                if (state->auto_run)
+                    _pImpl->_n->run(true, false, false, true);
+            }
+            else
+            {
+                state->janet_buffer              = janet_code + "\n";
+                state->accumulating_inline_janet = true;
+            }
+            return;
+        }
+
+        // --- 7. Janet block mode: accumulate lines ---
+        if (state->script_mode == ScriptMode::Janet)
+        {
+            std::string utf8_line = string::unicode::to_utf8(line);
+            state->janet_buffer += utf8_line + "\n";
+            return;
+        }
+
+        // --- 8. Zelph mode: parse and execute ---
         std::string utf8_line   = string::unicode::to_utf8(line);
         std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(utf8_line);
 
-        // 1. Zelph syntax
         if (!transformed.empty())
         {
             _pImpl->_script_engine->process_janet(transformed, true);
         }
-
-        // 2. Native Janet syntax
         else
         {
+            // Not parseable as zelph - syntax error
             size_t u_first = utf8_line.find_first_not_of(" \t");
-            if (u_first != std::string::npos && utf8_line[u_first] == '(')
-            {
-                _pImpl->_script_engine->process_janet(utf8_line, false);
-            }
-            // 3. Syntax Error
-            else if (u_first != std::string::npos) // Line is not empty
+            if (u_first != std::string::npos)
             {
                 throw std::runtime_error("Syntax error: Could not parse line.");
             }
         }
 
-        // Auto-run logic: Only if auto_run is on, and it wasn't a command or comment
-        if (_pImpl->_repl_state->auto_run && !was_command_or_empty)
+        if (state->auto_run)
         {
-            // silent = true to suppress standard reasoning logging
             _pImpl->_n->run(true, false, false, true);
         }
     }

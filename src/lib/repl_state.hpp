@@ -26,12 +26,22 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <memory>
+#include <string>
 
 namespace zelph::console
 {
+    enum class ScriptMode
+    {
+        Zelph,
+        Janet
+    };
+
     struct ReplState
     {
-        bool auto_run = true;
+        bool        auto_run    = true;
+        ScriptMode  script_mode = ScriptMode::Zelph;
+        std::string janet_buffer;                      // Accumulates incomplete Janet expressions
+        bool        accumulating_inline_janet = false; // True while a % expression spans multiple lines
     };
 
     // Helper RAII struct to temporarily suspend auto-run
