@@ -68,6 +68,11 @@ namespace zelph::network
         void prune_facts(Node pattern, size_t& removed_count);
         void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
         void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
+        // When set to a non-null pointer, query results (variable bindings)
+        // are collected into the pointed-to vector instead of being printed.
+        // The caller is responsible for setting this back to nullptr after
+        // the query completes. Thread-safe: guarded by _mtx_output.
+        void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
 
     private:
         void                               evaluate(RulePos rule, ReasoningContext& ctx);
@@ -79,23 +84,24 @@ namespace zelph::network
                                                                       const adjacency_set& deductions,
                                                                       Node                 parent);
 
-        std::atomic<bool>                   _done{false};
-        std::unique_ptr<wikidata::Markdown> _markdown;
-        std::atomic<uint64_t>               _running{0};
-        bool                                _print_deductions{true};
-        bool                                _generate_markdown{true};
-        std::atomic<bool>                   _contradiction{false};
-        StopWatch                           _stop_watch;
-        std::atomic<size_t>                 _skipped{0};
-        std::mutex                          _mtx_output;
-        std::mutex                          _mtx_network;
-        std::atomic<int>                    _total_matches{0};
-        std::atomic<int>                    _total_contradictions{0};
-        std::unique_ptr<ThreadPool>         _pool;
-        std::string                         _markdown_subdir;
-        bool                                _prune_mode{false};
-        bool                                _prune_nodes_mode{false};
-        std::unordered_set<Node>            _facts_to_prune;
-        std::unordered_set<Node>            _nodes_to_prune;
+        std::atomic<bool>                        _done{false};
+        std::unique_ptr<wikidata::Markdown>      _markdown;
+        std::atomic<uint64_t>                    _running{0};
+        bool                                     _print_deductions{true};
+        bool                                     _generate_markdown{true};
+        std::atomic<bool>                        _contradiction{false};
+        StopWatch                                _stop_watch;
+        std::atomic<size_t>                      _skipped{0};
+        std::mutex                               _mtx_output;
+        std::mutex                               _mtx_network;
+        std::atomic<int>                         _total_matches{0};
+        std::atomic<int>                         _total_contradictions{0};
+        std::unique_ptr<ThreadPool>              _pool;
+        std::string                              _markdown_subdir;
+        bool                                     _prune_mode{false};
+        bool                                     _prune_nodes_mode{false};
+        std::unordered_set<Node>                 _facts_to_prune;
+        std::unordered_set<Node>                 _nodes_to_prune;
+        std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};
     };
 }

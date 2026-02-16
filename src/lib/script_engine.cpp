@@ -160,7 +160,7 @@ public:
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name)\nResolve a string to its node in the current language, creating it if needed.");
 
-        janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query: print the pattern and find all matches. Takes a zelph/fact containing variables.");
+        janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
     }
 
     void setup_peg()
@@ -404,22 +404,52 @@ public:
         network::Node n = zelph_unwrap_node(argv[0]);
         if (!n) return janet_wrap_nil();
 
-        // Print the query pattern
-        std::wstring output;
-        s_instance->_n->format_fact(output, s_instance->_n->lang(), n, 3);
-        if (!output.empty() && output != L"??")
-            s_instance->_n->print(output, false);
-
-        // Trigger query evaluation
-        if (!s_instance->_scoped_variables.empty())
+        // Build inverse mapping: variable Node -> symbol name
+        // (must be done before apply_rule clears anything)
+        std::map<network::Node, std::string> var_to_name;
+        for (const auto& [name, node] : s_instance->_scoped_variables)
         {
-            s_instance->_n->apply_rule(0, n);
+            var_to_name[node] = name;
         }
 
-        // Reset variable scope for the next query
+        // Collect results instead of printing them
+        std::vector<std::shared_ptr<network::Variables>> results;
+
+        if (!s_instance->_scoped_variables.empty())
+        {
+            s_instance->_n->set_query_collector(&results);
+            s_instance->_n->apply_rule(0, n);
+            s_instance->_n->set_query_collector(nullptr);
+        }
+
+        // Reset variable scope for the next query/statement
         s_instance->_scoped_variables.clear();
 
-        return zelph_wrap_node(n);
+        // Convert results to Janet array of tables:
+        // @[@{X <zelph/node ...> Y <zelph/node ...>} ...]
+        JanetArray* result_array = janet_array(static_cast<int32_t>(results.size()));
+
+        for (const auto& vars : results)
+        {
+            JanetTable* entry = janet_table(static_cast<int32_t>(var_to_name.size()));
+
+            for (const auto& [var_node, bound_node] : *vars)
+            {
+                auto it = var_to_name.find(var_node);
+                if (it != var_to_name.end())
+                {
+                    Janet key = janet_wrap_symbol(janet_symbol(
+                        reinterpret_cast<const uint8_t*>(it->second.c_str()),
+                        static_cast<int32_t>(it->second.size())));
+                    Janet val = zelph_wrap_node(bound_node);
+                    janet_table_put(entry, key, val);
+                }
+            }
+
+            janet_array_push(result_array, janet_wrap_table(entry));
+        }
+
+        return janet_wrap_array(result_array);
     }
 
     // Helper to generate Janet code for a function call with potential focused arguments.

@@ -1049,23 +1049,80 @@ String arguments are automatically resolved as node names (identical to `zelph/r
 
 The function also accepts quoted Janet symbols (`'X`, `'_Var`) for zelph variables — single uppercase letters or underscore-prefixed identifiers. This is used when building rules and queries (see below).
 
-#### Queries: `zelph/query`
+#### Programmatic Query Results: `zelph/query`
 
-In zelph syntax, a statement containing variables is automatically treated as a query. In Janet, this distinction must be made explicitly using `zelph/query`. It takes a single `zelph/node` argument (typically the return value of a `zelph/fact` call containing variables), prints the query pattern, and triggers the matching engine:
-
-```
-%(zelph/query (zelph/fact 'A "is located in" 'B))
-```
-
-This is equivalent to the zelph query:
+When called from Janet, `zelph/query` returns its results as a Janet array of tables rather than printing them. Each table represents one match, mapping variable symbols to their bound `zelph/node` values:
 
 ```
-A "is located in" B
+%(def results (zelph/query (zelph/fact 'X "is located in" 'Y)))
 ```
 
-Each `zelph/query` call resets the variable scope, so consecutive calls create independent queries with fresh variable bindings.
+If the graph contains `Berlin "is located in" Germany` and `Paris "is located in" France`, the return value is:
 
-**Why a separate function?** When building rules, `zelph/fact` is called with variables as inner building blocks (e.g., to construct conditions). These calls must *not* trigger query evaluation. `zelph/query` marks the point where a pattern should be evaluated against the graph — the distinction between "build this structure" and "search for this pattern."
+```
+@[@{X <zelph/node 11> Y <zelph/node 13>}
+  @{X <zelph/node 14> Y <zelph/node 16>}]
+```
+
+Access individual bindings with `get` using the same symbol that was passed to `zelph/fact`:
+
+```
+%(each r results
+   (printf "%v is located in %v" (get r 'X) (get r 'Y)))
+```
+
+Iterate over all bindings in a match with `eachp`:
+
+```
+%(each r results
+   (eachp [var node] r
+     (printf "  %v = %v" var node)))
+```
+
+**Note:** The table keys are symbols (e.g. `'X`), and the values are `zelph/node` abstract types — opaque handles to the internal graph nodes. This ensures unambiguous identity even when multiple nodes share the same name.
+
+When a query is entered in **zelph syntax** (not via `zelph/query`), results are printed to the console — `zelph/query`'s return-value behavior only applies when called from Janet code.
+
+#### Filtering and Transforming Query Results
+
+Since results are standard Janet arrays and tables, all of Janet's collection functions work naturally:
+
+```
+%
+(def results (zelph/query (zelph/fact 'X "is located in" 'Y)))
+
+# Extract just the X bindings
+(def cities (map (fn [r] (get r 'X)) results))
+
+# Count results
+(printf "Found %d matches" (length results))
+
+# Filter: find results where Y is bound to a specific node
+(def germany (zelph/resolve "Germany"))
+(def in-germany
+  (filter (fn [r] (= (get r 'Y) germany))
+    results))
+
+(printf "Found %d cities in Germany" (length in-germany))
+%
+```
+
+**Important:** `zelph/query` is designed for pattern matching with variables. To check whether a specific fact exists, filter the returned bindings directly rather than calling `zelph/query` with a fully concrete pattern. Note that `zelph/fact` always *creates* a fact as a side effect — passing concrete nodes to `zelph/fact` inside a filter would unintentionally add facts to the graph.
+
+Each `zelph/query` call resets the variable scope, so consecutive queries produce independent results with fresh variable bindings.
+
+#### Using Query Results in Rules and Facts
+
+Query results can feed back into graph construction:
+
+```
+%
+(def german-cities (zelph/query (zelph/fact 'X "is located in" "Germany")))
+
+(each r german-cities
+  (zelph/fact (get r 'X) "~" "German city"))
+%
+```
 
 #### Rules in Janet: The `let` Pattern
 

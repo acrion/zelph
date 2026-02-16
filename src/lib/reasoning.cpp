@@ -572,6 +572,11 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
     }
 }
 
+void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* collector)
+{
+    _query_results = collector;
+}
+
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent)
 {
     StopWatch watch;
@@ -969,11 +974,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     }
                     else
                     {
-                        // Normal query output
+                        // Normal query output / collection
                         std::lock_guard<std::mutex> lock(_mtx_output);
-                        std::wstring                output;
-                        format_fact(output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
-                        print(L"Answer: " + output, true);
+                        if (_query_results)
+                        {
+                            _query_results->push_back(bindings);
+                        }
+                        else
+                        {
+                            std::wstring output;
+                            format_fact(output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
+                            print(L"Answer: " + output, true);
+                        }
                     }
                 }
             };
@@ -1233,11 +1245,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 }
                 else
                 {
-                    // normal query output
+                    // normal query output / collection
                     std::lock_guard<std::mutex> lock(_mtx_output);
-                    std::wstring                output;
-                    format_fact(output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
-                    print(L"Answer: " + output, true);
+                    if (_query_results)
+                    {
+                        _query_results->push_back(joined);
+                    }
+                    else
+                    {
+                        std::wstring output;
+                        format_fact(output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
+                        print(L"Answer: " + output, true);
+                    }
                 }
             }
         };
