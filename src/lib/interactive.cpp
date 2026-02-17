@@ -75,10 +75,10 @@ public:
         _n->register_core_node(_n->core.IsA, L"~");
         _n->register_core_node(_n->core.Unequal, L"!=");
         _n->register_core_node(_n->core.Contradiction, L"!");
-        _n->register_core_node(_n->core.FollowedBy, L"..");
+        _n->register_core_node(_n->core.Cons, L"cons");
+        _n->register_core_node(_n->core.Nil, L"nil");
         _n->register_core_node(_n->core.PartOf, L"in");
         _n->register_core_node(_n->core.Conjunction, L"conjunction");
-        _n->register_core_node(_n->core.HasValue, L"has_value");
         _n->register_core_node(_n->core.Negation, L"negation");
 
         _script_engine->initialize();
@@ -257,7 +257,7 @@ void console::Interactive::process(std::wstring line) const
             std::string utf8_line = string::unicode::to_utf8(line);
             state->janet_buffer += utf8_line + "\n";
 
-            if (_pImpl->_script_engine->is_expression_complete(state->janet_buffer))
+            if (zelph::ScriptEngine::is_expression_complete(state->janet_buffer))
             {
                 _pImpl->_script_engine->process_janet(state->janet_buffer, false);
                 state->janet_buffer.clear();
@@ -303,7 +303,7 @@ void console::Interactive::process(std::wstring line) const
 
             if (janet_code.empty()) return;
 
-            if (_pImpl->_script_engine->is_expression_complete(janet_code))
+            if (zelph::ScriptEngine::is_expression_complete(janet_code))
             {
                 _pImpl->_script_engine->process_janet(janet_code, false);
 

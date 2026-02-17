@@ -63,7 +63,7 @@ namespace zelph
         // Check whether a Janet code fragment has balanced delimiters
         // (parentheses, brackets, braces), respecting strings and comments.
         // Returns true when the expression is syntactically complete.
-        bool is_expression_complete(const std::string& code) const;
+        static bool is_expression_complete(const std::string& code);
 
         static bool is_var(std::wstring token);
 

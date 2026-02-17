@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <bitset>
 #include <fstream>
 #include <iostream>
+#include <ranges>
 #include <sstream>
 
 using std::ranges::all_of;
@@ -50,9 +51,8 @@ Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
     fact(core.Unequal, core.IsA, {core.RelationTypeCategory});
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});
-    fact(core.FollowedBy, core.IsA, {core.RelationTypeCategory});
+    fact(core.Cons, core.IsA, {core.RelationTypeCategory});
     fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
-    fact(core.HasValue, core.IsA, {core.RelationTypeCategory});
 }
 
 Zelph::~Zelph()
@@ -73,9 +73,16 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
-// Sets the name of an already existing node in a specific language.
-// This overload is used when you have a known Node handle and want to directly assign or update its name.
-// It does not create a new node – it only updates the name mappings for the given language.
+// Assigns or updates the name of an existing node for a specific language.
+//
+// This overload is used when you already have a valid Node handle and want to
+// directly assign or update its name in the given language.
+// It does not create new nodes — it only updates the bidirectional name mappings
+// for that language.
+//
+// If another node already has this name *and* merge_on_conflict is true,
+// the other node's connections are merged into this node, and the other node
+// is subsequently removed.
 void Zelph::set_name(const Node node, const std::wstring& name, std::string lang, const bool merge_on_conflict)
 {
     if (lang.empty()) lang = _lang; // Use current default language if none specified
@@ -101,7 +108,7 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
         }
         else if (existing->second != node)
         {
-            // Conflict: the same name is already used for another node
+            // Conflict: the same name is already used by another node
             Node from = existing->second;
             Node into = node;
 
@@ -120,24 +127,26 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
                            << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
             }
 
-            // Merge
+            // Merge connections from the conflicting node into this one
             _pImpl->merge(from, into);
 
-            // Transfer names from the merged node
+            // Transfer names from the merged-away node to the surviving node
             _pImpl->transfer_names(from, into);
 
-            // Update the reverse mapping to the surviving node
+            // Update reverse mapping to point to the surviving node
             _pImpl->_node_of_name[lang][name] = into;
         }
     }
     else // !merge_on_conflict
     {
-        // In case the caller does not request merging, we set the node of this name independent of its existence.
-        // This is useful for Wikidata import, when setting names in a different language than "wikidata", which are all ambiguous.
-        // See Wikidata::process_import()
-        // We also use it in case of variable names in rules, because they can only refer to the current rule, never a different one.
-        // This strategy regarding variables is not strictly required, but it makes the topology of the network cleaner, because
-        // that way a variable node is only connect a single rule. See console::Interactive::Impl::process_fact()
+        // If merging is not requested, we override the name → node mapping
+        // regardless of whether the name already exists for another node.
+        //
+        // This is intentionally used for:
+        // - Wikidata import (names in other languages are ambiguous)
+        //   See Wikidata::process_import()
+        // - Variable nodes in rules (they only ever refer to the current rule)
+        //   This keeps the graph cleaner. See console::Interactive::Impl::process_fact()
         _pImpl->_node_of_name[lang][name] = node;
     }
 }
@@ -553,7 +562,7 @@ bool Zelph::has_right_edge(Node a, Node b) const
     return _pImpl->has_right_edge(a, b);
 }
 
-Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacency_set& objects)
+Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacency_set& objects) const
 {
     bool known = false;
 
@@ -698,85 +707,104 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     return answer.relation();
 }
 
+/**
+ * Builds a Lisp-style singly linked list from a vector of Node elements using cons cells.
+ *
+ * This implements exactly the classic Lisp representation:
+ * (cons A (cons B (cons C nil)))
+ *
+ * Fundamental Lisp principle since McCarthy 1958: The entire list is represented solely
+ * by the pointer to the outermost (first) cons cell. There is no additional list header
+ * or wrapper node anywhere. This is why we can say "the outermost cons cell IS the list".
+ *
+ * Empty input returns core.Nil, which is the canonical empty list in Lisp.
+ *
+ * Crucial for identity: Repeated calls to sequence() with identical input vectors of Nodes
+ * (or equivalently with identical strings via the other overload) will always return exactly
+ * the same Node value. This is guaranteed because fact(subject, predicate, objects) computes
+ * the Node via a reproducible hash based on the triple (subject, predicate, objects) and
+ * returns the existing Node if one with that exact triple already exists; it never creates
+ * duplicates. For the string-based overload, node(const std::wstring&) additionally ensures
+ * that identical names map to the same Node before fact() is called.
+ *
+ * This structural identity is essential for rule-based arithmetic and consistent
+ * reasoning in zelph, as it ensures that equivalent lists are literally the same object.
+ */
 Node Zelph::sequence(const std::vector<Node>& elements)
 {
-    if (elements.empty()) return 0;
+    if (elements.empty()) return core.Nil;
 
-    // Create the super-node representing the sequence itself
-    Node seq_node = _pImpl->create();
+    // Build from right to left (Lisp-style cons list)
+    // (cons A (cons B (cons C nil)))
+    Node rest = core.Nil;
 
-    Node prev_node = 0;
-
-    for (const Node current_node : elements)
+    for (const Node current_node : std::ranges::reverse_view(elements))
     {
         if (current_node == 0) continue;
 
-        // Link to the sequence container
-        fact(current_node, core.PartOf, {seq_node});
-
-        // Maintain order
-        if (prev_node != 0)
-        {
-            fact(prev_node, core.FollowedBy, {current_node});
-        }
-
-        prev_node = current_node;
+        rest = fact(current_node, core.Cons, {rest});
     }
 
-    return seq_node;
+    return rest; // The outermost cons cell IS the list
 }
 
+/**
+ * Builds a Lisp-style cons list from a vector of wide strings (typically single characters
+ * or digits).
+ *
+ * Each wstring is first converted to a Node via node(element), then the general
+ * Node-based sequence() overload is called. This centralizes the cons-building logic
+ * and guarantees both overloads produce exactly the same Lisp-style structure.
+ *
+ * See the detailed explanation of structural identity in the Node-based overload above.
+ *
+ * Note that we could name the outermost cons cell like the concatenation of all element
+ * node names using set_name(result, value, _lang, false). This would make some sense for
+ * numbers, e.g. the elements "4" and "2" would give the list the name "42". Two nodes in
+ * zelph can have the same name without any issues. We don't do this for several reasons:
+ *  - It would only make sense for sequences that represent numbers.
+ *  - It would raise several issues, e.g. what to do if a preloaded dataset like Wikidata
+ *    includes that number as a named node already.
+ *  - A natural distinction between digits and numbers already exists in this representation:
+ *    the digit "4" is node("4"), while the number 4 is the cons cell fact(node("4"), Cons,
+ *    {Nil}) — a structurally different node. Giving the cons cell the same name "4" would
+ *    conflate two concepts that are better kept separate.
+ */
 Node Zelph::sequence(const std::vector<std::wstring>& elements)
 {
-    if (elements.empty()) return 0;
+    if (elements.empty()) return core.Nil;
 
-    // Create the super-node representing the sequence itself
-    Node seq_node = _pImpl->create();
+    std::vector<Node> node_elements;
+    node_elements.reserve(elements.size());
 
-    // --- Value-Binding ---
-    // 1. Forming the canonical name
-    std::wstring seq_name;
-    for (const auto& el : elements)
-        seq_name += el;
-
-    // 2. Get or create concept node (this node is unique per value)
-    Node value_concept = node(seq_name, _lang);
-
-    // 3. Building the bridge: seq_node --[HasValue]--> value_concept
-    fact(seq_node, core.HasValue, {value_concept});
-    // --------------------------
-
-    Node prev_node = 0;
-
-    for (const auto& elem_name : elements)
+    for (const auto& element : elements)
     {
-        // Create a distinct node for this element instance (e.g., the first "t")
-        Node current_node = _pImpl->create();
-
-        // Retrieve or create the concept node for the name (e.g., the concept of "t")
-        Node concept_node = node(elem_name, _lang);
-
-        // Define what this node is (an instance of the concept)
-        fact(current_node, core.IsA, {concept_node});
-
-        // Link to the sequence container
-        fact(current_node, core.PartOf, {seq_node});
-
-        // Maintain order
-        if (prev_node != 0)
-        {
-            fact(prev_node, core.FollowedBy, {current_node});
-        }
-
-        prev_node = current_node;
+        node_elements.emplace_back(node(element));
     }
 
-    return seq_node;
+    return sequence(node_elements);
 }
 
+/**
+ * Creates a set represented as a dedicated node in the knowledge graph.
+ *
+ * In classic Lisp there is no direct equivalent to an unordered set as a primitive data structure.
+ * Lisp traditionally uses lists (cons cells) for collections, and sets are usually simulated
+ * with lists while manually ensuring uniqueness (member, adjoin, etc.) or with hash-tables in Common Lisp.
+ *
+ * This implementation follows a graph-theoretic / triple-store approach that fits Zelph perfectly:
+ * - A dedicated "set node" is created that represents the set as a whole (the super-node).
+ * - Each element is linked to this set node via the core.PartOf predicate: (element PartOf set_node).
+ * - This allows natural, rule-based queries such as "which nodes are PartOf this set?" or
+ *   "create the union of all sets that contain X" directly in Zelph's reasoning engine.
+ * - The representation is inherently unordered (no head/tail like cons lists) and supports
+ *   easy extension for future rule-based arithmetic (union, intersection, cardinality etc.).
+ *
+ * Empty input returns core.Nil (consistent with sequence() and the canonical empty list/set in Lisp).
+ */
 Node Zelph::set(const std::unordered_set<Node>& elements)
 {
-    if (elements.empty()) return 0;
+    if (elements.empty()) return core.Nil;
 
     // Create the super-node representing the set itself
     Node set_node = _pImpl->create();
@@ -815,8 +843,15 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     if (candidates.size() == 1) return *candidates.begin();
 
     // Conflict detected: Multiple nodes look like the subject.
-    // This happens when a fact is part of a Set/Sequence/Condition, creating extra bidirectional links.
-    // Heuristic: Prefer the candidate that is NOT a structural relation (PartOf, FollowedBy, And).
+    // This happens when a fact node is also the subject of other facts,
+    // creating extra bidirectional links. For example, a cons cell <3>
+    // that is also the subject of (<3> .. <4>) and (<3> ~ digit) will
+    // have the relation nodes for those facts as additional candidates.
+    //
+    // Strategy: Filter out candidates that are themselves relation nodes
+    // (i.e., nodes that represent other facts). A relation node always has
+    // a recognized predicate (a RelationTypeCategory instance) in its
+    // outgoing connections. We also filter the original structural cases.
 
     Node best_candidate   = 0;
     int  valid_candidates = 0;
@@ -824,15 +859,22 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     for (Node cand : candidates)
     {
         bool is_structural = false;
-        // Check outgoing connections of the candidate.
-        // If it points to a structural predicate (PartOf, FollowedBy, And), it's likely a container wrapper.
+
+        // Check if cand points to a structural predicate
         for (Node pred : _pImpl->get_right(cand))
         {
-            if (pred == core.PartOf || pred == core.FollowedBy || pred == core.IsA)
+            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA)
             {
                 is_structural = true;
                 break;
             }
+        }
+
+        // Check if cand is itself a relation node for another fact.
+        // parse_relation returns non-zero if it finds a recognized predicate.
+        if (!is_structural && parse_relation(cand) != 0)
+        {
+            is_structural = true;
         }
 
         if (!is_structural)
@@ -848,7 +890,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     return 0; // Still ambiguous
 }
 
-Node Zelph::parse_relation(const Node rule)
+Node Zelph::parse_relation(const Node rule) const
 {
     Node relation = 0; // 0 means failure
     Node subject  = 0;
@@ -926,7 +968,7 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
 
 // #define DEBUG_FORMAT_FACT
 
-void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history)
+void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history) const
 {
     // Formats a fact into a string representation.
 
@@ -984,18 +1026,84 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
-    // 3. Container Detection (Set / Sequence)
+    // 3. Cons List Detection (Sequence)
+    // Check if 'resolved' is a cons cell (relation node whose predicate is Cons).
+    // If so, walk the cons chain and format as < e1 e2 ... en >.
+    if (_pImpl->exists(resolved))
+    {
+        Node rel_type = parse_relation(resolved);
+        if (rel_type == core.Cons)
+        {
+#ifdef DEBUG_FORMAT_FACT
+            std::clog << indent << "[DEBUG format_fact] DETECTED CONS LIST starting at " << resolved << std::endl;
+#endif
+            history->insert(resolved);
+
+            std::vector<Node>        seq_elements;
+            Node                     current = resolved;
+            std::unordered_set<Node> visited_cells;
+
+            while (current != 0 && current != core.Nil && _pImpl->exists(current))
+            {
+                if (visited_cells.count(current)) break; // cycle protection
+                visited_cells.insert(current);
+
+                if (parse_relation(current) != core.Cons) break; // not a cons cell
+
+                adjacency_set objs;
+                Node          car = parse_fact(current, objs, 0);
+                if (car != 0) car = resolve_var(car);
+                if (car != 0)
+                    seq_elements.push_back(car);
+
+                // Get cdr (rest of list) — the single object of this cons cell
+                Node cdr = core.Nil;
+                for (Node o : objs)
+                {
+                    cdr = resolve_var(o);
+                    break;
+                }
+                current = cdr;
+            }
+
+            if (!seq_elements.empty())
+            {
+                result     = L"<";
+                bool first = true;
+                for (Node e : seq_elements)
+                {
+                    if (!first) result += L" ";
+                    std::wstring elem_str;
+                    format_fact(elem_str, lang, e, max_objects, variables, resolved, history);
+
+                    // Wrap in parentheses if it's a composite expression (not a simple name)
+                    if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
+                        && elem_str.front() != L'<' && elem_str.front() != L'{')
+                    {
+                        Node eff_e = resolve_var(e);
+                        if (elem_str != get_formatted_name(eff_e, lang))
+                        {
+                            elem_str = L"(" + elem_str + L")";
+                        }
+                    }
+
+                    result += elem_str;
+                    first = false;
+                }
+                result += L">";
+                return;
+            }
+        }
+    }
+
+    // 4. Container Detection (Set)
     // Check if 'resolved' acts as a container (Object in a PartOf relation).
-    // We prioritize Container over Proxy/Fact because a Set might also IsA "Set", but we want to see content.
     std::unordered_set<Node> elements;
 
     if (_pImpl->exists(resolved))
     {
         for (Node rel : _pImpl->get_right(resolved))
         {
-            // If the relation describing the element membership IS the fact
-            // we are currently formatting (passed as parent), ignore it.
-            // This prevents the subject of "A in <123>" from appearing inside "<123>".
             if (rel == parent) continue;
 
             Node p = parse_relation(rel);
@@ -1003,9 +1111,6 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             {
                 adjacency_set objs;
                 Node          s = parse_fact(rel, objs, 0);
-                // Resolve variables (e.g. 'A') to their values (e.g. '1') before inserting into the set.
-                // This ensures that if a variable is bound to an existing element, it is deduplicated
-                // and doesn't appear twice (once as element, once as variable).
                 if (s != 0) s = resolve_var(s);
 
                 if (s != 0 && objs.count(resolved) > 0)
@@ -1019,92 +1124,14 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     if (!elements.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] DETECTED CONTAINER with " << elements.size() << " elements." << std::endl;
+        std::clog << indent << "[DEBUG format_fact] DETECTED SET with " << elements.size() << " elements." << std::endl;
 #endif
         history->insert(resolved);
 
-        std::map<Node, Node>     sequence_next;
-        std::unordered_set<Node> sequence_targets;
+        std::vector<Node> sorted_elements(elements.begin(), elements.end());
+        std::sort(sorted_elements.begin(), sorted_elements.end());
 
-        for (Node elem : elements)
-        {
-            for (Node rel : _pImpl->get_right(elem))
-            {
-                if (parse_relation(rel) == core.FollowedBy)
-                {
-                    adjacency_set objs;
-                    Node          s = parse_fact(rel, objs, 0);
-
-                    // Also resolve subjects of FollowedBy to ensure sequence logic works on resolved nodes
-                    if (s != 0) s = resolve_var(s);
-
-                    if (s == elem)
-                    {
-                        for (Node o : objs)
-                        {
-                            // Resolve objects of FollowedBy
-                            if (Impl::is_var(o)) o = resolve_var(o);
-
-                            if (elements.count(o))
-                            {
-                                sequence_next[elem] = o;
-                                sequence_targets.insert(o);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        bool is_sequence = !sequence_next.empty();
-#ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] Container type: " << (is_sequence ? "SEQUENCE" : "SET") << std::endl;
-#endif
-        std::vector<Node> sorted_elements;
-
-        if (is_sequence)
-        {
-            for (Node elem : elements)
-            {
-                if (sequence_targets.find(elem) == sequence_targets.end())
-                {
-                    Node                     current = elem;
-                    std::unordered_set<Node> seq_visited;
-                    while (true)
-                    {
-                        if (seq_visited.count(current)) break;
-                        seq_visited.insert(current);
-
-                        sorted_elements.push_back(current);
-                        auto it = sequence_next.find(current);
-                        if (it != sequence_next.end())
-                        {
-                            current = it->second;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            // Add orphans
-            for (Node elem : elements)
-            {
-                if (std::find(sorted_elements.begin(), sorted_elements.end(), elem) == sorted_elements.end())
-                {
-                    sorted_elements.push_back(elem);
-                }
-            }
-        }
-        else
-        {
-            sorted_elements.insert(sorted_elements.end(), elements.begin(), elements.end());
-            std::sort(sorted_elements.begin(), sorted_elements.end());
-        }
-
-        result     = is_sequence ? L"<" : L"{";
+        result     = L"{";
         bool first = true;
         for (Node e : sorted_elements)
         {
@@ -1112,8 +1139,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             std::wstring elem_str;
             format_fact(elem_str, lang, e, max_objects, variables, resolved, history);
 
-            // Wrap in parentheses if it has spaces and isn't just a simple name.
-            if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos && elem_str.front() != L'<' && elem_str.front() != L'{')
+            if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
+                && elem_str.front() != L'<' && elem_str.front() != L'{')
             {
                 Node eff_e = resolve_var(e);
                 if (elem_str != get_formatted_name(eff_e, lang))
@@ -1125,12 +1152,12 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             result += elem_str;
             first = false;
         }
-        result += is_sequence ? L">" : L"}";
+        result += L"}";
 
         return;
     }
 
-    // 4. Proxy / Instance Detection
+    // 5. Proxy / Instance Detection
     // If a node is anonymous and not a container, check if it is an instance of a concept (IsA).
     // If so, display the concept instead of the structural fact "Node IsA Concept".
     if (_pImpl->exists(resolved))
@@ -1168,7 +1195,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         }
     }
 
-    // 5. Standard Fact Formatting (S P O)
+    // 6. Standard Fact Formatting (S P O)
     // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
 #ifdef DEBUG_FORMAT_FACT
@@ -1435,7 +1462,7 @@ std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
     return results;
 }
 
-std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors)
+std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) const
 {
     std::string name = string::unicode::to_utf8(get_name(node, _lang, true));
 
@@ -1469,7 +1496,7 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
                                   std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
                                   std::unordered_set<WrapperNode>&                                all_nodes,
                                   int                                                             max_neighbors,
-                                  size_t&                                                         placeholder_counter)
+                                  size_t&                                                         placeholder_counter) const
 {
     if (--max_depth <= 0 || visited.count(current_wrap))
         return;
@@ -1589,7 +1616,7 @@ Zelph::FactComponents Zelph::extract_fact_components(Node relation) const
     return components;
 }
 
-void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors)
+void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors) const
 {
     adjacency_set conditions, deductions;
 

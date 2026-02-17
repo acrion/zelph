@@ -143,7 +143,7 @@ namespace zelph
             std::vector<std::string> get_languages() const;
             bool                     has_language(const std::string& language) const;
             Node                     get_node(const std::wstring& name, std::string lang = "") const;
-            std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors);
+            std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
             void                     set_name(Node node, const std::wstring& name, std::string lang, bool merge_on_conflict);
             Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
             void                     cleanup_isolated(size_t& removed_count) const;
@@ -155,9 +155,9 @@ namespace zelph
 
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
-            Node                 parse_relation(const Node rule);
+            Node                 parse_relation(const Node rule) const;
             std::wstring         get_formatted_name(Node node, const std::string& lang) const;
-            void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr);
+            void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr) const;
             adjacency_set        filter(const adjacency_set& source, Node target) const;
             adjacency_set        filter(Node fact, Node relationType, Node target) const;
             static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
@@ -165,13 +165,13 @@ namespace zelph
             adjacency_set        get_right(const Node b) const;
             bool                 has_left_edge(Node b, Node a) const;
             bool                 has_right_edge(Node a, Node b) const;
-            Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects);
+            Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
             Node                 sequence(const std::vector<Node>& elements);
             Node                 sequence(const std::vector<std::wstring>& elements);
             Node                 set(const std::unordered_set<Node>& elements);
             FactComponents       extract_fact_components(Node relation) const;
-            void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors);
+            void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors) const;
             void                 print(const std::wstring&, const bool) const;
             static std::string   get_version();
             void                 save_to_file(const std::string& filename) const;
@@ -198,10 +198,10 @@ namespace zelph
                 const Node IsA;
                 const Node Unequal;
                 const Node Contradiction;
-                const Node FollowedBy;
+                const Node Cons;
+                const Node Nil;
                 const Node PartOf;
                 const Node Conjunction;
-                const Node HasValue;
                 const Node Negation;
             } core;
 
@@ -219,7 +219,7 @@ namespace zelph
                                        std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
                                        std::unordered_set<WrapperNode>&                                all_nodes,
                                        int                                                             max_neighbors,
-                                       size_t&                                                         placeholder_counter);
+                                       size_t&                                                         placeholder_counter) const;
 
             std::function<void(std::wstring, bool)> _print;
         };

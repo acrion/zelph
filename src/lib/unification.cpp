@@ -65,25 +65,6 @@ static std::string u_node_str(Zelph* z, Node n)
 
 // --- Helper Functions ---
 
-static Node get_value_concept(Zelph* n, Node node)
-{
-    if (node == 0 || !n->exists(node)) return 0;
-
-    adjacency_set outgoing = n->get_right(node);
-    for (Node rel : outgoing)
-    {
-        if (n->get_right(rel).count(n->core.HasValue) == 1)
-        {
-            adjacency_set targets = n->get_left(rel);
-            for (Node t : targets)
-            {
-                if (t != node) return t;
-            }
-        }
-    }
-    return 0;
-}
-
 struct FactStructure
 {
     Node                     subject{};
@@ -232,24 +213,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             break;
         }
 
-        // 3. Value equivalence
-        Node v_rule  = get_value_concept(n, rule_node);
-        Node v_graph = get_value_concept(n, graph_node);
-
-        if (v_rule != 0 && v_graph != 0)
-        {
-            bool match = (v_rule == v_graph);
-            U_LOG(depth, match ? "  -> HasValue Match" : "  -> HasValue Mismatch");
-            result = match;
-            break;
-        }
-        if (v_rule != 0 || v_graph != 0)
-        {
-            result = false;
-            break;
-        }
-
-        // 4. Structural equivalence
+        // 3. Structural equivalence
         auto rule_structs = get_fact_structures(n, rule_node);
         if (rule_structs.empty())
         {

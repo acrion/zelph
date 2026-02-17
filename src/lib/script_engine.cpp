@@ -176,6 +176,9 @@ public:
                                                                                          "conditions: array of fact nodes (the conjunction).\n"
                                                                                          "consequences: one or more fact nodes to deduce.\n"
                                                                                          "Returns the condition set node.");
+
+        janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
+        janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
     }
 
     void setup_peg()
@@ -317,7 +320,7 @@ public:
 
     // Read-only variant: resolves strings to existing nodes without creating new ones.
     // Returns 0 if the node does not exist. Used by zelph/exists, zelph/sources, zelph/targets.
-    network::Node resolve_janet_arg_no_create(Janet arg)
+    network::Node resolve_janet_arg_no_create(Janet arg) const
     {
         if (janet_checktype(arg, JANET_ABSTRACT) || janet_checktype(arg, JANET_NUMBER))
         {
@@ -387,7 +390,7 @@ public:
     }
 
     // Find all subjects connected to target via predicate.
-    // (zelph/sources "in" seq-node) → elements of the sequence/set
+    // (zelph/sources "in" set-node) → elements of the set
     // (zelph/sources "~" concept)   → instances of that concept
     static Janet janet_cfun_zelph_sources(int32_t argc, Janet* argv)
     {
@@ -409,9 +412,9 @@ public:
     }
 
     // Find all objects connected from subject via predicate.
-    // (zelph/targets elem-node "..") → successor in sequence
-    // (zelph/targets inst-node "~")  → concept node
-    // (zelph/targets node "in")      → container (set/sequence)
+    // (zelph/targets elem-node "cons") → cdr of cons cell (rest of list)
+    // (zelph/targets inst-node "~")    → concept node
+    // (zelph/targets node "in")        → container (set)
     static Janet janet_cfun_zelph_targets(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 2);
@@ -450,6 +453,49 @@ public:
             janet_array_push(result, zelph_wrap_node(nd));
         }
         return janet_wrap_array(result);
+    }
+
+    // Extract the car (first element / subject) of a cons cell.
+    // Returns nil if the argument is nil or not a valid cons cell.
+    static Janet janet_cfun_zelph_car(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node cell = zelph_unwrap_node(argv[0]);
+        if (!cell || cell == s_instance->_n->core.Nil) return janet_wrap_nil();
+
+        // Verify this is a cons cell
+        if (s_instance->_n->parse_relation(cell) != s_instance->_n->core.Cons)
+            return janet_wrap_nil();
+
+        network::adjacency_set objs;
+        network::Node          subject = s_instance->_n->parse_fact(cell, objs, 0);
+        if (!subject) return janet_wrap_nil();
+
+        return zelph_wrap_node(subject);
+    }
+
+    // Extract the cdr (rest of list / object) of a cons cell.
+    // Returns nil-node if the argument is nil or not a valid cons cell.
+    static Janet janet_cfun_zelph_cdr(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node cell = zelph_unwrap_node(argv[0]);
+        if (!cell || cell == s_instance->_n->core.Nil)
+            return zelph_wrap_node(s_instance->_n->core.Nil);
+
+        // Verify this is a cons cell
+        if (s_instance->_n->parse_relation(cell) != s_instance->_n->core.Cons)
+            return janet_wrap_nil();
+
+        network::adjacency_set objs;
+        s_instance->_n->parse_fact(cell, objs, 0);
+        if (objs.empty()) return zelph_wrap_node(s_instance->_n->core.Nil);
+
+        return zelph_wrap_node(*objs.begin());
     }
 
     // Mark a fact pattern as negation and return the pattern node.
@@ -970,17 +1016,15 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
     janet_table_put(_pImpl->_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
 }
 
-bool ScriptEngine::is_expression_complete(const std::string& code) const
+bool ScriptEngine::is_expression_complete(const std::string& code)
 {
     int  depth      = 0;
     bool in_string  = false;
     bool escape     = false;
     bool in_comment = false;
 
-    for (size_t i = 0; i < code.size(); ++i)
+    for (char c : code)
     {
-        char c = code[i];
-
         if (in_comment)
         {
             if (c == '\n') in_comment = false;

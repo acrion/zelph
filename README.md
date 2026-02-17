@@ -205,12 +205,12 @@ zelph initializes with a small set of fundamental nodes that define the ontology
 | **IsA**                  | `~`           | `IsA`                  | The fundamental categorical relation. Used for classification ("Socrates ~ Human") and to link proxies to concepts in compact sequences. |
 | **Causes**               | `=>`          | `Causes`               | Defines inference rules. Connects a condition set to a consequence.                                                                      |
 | **PartOf**               | `in`          | `PartOf`               | Defines membership in containers (Sets and Sequences).                                                                                   |
-| **FollowedBy**           | `..`          | `FollowedBy`           | Defines the successor relationship in ordered sequences.                                                                                 |
+| **Cons**                 | `cons`        | `Cons`                 | The fundamental list-building relation (Lisp-style). The subject is the first element (car), the object is the rest of the list (cdr). |
+| **Nil**                  | `nil`         | `Nil`                  | The empty list terminator. Marks the end of a cons list.                                                                               |
 | **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                           |
 | **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                                |
 | **Negation**             | `negation`    | `Negation`             | Used to mark a condition in a rule as negative (match if the fact does *not* exist).                                                     |
 | **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                               |
-| **HasValue**             | `has_value`   | `HasValue`             | Connects a Sequence Node to its abstract value concept (e.g., connecting `<123>` to the concept "123").                                  |
 
 These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an instance of `->` (i.e., "IsA" is a "Relation Type"). This self-referential bootstrapping allows zelph to reason about its own structure.
 
@@ -223,7 +223,7 @@ In many traditional semantic web stacks (like OWL/RDF), the ontology is *descrip
 In zelph, **the logic is intrinsic to the data**.
 
 * **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
-* **Math is Data:** Numbers are not opaque literals but graph sequences that interact with semantic entities.
+* **Math is Data:** Numbers are not opaque literals but Lisp-style cons lists of digit nodes that interact with semantic entities.
 
 This means the graph doesn't just *describe* knowledge; it *structures the execution* of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior or the arithmetic logic of the system, creating a system that is not just a database, but an **executable graph**.
 
@@ -318,65 +318,43 @@ zelph distinguishes between two fundamental input modes for sequences, which res
 
 * **Syntax:** At least one whitespace between the brackets.
 * **Semantics:** The existing nodes `item1`, `item2`, and `item3` become the direct elements of the sequence.
+* **Facts created (Lisp-style cons list, built right-to-left):**
+    * `Cell2 = B cons nil`
+    * `Cell1 = A cons Cell2` (this IS the list)
 * **Use Case:** Lists of known entities, e.g., `<Berlin Paris London>`.
 
 2. **Compact Sequences (Continuous):** `<123>` or `<abc>`
 
 * **Syntax:** No spaces between characters.
-* **Semantics:** The input is split into individual characters.
-* **The Instance/Concept Mechanism:**
-    * The actual nodes *inside* the sequence are anonymous (unnamed) **Instance Nodes**.
-    * Each Instance Node is linked via `~` (IsA) to a named **Concept Node** representing the character (e.g., "1", "a").
-    * **Wikidata Integration:** These Concept Nodes map directly to external knowledge. For example, in a numeric sequence, the Concept Node for "1" corresponds exactly to the Wikidata item for the digit 1 ([Q199](https://www.wikidata.org/wiki/Q199)). This connects the structural position in a sequence directly to semantic knowledge about the character.
+* **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g., `node("1")`, `node("a")`), and these nodes become the direct elements of the cons list.
+* **Wikidata Integration:** The element nodes map directly to external knowledge. For example, in a numeric sequence, `node("1")` corresponds exactly to the Wikidata item for the digit 1 ([Q715432](https://www.wikidata.org/wiki/Q715432)). This connects positions in a sequence directly to semantic knowledge about the character.
 
-##### Value Binding (HasValue)
+##### Digits vs. Numbers
 
-While a sequence like `<113>` is structurally composed of digits, semantically it represents a single value. zelph bridges this gap via **Value Binding**.
+A natural distinction between digits and numbers emerges from the cons-list representation:
 
-1. **Canonical Name:** zelph calculates the combined name ("113") from the elements.
-2. **Value Concept:** It retrieves (or creates) the abstract Concept Node for "113". In a Wikidata context, this node corresponds exactly to the item for the number 113 ([Q715432](https://www.wikidata.org/wiki/Q715432)).
-3. **The Link:** The Sequence Node is connected to this Value Concept via the `has_value` relation.
+- The **digit** "4" is the named node `node("4")`.
+- The **number** 4 is the cons cell `4 cons nil` — a structurally different node.
 
-**Why is this powerful?**
-This architecture connects the structural representation of numbers to semantic knowledge. A sequence like `<113>` is not just a string of digits — through its Value Concept, it is linked to everything known about the number 113 (e.g., from Wikidata: that it is a prime number). This enables the seamless integration of arithmetic and reasoning described in [Semantic Math](#semantic-math).
+This means that the digit concept and the number concept are automatically kept separate without any special mechanism. In a Wikidata context, `node("1")` maps to the Wikidata item for the digit 1 ([Q3450386](https://www.wikidata.org/wiki/Q3450386)), while the cons cell `1 cons nil` represents the number 1 ([Q199](https://www.wikidata.org/wiki/Q199).
 
-* **Symbolic Math:** You can define arithmetic rules (like addition) based on the *sequence structure* (manipulating digits).
-* **Semantic Reasoning:** The result of that calculation (a new sequence) automatically points to its Value Concept, triggering any semantic rules known about that number.
-
-Example session:
-
-```
-zelph> <123>
-< 1   2   3 >
-zelph> A in <123>
-A  in  < 1   2   3 >
-Answer:   1    in  < 1   2   3 >
-Answer:   2    in  < 1   2   3 >
-Answer:   3    in  < 1   2   3 >
-zelph>
-```
+This architecture connects the structural representation of numbers to semantic knowledge. A sequence like `<113>` is not just a string of digits — through its element nodes, it is linked to everything known about those digits (e.g., [Q715432](https://www.wikidata.org/wiki/Q715432) which represents the number 113 in Wikidata). Combined with inference rules that manipulate the cons structure, this enables the seamless integration of arithmetic and reasoning described in [Semantic Math](#semantic-math).
 
 ##### Sequence Topology
 
-A compact sequence like `<11>` combines membership, ordering, instantiation, and value binding.
+A compact sequence like `<11>` uses Lisp-style cons cells with direct concept node references.
 
 **Topology of `<11>`:**
 
-1. **Sequence Node:** `Seq` (The container).
-2. **Concept Node (Digit):** `1` (Named "1", e.g., Wikidata Q199).
-3. **Value Concept (Number):** `11` (Named "11", e.g., Wikidata Q3056).
-4. **Structure:**
+1. **Concept Node (Digit):** `1` (Named "1", e.g., Wikidata [Q715432](https://www.wikidata.org/wiki/Q715432)).
+2. **Structure (Lisp-style cons list, built right-to-left, e.g. Wikidata [Q37136](https://www.wikidata.org/wiki/Q37136):**
 
-* `Seq` is linked to `11` via `has_value`.
-* **Instance 1:** `n_Inst1` (Anonymous node).
-    * `n_Inst1 ~ 1` (Instance of concept "1")
-    * `n_Inst1 in Seq`
-* **Instance 2:** `n_Inst2` (Anonymous node).
-    * `n_Inst2 ~ 1` (Instance of concept "1")
-    * `n_Inst2 in Seq`
-* `n_Inst1 .. n_Inst2` (Ordering).
+* `Cell2 = 1 cons nil` (last element)
+* `Cell1 = 1 cons Cell2` (first element — this IS the list)
 
-This topology ensures that while `<11>` contains two distinct nodes (positions), they are semantically identified as the same digit, and the whole structure is identified as the number 11.
+Note that both cons cells reference the *same* concept node `1` as their car (subject). They are nevertheless distinct nodes because their cdr (object) differs: `Cell2` points to `nil`, while `Cell1` points to `Cell2`.
+
+There is no separate container node — just as in Lisp, the outermost cons cell IS the list. Each cons cell's subject (car) holds an element, and its object (cdr) points to the rest of the list or `nil` for the final element.
 
 #### The Focus Operator `*`
 
@@ -392,50 +370,51 @@ This operator is crucial for the rule syntax.
 
 As described in [Angle Brackets: Sequences](#angle-brackets-sequences), zelph represents numbers as ordered sequences of digit nodes within the graph (e.g., `<123>`). Each sequence is linked to its Value Concept via `has_value`, connecting it to semantic knowledge about that number. This architecture has two powerful consequences:
 
-1. **Symbolic Math:** Arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. Since numbers are topological structures, you can write inference rules that manipulate them — effectively teaching the network to compute.
+1. **Symbolic Math:** Arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. Since numbers are topological structures (cons lists of digit nodes), you can write inference rules that manipulate them — effectively teaching the network to compute.
 
-2. **Semantic Integration:** Because every computed result automatically points to its Value Concept, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows that 113 is a prime number, that fact becomes available the moment a calculation produces the sequence `<113>`. The boundary between *calculating* numbers and *reasoning* about them is removed.
+2. **Semantic Integration:** Because sequence elements are the same nodes used throughout the knowledge graph, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows facts about the digit 1 ([Q715432](https://www.wikidata.org/wiki/Q715432)), those facts are accessible wherever `node("1")` appears in a sequence. The boundary between *calculating* numbers and *reasoning* about them is removed.
 
 #### Example: Defining Addition (Peano)
 
-In zelph, "math" is just a set of topological rules. Here is how you can teach the network to add 1 to a number, simply by defining the successor relationship `..` and a logical rule:
+In zelph, "math" is just a set of topological rules. Here is how you can teach the network to add 1 to a number, simply by defining a successor relationship and a logical rule:
 
 ```
-zelph> <0> .. <1>
-{ 0 }  ..  { 1 }
-zelph> <1> .. <2>
-{ 1 }  ..  { 2 }
-zelph> <2> .. <3>
-{ 2 }  ..  { 3 }
-zelph> <3> .. <4>
-{ 3 }  ..  { 4 }
-zelph> <4> .. <5>
-{ 4 }  ..  { 5 }
+zelph> <0> successor <1>
+< 0 >  successor  < 1 >
+zelph> <1> successor <2>
+< 1 >  successor  < 2 >
+zelph> <2> successor <3>
+< 2 >  successor  < 3 >
+zelph> <3> successor <4>
+< 3 >  successor  < 4 >
+zelph> <4> successor <5>
+< 4 >  successor  < 5 >
 ... (defining up to 9) ...
 
-zelph> (A .. B) => ((<1> + A) = B)
-(A  ..  B) => { 1 }  +  A  =  B
+zelph> (A successor B) => ((<1> + A) = B)
+(A  successor  B) => < 1 >  +  A  =  B
 ```
 
-The rule states: *If A is followed by B (in the number sequence), then '1 + A' equals 'B'.*
+The rule states: *If A is followed by B (in the number succession), then '1 + A' equals 'B'.*
 Zelph immediately applies this rule to the facts we just entered:
 
 ```
-{ 1 }  +  { 5 }  =  { 6 } ⇐ { 5 }  ..  { 6 }
-{ 1 }  +  { 2 }  =  { 3 } ⇐ { 2 }  ..  { 3 }
-{ 1 }  +  { 3 }  =  { 4 } ⇐ { 3 }  ..  { 4 }
+< 1 >  +  < 5 >  =  < 6 > ⇐ < 5 >  successor  < 6 >
+< 1 >  +  < 2 >  =  < 3 > ⇐ < 2 >  successor  < 3 >
+< 1 >  +  < 3 >  =  < 4 > ⇐ < 3 >  successor  < 4 >
 ...
 ```
 
-The network has effectively "learned" addition by understanding the sequence of numbers.
+Note that `successor` is a user-defined relation here — it is not a predefined core node. The internal structure of sequences uses Lisp-style cons cells (`cons`/`nil`), while the succession relationship between numbers is expressed through domain-specific relations like `successor`.
+````
 
 #### Advanced Arithmetic with Fresh Variables and Negation
 
-While the above example demonstrates basic Peano-style addition, zelph's advanced features—fresh variables and negation—enable more complex computations, such as digit-wise addition for arbitrary-sized numbers. These features are not specific to arithmetic; they are general-purpose tools for constructive reasoning and absence-based conditions. However, they shine in arithmetic applications by allowing the dynamic creation of new sequence structures and checks for structural termination (e.g., the last digit in a number).
+While the above example demonstrates basic Peano-style addition, zelph's advanced features—fresh variables and negation—enable more complex computations, such as digit-wise addition for arbitrary-sized numbers. These features are not specific to arithmetic; they are general-purpose tools for constructive reasoning and absence-based conditions. However, they shine in arithmetic applications by allowing the dynamic creation of new cons-list structures and recursive decomposition of number representations.
 
 **Conceptual Implementation of Digit-Wise Addition:**
 
-To implement digit-wise addition, we first need rules to extract digits, handle carry, and construct the result sequence. This leverages specific patterns:
+Since numbers are represented as Lisp-style cons lists of digit nodes (e.g., `<42>` is `4 cons (2 cons nil)`), digit-wise addition naturally decomposes into recursive processing of the cons structure.
 
 1. **Define Digit Concepts:** Establish the digits and a basic lookup table for single-digit addition (including carry logic).
 
@@ -446,20 +425,23 @@ To implement digit-wise addition, we first need rules to extract digits, handle 
    (<0> + <1>) = <1> carry <0>
    ```
 
-2. **Find the Last Digit:** Use **Negation** to find the digit that has no successor in the sequence.
+2. **Find the Last Digit:** Use the cons structure to find the element at the tail of the list — the cons cell whose cdr is `nil`:
 
    ```
-   (*{(A in _Num) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last digit of" _Num)
+   (A cons nil) => (A "is last digit of" *(A cons nil))
+   (*{(B "is last digit of" _Rest) (A cons _Rest)} ~ conjunction) => (B "is last digit of" *(A cons _Rest))
    ```
 
-3. **Compute and Generate Results:** Use **Fresh Variables** to create new result nodes. Variables that appear *only* in the consequence (e.g., `R` for a new result sequence node) trigger the creation of new entities.
+   The first rule identifies the last element in a single-element list. The second rule propagates the result up the cons chain: if B is the last digit of the sublist `_Rest`, and `A cons _Rest` extends it, then B is also the last digit of the longer list.
+
+3. **Compute and Generate Results:** Use **Fresh Variables** to create new result nodes. Variables that appear *only* in the consequence (e.g., `R` for a new cons cell) trigger the creation of new entities.
 
    ```
-   (*{(A "is last digit of" _Num1) (B "is last digit of" _Num2) ( (A + B) = S )} ~ conjunction) 
-   => (I ~ S) (I in R) (_Num1 + _Num2 = R)
+   (*{(A "is last digit of" _Num1) (B "is last digit of" _Num2) ( (A + B) = S )} ~ conjunction)
+   => (S cons nil = R) (_Num1 + _Num2 = R)
    ```
 
-To handle multi-digit numbers with carry, recursive rules would process the number from right to left, stripping the last digit and propagating the carry to the next "tail" of the sequence. This approach demonstrates how zelph can perform arbitrary precision arithmetic purely through graph transformations.
+To handle multi-digit numbers with carry, recursive rules would decompose the cons structure (separating car from cdr), apply the digit lookup table, handle carries, and construct new cons cells for the result using fresh variables. This is a natural fit for the Lisp-style representation: just as `car`/`cdr` decompose a list in Lisp, zelph's cons relation allows rules to structurally pattern-match on the head and tail of a number. This approach demonstrates how zelph can perform arbitrary precision arithmetic purely through graph transformations on cons-list structures.
 
 #### Example: Querying Prime Numbers from Wikidata
 
@@ -470,7 +452,7 @@ The seamless integration of semantic knowledge and computation means that algori
 X P31 Q49008
 ```
 
-With a Wikidata dataset loaded (for example, [wikidata-20251222-pruned.bin](https://huggingface.co/datasets/acrion/zelph/tree/main)), this query lists all prime numbers recorded in Wikidata — 10,018 in this dataset. The only requirement for an algorithm to work with prime numbers is to reference the correct node (`Q49008`); everything else works out of the box because the knowledge is already part of the graph.
+With a Wikidata dataset loaded (for example, [wikidata-20251222-pruned.bin](https://huggingface.co/datasets/acrion/zelph/tree/main)), this query lists all prime numbers recorded in Wikidata — 10,018 in this dataset. The only requirement for an algorithm to work with prime numbers is to reference the correct node (`Q49008`); everything else works out of the box because the knowledge is already part of the graph. Since sequence elements are the same nodes as Wikidata entities, any arithmetic rule that produces a digit already inherits all semantic facts known about that digit.
 
 This illustrates a key design principle of zelph: knowledge and computation are not separate layers. Any arithmetic rule that produces a number automatically inherits all semantic facts known about that number, and any semantic query can draw on structurally computed results.
 
@@ -606,18 +588,24 @@ zelph> (*(A is green) ~ negation) => (A "is not" green)
  sun   is not   green  ⇐  negation
 ```
 
-**Example 2: Topological Querying (Finding the end of a sequence)**
-Negation is essential for analyzing structures, such as lists or numbers. To find the last element of a sequence, we look for an element `A` that is in the sequence but has **no** successor `X`.
+**Example 2: Topological Querying (Finding the last element of a list)**
+Negation combined with the cons structure enables analysis of lists. To find the last element,
+we look for a cons cell whose cdr is `nil`:
 
 ```
 zelph> <1 2 3>
 < 1   2   3 >
-zelph> (*{(A in _Seq) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last of" _Seq)
-{ negation  (A  in  _Seq)} => (A  is last of  _Seq)
- 3   is last of  < 1   2   3 > ⇐ { negation  ( 3   in  < 1   2   3 >)}
+zelph> (A cons nil) => (A "is last of" *(A cons nil))
+(A  cons  nil) => (A  is last of  < A >)
+ 3   is last of  < 3 > ⇐ ( 3   cons   nil )
+zelph> (*{(B "is last of" _Rest) (A cons _Rest)} ~ conjunction) => (B "is last of" *(A cons _Rest))
+{(A  cons  _Rest) (B  is last of  _Rest)} => (B  is last of  < A  ... >)
+ 3   is last of  < 2   3 > ⇐ {( 2   cons  < 3 >) ( 3   is last of  < 3 >)}
+ 3   is last of  < 1   2   3 > ⇐ {( 1   cons  < 2   3 >) ( 3   is last of  < 2   3 >)}
 ```
 
-This feature is general-purpose: it can be used for endpoint detection (as in sequences), constraints (e.g., "no conflicts"), or any absence-based logic.
+The first rule handles the base case (single-element list), the second propagates the result
+recursively up the cons chain. This is a general-purpose pattern for any cons-list analysis.
 
 ### Fresh Variables (Node Generation)
 
@@ -1161,7 +1149,7 @@ Equivalent to:
 < Berlin Paris London >
 ```
 
-**Compact sequences** (`<abc>` in zelph) split a string into individual characters, creating instance nodes linked to concept nodes for each character:
+**Compact sequences** (`<abc>` in zelph) split a string into individual characters, resolve each to a named node, and build a cons list from them:
 
 ```
 %(zelph/seq-chars "42")
@@ -1388,62 +1376,67 @@ These functions traverse the graph along a specific relation, returning arrays o
 **Common patterns with sets and sequences:**
 
 ```
-# Elements of a set or sequence (elements are linked via "in")
-%(zelph/sources "in" my-set)        # → all elements
+# Elements of a set (elements are linked via "in")
+%(zelph/sources "in" my-set)        # → all elements of the set
+
+# Decompose a cons cell (Lisp-style list node)
+%(zelph/car cons-cell)              # → the first element (car)
+%(zelph/cdr cons-cell)              # → the rest of the list (cdr)
 
 # Instances of a concept
 %(zelph/sources "~" "city")         # → all nodes that are instances of "city"
 
-# Successor in a sequence
-%(zelph/targets elem-node "..")     # → next element
-
 # What concept an instance represents
 %(zelph/targets inst-node "~")      # → @[<concept-node>]
 
-# Which container a node belongs to
-%(zelph/targets elem-node "in")     # → @[<set-or-sequence-node>]
+# Which set a node belongs to
+%(zelph/targets elem-node "in")     # → @[<set-node>]
 ```
+
+##### List Decomposition: `zelph/car` and `zelph/cdr`
+
+These functions decompose cons cells (Lisp-style list nodes), mirroring the classic Lisp `car`/`cdr` operations:
+
+- **`zelph/car`** returns the first element (subject) of a cons cell.
+- **`zelph/cdr`** returns the rest of the list (object) of a cons cell.
+
+Both return `nil` for invalid input. `zelph/cdr` returns the `nil` node for the last cell in a list.
+
+``​`
+%(def list-42 (zelph/seq-chars "42"))
+%(zelph/car list-42)                    # → <zelph/node> for "4"
+%(zelph/cdr list-42)                    # → <zelph/node> for the sublist <2>
+%(zelph/car (zelph/cdr list-42))        # → <zelph/node> for "2"
+%(zelph/cdr (zelph/cdr list-42))        # → <zelph/node> for nil
+``​`
+
+**Important:** `zelph/sources` and `zelph/targets` do *not* work for decomposing cons cells, because cons cells are relation nodes (fact nodes) in the graph, not entities that appear as subjects or objects in higher-level facts. Use `zelph/car` and `zelph/cdr` instead.
+
 
 ##### Practical Example: Inspecting a Sequence
 
-Combining all four functions to walk a compact sequence. Note that `zelph/resolve` on a sequence name (e.g. `"42"`) returns the **Value Concept** node, not the sequence node itself. The actual sequence is linked to its Value Concept via `has_value`, so an extra step is needed:
+Combining `zelph/car` and `zelph/cdr` to walk a cons-list sequence:
 
 ```
 zelph> <42>
 < 4   2 >
 %
-# zelph/resolve "42" returns the Value Concept, not the sequence
-(def value-concept (zelph/resolve "42"))
+(def list-42 (zelph/seq-chars "42"))
+(def nil-node (zelph/resolve "nil"))
 
-# Find the sequence node(s) linked to this Value Concept
-(def seq-nodes (zelph/sources "has_value" value-concept))
-(def seq-node (first seq-nodes))
-
-# Find all instance nodes in the sequence
-(def elements (zelph/sources "in" seq-node))
-(printf "Sequence has %d elements" (length elements))
-
-# For each element, find its concept (digit)
-(each elem elements
-  (let [concepts (zelph/targets elem "~")]
-    (when (not (empty? concepts))
-      (printf "  element %v is digit '%s'" elem (zelph/name (first concepts))))))
-
-# Walk the sequence in order: find the first element (has no predecessor)
-(def first-elem
-  (find (fn [e] (empty? (zelph/sources ".." e))) elements))
-
-(var current first-elem)
-(while current
-  (let [concepts (zelph/targets current "~")
-        digit-name (if (empty? concepts) "?" (zelph/name (first concepts)))]
-    (prin digit-name))
-  (let [nexts (zelph/targets current "..")]
-    (set current (if (empty? nexts) nil (first nexts)))))
+# Walk the cons list using car/cdr
+(var current list-42)
+(while (and current (not= current nil-node))
+  (let [element (zelph/car current)]
+    (when element
+      (prin (zelph/name element))))
+  (set current (zelph/cdr current)))
 (print) # newline
-# Output: 42
 %
+# Output: 42
 ```
+
+Note: `zelph/car` and `zelph/cdr` mirror the classic Lisp operations. `zelph/sources` and `zelph/targets` cannot be used for cons cell decomposition because cons cells are relation nodes in the graph, not entities.
 
 ##### Combining with Query Results
 
@@ -1595,17 +1588,20 @@ As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops
       (zelph/fact addition-fact "digit-sum" (zelph/seq-chars (string d)))
       (zelph/fact addition-fact "digit-carry" (zelph/seq-chars (string c))))))
 
-# Rule: find the last element of any sequence
-(zelph/rule
-  [(zelph/fact 'A "in" '_Seq)
-   (zelph/negate (zelph/fact 'A ".." 'X))]
-  (zelph/fact 'A "is last of" '_Seq))
+# Rule: find the last element of any cons list
+# Base case: the car of a cell ending in nil
+(let [base-cell (zelph/fact 'A "cons" "nil")]
+  (zelph/rule [base-cell]
+    (zelph/fact 'A "is last of" base-cell)))
 
-# Rule: find the first element of any sequence
+# Recursive case: propagate through the cons chain
 (zelph/rule
-  [(zelph/fact 'A "in" '_Seq)
-   (zelph/negate (zelph/fact 'X ".." 'A))]
-  (zelph/fact 'A "is first of" '_Seq))
+  [(zelph/fact 'B "is last of" '_Rest)
+   (zelph/fact 'A "cons" '_Rest)]
+  (zelph/fact 'B "is last of" (zelph/fact 'A "cons" '_Rest)))
+
+# The first element of a cons list is trivially the car of the outermost cell,
+# accessible via (zelph/car list-node) — no inference rule needed.
 %
 ```
 
@@ -1620,8 +1616,8 @@ The rules above are general-purpose (they work on any sequence, not just numbers
 | `sun is yellow` | `(zelph/fact "sun" "is" "yellow")` | Create a fact (triple) |
 | `(sun is yellow)` | `(zelph/fact "sun" "is" "yellow")` | Nested fact (returns relation node) |
 | `{ red green blue }` | `(zelph/set "red" "green" "blue")` | Unordered set |
-| `< Berlin Paris >` | `(zelph/seq "Berlin" "Paris")` | Ordered node sequence |
-| `<abc>` | `(zelph/seq-chars "abc")` | Compact character sequence |
+| `< Berlin Paris >` | `(zelph/seq "Berlin" "Paris")` | Ordered cons-list sequence |
+| `<abc>` | `(zelph/seq-chars "abc")` | Compact character cons-list sequence |
 | `*expr` | `let` binding to capture and reuse a sub-expression | Focus operator |
 | `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value |
 | `% code` | — | Execute Janet inline |

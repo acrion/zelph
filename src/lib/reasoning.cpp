@@ -470,7 +470,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
     auto is_protected = [&](Node n)
     {
-        return n == core.IsA || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.FollowedBy || n == core.PartOf || n == core.Conjunction;
+        return n == core.IsA || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.Cons || n == core.Nil || n == core.PartOf || n == core.Conjunction;
     };
 
     std::clog << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
