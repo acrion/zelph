@@ -406,7 +406,6 @@ Zelph immediately applies this rule to the facts we just entered:
 ```
 
 Note that `successor` is a user-defined relation here — it is not a predefined core node. The internal structure of sequences uses Lisp-style cons cells (`cons`/`nil`), while the succession relationship between numbers is expressed through domain-specific relations like `successor`.
-````
 
 #### Advanced Arithmetic with Fresh Variables and Negation
 
