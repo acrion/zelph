@@ -51,8 +51,8 @@ Answer:  tim   ancestor   tom
  ??   nameof   tim  ⇐  tim   is   human 
 < 1 >  +  < 0 >  =  < 1 > ⇐ < 0 >  followed-by  < 1 >
  success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
- test   test  < 0 > ⇐ < 1 >  +  < 0 >  =  < 1 >
  test   4   5  ⇐ ( 4   +   5 )  =   9 
+ test   test  < 0 > ⇐ < 1 >  +  < 0 >  =  < 1 >
  tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
  elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
  6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}

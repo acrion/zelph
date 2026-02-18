@@ -125,10 +125,11 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
                 }
             }
 
-            if (!fs.objects.empty())
+            if (fs.objects.empty())
             {
-                structures.push_back(fs);
+                fs.objects.insert(s);
             }
+            structures.push_back(fs);
         }
     }
 

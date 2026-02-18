@@ -99,7 +99,12 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
                 }
             }
 
-            if (!fs.objects.empty()) structures.push_back(fs);
+            if (fs.objects.empty())
+            {
+                // Self-referential: subject is also the object.
+                fs.objects.insert(s);
+            }
+            structures.push_back(fs);
         }
     }
 
@@ -555,6 +560,12 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
                             has_object = true;
                             break;
                         }
+                    }
+                    if (!has_object)
+                    {
+                        // Self-referential: all incoming nodes are also outgoing (bidirectional subject only).
+                        has_object = std::all_of(incoming_to_fact.begin(), incoming_to_fact.end(), [&](Node n)
+                                                 { return outgoing_from_fact.count(n) != 0; });
                     }
                 }
 
@@ -1449,8 +1460,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                                 throw contradiction_error(ctx.current_condition, augmented, parent);
                             }
                             else if (!answer.is_known()
-                                     && targets.count(rel) == 0
-                                     && targets.count(source) == 0)
+                                     && targets.count(rel) == 0)
                             {
                                 try
                                 {

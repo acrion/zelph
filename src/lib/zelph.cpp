@@ -578,7 +578,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
              && std::all_of(objects.begin(), objects.end(), [&](Node t)
                             { return connectedToRelation.count(t) != 0; }) // objects must all be connected to relation
              && std::all_of(objects.begin(), objects.end(), [&](Node t)
-                            { return connectedFromRelation.count(t) == 0; }); // no object must be connected from relation node
+                            { return t == subject || connectedFromRelation.count(t) == 0; }); // no object must be connected from relation node
 
         if (!_pImpl->_format_fact_level
             && !known
@@ -688,18 +688,25 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         {
             if (t == subject)
             {
-                // We do not support relations that have the same subject and object. Real life example (from invalid wikidata entries):
-                // South Africa (Q258)  country (P17)  South Africa (Q258)
-                // or
-                // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
+                if (objects.size() > 1)
+                {
+                    // We only allow relations with the same subject and object in the case of a single object. If there are several
+                    // objects and one of them is identical to the subject, we wouldn't know that such an object exists.
+                    // Real life examples from Wikidata:
+                    // South Africa (Q258)  country (P17)  South Africa (Q258)
+                    // or
+                    // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                const std::wstring name_subject_object = get_name(subject, _lang, true);
-                const std::wstring name_relationType   = get_name(predicate, _lang, true);
+                    const std::wstring name_subject_object = get_name(subject, _lang, true);
+                    const std::wstring name_relationType   = get_name(predicate, _lang, true);
 
-                throw std::runtime_error("fact(): facts with same subject and object are not supported: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
+                    throw std::runtime_error("fact(): facts with same subject and object are only supported for facts with a single object: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
+                }
             }
-
-            _pImpl->connect(t, answer.relation());
+            else
+            {
+                _pImpl->connect(t, answer.relation());
+            }
         }
         _pImpl->connect(answer.relation(), predicate, probability);
     }
@@ -840,7 +847,12 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     }
 
     if (candidates.empty()) return 0;
-    if (candidates.size() == 1) return *candidates.begin();
+    if (candidates.size() == 1)
+    {
+        if (deductions.empty())
+            deductions.insert(*candidates.begin()); // Self-referential: subject is its own object.
+        return *candidates.begin();
+    }
 
     // Conflict detected: Multiple nodes look like the subject.
     // This happens when a fact node is also the subject of other facts,

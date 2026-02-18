@@ -526,7 +526,14 @@ The directions of the relations are as follows:
 
 This semantics is used by zelph in several contexts, such as rule unification. It’s required because zelph doesn’t encode relation types as labels on arrows but rather as equal nodes. This has the advantage of facilitating statements about statements, for example, the statement that a relation is transitive.
 
-This design prevents subject and object from being identical in a relation. There are examples of this in Wikidata, e.g., "South Africa (Q258)" "country (P17)" "South Africa (Q258)". "South Africa" is thus linked to itself in Wikidata via the relation (property) "Country". These examples are extremely rare in Wikidata and are ignored during import, with a warning.
+zelph also supports **self-referential facts**, where subject and object are the same
+node (e.g., `A cons A`). These arise rarely in practice — Wikidata contains a small
+number of such entries, for example `South Africa (Q258) country (P17) South Africa
+(Q258)`. Internally, the object connection is omitted because the subject is already
+connected to the fact-node bidirectionally, which serves as the implicit object
+connection. Detection is unambiguous: a fact-node whose left-neighbor set contains
+only the subject node (no additional unidirectional incoming connection) is
+self-referential.
 
 ## Creating a node graph
 

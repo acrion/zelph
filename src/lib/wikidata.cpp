@@ -891,6 +891,5 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
         if (remaining.empty()) break;
     }
 
-    // ... (rest same) ...
     std::clog << "Export completed." << std::endl;
 }
