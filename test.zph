@@ -20,9 +20,6 @@ special_atoms list_contains < <= => >= < > >
 seq_compact is_defined_as <123>
 seq_spaced is_defined_as < seqItem1 seqItem2 seqItem3 >
 
-A in <123>
-B in < 1 2 3 >
-
 nested_set_in_seq holds < {seqElem1 seqElem2} {seqElem3 seqElem4} >
 nested_seq_in_set holds { <setElem1 setElem2> <setElem3 setElem4> }
 
@@ -50,11 +47,6 @@ tim _predicate _object
 (subj pred (obj is (subj2 A (b test C)))) => (success A C)
 subj pred (obj is (subj2 a_val (b test c_val)))
 
-# contradiction test
-(*{(A instanceof B) (a subclassof B)} ~ conjunction) => !
-gene instanceof geneclass
-gene subclassof geneclass
-
 # complex rule
 (*{ ((A + B) = C) (B followed-by D) (C followed-by E) } ~ conjunction) => ((A + D) = E)
 
@@ -75,3 +67,8 @@ elem3 partoflist mylist
 elem4 partoflist mylist
 elem5 partoflist mylist
 (*{(A partoflist L) (*(A --> X) ~ negation)} ~ conjunction) => (A "is last of" L)
+
+# contradiction test
+(*{(A instanceof B) (A subclassof B)} ~ conjunction) => !
+gene instanceof geneclass
+gene subclassof geneclass

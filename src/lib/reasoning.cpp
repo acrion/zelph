@@ -58,7 +58,11 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
     for (Node p : right)
     {
         if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
+        {
+            // Same guard as in unification.cpp: cons cells are opaque atoms.
+            if (p == n->core.Cons) continue;
             predicates.insert(p);
+        }
     }
 
     if (predicates.empty()) return preferred;
@@ -109,6 +113,20 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
                 // Prefer non-hash subjects (atoms/variables)
                 preferred = fs;
                 break;
+            }
+        }
+
+        // Among all-hash subjects, prefer Cons cells: they are semantic values,
+        // not relation nodes that accidentally appear via bidirectional subject edges.
+        if (Zelph::Impl::is_hash(preferred.subject))
+        {
+            for (const auto& fs : structures)
+            {
+                if (Zelph::Impl::is_hash(fs.subject) && n->parse_relation(fs.subject) == n->core.Cons)
+                {
+                    preferred = fs;
+                    break;
+                }
             }
         }
     }
@@ -273,8 +291,8 @@ bool Reasoning::consequences_already_exist(
         adjacency_set targets;
         for (Node vt : var_targets)
         {
-            history.clear();
-            Node t = instantiate_fact(this, vt, working, history);
+            history = {deduction};
+            Node t  = instantiate_fact(this, vt, working, history);
             if (t == 0) return false;
             targets.insert(t);
         }
@@ -1397,7 +1415,9 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
                 if (!var_targets.empty())
                 {
-                    std::vector<Node> history;
+                    // Seed history with the deduction node so that get_preferred_structure()
+                    // skips it as a parent and does not mistake it for the subject of var_source.
+                    std::vector<Node> history{deduction};
                     const Node        source = instantiate_fact(this, var_source, augmented, history);
 
                     if (source)
@@ -1406,8 +1426,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                         bool          done = true;
                         for (Node var_t : var_targets)
                         {
-                            history.clear();
-                            Node t = instantiate_fact(this, var_t, augmented, history);
+                            history = {deduction};
+                            Node t  = instantiate_fact(this, var_t, augmented, history);
 
                             if (t)
                             {

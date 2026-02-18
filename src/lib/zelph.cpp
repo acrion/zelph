@@ -667,7 +667,7 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 
-        if (predicate != core.IsA) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
+        if (predicate != core.IsA && (!Impl::is_hash(predicate) || Network::is_var(predicate))) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
         {
             fact(predicate, core.IsA, {core.RelationTypeCategory});
         }
@@ -856,26 +856,57 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     Node best_candidate   = 0;
     int  valid_candidates = 0;
 
+    // Phase 1: filter candidates whose outgoing edges include a core structural
+    // predicate. This identifies interlopers added by set-membership (PartOf),
+    // IsA tagging (conjunction/negation/RelTypeCategory), cons-cell structure
+    // (Cons), rule creation (Causes), or inequality constraints (Unequal).
     for (Node cand : candidates)
     {
         bool is_structural = false;
-
-        // Check if cand points to a structural predicate
         for (Node pred : _pImpl->get_right(cand))
         {
-            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA)
+            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA || pred == core.Causes || pred == core.Unequal)
             {
                 is_structural = true;
                 break;
             }
         }
-
-        // Check if cand is itself a relation node for another fact.
-        // parse_relation returns non-zero if it finds a recognized predicate.
-        if (!is_structural && parse_relation(cand) != 0)
+        if (!is_structural)
         {
-            is_structural = true;
+            best_candidate = cand;
+            valid_candidates++;
         }
+    }
+
+    if (valid_candidates == 1) return best_candidate;
+    if (valid_candidates == 0) return 0; // Still ambiguous (all filtered)
+
+    // Phase 2 (fallback): if multiple candidates remain after phase 1, also
+    // filter any candidate that is a fact node with a user-defined predicate.
+    // This handles spurious bidirectional candidates created when `rule` was
+    // used as the subject of another user-defined fact (e.g. a cons cell node
+    // later used as the subject of an arithmetic relation).
+    //
+    // Note: this phase may leave the result ambiguous (0) when a compound
+    // nested subject (e.g. the (A+B) in ((A+B)=C)) is simultaneously used as
+    // the subject of a user-defined relation. That edge case degrades to `??`
+    // rather than producing incorrect output.
+    best_candidate   = 0;
+    valid_candidates = 0;
+
+    for (Node cand : candidates)
+    {
+        bool is_structural = false;
+        for (Node pred : _pImpl->get_right(cand))
+        {
+            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA || pred == core.Causes || pred == core.Unequal)
+            {
+                is_structural = true;
+                break;
+            }
+        }
+        if (!is_structural && parse_relation(cand) != 0)
+            is_structural = true;
 
         if (!is_structural)
         {
@@ -887,7 +918,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     // If filtering leaves exactly one candidate, that's our semantic subject.
     if (valid_candidates == 1) return best_candidate;
 
-    return 0; // Still ambiguous
+    return 0; // Still ambiguous after both phases
 }
 
 Node Zelph::parse_relation(const Node rule) const
@@ -966,7 +997,9 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     }
 }
 
-// #define DEBUG_FORMAT_FACT
+#ifndef NDEBUG
+    #define DEBUG_FORMAT_FACT
+#endif
 
 void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history) const
 {
@@ -995,9 +1028,9 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         Node curr  = n;
         while (Impl::is_var(curr) && limit++ < 100)
         {
-            Node next = string::get(variables, curr, 0);
-            if (next == 0 || next == curr) break;
-            curr = next;
+            auto it = variables.find(curr);
+            if (it == variables.end() || it->second == 0 || it->second == curr) break;
+            curr = it->second;
         }
         return curr;
     };
@@ -1037,7 +1070,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #ifdef DEBUG_FORMAT_FACT
             std::clog << indent << "[DEBUG format_fact] DETECTED CONS LIST starting at " << resolved << std::endl;
 #endif
-            history->insert(resolved);
+            auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
+            child_history->insert(resolved);
 
             std::vector<Node>        seq_elements;
             Node                     current = resolved;
@@ -1074,7 +1108,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                 {
                     if (!first) result += L" ";
                     std::wstring elem_str;
-                    format_fact(elem_str, lang, e, max_objects, variables, resolved, history);
+                    format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
 
                     // Wrap in parentheses if it's a composite expression (not a simple name)
                     if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
@@ -1126,7 +1160,8 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 #ifdef DEBUG_FORMAT_FACT
         std::clog << indent << "[DEBUG format_fact] DETECTED SET with " << elements.size() << " elements." << std::endl;
 #endif
-        history->insert(resolved);
+        auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
+        child_history->insert(resolved);
 
         std::vector<Node> sorted_elements(elements.begin(), elements.end());
         std::sort(sorted_elements.begin(), sorted_elements.end());
@@ -1137,7 +1172,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         {
             if (!first) result += L" ";
             std::wstring elem_str;
-            format_fact(elem_str, lang, e, max_objects, variables, resolved, history);
+            format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
 
             if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
                 && elem_str.front() != L'<' && elem_str.front() != L'{')
@@ -1220,14 +1255,16 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
-    history->insert(resolved);
+    auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
+    child_history->insert(resolved);
+
     std::wstring subject_name, relation_name;
 
     if (!is_condition || subject)
     {
         // Recursion for Subject
         std::wstring s_str;
-        format_fact(s_str, lang, subject, max_objects, variables, resolved, history);
+        format_fact(s_str, lang, subject, max_objects, variables, resolved, child_history);
 
         // Wrap subject only if it's a composite fact, not a named atom
         bool needs_parens = false;
@@ -1262,7 +1299,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         {
             // Recurse -> returns marked string
             std::wstring r_str;
-            format_fact(r_str, lang, relation, max_objects, variables, resolved, history);
+            format_fact(r_str, lang, relation, max_objects, variables, resolved, child_history);
             relation_name = r_str.empty() ? string::mark_identifier(L"?") : r_str;
 
             // Optional: Wrap complex unnamed relations in parens too?
@@ -1284,7 +1321,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         for (Node object : objects)
         {
             std::wstring o_str;
-            format_fact(o_str, lang, object, max_objects, variables, resolved, history);
+            format_fact(o_str, lang, object, max_objects, variables, resolved, child_history);
 
             // Wrap object only if it's a composite fact, not a named atom
             if (!o_str.empty() && o_str.find(L' ') != std::wstring::npos && o_str.front() != L'<' && o_str.front() != L'{')

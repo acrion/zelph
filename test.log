@@ -7,28 +7,20 @@
  h   ..   i 
  atom_A  =>  atom_B 
  atom_C  <=  atom_D 
-(A { = } B)  is_type   equivalence 
+(A  ??  B)  is_type   equivalence 
  special_atoms   list_contains  << =  =>>  = >
  solar system   is part of   milky way 
 ( earth   is part of   solar system )  is_truth   true 
  seq_compact   is_defined_as  < 1   2   3 >
  seq_spaced   is_defined_as  < seqItem1   seqItem2   seqItem3 >
-A  in  < 1   2   3 >
-Answer:  3   in  < 1   2   3 >
-Answer:  2   in  < 1   2   3 >
-Answer:  1   in  < 1   2   3 >
-B  in  < 1   2   3 >
-Answer:  1   in  < 1   2   3 >
-Answer:  2   in  < 1   2   3 >
-Answer:  3   in  < 1   2   3 >
  nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
- nested_seq_in_set   holds  {< setElem1   setElem2 > < setElem3   setElem4 >}
- container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(X  ancestor  Y) (Y  ancestor  Z)} => (X  ancestor  Z)>
+ nested_seq_in_set   holds  {< setElem3   setElem4 > < setElem1   setElem2 >}
+ container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z)>
  mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
 _Variable  with_underscore  _V
  quoted_sequence   ~  < a   b   c >
- deep_nesting   ~  ( Level1  ->  Level1Object )
- set_logic   ~  {( myItem2   IsA   myItem3 ) ( myItem1   IsA   myItem2 )}
+ deep_nesting   ~  ( Level1   ??   Level1Object )
+ set_logic   ~  {( myItem1   IsA   myItem2 ) ( myItem2   IsA   myItem3 )}
  tim   ~   male 
  tim  _predicate _object
 Answer:  tim   ~   human 
@@ -38,12 +30,9 @@ Answer:  tim   ancestor   tom
 ( 4   +   5 )  =   9 
 ( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
-{( a   subclassof  B) (A  instanceof  B)} =>  ! 
- gene   instanceof   geneclass 
- gene   subclassof   geneclass 
-{(B  followed-by  D) (C  followed-by  E) ((A  +  B)  =  C)} => ((A  +  D)  =  E)
-(A  followed-by  B) => { 1 }  +  A  =  B
-{ 0 }  followed-by  { 1 }
+{(C  followed-by  E) ((A  +  B)  =  C) (B  followed-by  D)} => ((A  +  D)  =  E)
+(A  followed-by  B) => < 1 >  +  A  =  B
+< 0 >  followed-by  < 1 >
 (A  is   human ) => (B  nameof  A)
  tim   is   human 
  elem1  -->  elem2 
@@ -56,11 +45,17 @@ Answer:  tim   ancestor   tom
  elem4   partoflist   mylist 
  elem5   partoflist   mylist 
 { negation  (A  partoflist  L)} => (A  is last of  L)
+{(A  subclassof  B) (A  instanceof  B)} =>  ! 
+ gene   instanceof   geneclass 
+ gene   subclassof   geneclass 
  ??   nameof   tim  ⇐  tim   is   human 
- test   4   5  ⇐ ( 4   +   5 )  =   9 
- elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
- tim   ancestor   paul  ⇐ {( tim   ancestor   tom ) ( tom   ancestor   paul )}
-{ 1 }  +  { 0 }  =  { 1 } ⇐ { 0 }  followed-by  { 1 }
- 6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+< 1 >  +  < 0 >  =  < 1 > ⇐ < 0 >  followed-by  < 1 >
  success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
- test  { 1 } { 0 } ⇐ { 1 }  +  { 0 }  =  { 1 }
+ test   test  < 0 > ⇐ < 1 >  +  < 0 >  =  < 1 >
+ test   4   5  ⇐ ( 4   +   5 )  =   9 
+ tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
+ elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
+ 6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+ !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
+ !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
+Found one or more contradictions!

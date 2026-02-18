@@ -91,6 +91,10 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
     {
         if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
         {
+            // Cons cells are opaque atoms in structural matching.
+            // Do not treat a node whose predicate is Cons as having structure;
+            // it must only match by identity (or variable binding).
+            if (p == n->core.Cons) continue;
             predicates.insert(p);
         }
     }
@@ -144,6 +148,23 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
             for (const auto& fs : structures)
             {
                 if (!Zelph::Impl::is_hash(fs.subject)) filtered.push_back(fs);
+            }
+            return filtered;
+        }
+
+        // Among all-hash subjects, prefer Cons cells: they are semantic values,
+        // not relation nodes that accidentally appear via bidirectional subject edges.
+        bool has_cons_subject = false;
+        for (const auto& fs : structures)
+        {
+            if (n->parse_relation(fs.subject) == n->core.Cons) has_cons_subject = true;
+        }
+        if (has_cons_subject)
+        {
+            filtered.clear();
+            for (const auto& fs : structures)
+            {
+                if (n->parse_relation(fs.subject) == n->core.Cons) filtered.push_back(fs);
             }
             return filtered;
         }
