@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <boost/algorithm/string.hpp>
 
+#include <algorithm>
 #include <map>
 #include <unordered_set>
 #include <vector>
@@ -153,9 +154,9 @@ public:
 #endif
         janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact s p o)\nCreate fact.");
 
-        janet_def(_janet_env, "zelph/seq", wrap((JanetCFunction)janet_cfun_zelph_seq), "(zelph/seq nodes...)\nCreate sequence from nodes.");
+        janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)janet_cfun_zelph_list), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell).");
 
-        janet_def(_janet_env, "zelph/seq-chars", wrap((JanetCFunction)janet_cfun_zelph_seq_chars), "(zelph/seq-chars str)\nCreate sequence from string characters.");
+        janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)janet_cfun_zelph_list_chars), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.");
         janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name)\nResolve a string to its node in the current language, creating it if needed.");
@@ -185,13 +186,14 @@ public:
     {
         // zelph Grammar:
         // 1. :atom -> Alphanumeric or Symbols (excluding reserved)
-        // 2. :sequence -> < ... >
-        // 3. :set -> { ... }
-        // 4. :nested -> ( ... ) Recursive statements inside ( ... )
-        // 5. :quoted -> "..."
-        // 6. :focused -> *Element (Returns the element instead of the container)
-        // 7. :unquote -> ,identifier (Reference to a Janet variable)
-        // Returns tagged tuples like [:atom "val"], [:seq "val"] or [:nested sub-stmt...] for C++ processing
+        // 2. :list-compact -> <123> Compact list: split into individual chars
+        // 3. :list-nodes -> < a b > Node list: space-separated elements
+        // 4. :set -> { ... }
+        // 5. :nested -> ( ... ) Recursive statements inside ( ... )
+        // 6. :quoted -> "..."
+        // 7. :focused -> *Element (Returns the element instead of the container)
+        // 8. :unquote -> ,identifier (Reference to a Janet variable)
+        // Returns tagged tuples like [:atom "val"], [:list-compact "val"] or [:nested sub-stmt...] for C++ processing
         std::string peg_setup = R"zph(
             (def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
@@ -238,8 +240,9 @@ public:
 
                 :star-atom  (group (* (constant :atom) (capture "*")))
 
-                # 1. Compact Sequence: <abc>
-                :tag-seq-compact (group (* (constant :seq-compact) (* "<" (capture (some (if-not (set "> \t\r\n") 1))) ">")))
+                # 1. Compact List: <abc> — no spaces between chars, split into individual character nodes.
+                #    Characters are stored reversed internally (LSB-first for numbers).
+                :tag-list-compact (group (* (constant :list-compact) (* "<" (capture (some (if-not (set "> \t\r\n") 1))) ">")))
 
                 # Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
                 # but Janet PEG handles this via the :val-any choice reference.
@@ -255,17 +258,17 @@ public:
                 :set-content (any (sequence :s* :val-any))
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
-                # 2. Node Sequence: < a b >
+                # 2. Node List: < a b > — space-separated, stored as cons list (last element outermost).
+                #    The user writes elements in the order they should be displayed; format_fact reverses
+                #    the internal order back for output. For numbers, write digits in reverse: <3 2 1>
+                #    represents the number 123 (same internal form as the compact <123>).
                 # The loop (if-not ">" :val-any) ensures we don't consume the closing delimiter.
-                # This works for "=>" because the first char "=" passes the check,
-                # and then :arrow-multi consumes the whole "=>".
-                # An unquoted ">" atom inside a sequence is impossible here (it acts as delimiter).
-                :seq-content (any (sequence :s* (if-not ">" :val-any)))
-                :tag-seq-nodes (group (* (constant :seq-nodes) (* "<" :seq-content :s* ">")))
+                :list-content (any (sequence :s* (if-not ">" :val-any)))
+                :tag-list-nodes (group (* (constant :list-nodes) (* "<" :list-content :s* ">")))
 
                 # Value order:
-                # Check sequences first so "<" starts a sequence if possible.
-                :val-any (choice :tag-focused :tag-var :tag-unquote :tag-seq-compact :tag-seq-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                # Check lists first so "<" starts a list if possible.
+                :val-any (choice :tag-focused :tag-var :tag-unquote :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -340,8 +343,6 @@ public:
         }
         return 0;
     }
-
-    // --- Add these static functions after janet_cfun_zelph_query ---
 
     // Check whether a fact exists in the graph without creating it.
     // Returns true if the fact (subject predicate object...) is known.
@@ -569,8 +570,12 @@ public:
         return zelph_wrap_node(condition_set);
     }
 
-    // Split string into chars (for compact <abc> syntax)
-    static Janet janet_cfun_zelph_seq_chars(int32_t argc, Janet* argv)
+    // Build a cons list from string characters (for compact <abc> syntax).
+    // Characters are reversed before list construction so that the last (rightmost)
+    // character — the least significant digit in a numeric string — becomes the
+    // outermost cons cell. This matches the node-list syntax where the user writes
+    // digits in reverse order: <3 2 1> and <123> produce the same internal structure.
+    static Janet janet_cfun_zelph_list_chars(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
@@ -579,22 +584,29 @@ public:
         std::string    raw_s = reinterpret_cast<const char*>(str);
         std::wstring   wstr  = string::unicode::from_utf8(raw_s);
 
-        // Compact mode always splits by character
+        if (wstr.empty()) return janet_wrap_nil(); // Empty lists are not supported
+
+        // Split into individual characters, then reverse so the rightmost character
+        // (least significant digit) becomes element[0] and thus the outermost cons cell.
+        // Example: "123" -> ['3','2','1'] -> list builds 3 cons (2 cons (1 cons nil))
+        // This matches the node-list syntax where the user writes <3 2 1> for the number 123.
         std::vector<std::wstring> elements;
         elements.reserve(wstr.length());
         for (wchar_t c : wstr)
-        {
             elements.emplace_back(1, c);
-        }
 
-        if (elements.empty()) return janet_wrap_nil(); // Empty sequences are not supported
+        std::reverse(elements.begin(), elements.end());
 
-        network::Node seq_node = s_instance->_n->sequence(elements);
-        return zelph_wrap_node(seq_node);
+        network::Node list_node = s_instance->_n->list(elements);
+        return zelph_wrap_node(list_node);
     }
 
-    // Sequence of Nodes (for < A B > syntax)
-    static Janet janet_cfun_zelph_seq(int32_t argc, Janet* argv)
+    // Build a cons list from existing nodes (for < A B > node-list syntax).
+    // The first node in the input becomes the outermost cons cell (= head of the cons list).
+    // For numbers, write digits in reverse so that the LSB comes first:
+    // <3 2 1> gives 3 as the outermost car (= LSB of "123"), matching the internal
+    // structure of the compact <123> syntax.
+    static Janet janet_cfun_zelph_list(int32_t argc, Janet* argv)
     {
         if (!s_instance) return janet_wrap_nil();
 
@@ -609,8 +621,8 @@ public:
 
         if (elements.empty()) return janet_wrap_nil();
 
-        network::Node seq_node = s_instance->_n->sequence(elements);
-        return zelph_wrap_node(seq_node);
+        network::Node list_node = s_instance->_n->list(elements);
+        return zelph_wrap_node(list_node);
     }
 
     static Janet janet_cfun_zelph_set(int32_t argc, Janet* argv)
@@ -821,15 +833,16 @@ public:
                 args.push_back(data[i]);
             return build_smart_call("zelph/set", args);
         }
-        else if (type == "seq-nodes")
+        else if (type == "list-nodes")
         {
+            // [:list-nodes val1 val2 ...] — node list < A B C >
             std::vector<Janet> args;
             for (int32_t i = 1; i < len; ++i)
                 args.push_back(data[i]);
-            return build_smart_call("zelph/seq", args);
+            return build_smart_call("zelph/list", args);
         }
 
-        // Handle leaf nodes (atom, var, seq, unquote)
+        // Handle leaf nodes (atom, var, list-compact, unquote)
         // These expect data[1] to be the content string/buffer
         std::string val_str;
         if (janet_checktype(data[1], JANET_STRING))
@@ -868,12 +881,13 @@ public:
                 return "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             }
         }
-        else if (type == "seq-compact")
+        else if (type == "list-compact")
         {
-            // Convert <123> content to (zelph/seq "123")
-            // Escape the content string for Janet
+            // Convert <123> content to (zelph/list-chars "123").
+            // janet_cfun_zelph_list_chars reverses the characters internally
+            // so the LSB (rightmost char) becomes the outermost cons cell.
             std::string content = "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
-            return "(zelph/seq-chars " + content + ")";
+            return "(zelph/list-chars " + content + ")";
         }
 
         return "nil";

@@ -167,8 +167,8 @@ namespace zelph
             bool                 has_right_edge(Node a, Node b) const;
             Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
             Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
-            Node                 sequence(const std::vector<Node>& elements);
-            Node                 sequence(const std::vector<std::wstring>& elements);
+            Node                 list(const std::vector<Node>& elements);
+            Node                 list(const std::vector<std::wstring>& elements);
             Node                 set(const std::unordered_set<Node>& elements);
             FactComponents       extract_fact_components(Node relation) const;
             void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors) const;

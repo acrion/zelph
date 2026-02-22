@@ -737,7 +737,7 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
  * This structural identity is essential for rule-based arithmetic and consistent
  * reasoning in zelph, as it ensures that equivalent lists are literally the same object.
  */
-Node Zelph::sequence(const std::vector<Node>& elements)
+Node Zelph::list(const std::vector<Node>& elements)
 {
     if (elements.empty()) return core.Nil;
 
@@ -777,7 +777,7 @@ Node Zelph::sequence(const std::vector<Node>& elements)
  *    {Nil}) — a structurally different node. Giving the cons cell the same name "4" would
  *    conflate two concepts that are better kept separate.
  */
-Node Zelph::sequence(const std::vector<std::wstring>& elements)
+Node Zelph::list(const std::vector<std::wstring>& elements)
 {
     if (elements.empty()) return core.Nil;
 
@@ -789,7 +789,7 @@ Node Zelph::sequence(const std::vector<std::wstring>& elements)
         node_elements.emplace_back(node(element));
     }
 
-    return sequence(node_elements);
+    return list(node_elements);
 }
 
 /**
@@ -1085,7 +1085,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
             child_history->insert(resolved);
 
-            std::vector<Node>        seq_elements;
+            std::vector<Node>        list_elements;
             Node                     current = resolved;
             std::unordered_set<Node> visited_cells;
 
@@ -1100,7 +1100,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                 Node          car = parse_fact(current, objs, 0);
                 if (car != 0) car = resolve_var(car);
                 if (car != 0)
-                    seq_elements.push_back(car);
+                    list_elements.push_back(car);
 
                 // Get cdr (rest of list) — the single object of this cons cell
                 Node cdr = core.Nil;
@@ -1112,31 +1112,54 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                 current = cdr;
             }
 
-            if (!seq_elements.empty())
+            if (!list_elements.empty())
             {
-                result     = L"<";
-                bool first = true;
-                for (Node e : seq_elements)
+                // Check whether all elements are single-character named nodes (digit-like).
+                bool all_single_char = std::all_of(list_elements.begin(), list_elements.end(), [&](Node e) -> bool
+                                                   {
+                        Node         eff = resolve_var(e);
+                        std::wstring nm  = get_formatted_name(eff, lang);
+                        return nm.length() == 1; });
+
+                if (all_single_char)
                 {
-                    if (!first) result += L" ";
-                    std::wstring elem_str;
-                    format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
+                    // Reverse for display: stored order is LSB-first (e.g. [3,2,1] for 123),
+                    // conventional display is MSB-first. Omit spaces to match input syntax.
+                    std::vector<Node> display_elements(list_elements.rbegin(), list_elements.rend());
 
-                    // Wrap in parentheses if it's a composite expression (not a simple name)
-                    if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
-                        && elem_str.front() != L'<' && elem_str.front() != L'{')
+                    result = L"<";
+                    for (Node e : display_elements)
                     {
-                        Node eff_e = resolve_var(e);
-                        if (elem_str != get_formatted_name(eff_e, lang))
-                        {
-                            elem_str = L"(" + elem_str + L")";
-                        }
+                        std::wstring elem_str;
+                        format_fact(elem_str, lang, resolve_var(e), max_objects, variables, resolved, child_history);
+                        result += boost::algorithm::trim_copy_if(elem_str, boost::algorithm::is_any_of(L"«»"));
                     }
-
-                    result += elem_str;
-                    first = false;
+                    result += L">";
                 }
-                result += L">";
+                else
+                {
+                    result     = L"<";
+                    bool first = true;
+                    for (Node e : list_elements)
+                    {
+                        if (!first) result += L" ";
+                        std::wstring elem_str;
+                        format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
+
+                        // Wrap in parentheses if it's a composite expression (not a simple name).
+                        if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
+                            && elem_str.front() != L'<' && elem_str.front() != L'{')
+                        {
+                            Node eff_e = resolve_var(e);
+                            if (elem_str != get_formatted_name(eff_e, lang))
+                                elem_str = L"(" + elem_str + L")";
+                        }
+
+                        result += elem_str;
+                        first = false;
+                    }
+                    result += L">";
+                }
                 return;
             }
         }
