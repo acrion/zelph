@@ -34,6 +34,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph
 {
+    inline thread_local bool tl_is_pool_worker = false;
+
     class ThreadPool
     {
     public:
@@ -41,20 +43,25 @@ namespace zelph
         {
             for (size_t i = 0; i < num_threads; ++i)
             {
-                workers.emplace_back([this]
-                                     {
-                    while (true) {
-                        std::function<void()> task;
+                workers.emplace_back(
+                    [this]
+                    {
+                        tl_is_pool_worker = true;
+                        while (true)
                         {
-                            std::unique_lock<std::mutex> lock(queue_mutex);
-                            condition.wait(lock, [this] { return stop || !tasks.empty(); });
-                            if (stop && tasks.empty()) return;
-                            task = std::move(tasks.front());
-                            tasks.pop();
+                            std::function<void()> task;
+                            {
+                                std::unique_lock<std::mutex> lock(queue_mutex);
+                                condition.wait(lock, [this]
+                                               { return stop || !tasks.empty(); });
+                                if (stop && tasks.empty()) return;
+                                task = std::move(tasks.front());
+                                tasks.pop();
+                            }
+                            task();
+                            --pending_tasks;
                         }
-                        task();
-                        --pending_tasks;
-                    } });
+                    });
             }
         }
 

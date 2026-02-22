@@ -11,14 +11,14 @@
  special_atoms   list_contains  << =  =>>  = >
  solar system   is part of   milky way 
 ( earth   is part of   solar system )  is_truth   true 
- seq_compact   is_defined_as  < 1   2   3 >
+ seq_compact   is_defined_as  <123>
  seq_spaced   is_defined_as  < seqItem1   seqItem2   seqItem3 >
  nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
  nested_seq_in_set   holds  {< setElem3   setElem4 > < setElem1   setElem2 >}
  container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z)>
  mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
 _Variable  with_underscore  _V
- quoted_sequence   ~  < a   b   c >
+ quoted_sequence   ~  <cba>
  deep_nesting   ~  ( Level1   ??   Level1Object )
  set_logic   ~  {( myItem1   IsA   myItem2 ) ( myItem2   IsA   myItem3 )}
  tim   ~   male 
@@ -31,8 +31,8 @@ Answer:  tim   ancestor   tom
 ( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
 {(C  followed-by  E) ((A  +  B)  =  C) (B  followed-by  D)} => ((A  +  D)  =  E)
-(A  followed-by  B) => < 1 >  +  A  =  B
-< 0 >  followed-by  < 1 >
+(A  followed-by  B) => <1>  +  A  =  B
+<0>  followed-by  <1>
 (A  is   human ) => (B  nameof  A)
  tim   is   human 
  elem1  -->  elem2 
@@ -49,13 +49,14 @@ Answer:  tim   ancestor   tom
  gene   instanceof   geneclass 
  gene   subclassof   geneclass 
  ??   nameof   tim  ⇐  tim   is   human 
-< 1 >  +  < 0 >  =  < 1 > ⇐ < 0 >  followed-by  < 1 >
  success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
  test   4   5  ⇐ ( 4   +   5 )  =   9 
- test   test  < 0 > ⇐ < 1 >  +  < 0 >  =  < 1 >
+<1>  +  <0>  =  <1> ⇐ <0>  followed-by  <1>
  tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
  elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
  6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+ !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
+ test   test  <0> ⇐ <1>  +  <0>  =  <1>
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
 Found one or more contradictions!

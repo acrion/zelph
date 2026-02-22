@@ -59,8 +59,6 @@ static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vec
     {
         if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
         {
-            // Same guard as in unification.cpp: cons cells are opaque atoms.
-            if (p == n->core.Cons) continue;
             predicates.insert(p);
         }
     }

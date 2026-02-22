@@ -91,10 +91,6 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
     {
         if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
         {
-            // Cons cells are opaque atoms in structural matching.
-            // Do not treat a node whose predicate is Cons as having structure;
-            // it must only match by identity (or variable binding).
-            if (p == n->core.Cons) continue;
             predicates.insert(p);
         }
     }
@@ -393,7 +389,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         }
     }
 
-    if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound)
+    if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound && !tl_is_pool_worker)
     {
         Node fixed_rel = *_relation_list.begin();
 
