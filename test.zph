@@ -72,3 +72,16 @@ elem5 partoflist mylist
 (*{(A instanceof B) (A subclassof B)} ~ conjunction) => !
 gene instanceof geneclass
 gene subclassof geneclass
+
+%(zelph/fact "Berlin" "is capital of" "Germany")
+Germany "is located in" Europe
+%
+(let [cond (zelph/set
+            (zelph/fact 'X "is capital of" 'Y)
+            (zelph/fact 'Y "is located in" 'Z))]
+(zelph/fact cond "~" "conjunction")
+(zelph/fact cond "=>" (zelph/fact 'X "is located in" 'Z)))
+%
+
+%(def berlin (zelph/resolve "Berlin"))
+,berlin ~ town

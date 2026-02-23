@@ -606,7 +606,30 @@ private:
             L"          => (X \"is located in\" Z)",
             L"          Answer: Berlin   is located in   Europe",
             L"                  ⇐ {( Germany   is located in   Europe )",
-            L"                      ( Berlin   is capital of   Germany )}"};
+            L"                      ( Berlin   is capital of   Germany )}",
+            L"",
+            L"Janet Scripting",
+            L"───────────────",
+            L"Janet:    %<code> (inline, one line) or bare % (toggle block mode until next %).",
+            L"          Janet generates facts/rules programmatically – then zelph inference runs as usual.",
+            L"          Example (using the Berlin/Germany facts from above):",
+            L"          %(zelph/fact \"Berlin\" \"is capital of\" \"Germany\")",
+            L"          Germany \"is located in\" Europe",
+            L"          %",
+            L"          (let [cond (zelph/set",
+            L"                      (zelph/fact 'X \"is capital of\" 'Y)",
+            L"                      (zelph/fact 'Y \"is located in\" 'Z))]",
+            L"            (zelph/fact cond \"~\" \"conjunction\")",
+            L"            (zelph/fact cond \"=>\" (zelph/fact 'X \"is located in\" 'Z)))",
+            L"          %",
+            L"          Answer: Berlin   is located in   Europe",
+            L"                  ⇐ {( Germany   is located in   Europe )",
+            L"                      ( Berlin   is capital of   Germany )}",
+            L"",
+            L"Unquote:  ,janet-var inside zelph lines (after defining in Janet).",
+            L"          Example:",
+            L"          %(def berlin (zelph/resolve \"Berlin\"))",
+            L"          ,berlin \"is capital of\" Germany"};
 
         static const std::map<std::wstring, std::wstring> detailed_help = {
             {L".help", L".help [command]\n"
