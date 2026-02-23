@@ -88,20 +88,19 @@ int main(int argc, char** argv)
             std::wcout << L"-- REPL mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
             std::wcout << std::endl;
 
-            std::wstring line;
-            std::wstring lang_prompt   = zelph::string::unicode::from_utf8(interactive.get_lang());
-            std::wstring prompt_suffix = interactive.is_auto_run_active() ? L"> " : L"-> "; // Visual indicator
-
             auto make_prompt = [&]() -> std::wstring
             {
                 if (interactive.is_accumulating())
-                    return interactive.is_auto_run_active() ? L"+> " : L"-+> ";
-                return interactive.is_auto_run_active() ? L"> " : L"-> ";
+                    return L"";
+                else
+                    return zelph::string::unicode::from_utf8(interactive.get_lang())
+                         + (interactive.is_auto_run_active() ? L"> " : L"-> ");
             };
 
-            std::wcout << lang_prompt << prompt_suffix;
+            std::wcout << make_prompt();
             std::wcout.flush();
 
+            std::wstring line;
             while (std::getline(std::wcin, line))
             {
                 if (line == exit_command)
@@ -110,8 +109,7 @@ int main(int argc, char** argv)
                 if (line.empty())
                 {
                     std::wcout << L"type .help for help --" << std::endl;
-                    lang_prompt = zelph::string::unicode::from_utf8(interactive.get_lang());
-                    std::wcout << lang_prompt << make_prompt();
+                    std::wcout << make_prompt();
                     std::wcout.flush();
                     continue;
                 }
@@ -125,8 +123,7 @@ int main(int argc, char** argv)
                     std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
                 }
 
-                lang_prompt = zelph::string::unicode::from_utf8(interactive.get_lang());
-                std::wcout << lang_prompt << make_prompt();
+                std::wcout << make_prompt();
                 std::wcout.flush();
             }
 
