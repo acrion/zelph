@@ -138,6 +138,14 @@ bool console::Interactive::is_auto_run_active() const
     return _pImpl->_repl_state->auto_run;
 }
 
+bool console::Interactive::is_accumulating() const
+{
+    const auto& s = _pImpl->_repl_state;
+    return s->accumulating_zelph
+        || s->accumulating_inline_janet
+        || s->script_mode == ScriptMode::Janet;
+}
+
 void console::Interactive::process(std::wstring line) const
 {
     _pImpl->_n->set_print([](const std::wstring& str, bool)
@@ -258,9 +266,25 @@ void console::Interactive::process(std::wstring line) const
             return;
         }
 
-        // --- 8. Zelph mode: parse and execute ---
-        std::string utf8_line   = string::unicode::to_utf8(line);
-        std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(utf8_line);
+        // --- 8. Zelph mode: accumulate until statement is complete, then parse ---
+        std::string utf8_line = string::unicode::to_utf8(line);
+
+        if (state->accumulating_zelph)
+            state->zelph_buffer += "\n" + utf8_line;
+        else
+            state->zelph_buffer = utf8_line;
+
+        if (!zelph::ScriptEngine::is_zelph_complete(state->zelph_buffer))
+        {
+            state->accumulating_zelph = true;
+            return;
+        }
+
+        std::string complete_stmt = state->zelph_buffer;
+        state->zelph_buffer.clear();
+        state->accumulating_zelph = false;
+
+        std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(complete_stmt);
 
         if (!transformed.empty())
         {
@@ -268,11 +292,10 @@ void console::Interactive::process(std::wstring line) const
         }
         else
         {
-            // Not parseable as zelph - syntax error
-            size_t u_first = utf8_line.find_first_not_of(" \t");
+            size_t u_first = complete_stmt.find_first_not_of(" \t\n");
             if (u_first != std::string::npos)
             {
-                throw std::runtime_error("Syntax error: Could not parse line.");
+                throw std::runtime_error("Syntax error: Could not parse statement.");
             }
         }
 

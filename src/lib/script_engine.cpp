@@ -952,8 +952,17 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
 
     if (val_count == 1)
     {
-        // Single term (e.g. { ... } or just "Atom")
-        // Just return the term itself to be evaluated/printed
+        // A bare parenthesized fact like (A rel B) at the top level is a syntax error:
+        // nested facts are only valid as arguments inside a larger statement, not standalone.
+        const Janet* val_data;
+        int32_t      val_len;
+        if (janet_indexed_view(root_data[1], &val_data, &val_len) && val_len > 0
+            && janet_checktype(val_data[0], JANET_KEYWORD))
+        {
+            std::string val_type = reinterpret_cast<const char*>(janet_unwrap_keyword(val_data[0]));
+            if (val_type == "nested")
+                return ""; // Syntax error: (fact) at top level is not a valid statement
+        }
         return _pImpl->transform_arg(root_data[1]);
     }
     else
@@ -1095,6 +1104,99 @@ bool ScriptEngine::is_expression_complete(const std::string& code)
     }
 
     return depth <= 0;
+}
+
+// Determine whether a zelph statement is complete.
+// A statement is complete when:
+//   - All parentheses and braces are balanced
+//   - The top-level token count indicates a full triple (>= 3),
+//     OR it is exactly 1 token that is NOT a parenthesized group.
+//     (A single paren group like "(*{...} ~ conj)" is a subject waiting for P and O.)
+//     A bare atom, set {}, or list <> with count == 1 is a valid standalone expression.
+//   - "Top-level token" = a contiguous non-whitespace chunk at paren/brace depth 0.
+//     Note: < > (list delimiters) and all other chars are treated as plain characters
+//     for token boundaries; only () and {} affect depth.
+bool ScriptEngine::is_zelph_complete(const std::string& code)
+{
+    int  depth      = 0; // () and {} depth only
+    bool in_string  = false;
+    bool escape     = false;
+    bool in_comment = false;
+
+    int  top_tokens   = 0;
+    bool in_top_token = false;
+
+    for (char c : code)
+    {
+        if (in_comment)
+        {
+            if (c == '\n') in_comment = false;
+            continue;
+        }
+        if (escape)
+        {
+            escape = false;
+            continue;
+        }
+        if (in_string)
+        {
+            if (c == '\\')
+                escape = true;
+            else if (c == '"')
+                in_string = false;
+            continue;
+        }
+
+        if (c == '#')
+        {
+            in_comment = true;
+            continue;
+        }
+        if (c == '"')
+        {
+            in_string = true;
+            if (depth == 0 && !in_top_token)
+            {
+                top_tokens++;
+                in_top_token = true;
+            }
+            continue;
+        }
+
+        bool is_ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+
+        if (c == '(' || c == '{')
+        {
+            if (depth == 0 && !in_top_token)
+            {
+                top_tokens++;
+                in_top_token = true;
+            }
+            depth++;
+        }
+        else if (c == ')' || c == '}')
+        {
+            depth--;
+            if (depth == 0) in_top_token = false;
+        }
+        else if (is_ws)
+        {
+            if (depth == 0) in_top_token = false;
+        }
+        else
+        {
+            // Any other character: atom chars, operators, < > * , etc.
+            if (depth == 0 && !in_top_token)
+            {
+                top_tokens++;
+                in_top_token = true;
+            }
+        }
+    }
+
+    if (depth != 0 || in_string) return false;
+    if (top_tokens <= 2) return false; // nothing / subject only / S P only   — still needs input to complete a triple
+    return true;
 }
 
 bool ScriptEngine::is_var(std::wstring token)

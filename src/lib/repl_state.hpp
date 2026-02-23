@@ -42,6 +42,8 @@ namespace zelph::console
         ScriptMode  script_mode = ScriptMode::Zelph;
         std::string janet_buffer;                      // Accumulates incomplete Janet expressions
         bool        accumulating_inline_janet = false; // True while a % expression spans multiple lines
+        std::string zelph_buffer;
+        bool        accumulating_zelph = false;
     };
 
     // Helper RAII struct to temporarily suspend auto-run

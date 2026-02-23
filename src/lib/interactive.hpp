@@ -46,6 +46,7 @@ namespace zelph::console
         std::string        get_lang() const;
         static std::string get_version();
         bool               is_auto_run_active() const;
+        bool               is_accumulating() const;
         void               process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
 
         Interactive(const Interactive&)            = delete;

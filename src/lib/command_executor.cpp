@@ -364,6 +364,16 @@ public:
             _process_line_callback(string::unicode::from_utf8(line_utf8));
         }
 
+        // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)
+        if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
+        {
+            std::string transformed = _script_engine->parse_zelph_to_janet(_repl_state->zelph_buffer);
+            if (!transformed.empty())
+                _script_engine->process_janet(transformed, true);
+            _repl_state->zelph_buffer.clear();
+        }
+        _repl_state->accumulating_zelph = false;
+
         // Flush any remaining accumulated Janet code
         if (!_repl_state->janet_buffer.empty())
         {

@@ -65,6 +65,8 @@ namespace zelph
         // Returns true when the expression is syntactically complete.
         static bool is_expression_complete(const std::string& code);
 
+        static bool is_zelph_complete(const std::string& code);
+
         static bool is_var(std::wstring token);
 
         ScriptEngine(const ScriptEngine&)            = delete;
