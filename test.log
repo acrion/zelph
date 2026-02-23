@@ -1,3 +1,4 @@
+Importing file test.zph...
 {(X R Y) (R  ~   transitive ) (Y R Z)} => (X R Z)
 >  ~   transitive 
  6  >  5 

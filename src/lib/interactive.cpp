@@ -34,7 +34,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <boost/algorithm/string.hpp>
 #include <boost/tokenizer.hpp>
 
-#include <fstream>
 #include <iostream>
 #include <memory>
 
@@ -98,15 +97,8 @@ public:
         delete _n;
     }
 
-    void import_file(const std::wstring& file) const;
-    void process_zelph_file(const std::string& path, const std::vector<std::string>& args = {}) const;
-
     // Member function to delegate to CommandExecutor
     void process_command(const std::vector<std::wstring>& cmd) const;
-
-    // Flush any pending Janet code in the buffer and reset accumulation state.
-    // Called at the end of file imports and when switching modes.
-    void flush_janet_buffer() const;
 
     std::shared_ptr<DataManager>     _data_manager;
     network::Reasoning* const        _n;
@@ -131,69 +123,9 @@ console::Interactive::~Interactive()
     delete _pImpl;
 }
 
-void console::Interactive::Impl::flush_janet_buffer() const
-{
-    if (!_repl_state->janet_buffer.empty())
-    {
-        _script_engine->process_janet(_repl_state->janet_buffer, false);
-        _repl_state->janet_buffer.clear();
-    }
-    _repl_state->accumulating_inline_janet = false;
-    _repl_state->script_mode               = ScriptMode::Zelph;
-}
-
-void console::Interactive::Impl::import_file(const std::wstring& file) const
-{
-    AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
-
-    std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
-    std::wifstream stream(string::unicode::to_utf8(file));
-
-    if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
-
-    for (std::wstring line; std::getline(stream, line);)
-    {
-        _interactive->process(line);
-    }
-
-    // Flush any remaining Janet buffer at end of file
-    flush_janet_buffer();
-
-    if (suspend.was_active())
-    {
-        _n->run(true, false, false, true); // silent run at the end
-    }
-}
-
-void console::Interactive::Impl::process_zelph_file(const std::string& path, const std::vector<std::string>& args) const
-{
-    AutoRunSuspender suspend(_repl_state); // Don't auto-run inside scripts
-
-    _script_engine->set_script_args(args);
-
-    std::ifstream file(path);
-    if (!file) throw std::runtime_error("Konnte Datei nicht öffnen: " + path);
-    std::string line;
-    while (std::getline(file, line))
-    {
-        boost::trim(line);
-        if (line.empty() || line[0] == '#') continue;
-        std::wstring wline = string::unicode::from_utf8(line);
-        _interactive->process(wline);
-    }
-
-    // Flush any remaining Janet buffer at end of file
-    flush_janet_buffer();
-
-    if (suspend.was_active())
-    {
-        _n->run(true, false, false, true); // silent run at the end
-    }
-}
-
 void console::Interactive::process_file(const std::wstring& file, const std::vector<std::string>& args) const
 {
-    _pImpl->process_zelph_file(string::unicode::to_utf8(file), args);
+    _pImpl->_command_executor->import_file(file, args);
 }
 
 std::string console::Interactive::get_version()
@@ -357,7 +289,7 @@ void console::Interactive::process(std::wstring line) const
 
 void console::Interactive::import_file(const std::wstring& file) const
 {
-    _pImpl->import_file(file);
+    _pImpl->_command_executor->import_file(file);
 }
 
 // Delegation method

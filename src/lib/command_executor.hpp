@@ -81,6 +81,18 @@ namespace zelph::console
          */
         void execute(const std::vector<std::wstring>& cmd);
 
+        /**
+         * @brief Imports a zelph script file, processing it line by line.
+         *
+         * Suspends auto-run for the duration of the import and triggers a silent
+         * run afterwards if auto-run was active. Optionally sets script arguments
+         * accessible via :args in Janet.
+         *
+         * @param file UTF-16 path to the .zph file.
+         * @param args Optional script arguments (accessible as :args in Janet).
+         */
+        void import_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
+
         // Non-copyable due to internal state references
         CommandExecutor(const CommandExecutor&)            = delete;
         CommandExecutor& operator=(const CommandExecutor&) = delete;

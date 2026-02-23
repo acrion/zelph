@@ -348,17 +348,30 @@ private:
         throw std::runtime_error("Unknown node '" + string::unicode::to_utf8(arg) + "'");
     }
 
-    void import_file(const std::wstring& file) const
+public:
+    void import_file(const std::wstring& file, const std::vector<std::string>& args = {}) const
     {
         AutoRunSuspender suspend(_repl_state);
 
+        if (!args.empty())
+            _script_engine->set_script_args(args);
+
         std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
-        std::wifstream stream(string::unicode::to_utf8(file));
+        std::ifstream stream(string::unicode::to_utf8(file));
         if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
-        for (std::wstring line; std::getline(stream, line);)
+        for (std::string line_utf8; std::getline(stream, line_utf8);)
         {
-            _process_line_callback(line);
+            _process_line_callback(string::unicode::from_utf8(line_utf8));
         }
+
+        // Flush any remaining accumulated Janet code
+        if (!_repl_state->janet_buffer.empty())
+        {
+            _script_engine->process_janet(_repl_state->janet_buffer, false);
+            _repl_state->janet_buffer.clear();
+        }
+        _repl_state->accumulating_inline_janet = false;
+        _repl_state->script_mode               = ScriptMode::Zelph;
 
         if (suspend.was_active())
         {
@@ -366,6 +379,7 @@ private:
         }
     }
 
+private:
     void list_predicate_usage(size_t limit)
     {
         // Map to store predicate node and its usage count
@@ -1459,7 +1473,7 @@ private:
         _n->save_to_file(utf8_file);
         _n->print(L"Saved network to " + file, true);
     }
-    void cmd_import(const std::vector<std::wstring>& cmd)
+    void cmd_import(const std::vector<std::wstring>& cmd) const
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         const std::wstring& path = cmd[1];
@@ -1487,4 +1501,9 @@ console::CommandExecutor::~CommandExecutor() = default;
 void console::CommandExecutor::execute(const std::vector<std::wstring>& cmd)
 {
     _pImpl->execute(cmd);
+}
+
+void console::CommandExecutor::import_file(const std::wstring& file, const std::vector<std::string>& args) const
+{
+    _pImpl->import_file(file, args);
 }

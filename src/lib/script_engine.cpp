@@ -977,7 +977,17 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 
     if (status != JANET_SIGNAL_OK)
     {
-        janet_stacktrace(nullptr, out);
+        // Throw a C++ exception so the error propagates correctly through import
+        // chains and other nested call contexts (e.g. .import, process_file).
+        std::string err = "Janet error";
+        if (janet_checktype(out, JANET_STRING))
+            err = reinterpret_cast<const char*>(janet_unwrap_string(out));
+        else if (janet_checktype(out, JANET_BUFFER))
+        {
+            JanetBuffer* b = janet_unwrap_buffer(out);
+            err            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+        }
+        throw std::runtime_error(err);
     }
     else
     {
@@ -1014,8 +1024,15 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);
     if (status != JANET_SIGNAL_OK)
     {
-        janet_stacktrace(nullptr, out);
-        throw std::runtime_error("Error evaluating janet expression");
+        std::string err = "Janet error";
+        if (janet_checktype(out, JANET_STRING))
+            err = reinterpret_cast<const char*>(janet_unwrap_string(out));
+        else if (janet_checktype(out, JANET_BUFFER))
+        {
+            JanetBuffer* b = janet_unwrap_buffer(out);
+            err            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+        }
+        throw std::runtime_error(err);
     }
     return zelph_unwrap_node(out);
 }
