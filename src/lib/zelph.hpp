@@ -152,11 +152,15 @@ namespace zelph
             size_t                   get_node_of_name_size(const std::string& lang) const;
             size_t                   language_count() const;
             size_t                   rule_count() const;
+            void                     set_logging(int max_depth);
+            void                     log(int depth, const std::string& category, const std::string& message) const;
+            bool                     should_log(int depth) const { return _logging && depth <= _max_log_depth; }
 
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
             Node                 parse_relation(const Node rule) const;
             std::wstring         get_formatted_name(Node node, const std::string& lang) const;
+            std::string          format(Node node) const;
             void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr) const;
             adjacency_set        filter(const adjacency_set& source, Node target) const;
             adjacency_set        filter(Node fact, Node relationType, Node target) const;
@@ -222,6 +226,8 @@ namespace zelph
                                        size_t&                                                         placeholder_counter) const;
 
             std::function<void(std::wstring, bool)> _print;
+            int                                     _max_log_depth{0};
+            bool                                    _logging{false};
         };
     }
 }

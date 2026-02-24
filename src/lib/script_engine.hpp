@@ -30,6 +30,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <string>
 #include <vector>
 
+struct JanetAbstractType;
+struct JanetBuffer;
+union Janet;
+
 namespace zelph
 {
     namespace network
@@ -75,5 +79,12 @@ namespace zelph
     private:
         class Impl;
         Impl* const _pImpl;
+
+        static const JanetAbstractType zelph_node_type;
+        static void                    zelph_node_tostring(void* p, JanetBuffer* buffer);
+        static int                     zelph_node_compare(void* p1, void* p2);
+        static int                     zelph_node_hash(void* p, size_t size);
+        static Janet                   zelph_wrap_node(network::Node n);
+        static network::Node           zelph_unwrap_node(Janet val);
     };
 }

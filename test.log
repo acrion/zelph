@@ -49,10 +49,10 @@ Answer:  tim   ancestor   tom
 {(A  subclassof  B) (A  instanceof  B)} =>  ! 
  gene   instanceof   geneclass 
  gene   subclassof   geneclass 
-<zelph/node <zelph/node 5325429171640007963>>
+<zelph/node «Berlin» «is capital of» «Germany»>
  Germany   is located in   Europe 
-<zelph/node <zelph/node 7833222380197596495>>
-<zelph/node <zelph/node 130>>
+<zelph/node {(X «is capital of» Y) (Y «is located in» Z)} => (X «is located in» Z)>
+<zelph/node «Berlin»>
  Berlin   ~   town 
  ??   nameof   tim  ⇐  tim   is   human 
  success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))

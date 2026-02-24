@@ -33,35 +33,27 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-#ifndef NDEBUG
-    #include <string>
+#include <string>
 static void u_log(int depth, const std::string& msg)
 {
-    if (depth < 10)
-    {
-        std::string indent(depth * 2, ' ');
-        std::clog << indent << "[Unify] " << msg << std::endl;
-    }
+    std::string indent(depth * 2, ' ');
+    std::clog << indent << "[depth " << depth << ", Unify] " << msg << std::endl;
 }
-// Helper for Node representation in Debug mode
-static std::string u_node_str(Zelph* z, Node n)
+
+static std::string u_node_str(const Zelph* z, Node n)
 {
     if (n == 0) return "0";
-    if (Zelph::Impl::is_var(n)) return "VAR(" + std::to_string(n) + ")";
+    if (Zelph::Impl::is_var(n)) return "VAR(" + z->format(n) + ")";
     std::string name = zelph::string::unicode::to_utf8(z->get_name(n, "zelph", true));
-    if (name.empty()) name = zelph::string::unicode::to_utf8(z->get_name(n, "en", false));
-    if (name.empty()) return std::to_string(n);
-    return name + "(" + std::to_string(n) + ")";
+    if (name.empty()) name = z->format(n);
+    if (name.empty())
+        return std::to_string(n);
+    else
+        return name;
 }
-    #define U_LOG(depth, msg) u_log(depth, msg)
-    #define U_NODE(n)         u_node_str(_n, n)
-#else
-    #define U_LOG(depth, msg) \
-        do                    \
-        {                     \
-        } while (0)
-    #define U_NODE(n) ""
-#endif
+#define U_LOG(depth, msg) \
+    if (_n->should_log(depth)) { u_log(depth, msg); }
+#define U_NODE(n) u_node_str(_n, n)
 
 // --- Helper Functions ---
 
@@ -73,7 +65,7 @@ struct FactStructure
 };
 
 // Determines all possible structural interpretations of a node.
-static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
+static std::vector<FactStructure> get_fact_structures(const Zelph* n, Node fact)
 {
     std::vector<FactStructure> structures;
     if (fact == 0 || !n->exists(fact)) return structures;
@@ -171,14 +163,12 @@ static std::vector<FactStructure> get_fact_structures(Zelph* n, Node fact)
 }
 
 // Recursive Unification Algorithm with Cycle Detection
-static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& local_bindings, const Variables& global_bindings, std::vector<std::pair<Node, Node>>& history, int depth = 0)
+static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, Variables& local_bindings, const Variables& global_bindings, std::vector<std::pair<Node, Node>>& history, int depth)
 {
     //    if (depth > 50) return false; // Hard limit fallback
     if (rule_node == 0 || graph_node == 0) return false;
 
-#ifndef NDEBUG
-    U_LOG(depth, "Comparing " + u_node_str(n, rule_node) + " vs " + u_node_str(n, graph_node));
-#endif
+    U_LOG(depth, "Comparing " + U_NODE(rule_node) + " vs " + U_NODE(graph_node));
 
     // 0. Cycle Check
     // If we already check this exact pair (rule, graph) in this path, the cycle is closed
@@ -204,21 +194,21 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             if (local_bindings.count(rule_node))
             {
                 U_LOG(depth, "  Var local bound -> recursing");
-                result = unify_nodes(n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth);
+                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1);
                 break;
             }
             if (global_bindings.count(rule_node))
             {
                 Node bound = zelph::string::get(global_bindings, rule_node, 0);
                 U_LOG(depth, "  Var global bound -> recursing");
-                result = unify_nodes(n, bound, graph_node, local_bindings, global_bindings, history, depth);
+                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1);
                 break;
             }
 
             local_bindings[rule_node] = graph_node;
-#ifndef NDEBUG
-            U_LOG(depth, "  -> Bound " + u_node_str(n, rule_node) + " to " + u_node_str(n, graph_node));
-#endif
+
+            U_LOG(depth, "  -> Bound " + U_NODE(rule_node) + " to " + U_NODE(graph_node));
+
             result = true;
             break;
         }
@@ -232,7 +222,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
         }
 
         // 3. Structural equivalence
-        auto rule_structs = get_fact_structures(n, rule_node);
+        auto rule_structs = get_fact_structures(_n, rule_node);
         if (rule_structs.empty())
         {
             U_LOG(depth, "  -> Rule node is atom, but not identical. Fail.");
@@ -240,7 +230,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             break;
         }
 
-        auto graph_structs = get_fact_structures(n, graph_node);
+        auto graph_structs = get_fact_structures(_n, graph_node);
         if (graph_structs.empty())
         {
             U_LOG(depth, "  -> Graph node is atom, but rule expects structure. Fail.");
@@ -253,10 +243,10 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
             for (const auto& gs : graph_structs)
             {
                 // A. Predicate
-                if (!unify_nodes(n, rs.predicate, gs.predicate, local_bindings, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, local_bindings, global_bindings, history, depth + 1)) continue;
 
                 // B. Subject
-                if (!unify_nodes(n, rs.subject, gs.subject, local_bindings, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.subject, gs.subject, local_bindings, global_bindings, history, depth + 1)) continue;
 
                 // C. Objekte
                 if (rs.objects.empty() != gs.objects.empty()) continue;
@@ -270,7 +260,7 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
                     bool found = false;
                     for (Node g_obj : gs.objects)
                     {
-                        if (unify_nodes(n, r_obj, g_obj, temp_bindings, global_bindings, history, depth + 1))
+                        if (unify_nodes(_n, r_obj, g_obj, temp_bindings, global_bindings, history, depth + 1))
                         {
                             found = true;
                             break;
@@ -299,8 +289,8 @@ static bool unify_nodes(Zelph* n, Node rule_node, Node graph_node, Variables& lo
     return result;
 }
 
-Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool)
-    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool)
+Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth)
+    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth)
 {
     // "condition" means here one of the predicates that form a list of conditions (which are connected by "and")
 
@@ -311,7 +301,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         Node relation = *relations.begin(); // there is always only 1 relation
         _subject      = _n->parse_fact(condition, _objects, _parent);
 
-        U_LOG(0, "Init Unification: " + U_NODE(condition));
+        U_LOG(_log_depth, "Init Unification: " + U_NODE(condition));
 
         if (Zelph::Impl::is_var(relation))
         {
@@ -433,7 +423,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                        Node fact = _snapshot_vec[i];
                                        adjacency_set objects;
                                        Node subject = _n->parse_fact(fact, objects, fixed_rel);
-                                       auto result = extract_bindings(subject, objects, fixed_rel);
+                                       auto result = extract_bindings(subject, objects, fixed_rel, _log_depth);
                                        if (result)
                                        {
                                            std::lock_guard<std::mutex> l(_queue_mtx);
@@ -573,7 +563,7 @@ std::shared_ptr<Variables> Unification::Next()
                 adjacency_set objects;
                 Node          subject = _n->parse_fact(*_fact_index, objects, *_relation_index);
 
-                auto result = extract_bindings(subject, objects, *_relation_index);
+                auto result = extract_bindings(subject, objects, *_relation_index, _log_depth);
                 if (result)
                 {
                     return result;
@@ -593,18 +583,18 @@ std::shared_ptr<Variables> Unification::Next()
 // Both a rule and a fact can have only a single subject, but multiple objects.
 // In a rule, these objects are interpreted as alternatives.
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
-std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const
+std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const
 {
     if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject)) return nullptr;
 
     auto result = std::make_shared<Variables>();
 
-    U_LOG(0, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
+    U_LOG(depth, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
 
     std::vector<std::pair<Node, Node>> history; // Cycle detection
-    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history))
+    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history, _log_depth))
     {
-        U_LOG(0, "  -> Subject Failed");
+        U_LOG(depth, "  -> Subject Failed");
         return nullptr;
     }
 
@@ -626,7 +616,7 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     {
         Variables temp_bindings = *result;
         history.clear(); // Reset history for cycle detection
-        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history))
+        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history, _log_depth))
         {
             *result        = temp_bindings;
             object_matches = true;

@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "reasoning.hpp"
 #include "contradiction_error.hpp"
+#include "string_utils.hpp"
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 
@@ -225,25 +226,20 @@ static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& 
 // New member function: is_negated_condition
 // =============================================================================
 
-bool Reasoning::is_negated_condition(Node condition)
+bool Reasoning::is_negated_condition(Node condition, int depth)
 {
     if (!_pImpl->exists(condition))
     {
-#ifndef NDEBUG
-        std::clog << "[NEG-CHECK] condition " << condition << " does not exist!" << std::endl;
-#endif
+        if (should_log(depth))
+            log(depth, "neg-check", "condition " + std::to_string(condition) + " does not exist!");
         return false;
     }
 
     Answer ans    = check_fact(condition, core.IsA, {core.Negation});
     bool   result = ans.is_known();
 
-#ifndef NDEBUG
-    std::clog << "[NEG-CHECK] condition=" << condition
-              << " name='" << string::unicode::to_utf8(get_name(condition, _lang, true))
-              << "' IsA Negation? " << (result ? "YES" : "NO")
-              << " (Negation core node=" << core.Negation << ")" << std::endl;
-#endif
+    if (should_log(depth))
+        log(depth, "neg-check", "condition=" + format(condition) + " name='" + string::unicode::to_utf8(get_name(condition, _lang, true)) + "' IsA Negation? " + (result ? "YES" : "NO") + " (Negation core node=" + std::to_string(core.Negation) + ")");
 
     return result;
 }
@@ -678,6 +674,12 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
 void Reasoning::apply_rule(const Node& rule, Node condition)
 {
+    if (should_log(1))
+    {
+        std::wstring formatted_rule;
+        format_fact(formatted_rule, _lang, rule, 3);
+        log(0, "rule", "=== Applying rule " + string::unicode::to_utf8(formatted_rule) + " ===");
+    }
     ReasoningContext ctx;
 
     if (rule == 0)
@@ -700,7 +702,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
         try
         {
-            evaluate(RulePos({rule, conditions, 0}), ctx);
+            evaluate(RulePos({rule, conditions, 0}), ctx, 1);
         }
         catch (const contradiction_error& error)
         {
@@ -731,7 +733,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 }
 
 // Greedy Sort to optimize execution order based on variable bindings
-std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set& conditions, const Variables& current_vars)
+std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth)
 {
     auto sorted = std::make_shared<std::vector<Node>>();
     sorted->reserve(conditions.size());
@@ -773,7 +775,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
             // Negated conditions must be evaluated last to ensure
             // maximum variable binding before the existence check.
-            if (is_negated_condition(cond))
+            if (is_negated_condition(cond, depth))
                 score -= 1000;
 
             if (score > max_score)
@@ -786,6 +788,15 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
         if (best_it != pending.end())
         {
             Node best_cond = *best_it;
+            if (should_log(depth))
+            // Log the selected condition with its score
+            {
+                adjacency_set rels     = filter(best_cond, core.IsA, core.RelationTypeCategory);
+                std::string   rel_name = "?";
+                if (rels.size() == 1) rel_name = string::unicode::to_utf8(get_name(*rels.begin(), _lang, true));
+                log(depth, "optorder", "Selected condition=" + format(best_cond) + " rel=" + rel_name + " score=" + std::to_string(static_cast<int>(max_score)));
+            }
+
             sorted->push_back(best_cond);
 
             // "Bind" variables for next iteration
@@ -808,15 +819,14 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
     return sorted;
 }
 
-void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
+void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 {
     if (!rule.conditions || rule.index >= rule.conditions->size()) return;
 
     Node condition = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
 
-#ifndef NDEBUG
-    std::clog << "[DEBUG evaluate] Processing condition node: " << condition << std::endl;
-#endif
+    if (should_log(depth))
+        log(depth, "evaluate", "Processing condition node: " + format(condition));
 
     // A Condition can be a Set which is an instance of core.Conjunction.
     // Check: (condition ~ conjunction) ?
@@ -842,9 +852,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
     if (is_conjunction)
     {
-#ifndef NDEBUG
-        std::clog << "[DEBUG evaluate] Node " << condition << " identified as Conjunction Set." << std::endl;
-#endif
+        if (should_log(depth))
+            log(depth, "evaluate", "Node " + format(condition) + " identified as Conjunction Set.");
+
         // It is a Conjunction Set.
         // We need to retrieve its elements. In Zelph topology, elements are subjects of PartOf relations pointing to the set.
         // Fact: Element PartOf Set
@@ -863,9 +873,8 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 // Verify that 'condition' is indeed one of the objects (it should be, since we found 'rel' via get_right(condition))
                 if (element && objs.count(condition) == 1)
                 {
-#ifndef NDEBUG
-                    std::clog << "[DEBUG evaluate] Found element of conjunction: " << element << " (via relation " << rel << ")" << std::endl;
-#endif
+                    if (should_log(depth))
+                        log(depth, "evaluate", "Found element of conjunction: " + format(element) + " (via relation " + format(rel) + ")");
                     sub_conditions.insert(element);
                 }
             }
@@ -874,7 +883,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
         if (!sub_conditions.empty())
         {
             // Optimization: Sort conditions to evaluate most constrained ones first
-            auto sorted_conditions = optimize_order(sub_conditions, *rule.variables);
+            auto sorted_conditions = optimize_order(sub_conditions, *rule.variables, depth);
 
             // Push next alternative (sibling of current Conjunction-node logic) to stack if applicable
             RulePos next_branch(rule);
@@ -894,25 +903,23 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
             }
 
             // Recurse into the conjunction
-            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded}), ctx);
+            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded}), ctx, depth + 1);
         }
-        else
+        else if (should_log(depth))
         {
-#ifndef NDEBUG
-            std::clog << "[DEBUG evaluate] Conjunction set " << condition << " appears empty or malformed." << std::endl;
-#endif
+            log(depth, "evaluate", "Conjunction set " + format(condition) + " appears empty or malformed.");
         }
     }
     else
     {
         // Leaf Condition (Atomic Fact)
-#ifndef NDEBUG
-        std::clog << "[DEBUG evaluate] Processing leaf condition: " << condition << std::endl;
-#endif
-        bool is_negated = is_negated_condition(condition);
+        if (should_log(depth))
+            log(depth, "evaluate", "Processing leaf condition: " + format(condition));
+
+        bool is_negated = is_negated_condition(condition, depth);
 
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
-            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get());
+            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1);
 
         // --- Negation Handling ---
         // A condition tagged with `negation` succeeds if and only if
@@ -932,7 +939,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     next.variables            = bindings;
                     next.index                = next_index;
                     ReasoningContext ctx_copy = ctx;
-                    evaluate(next, ctx_copy);
+                    evaluate(next, ctx_copy, depth + 1);
                 }
                 else if (!ctx.next.empty())
                 {
@@ -940,7 +947,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                     next.variables = bindings;
                     ctx.next.pop_back();
                     ReasoningContext ctx_copy = ctx;
-                    evaluate(next, ctx_copy);
+                    evaluate(next, ctx_copy, depth + 1);
                 }
                 else
                 {
@@ -1019,28 +1026,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
             // No match => negation succeeds => continue with current bindings
 
-#ifndef NDEBUG
-            std::clog << "[NEG-EVAL] === Processing negated condition ===" << std::endl;
-            std::clog << "[NEG-EVAL] condition=" << condition << std::endl;
-
-            // Show what the negated pattern actually is
+            if (should_log(depth))
             {
                 std::wstring cond_str;
                 format_fact(cond_str, _lang, condition, 3, *rule.variables, rule.node);
-                std::clog << "[NEG-EVAL] Formatted condition: "
-                          << string::unicode::to_utf8(cond_str) << std::endl;
-            }
+                log(depth, "neg-eval", "Processing negated condition " + string::unicode::to_utf8(cond_str));
 
-            std::clog << "[NEG-EVAL] Current variable bindings:" << std::endl;
-            for (const auto& [var, val] : *rule.variables)
-            {
-                std::clog << "[NEG-EVAL]   "
-                          << string::unicode::to_utf8(get_name(var, _lang, true))
-                          << " (id=" << var << ") -> "
-                          << string::unicode::to_utf8(get_name(val, _lang, true))
-                          << " (id=" << val << ")" << std::endl;
+                log(depth, "neg-eval", "Current variable bindings:");
+                for (const auto& [var, val] : *rule.variables)
+                {
+                    log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
+                }
             }
-#endif
 
             // --- Step 1: Try standard Unification ---
             // This handles the common case where all variables are already
@@ -1050,23 +1047,19 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
 
             if (match)
             {
-#ifndef NDEBUG
-                std::clog << "[NEG-EVAL] MATCH FOUND => negation FAILS. Bindings:" << std::endl;
-                for (const auto& [var, val] : *match)
+                if (should_log(depth))
                 {
-                    std::clog << "[NEG-EVAL]   "
-                              << string::unicode::to_utf8(get_name(var, _lang, true))
-                              << " (id=" << var << ") -> "
-                              << string::unicode::to_utf8(get_name(val, _lang, true))
-                              << " (id=" << val << ")" << std::endl;
+                    log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
+                    for (const auto& [var, val] : *match)
+                    {
+                        log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
+                    }
                 }
-#endif
                 // Match found => negation fails => prune this branch
                 return;
             }
-#ifndef NDEBUG
-            std::clog << "[NEG-EVAL] NO MATCH => negation SUCCEEDS" << std::endl;
-#endif
+            if (should_log(depth))
+                log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
 
             // --- Step 2: No positive match. Determine how to proceed. ---
             // Parse the negated pattern to inspect its subject.
@@ -1199,14 +1192,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx)
                 next.index     = next_index;
 
                 ReasoningContext ctx_copy = ctx;
-                evaluate(next, ctx_copy);
+                evaluate(next, ctx_copy, depth + 1);
             }
             else if (!ctx.next.empty())
             {
                 RulePos next = ctx.next.back();
                 ctx.next.pop_back();
                 ReasoningContext ctx_copy = ctx;
-                evaluate(next, ctx_copy);
+                evaluate(next, ctx_copy, depth + 1);
             }
             else
             {

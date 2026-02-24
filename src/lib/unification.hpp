@@ -39,7 +39,7 @@ namespace zelph::network
     class Unification
     {
     public:
-        Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool = nullptr);
+        Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth);
         std::shared_ptr<Variables> Next();
         std::shared_ptr<Variables> Unequals();
         bool                       uses_parallel() const { return _use_parallel; }
@@ -55,7 +55,7 @@ namespace zelph::network
 
     private:
         bool                       increment_fact_index();
-        std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation) const;
+        std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const;
 
         Zelph* const               _n;
         Node                       _parent;
@@ -65,6 +65,7 @@ namespace zelph::network
         Node                       _relation_variable{0};
         Node                       _subject{0};
         adjacency_set              _objects;
+        int                        _log_depth{0};
 
         // Parallel mode
         ThreadPool*                            _pool{nullptr};

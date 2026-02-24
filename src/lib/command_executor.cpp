@@ -143,6 +143,8 @@ private:
         { cmd_cleanup(c); };
         _command_map[L".stat"] = [this](auto& c)
         { cmd_stat(c); };
+        _command_map[L".log"] = [this](auto& c)
+        { cmd_log(c); };
         _command_map[L".save"] = [this](auto& c)
         { cmd_save(c); };
         _command_map[L".import"] = [this](auto& c)
@@ -580,6 +582,7 @@ private:
             L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             L".cleanup                    – Remove isolated nodes and clean name mappings",
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            L".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off)",
             L".auto-run                   – Toggle automatic execution of .run after each input",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
             L".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
@@ -775,6 +778,11 @@ private:
                        L"- Total entries in node-of-name mappings\n"
                        L"- Number of languages\n"
                        L"- Number of rules"},
+
+            {L".log", L".log <max-depth>\n"
+                      L"Enables detailed reasoning logging up to the given recursion depth.\n"
+                      L"0 disables it.\n"
+                      L"Every line is correctly indented according to depth."},
 
             {L".auto-run", L".auto-run\n"
                            L"Toggles the automatic execution of the inference engine (.run) after every input.\n"
@@ -1489,6 +1497,23 @@ private:
         std::clog << "Rules: " << _n->rule_count() << std::endl;
 
         std::clog << "------------------------" << std::endl;
+    }
+    void cmd_log(const std::vector<std::wstring>& cmd)
+    {
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .log: exactly one maximum recursion depth required (0 = off).");
+
+        int depth;
+        try
+        {
+            depth = std::stoi(string::unicode::to_utf8(cmd[1]));
+        }
+        catch (...)
+        {
+            throw std::runtime_error("Command .log: invalid depth value.");
+        }
+
+        _n->set_logging(depth);
     }
     void cmd_save(const std::vector<std::wstring>& cmd)
     {

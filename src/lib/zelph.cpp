@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "zelph.hpp"
+#include "string_utils.hpp"
 #include "zelph_impl.hpp"
 
 #include <boost/algorithm/string.hpp>
@@ -1013,6 +1014,13 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     #define DEBUG_FORMAT_FACT
 #endif
 
+std::string Zelph::format(Node node) const
+{
+    std::wstring result;
+    format_fact(result, _lang, node, 3);
+    return string::unicode::to_utf8(result);
+}
+
 void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables, Node parent, std::shared_ptr<std::unordered_set<Node>> history) const
 {
     // Formats a fact into a string representation.
@@ -1283,11 +1291,58 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     if (subject == 0 && !is_condition)
     {
+        // parse_fact failed to identify the subject. This happens when the subject is itself
+        // a hash node (e.g. a cons cell) whose outgoing edges contain structural predicates,
+        // causing parse_fact's candidate filter to discard it. We fall back to direct graph
+        // inspection: the subject is the unique node that is bidirectionally connected to
+        // `resolved` (i.e. present in both get_right and get_left), which is the defining
+        // invariant established by fact() via connect(subject, relation) + connect(relation, subject).
+        Node fallback_pred = parse_relation(resolved);
+        Node fallback_subj = 0;
+
+        if (fallback_pred != 0)
+        {
+            for (Node nd : _pImpl->get_right(resolved))
+            {
+                // nd is the subject iff it is bidirectional with resolved (in both left and right)
+                // and is not the predicate itself.
+                if (nd != fallback_pred && _pImpl->has_left_edge(resolved, nd))
+                {
+                    fallback_subj = nd;
+                    break;
+                }
+            }
+        }
+
+        if (fallback_subj == 0)
+        {
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] INVALID: Subject is 0 and not condition. Returning '??'" << std::endl;
+            std::clog << indent << "[DEBUG format_fact] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
 #endif
-        result = string::mark_identifier(L"??");
-        return;
+            result = string::mark_identifier(L"??");
+            return;
+        }
+
+#ifdef DEBUG_FORMAT_FACT
+        std::clog << indent << "[DEBUG format_fact] Fallback subject found: " << fallback_subj << std::endl;
+#endif
+
+        // Reconstruct objects: nodes in get_left(resolved) that are neither the subject
+        // nor bidirectionally connected (predicates and parents appear in get_right too).
+        subject = fallback_subj;
+        objects.clear();
+        for (Node nd : _pImpl->get_left(resolved))
+        {
+            if (nd != fallback_subj && !_pImpl->has_right_edge(resolved, nd))
+            {
+                objects.insert(nd);
+            }
+        }
+        if (objects.empty())
+        {
+            // Self-referential fact: subject is its own object.
+            objects.insert(fallback_subj);
+        }
     }
 
     auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
@@ -1844,4 +1899,18 @@ void Zelph::save_to_file(const std::string& filename) const
 void Zelph::load_from_file(const std::string& filename) const
 {
     _pImpl->loadFromFile(filename);
+}
+
+void Zelph::set_logging(int max_depth)
+{
+    _logging       = max_depth > 0;
+    _max_log_depth = max_depth;
+    std::clog << (_logging ? "Logging enabled with max depth " : "Logging disabled. ") << max_depth << std::endl;
+}
+
+void Zelph::log(int depth, const std::string& category, const std::string& message) const
+{
+    if (!should_log(depth)) return;
+    std::string indent(depth * 2, ' ');
+    std::clog << indent << "[depth " << depth << ", " << category << "] " << message << std::endl;
 }

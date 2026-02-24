@@ -75,11 +75,11 @@ namespace zelph::network
         void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
 
     private:
-        void                               evaluate(RulePos rule, ReasoningContext& ctx);
+        void                               evaluate(RulePos rule, ReasoningContext& ctx, int depth);
         static bool                        contradicts(const Variables& variables, const Variables& unequals);
         void                               deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
-        std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars);
-        bool                               is_negated_condition(Node condition);
+        std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
+        bool                               is_negated_condition(Node condition, int depth);
         bool                               consequences_already_exist(const Variables&     condition_bindings,
                                                                       const adjacency_set& deductions,
                                                                       Node                 parent);

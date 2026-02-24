@@ -38,70 +38,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph;
 
-// --- Static Helper Functions for Janet/Zelph Bridge ---
-
-static int zelph_node_compare(void* p1, void* p2)
-{
-    network::Node n1 = *static_cast<network::Node*>(p1);
-    network::Node n2 = *static_cast<network::Node*>(p2);
-    return (n1 > n2) ? 1 : ((n1 < n2) ? -1 : 0);
-}
-
-static int zelph_node_hash(void* p, size_t size)
-{
-    (void)size;
-    network::Node n = *static_cast<network::Node*>(p);
-    return static_cast<int32_t>(n ^ (n >> 32));
-}
-
-static void zelph_node_tostring(void* p, JanetBuffer* buffer)
-{
-    network::Node n = *static_cast<network::Node*>(p);
-    std::string   s = "<zelph/node " + std::to_string(n) + ">";
-    janet_buffer_push_bytes(buffer, (const uint8_t*)s.c_str(), (int32_t)s.size());
-}
-
-static const JanetAbstractType zelph_node_type = {
-    "zelph/node",
-    nullptr,             // gc
-    nullptr,             // gcmark
-    nullptr,             // get
-    nullptr,             // put
-    nullptr,             // marshal
-    nullptr,             // unmarshal
-    zelph_node_tostring, // tostring
-    zelph_node_compare,  // compare
-    zelph_node_hash,     // hash
-    nullptr,             // next
-    nullptr,             // call
-    nullptr,             // length
-    nullptr,             // bytes
-};
-
-static Janet zelph_wrap_node(network::Node n)
-{
-    network::Node* ptr = (network::Node*)janet_abstract(&zelph_node_type, sizeof(network::Node));
-    *ptr               = n;
-    return janet_wrap_abstract(ptr);
-}
-
-static network::Node zelph_unwrap_node(Janet val)
-{
-    if (janet_checktype(val, JANET_ABSTRACT))
-    {
-        void* abstract = janet_unwrap_abstract(val);
-        if (janet_abstract_type(abstract) == &zelph_node_type)
-        {
-            return *static_cast<network::Node*>(abstract);
-        }
-    }
-    if (janet_checktype(val, JANET_NUMBER))
-    {
-        return (network::Node)janet_unwrap_number(val);
-    }
-    return 0;
-}
-
 // --- Implementation Class ---
 
 class ScriptEngine::Impl
@@ -893,6 +829,70 @@ public:
         return "nil";
     }
 };
+
+// --- Static Helper Functions for Janet/Zelph Bridge ---
+
+int ScriptEngine::zelph_node_compare(void* p1, void* p2)
+{
+    network::Node n1 = *static_cast<network::Node*>(p1);
+    network::Node n2 = *static_cast<network::Node*>(p2);
+    return (n1 > n2) ? 1 : ((n1 < n2) ? -1 : 0);
+}
+
+int ScriptEngine::zelph_node_hash(void* p, size_t size)
+{
+    (void)size;
+    network::Node n = *static_cast<network::Node*>(p);
+    return static_cast<int32_t>(n ^ (n >> 32));
+}
+
+void ScriptEngine::zelph_node_tostring(void* p, JanetBuffer* buffer)
+{
+    network::Node n = *static_cast<network::Node*>(p);
+    std::string   s = (Impl::s_instance && Impl::s_instance->_n) ? Impl::s_instance->_n->format(n) : ("<zelph/node " + std::to_string(n) + ">");
+    janet_buffer_push_bytes(buffer, (const uint8_t*)s.c_str(), (int32_t)s.size());
+}
+
+const JanetAbstractType ScriptEngine::zelph_node_type = {
+    "zelph/node",
+    nullptr,             // gc
+    nullptr,             // gcmark
+    nullptr,             // get
+    nullptr,             // put
+    nullptr,             // marshal
+    nullptr,             // unmarshal
+    zelph_node_tostring, // tostring
+    zelph_node_compare,  // compare
+    zelph_node_hash,     // hash
+    nullptr,             // next
+    nullptr,             // call
+    nullptr,             // length
+    nullptr,             // bytes
+};
+
+Janet ScriptEngine::zelph_wrap_node(network::Node n)
+{
+    network::Node* ptr = (network::Node*)janet_abstract(&zelph_node_type, sizeof(network::Node));
+    *ptr               = n;
+    return janet_wrap_abstract(ptr);
+}
+
+network::Node ScriptEngine::zelph_unwrap_node(Janet val)
+{
+    if (janet_checktype(val, JANET_ABSTRACT))
+    {
+        void* abstract = janet_unwrap_abstract(val);
+        if (janet_abstract_type(abstract) == &zelph_node_type)
+        {
+            return *static_cast<network::Node*>(abstract);
+        }
+    }
+    if (janet_checktype(val, JANET_NUMBER))
+    {
+        return (network::Node)janet_unwrap_number(val);
+    }
+    return 0;
+}
 
 ScriptEngine::Impl* ScriptEngine::Impl::s_instance = nullptr;
 
