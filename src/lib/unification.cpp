@@ -289,6 +289,25 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
     return result;
 }
 
+// Returns true if nd is itself a VAR, or if nd is a hash node whose
+// immediate structural subject or objects contain a VAR node.
+// Used to reject rule-template fact nodes from the unification candidate set.
+static bool contains_variable_shallow(Zelph* n, Node nd)
+{
+    if (nd == 0) return false;
+    if (Zelph::Impl::is_var(nd)) return true;
+    if (!Zelph::Impl::is_hash(nd)) return false; // plain atom → no internal structure
+
+    auto structs = get_fact_structures(n, nd);
+    for (const auto& fs : structs)
+    {
+        if (Zelph::Impl::is_var(fs.subject)) return true;
+        for (Node o : fs.objects)
+            if (Zelph::Impl::is_var(o)) return true;
+    }
+    return false;
+}
+
 Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth)
     : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth)
 {
@@ -347,77 +366,79 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
 
 // Optimization for Release mode only: Subject/Object Driven Indexing
 #ifdef NDEBUG
-    // parallel only with fixed relation
-    // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
-    bool subject_is_bound = false;
-    if (_subject != 0)
+    if (!_n->should_log(1))
     {
-        Node s = _subject;
-        if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
-        // Only optimize if s is an ATOM (not a structure), because complex structures
-        // cannot be looked up simply via get_right(s) in a deep unification context.
-        if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
-    }
-
-    // Do not use parallel if the object is bound (const or bound var).
-    // In this case, an object-driven index lookup (in sequential mode) is much faster than scanning the relation.
-    bool object_is_bound = false;
-    for (Node o : _objects)
-    {
-        if (!Zelph::Impl::is_var(o))
+        // parallel only with fixed relation
+        // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
+        bool subject_is_bound = false;
+        if (_subject != 0)
         {
-            if (get_fact_structures(_n, o).empty())
+            Node s = _subject;
+            if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
+            // Only optimize if s is an ATOM (not a structure), because complex structures
+            // cannot be looked up simply via get_right(s) in a deep unification context.
+            if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
+        }
+
+        // Do not use parallel if the object is bound (const or bound var).
+        // In this case, an object-driven index lookup (in sequential mode) is much faster than scanning the relation.
+        bool object_is_bound = false;
+        for (Node o : _objects)
+        {
+            if (!Zelph::Impl::is_var(o))
+            {
+                if (get_fact_structures(_n, o).empty())
+                {
+                    object_is_bound = true;
+                    break;
+                }
+            }
+            else if (_variables->find(o) != _variables->end())
             {
                 object_is_bound = true;
                 break;
             }
         }
-        else if (_variables->find(o) != _variables->end())
+
+        if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound && !tl_is_pool_worker)
         {
-            object_is_bound = true;
-            break;
-        }
-    }
+            Node fixed_rel = *_relation_list.begin();
 
-    if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound && !tl_is_pool_worker)
-    {
-        Node fixed_rel = *_relation_list.begin();
+            auto snap_start = std::chrono::steady_clock::now();
 
-        auto snap_start = std::chrono::steady_clock::now();
-
-        adjacency_set snapshot;
-        if (!_n->_pImpl->snapshot_left_of(fixed_rel, snapshot))
-        {
-            return;
-        }
-
-        auto   snap_end = std::chrono::steady_clock::now();
-        double snap_ms  = std::chrono::duration<double, std::milli>(snap_end - snap_start).count();
-
-        if (snap_ms > 100) // Only log significant snapshots
-        {
-            std::clog << "[Timer] Unification snapshot " << fixed_rel
-                      << " size=" << snapshot.size()
-                      << " took=" << snap_ms << "ms" << std::endl;
-        }
-
-        if (snapshot.size() > 0)
-        {
-            _use_parallel = true;
-            _snapshot_vec.assign(snapshot.begin(), snapshot.end());
-
-            size_t threads    = std::thread::hardware_concurrency();
-            size_t chunks     = std::min(threads * 4, snapshot.size());
-            size_t chunk_size = snapshot.size() / chunks;
-            _active_tasks     = chunks;
-
-            for (size_t c = 0; c < chunks; ++c)
+            adjacency_set snapshot;
+            if (!_n->_pImpl->snapshot_left_of(fixed_rel, snapshot))
             {
-                size_t start = c * chunk_size;
-                size_t end   = (c + 1 == chunks) ? _snapshot_vec.size() : (c + 1) * chunk_size;
+                return;
+            }
 
-                _pool->enqueue([this, fixed_rel, start, end]()
-                               {
+            auto   snap_end = std::chrono::steady_clock::now();
+            double snap_ms  = std::chrono::duration<double, std::milli>(snap_end - snap_start).count();
+
+            if (snap_ms > 100) // Only log significant snapshots
+            {
+                std::clog << "[Timer] Unification snapshot " << fixed_rel
+                          << " size=" << snapshot.size()
+                          << " took=" << snap_ms << "ms" << std::endl;
+            }
+
+            if (snapshot.size() > 0)
+            {
+                _use_parallel = true;
+                _snapshot_vec.assign(snapshot.begin(), snapshot.end());
+
+                size_t threads    = std::thread::hardware_concurrency();
+                size_t chunks     = std::min(threads * 4, snapshot.size());
+                size_t chunk_size = snapshot.size() / chunks;
+                _active_tasks     = chunks;
+
+                for (size_t c = 0; c < chunks; ++c)
+                {
+                    size_t start = c * chunk_size;
+                    size_t end   = (c + 1 == chunks) ? _snapshot_vec.size() : (c + 1) * chunk_size;
+
+                    _pool->enqueue([this, fixed_rel, start, end]()
+                                   {
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
@@ -436,6 +457,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                        --_active_tasks;
                                        _queue_cv.notify_all();
                                    } });
+                }
             }
         }
     }
@@ -459,54 +481,57 @@ bool Unification::increment_fact_index()
             Node current_rel        = *_relation_index;
 
 #ifdef NDEBUG
-            // Check if Subject is bound
-            Node s = _subject;
-            if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
-
-            // Only optimize if subject is atomic (see constructor comments)
-            if (s != 0 && !Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty())
+            if (!_n->should_log(1))
             {
-                // Strategy: Subject Driven
-                // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
-                // So get_right(Subject) contains the Facts involving this subject.
-                adjacency_set candidates = _n->get_right(s);
-                _facts_snapshot.clear();
-                // Filter candidates: we only want facts that are of type 'current_rel'
-                for (Node fact : candidates)
-                {
-                    if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+                // Check if Subject is bound
+                Node s = _subject;
+                if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
 
-                    // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
-                    // So get_right(Fact) contains RelationType.
-                    if (_n->get_right(fact).count(current_rel) == 1)
-                    {
-                        _facts_snapshot.insert(fact);
-                    }
-                }
-                optimized_snapshot = true;
-            }
-            // Check if Object is bound (if Subject wasn't)
-            else if (!_objects.empty())
-            {
-                Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
-                if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
-
-                if (o != 0 && !Zelph::Impl::is_var(o) && get_fact_structures(_n, o).empty())
+                // Only optimize if subject is atomic (see constructor comments)
+                if (s != 0 && !Zelph::Impl::is_var(s) && _n->exists(s))
                 {
-                    // Strategy: Object Driven
-                    // Zelph::fact -> connect(Object, Fact). Object points to Fact.
-                    adjacency_set candidates = _n->get_right(o);
+                    // Strategy: Subject Driven
+                    // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
+                    // So get_right(Subject) contains the Facts involving this subject.
+                    adjacency_set candidates = _n->get_right(s);
                     _facts_snapshot.clear();
+                    // Filter candidates: we only want facts that are of type 'current_rel'
                     for (Node fact : candidates)
                     {
                         if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
 
+                        // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
+                        // So get_right(Fact) contains RelationType.
                         if (_n->get_right(fact).count(current_rel) == 1)
                         {
                             _facts_snapshot.insert(fact);
                         }
                     }
                     optimized_snapshot = true;
+                }
+                // Check if Object is bound (if Subject wasn't)
+                else if (!_objects.empty())
+                {
+                    Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
+                    if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
+
+                    if (o != 0 && !Zelph::Impl::is_var(o) && _n->exists(o))
+                    {
+                        // Strategy: Object Driven
+                        // Zelph::fact -> connect(Object, Fact). Object points to Fact.
+                        adjacency_set candidates = _n->get_right(o);
+                        _facts_snapshot.clear();
+                        for (Node fact : candidates)
+                        {
+                            if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+
+                            if (_n->get_right(fact).count(current_rel) == 1)
+                            {
+                                _facts_snapshot.insert(fact);
+                            }
+                        }
+                        optimized_snapshot = true;
+                    }
                 }
             }
 #endif
@@ -605,6 +630,18 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
             // the given "fact" is not a fact, but a rule, because it contains a variable in at least one of its objects
             return nullptr;
         }
+    }
+
+    // Reject rule-template fact nodes. Rule consequences are stored as real
+    // graph nodes (e.g. the consequence (D cons T) of rule As2), but their
+    // immediate substructure contains VAR nodes. Without this check those
+    // templates are matched by unification, producing incorrect bindings and
+    // causing extreme performance degradation because every sum/ci/co query
+    // iterates over them endlessly.
+    if (contains_variable_shallow(_n, subject)) return nullptr;
+    for (Node o : objects)
+    {
+        if (contains_variable_shallow(_n, o)) return nullptr;
     }
 
     // Check if the object matches the bound rule variable (if-clause)

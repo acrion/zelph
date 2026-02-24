@@ -744,13 +744,13 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
     while (!pending.empty())
     {
-        auto best_it   = pending.end();
-        int  max_score = -999999;
+        auto   best_it   = pending.end();
+        double max_score = -999999;
 
         for (auto it = pending.begin(); it != pending.end(); ++it)
         {
             Node          cond  = *it;
-            int           score = 0;
+            double        score = 0;
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
@@ -777,6 +777,27 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // maximum variable binding before the existence check.
             if (is_negated_condition(cond, depth))
                 score -= 1000;
+
+            // Prefer conditions whose predicate has fewer matching facts
+            adjacency_set rels_for_score = filter(cond, core.IsA, core.RelationTypeCategory);
+            if (rels_for_score.size() == 1)
+            {
+                Node rel = *rels_for_score.begin();
+                if (!Zelph::Impl::is_var(rel))
+                {
+                    adjacency_set rel_facts;
+                    if (_pImpl->snapshot_left_of(rel, rel_facts))
+                    {
+                        // Subtract a small penalty proportional to log(fact_count)
+                        // so that high-cardinality relations are tried last
+                        size_t n = rel_facts.size();
+                        if (n > 0)
+                        {
+                            score -= std::log2(static_cast<double>(n));
+                        }
+                    }
+                }
+            }
 
             if (score > max_score)
             {
@@ -1417,99 +1438,107 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
 
                 if (!var_targets.empty())
                 {
-                    // Seed history with the deduction node so that get_preferred_structure()
-                    // skips it as a parent and does not mistake it for the subject of var_source.
-                    std::vector<Node> history{deduction};
-                    const Node        source = instantiate_fact(this, var_source, augmented, history);
+                    // All instantiation and fact creation happens under one lock to
+                    // prevent races where parallel threads create the same node.
+                    Node          source;
+                    adjacency_set targets;
+                    Node          d       = 0;
+                    bool          wrong   = false;
+                    bool          created = false;
 
-                    if (source)
                     {
-                        adjacency_set targets;
-                        bool          done = true;
-                        for (Node var_t : var_targets)
+                        std::lock_guard<std::mutex> lock_network(_mtx_network);
+
+                        // Seed history with the deduction node so that get_preferred_structure()
+                        // skips it as a parent and does not mistake it for the subject of var_source.
+                        std::vector<Node> history{deduction};
+                        source = instantiate_fact(this, var_source, augmented, history);
+
+                        if (source)
                         {
-                            history = {deduction};
-                            Node t  = instantiate_fact(this, var_t, augmented, history);
+                            bool done = true;
+                            for (Node var_t : var_targets)
+                            {
+                                history = {deduction};
+                                Node t  = instantiate_fact(this, var_t, augmented, history);
 
-                            if (t)
-                            {
-                                targets.insert(t);
-                            }
-                            else
-                            {
-                                done = false;
-                                break;
-                            }
-                        }
-
-                        if (done)
-                        {
-                            Answer answer = check_fact(source, rel, targets);
-
-                            if (answer.is_wrong())
-                            {
-                                throw contradiction_error(ctx.current_condition, augmented, parent);
-                            }
-                            else if (!answer.is_known()
-                                     && targets.count(rel) == 0)
-                            {
-                                try
+                                if (t)
                                 {
-                                    Node d;
-                                    {
-                                        std::lock_guard<std::mutex> lock_network(_mtx_network);
-                                        d = fact(source, rel, targets);
-                                    }
-
-                                    {
-                                        std::lock_guard<std::mutex> lock(_mtx_output);
-                                        bool                        do_print = _print_deductions;
-
-                                        if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
-                                        {
-                                            do_print = true;
-                                            _stop_watch.start();
-                                        }
-                                        else if (!do_print)
-                                        {
-                                            ++_skipped;
-                                        }
-                                        else
-                                        {
-                                            _stop_watch.start();
-                                        }
-
-                                        if (do_print || _generate_markdown)
-                                        {
-                                            size_t skipped_val = _skipped.exchange(0);
-                                            if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
-
-                                            std::wstring input, output;
-                                            format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
-                                            format_fact(output, _lang, d, 3, {}, parent);
-
-                                            std::wstring message = output + L" ⇐ " + input;
-
-                                            if (do_print)
-                                            {
-                                                print(message, true);
-                                            }
-
-                                            if (_generate_markdown)
-                                            {
-                                                _markdown->add(L"Deductions", message);
-                                            }
-                                        }
-
-                                        _done = true;
-                                    }
+                                    targets.insert(t);
                                 }
-                                catch (const std::exception&)
+                                else
                                 {
-                                    throw contradiction_error(ctx.current_condition, augmented, parent);
+                                    done = false;
+                                    break;
+                                }
+                            }
+
+                            if (done)
+                            {
+                                Answer answer = check_fact(source, rel, targets);
+                                if (answer.is_wrong())
+                                    wrong = true;
+                                else if (!answer.is_known() && targets.count(rel) == 0)
+                                {
+                                    try
+                                    {
+                                        d       = fact(source, rel, targets);
+                                        created = true;
+                                    }
+                                    catch (const std::exception&)
+                                    {
+                                        wrong = true;
+                                    }
                                 }
                             }
                         }
+                    } // _mtx_network released
+
+                    if (wrong)
+                        throw contradiction_error(ctx.current_condition, augmented, parent);
+
+                    if (created)
+                    {
+                        std::lock_guard<std::mutex> lock(_mtx_output);
+                        bool                        do_print = _print_deductions;
+
+                        if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
+                        {
+                            do_print = true;
+                            _stop_watch.start();
+                        }
+                        else if (!do_print)
+                        {
+                            ++_skipped;
+                        }
+                        else
+                        {
+                            _stop_watch.start();
+                        }
+
+                        if (do_print || _generate_markdown)
+                        {
+                            size_t skipped_val = _skipped.exchange(0);
+                            if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
+
+                            std::wstring input, output;
+                            format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
+                            format_fact(output, _lang, d, 3, {}, parent);
+
+                            std::wstring message = output + L" ⇐ " + input;
+
+                            if (do_print)
+                            {
+                                print(message, true);
+                            }
+
+                            if (_generate_markdown)
+                            {
+                                _markdown->add(L"Deductions", message);
+                            }
+                        }
+
+                        _done = true;
                     }
                 }
             }

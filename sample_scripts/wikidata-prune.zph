@@ -2,11 +2,8 @@
 .remove-rules
 .list-rules
 .prune-nodes A P31 Q8054
-.prune-nodes A P279 Q8054
 .prune-nodes A P31 Q7187
-.prune-nodes A P279 Q7187
 .prune-nodes A P31 Q11173
-.prune-nodes A P279 Q11173
 .prune-nodes A P31 Q13442814
 .prune-nodes A P31 Q16521
 .prune-nodes A P31 Q5
@@ -21,7 +18,6 @@
 .prune-nodes A P31 Q13433827
 .prune-nodes A P31 Q101352
 .prune-nodes A P31 Q13100073
-.prune-nodes A P279 Q277338
 .prune-nodes A P31 Q277338
 .prune-nodes A P1433 B
 .prune-nodes A P31 Q3305213
