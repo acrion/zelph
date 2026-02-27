@@ -186,13 +186,32 @@ namespace zelph::network
                                         Node x_pred = n->parse_relation(x);
                                         if (x_pred != 0 && x_pred != s_pred)
                                         {
-                                            // x is a child-fact of s (grandchild of fact)
-                                            // → does NOT disprove that fact is s's subject
+                                            // x has a different predicate than s — could be:
+                                            // (a) a child-fact of s (grandchild of fact), OR
+                                            // (b) the genuine subject of s (a complex fact
+                                            //     node that happens to have a different predicate).
+                                            //
+                                            // Distinguish: if `fact` is bidirectional with x,
+                                            // then x is part of fact's sub-tree (case a).
+                                            // Otherwise x is an independent node — the genuine
+                                            // subject of s (case b).
+                                            if (n->get_right(x).count(fact) > 0
+                                                && n->get_left(x).count(fact) > 0)
+                                            {
+                                                // x is connected to fact → child-fact
+                                                if (n->should_log(depth + 3))
+                                                {
+                                                    n->log(depth + 3, "get_fact_structures", "x is child-fact (different pred, connected to fact), continue");
+                                                }
+                                                continue;
+                                            }
+                                            // x is NOT connected to fact → genuine alternative subject
+                                            fact_is_subject_of_s = false;
                                             if (n->should_log(depth + 3))
                                             {
-                                                n->log(depth + 3, "get_fact_structures", "x is child-fact (different pred), continue");
+                                                n->log(depth + 3, "get_fact_structures", "x has different pred but NOT connected to fact -> genuine alt subject x=" + n->format(x));
                                             }
-                                            continue;
+                                            break;
                                         }
                                     }
                                     // x is a genuine alternative subject of s
