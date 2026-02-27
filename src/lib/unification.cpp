@@ -117,7 +117,7 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
         }
 
         // 3. Structural equivalence
-        auto rule_structs = get_fact_structures(_n, rule_node);
+        auto rule_structs = get_fact_structures(_n, rule_node, false, depth);
         if (rule_structs.empty())
         {
             U_LOG(depth, "  -> Rule node is atom, but not identical. Fail.");
@@ -125,7 +125,7 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
             break;
         }
 
-        auto graph_structs = get_fact_structures(_n, graph_node);
+        auto graph_structs = get_fact_structures(_n, graph_node, false, depth);
         if (graph_structs.empty())
         {
             U_LOG(depth, "  -> Graph node is atom, but rule expects structure. Fail.");
@@ -187,13 +187,13 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
 // Returns true if nd is itself a VAR, or if nd is a hash node whose
 // immediate structural subject or objects contain a VAR node.
 // Used to reject rule-template fact nodes from the unification candidate set.
-static bool contains_variable_shallow(Zelph* n, Node nd)
+static bool contains_variable_shallow(Zelph* n, Node nd, const int depth)
 {
     if (nd == 0) return false;
     if (Zelph::Impl::is_var(nd)) return true;
     if (!Zelph::Impl::is_hash(nd)) return false; // plain atom → no internal structure
 
-    auto structs = get_fact_structures(n, nd);
+    auto structs = get_fact_structures(n, nd, false, depth);
     for (const auto& fs : structs)
     {
         if (Zelph::Impl::is_var(fs.subject)) return true;
@@ -272,7 +272,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
             if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
             // Only optimize if s is an ATOM (not a structure), because complex structures
             // cannot be looked up simply via get_right(s) in a deep unification context.
-            if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s).empty()) subject_is_bound = true;
+            if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, false, log_depth).empty()) subject_is_bound = true;
         }
 
         // Do not use parallel if the object is bound (const or bound var).
@@ -282,7 +282,7 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         {
             if (!Zelph::Impl::is_var(o))
             {
-                if (get_fact_structures(_n, o).empty())
+                if (get_fact_structures(_n, o, false, log_depth).empty())
                 {
                     object_is_bound = true;
                     break;
@@ -533,10 +533,10 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     // templates are matched by unification, producing incorrect bindings and
     // causing extreme performance degradation because every sum/ci/co query
     // iterates over them endlessly.
-    if (contains_variable_shallow(_n, subject)) return nullptr;
+    if (contains_variable_shallow(_n, subject, depth)) return nullptr;
     for (Node o : objects)
     {
-        if (contains_variable_shallow(_n, o)) return nullptr;
+        if (contains_variable_shallow(_n, o, depth)) return nullptr;
     }
 
     // Check if the object matches the bound rule variable (if-clause)

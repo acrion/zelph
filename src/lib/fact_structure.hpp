@@ -55,9 +55,15 @@ namespace zelph::network
     inline std::vector<FactStructure> get_fact_structures(
         const Zelph* n,
         Node         fact,
-        bool         prefer_single = false)
+        bool         prefer_single,
+        int          depth)
     {
         std::vector<FactStructure> structures;
+
+        if (n->should_log(depth))
+        {
+            n->log(depth, "get_fact_structures", "Starting for fact: " + n->format(fact) + ", prefer_single: " + std::to_string(prefer_single));
+        }
 
         if (fact == 0 || !n->exists(fact)) return structures;
 
@@ -69,6 +75,11 @@ namespace zelph::network
         adjacency_set right = n->get_right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
         adjacency_set left  = n->get_left(fact);  // Contains O and S (and Parent-Facts P')
 
+        if (n->should_log(depth))
+        {
+            n->log(depth, "get_fact_structures", "Right neighbors: " + std::to_string(right.size()) + ", Left neighbors: " + std::to_string(left.size()));
+        }
+
         adjacency_set predicates;
         for (Node p : right)
         {
@@ -78,14 +89,43 @@ namespace zelph::network
             }
         }
 
+        if (n->should_log(depth))
+        {
+            n->log(depth, "get_fact_structures", "Found predicates: " + std::to_string(predicates.size()));
+        }
+
         if (predicates.empty()) return structures;
 
         for (Node p : predicates)
         {
+            if (n->should_log(depth + 1))
+            {
+                n->log(depth + 1, "get_fact_structures", "Processing predicate: " + n->format(p));
+            }
+
             for (Node s : right)
             {
-                if (s == p) continue;
-                if (left.count(s) == 0) continue; // Subject must be bidirectional
+                if (n->should_log(depth + 2))
+                {
+                    n->log(depth + 2, "get_fact_structures", "Checking potential subject s: " + n->format(s));
+                }
+
+                if (s == p)
+                {
+                    if (n->should_log(depth + 2))
+                    {
+                        n->log(depth + 2, "get_fact_structures", "Skipping s == p");
+                    }
+                    continue;
+                }
+                if (left.count(s) == 0)
+                {
+                    if (n->should_log(depth + 2))
+                    {
+                        n->log(depth + 2, "get_fact_structures", "Skipping: s not bidirectional");
+                    }
+                    continue; // Subject must be bidirectional
+                }
 
                 // Filter out "child fact" nodes: nodes that use `fact` as THEIR
                 // subject.  These appear bidirectionally connected because
@@ -93,6 +133,11 @@ namespace zelph::network
                 // link fact <-> child_relation_node.
                 if (Zelph::Impl::is_hash(s)) // s is fact or variable - TODO: exclude variables?
                 {
+                    if (n->should_log(depth + 2))
+                    {
+                        n->log(depth + 2, "get_fact_structures", "s is hash: Checking for child-fact");
+                    }
+
                     Node s_pred = n->parse_relation(s);
                     if (s_pred != 0 && s_pred != p)
                     {
@@ -117,7 +162,19 @@ namespace zelph::network
                             bool fact_is_subject_of_s = true;
                             for (Node x : s_right)
                             {
-                                if (x == fact || x == s_pred) continue;
+                                if (n->should_log(depth + 3))
+                                {
+                                    n->log(depth + 3, "get_fact_structures", "Checking bidirectional x: " + n->format(x));
+                                }
+
+                                if (x == fact || x == s_pred)
+                                {
+                                    if (n->should_log(depth + 3))
+                                    {
+                                        n->log(depth + 3, "get_fact_structures", "Skipping x == fact or s_pred");
+                                    }
+                                    continue;
+                                }
                                 if (s_left.count(x) > 0)
                                 {
                                     // x is bidirectional with s.
@@ -131,15 +188,30 @@ namespace zelph::network
                                         {
                                             // x is a child-fact of s (grandchild of fact)
                                             // → does NOT disprove that fact is s's subject
+                                            if (n->should_log(depth + 3))
+                                            {
+                                                n->log(depth + 3, "get_fact_structures", "x is child-fact (different pred), continue");
+                                            }
                                             continue;
                                         }
                                     }
                                     // x is a genuine alternative subject of s
                                     fact_is_subject_of_s = false;
+                                    if (n->should_log(depth + 3))
+                                    {
+                                        n->log(depth + 3, "get_fact_structures", "Found genuine alternative subject x=" + n->format(x) + " -> fact_is_subject_of_s=false");
+                                    }
                                     break;
                                 }
                             }
-                            if (fact_is_subject_of_s) continue; // skip: s is a child-fact
+                            if (fact_is_subject_of_s)
+                            {
+                                if (n->should_log(depth + 2))
+                                {
+                                    n->log(depth + 2, "get_fact_structures", "Skipping: s is child-fact (fact is subject of s)");
+                                }
+                                continue; // skip: s is a child-fact
+                            }
                         }
                     }
                 }
@@ -166,12 +238,22 @@ namespace zelph::network
                     fs.objects.insert(s);
                 }
                 structures.push_back(fs);
+
+                if (n->should_log(depth + 1))
+                {
+                    n->log(depth + 1, "get_fact_structures", "Added structure: subject=" + n->format(fs.subject) + ", predicate=" + n->format(fs.predicate) + ", objects_count=" + std::to_string(fs.objects.size()));
+                }
             }
         }
 
         // --- Disambiguation ---
         if (structures.size() > 1)
         {
+            if (n->should_log(depth))
+            {
+                n->log(depth, "get_fact_structures", "Disambiguation needed: " + std::to_string(structures.size()) + " structures found");
+            }
+
             // Prefer structures with atomic (non-hash) subjects
             bool has_non_hash = false;
             for (const auto& fs : structures)
@@ -191,6 +273,11 @@ namespace zelph::network
                     if (!Zelph::Impl::is_hash(fs.subject)) filtered.push_back(fs);
                 }
                 structures = std::move(filtered);
+
+                if (n->should_log(depth))
+                {
+                    n->log(depth, "get_fact_structures", "After preferring non-hash subjects: " + std::to_string(structures.size()) + " left");
+                }
             }
             else
             {
@@ -214,6 +301,11 @@ namespace zelph::network
                             filtered.push_back(fs);
                     }
                     structures = std::move(filtered);
+
+                    if (n->should_log(depth))
+                    {
+                        n->log(depth, "get_fact_structures", "After preferring Cons subjects: " + std::to_string(structures.size()) + " left");
+                    }
                 }
             }
         }
@@ -221,15 +313,25 @@ namespace zelph::network
         if (prefer_single && structures.size() > 1)
         {
             structures.resize(1);
+
+            if (n->should_log(depth))
+            {
+                n->log(depth, "get_fact_structures", "prefer_single: Reduced to 1 structure");
+            }
+        }
+
+        if (n->should_log(depth))
+        {
+            n->log(depth, "get_fact_structures", "Completed: Returning " + std::to_string(structures.size()) + " structures");
         }
 
         return structures;
     }
 
     // Convenience: return a single preferred structure (for reasoning/instantiation).
-    inline FactStructure get_preferred_structure(const Zelph* n, Node fact)
+    inline FactStructure get_preferred_structure(const Zelph* n, Node fact, const int depth)
     {
-        auto results = get_fact_structures(n, fact, true);
+        auto results = get_fact_structures(n, fact, true, depth);
         if (results.empty()) return FactStructure{};
         return results[0];
     }

@@ -77,12 +77,13 @@ namespace zelph::network
     private:
         void                               evaluate(RulePos rule, ReasoningContext& ctx, int depth);
         static bool                        contradicts(const Variables& variables, const Variables& unequals);
-        void                               deduce(const Variables& variables, Node parent, ReasoningContext& ctx);
+        void                               deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx);
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
         bool                               is_negated_condition(Node condition, int depth);
         bool                               consequences_already_exist(const Variables&     condition_bindings,
                                                                       const adjacency_set& deductions,
-                                                                      Node                 parent);
+                                                                      Node                 parent,
+                                                                      const int            depth);
 
         std::atomic<bool>                        _done{false};
         std::unique_ptr<wikidata::Markdown>      _markdown;

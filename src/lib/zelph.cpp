@@ -1880,7 +1880,7 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
 
     std::ofstream file(file_name);
     if (!file.is_open())
-        throw std::runtime_error("Kann Datei nicht öffnen: " + file_name);
+        throw std::runtime_error("Cannot open file: " + file_name);
 
     file << html_header << mermaid.str() << html_footer;
 }

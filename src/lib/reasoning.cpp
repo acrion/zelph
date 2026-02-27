@@ -35,7 +35,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, std::vector<Node>& history)
+static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, const int depth, std::vector<Node>& history)
 {
     // 1. Variable substitution
     if (Zelph::Impl::is_var(pattern))
@@ -51,7 +51,7 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
     history.push_back(pattern);
 
     // 3. Structural recursion
-    FactStructure fs = get_preferred_structure(z, pattern);
+    FactStructure fs = get_preferred_structure(z, pattern, depth);
 
     if (fs.subject == 0)
     {
@@ -59,15 +59,15 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
         return pattern; // Atomic / No structure found
     }
 
-    Node inst_subject  = instantiate_fact(z, fs.subject, variables, history);
-    Node inst_relation = instantiate_fact(z, fs.predicate, variables, history);
+    Node inst_subject  = instantiate_fact(z, fs.subject, variables, depth, history);
+    Node inst_relation = instantiate_fact(z, fs.predicate, variables, depth, history);
 
     adjacency_set inst_objects;
     bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);
 
     for (Node o : fs.objects)
     {
-        Node io = instantiate_fact(z, o, variables, history);
+        Node io = instantiate_fact(z, o, variables, depth, history);
         inst_objects.insert(io);
         if (io != o) changed = true;
     }
@@ -85,7 +85,7 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
 // Recursively collect all variable nodes from a fact pattern.
 // Used to detect "fresh variables" — variables that appear only in rule
 // consequences and need to be bound to newly created nodes.
-static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, std::vector<Node>& history)
+static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, const int depth, std::vector<Node>& history)
 {
     if (pattern == 0) return;
 
@@ -102,18 +102,18 @@ static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& 
     }
     history.push_back(pattern);
 
-    FactStructure fs = get_preferred_structure(z, pattern);
+    FactStructure fs = get_preferred_structure(z, pattern, depth);
     if (fs.subject == 0)
     {
         history.pop_back();
         return; // Atomic, non-variable node
     }
 
-    collect_variables(z, fs.subject, vars, history);
-    collect_variables(z, fs.predicate, vars, history);
+    collect_variables(z, fs.subject, vars, depth, history);
+    collect_variables(z, fs.predicate, vars, depth, history);
     for (Node o : fs.objects)
     {
-        collect_variables(z, o, vars, history);
+        collect_variables(z, o, vars, depth, history);
     }
 
     history.pop_back();
@@ -161,7 +161,8 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
 bool Reasoning::consequences_already_exist(
     const Variables&     condition_bindings,
     const adjacency_set& deductions,
-    Node                 parent)
+    Node                 parent,
+    const int            depth)
 {
     Variables working = condition_bindings;
 
@@ -182,13 +183,13 @@ bool Reasoning::consequences_already_exist(
 
         // Instantiate subject and objects with current working bindings
         std::vector<Node> history;
-        Node              source = instantiate_fact(this, var_source, working, history);
+        Node              source = instantiate_fact(this, var_source, working, depth, history);
 
         adjacency_set targets;
         for (Node vt : var_targets)
         {
             history = {deduction};
-            Node t  = instantiate_fact(this, vt, working, history);
+            Node t  = instantiate_fact(this, vt, working, depth, history);
             if (t == 0) return false;
             targets.insert(t);
         }
@@ -876,7 +877,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     {
                         try
                         {
-                            deduce(*bindings, rule.node, ctx_copy);
+                            deduce(*bindings, rule.node, depth, ctx_copy);
                         }
                         catch (const contradiction_error& error)
                         {
@@ -1034,14 +1035,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                     // Fully instantiate the pattern with the test bindings
                     std::vector<Node> hist;
-                    Node              inst_subj = instantiate_fact(this, pattern_subject, test, hist);
+                    Node              inst_subj = instantiate_fact(this, pattern_subject, test, depth, hist);
 
                     adjacency_set inst_objs;
                     bool          resolved = true;
                     for (Node po : pattern_objects)
                     {
                         hist.clear();
-                        Node io = instantiate_fact(this, po, test, hist);
+                        Node io = instantiate_fact(this, po, test, depth, hist);
                         if (io && !Zelph::Impl::is_var(io))
                             inst_objs.insert(io);
                         else
@@ -1128,7 +1129,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 {
                     try
                     {
-                        deduce(*joined, rule.node, ctx_copy);
+                        deduce(*joined, rule.node, depth, ctx_copy);
                     }
                     catch (const contradiction_error& error)
                     {
@@ -1266,7 +1267,7 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
     return false; // no contradiction
 }
 
-void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningContext& ctx)
+void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx)
 {
     // --- Fresh Variable Detection ---
     // Variables that appear in consequences but are not bound by conditions
@@ -1279,7 +1280,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
     {
         if (deduction == core.Contradiction) continue;
         std::vector<Node> history;
-        collect_variables(this, deduction, deduction_vars, history);
+        collect_variables(this, deduction, deduction_vars, depth, history);
     }
 
     std::unordered_set<Node> fresh_vars;
@@ -1296,7 +1297,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
     // The check is done against the live network, so it survives serialization.
     if (!fresh_vars.empty())
     {
-        if (consequences_already_exist(variables, ctx.rule_deductions, parent))
+        if (consequences_already_exist(variables, ctx.rule_deductions, parent, depth))
             return;
     }
 
@@ -1349,7 +1350,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                         // Seed history with the deduction node so that get_preferred_structure()
                         // skips it as a parent and does not mistake it for the subject of var_source.
                         std::vector<Node> history{deduction};
-                        source = instantiate_fact(this, var_source, augmented, history);
+                        source = instantiate_fact(this, var_source, augmented, depth, history);
 
                         if (source)
                         {
@@ -1357,7 +1358,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, ReasoningC
                             for (Node var_t : var_targets)
                             {
                                 history = {deduction};
-                                Node t  = instantiate_fact(this, var_t, augmented, history);
+                                Node t  = instantiate_fact(this, var_t, augmented, depth, history);
 
                                 if (t)
                                 {
