@@ -59,8 +59,8 @@ int main(int argc, char** argv)
                 setenv("ZELPH_UNDER_RLWRAP", "1", 1);
                 std::vector<char*> exec_args;
                 exec_args.push_back(const_cast<char*>("rlwrap"));
-                exec_args.push_back(const_cast<char*>("-m")); // Für multiline mit Bracket-Blinking
-                exec_args.push_back(argv[0]);                 // Das Binary selbst
+                exec_args.push_back(const_cast<char*>("-m"));
+                exec_args.push_back(argv[0]);
                 for (int i = 1; i < argc; ++i)
                 {
                     exec_args.push_back(argv[i]);
