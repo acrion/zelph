@@ -24,11 +24,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "unification.hpp"
+#include "fact_structure.hpp"
 #include "string_utils.hpp"
 #include "zelph_impl.hpp"
 
 #include <iostream>
-#include <unordered_set>
 #include <vector>
 
 using namespace zelph::network;
@@ -56,130 +56,6 @@ static std::string u_node_str(const Zelph* z, Node n)
 #define U_NODE(n) u_node_str(_n, n)
 
 // --- Helper Functions ---
-
-struct FactStructure
-{
-    Node                     subject{};
-    Node                     predicate{};
-    std::unordered_set<Node> objects;
-};
-
-// Determines all possible structural interpretations of a node.
-static std::vector<FactStructure> get_fact_structures(const Zelph* n, Node fact)
-{
-    std::vector<FactStructure> structures;
-    if (fact == 0 || !n->exists(fact)) return structures;
-
-    // Zelph Topology:
-    // S <-> F (Subject is bidirectional)
-    // F -> P  (Predicate is outgoing)
-    // O -> F  (Object is incoming)
-
-    adjacency_set right = n->get_right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
-    adjacency_set left  = n->get_left(fact);  // Contains O and S (and Parent-Facts P')
-
-    adjacency_set predicates;
-    for (Node p : right)
-    {
-        if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
-        {
-            predicates.insert(p);
-        }
-    }
-
-    if (predicates.empty()) return structures;
-
-    for (Node p : predicates)
-    {
-        for (Node s : right)
-        {
-            if (s == p) continue;
-            if (left.count(s) == 0) continue; // Subject must be bidirectional
-
-            // Filter out "child fact" nodes: if s is itself a fact node
-            // (has a recognized predicate in its outgoing edges) and that
-            // predicate differs from p, then s is a child/parent relation
-            // node that happens to be bidirectionally connected because
-            // 'fact' is its subject — not a true semantic subject of 'fact'.
-            //
-            // Example: ci_fact = ((3 d+ 5) ci 0) is the subject of
-            // sum_fact = ((3 d+ 5) ci 0) sum 8. The sum_fact node is
-            // bidirectionally connected to ci_fact, but sum_fact is NOT
-            // the subject of ci_fact — it is a child fact. Without this
-            // filter, unify_nodes may explore a spurious structural
-            // interpretation, hit cycle detection, and produce false matches.
-            if (Zelph::Impl::is_hash(s))
-            {
-                Node s_pred = n->parse_relation(s);
-                if (s_pred != 0 && s_pred != p)
-                    continue; // s is a fact node with a different predicate → child fact, skip
-            }
-
-            FactStructure fs;
-            fs.subject   = s;
-            fs.predicate = p;
-
-            // Objects are in 'left', but must NOT be in 'right'.
-            // (S is in both, Parent is in both, O is only in left)
-            for (Node o : left)
-            {
-                if (o != s && o != p)
-                {
-                    if (right.count(o) == 0)
-                    {
-                        fs.objects.insert(o);
-                    }
-                }
-            }
-
-            if (fs.objects.empty())
-            {
-                fs.objects.insert(s);
-            }
-            structures.push_back(fs);
-        }
-    }
-
-    // Disambiguation: Prefer structures with atomic (Non-Hash) subjects to avoid confusion with parent nodes.
-    if (structures.size() > 1)
-    {
-        std::vector<FactStructure> filtered;
-        bool                       has_non_hash = false;
-
-        for (const auto& fs : structures)
-        {
-            if (!Zelph::Impl::is_hash(fs.subject)) has_non_hash = true;
-        }
-
-        if (has_non_hash)
-        {
-            for (const auto& fs : structures)
-            {
-                if (!Zelph::Impl::is_hash(fs.subject)) filtered.push_back(fs);
-            }
-            return filtered;
-        }
-
-        // Among all-hash subjects, prefer Cons cells: they are semantic values,
-        // not relation nodes that accidentally appear via bidirectional subject edges.
-        bool has_cons_subject = false;
-        for (const auto& fs : structures)
-        {
-            if (n->parse_relation(fs.subject) == n->core.Cons) has_cons_subject = true;
-        }
-        if (has_cons_subject)
-        {
-            filtered.clear();
-            for (const auto& fs : structures)
-            {
-                if (n->parse_relation(fs.subject) == n->core.Cons) filtered.push_back(fs);
-            }
-            return filtered;
-        }
-    }
-
-    return structures;
-}
 
 // Recursive Unification Algorithm with Cycle Detection
 static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, Variables& local_bindings, const Variables& global_bindings, std::vector<std::pair<Node, Node>>& history, int depth)

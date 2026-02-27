@@ -25,118 +25,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "reasoning.hpp"
 #include "contradiction_error.hpp"
+#include "fact_structure.hpp"
 #include "string_utils.hpp"
 #include "unification.hpp"
-#include "zelph_impl.hpp"
 
 #include <cassert>
 #include <iostream> // For std::clog
 #include <vector>
 
 using namespace zelph::network;
-
-struct FactStructure
-{
-    Node                     subject{};
-    Node                     predicate{};
-    std::unordered_set<Node> objects;
-};
-
-// Find the right structure for instantiation. Use history to exclude parent nodes (cycles).
-static FactStructure get_preferred_structure(Zelph* n, Node fact, const std::vector<Node>& history)
-{
-    FactStructure preferred;
-    preferred.subject = 0;
-
-    std::vector<FactStructure> structures;
-
-    if (fact == 0 || !n->exists(fact)) return preferred;
-
-    adjacency_set right = n->get_right(fact);
-    adjacency_set left  = n->get_left(fact);
-
-    adjacency_set predicates;
-    for (Node p : right)
-    {
-        if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
-        {
-            predicates.insert(p);
-        }
-    }
-
-    if (predicates.empty()) return preferred;
-
-    for (Node p : predicates)
-    {
-        for (Node s : right)
-        {
-            if (s == p || left.count(s) == 0) continue;
-
-            // If `s` (the candidate for the subject) is already in the history,
-            // `s` is a parent node that is currently instantiating `fact`.
-            // We must not return to it.
-            bool is_parent = false;
-            for (Node visited : history)
-            {
-                if (visited == s)
-                {
-                    is_parent = true;
-                    break;
-                }
-            }
-            if (is_parent) continue;
-
-            FactStructure fs;
-            fs.subject   = s;
-            fs.predicate = p;
-
-            for (Node o : left)
-            {
-                if (o != s && o != p && right.count(o) == 0)
-                {
-                    fs.objects.insert(o);
-                }
-            }
-
-            if (fs.objects.empty())
-            {
-                // Self-referential: subject is also the object.
-                fs.objects.insert(s);
-            }
-            structures.push_back(fs);
-        }
-    }
-
-    if (!structures.empty())
-    {
-        preferred = structures[0];
-        for (const auto& fs : structures)
-        {
-            if (!Zelph::Impl::is_hash(fs.subject))
-            {
-                // Prefer non-hash subjects (atoms/variables)
-                preferred = fs;
-                break;
-            }
-        }
-
-        // Among all-hash subjects, prefer Cons cells: they are semantic values,
-        // not relation nodes that accidentally appear via bidirectional subject edges.
-        if (Zelph::Impl::is_hash(preferred.subject))
-        {
-            for (const auto& fs : structures)
-            {
-                if (Zelph::Impl::is_hash(fs.subject) && n->parse_relation(fs.subject) == n->core.Cons)
-                {
-                    preferred = fs;
-                    break;
-                }
-            }
-        }
-    }
-
-    return preferred;
-}
 
 static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, std::vector<Node>& history)
 {
@@ -154,7 +51,7 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
     history.push_back(pattern);
 
     // 3. Structural recursion
-    FactStructure fs = get_preferred_structure(z, pattern, history);
+    FactStructure fs = get_preferred_structure(z, pattern);
 
     if (fs.subject == 0)
     {
@@ -205,7 +102,7 @@ static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& 
     }
     history.push_back(pattern);
 
-    FactStructure fs = get_preferred_structure(z, pattern, history);
+    FactStructure fs = get_preferred_structure(z, pattern);
     if (fs.subject == 0)
     {
         history.pop_back();
