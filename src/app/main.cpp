@@ -26,6 +26,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "string_utils.hpp"
 
+#ifndef _WIN32
+    #include <cstdlib>     // for system
+    #include <sys/types.h> // for fork
+    #include <sys/wait.h>  // for waitpid
+    #include <unistd.h>    // for execvp, getenv
+#endif
+
 #include <iostream>
 #include <vector>
 
@@ -34,6 +41,38 @@ Interactive interactive;
 
 int main(int argc, char** argv)
 {
+#ifndef _WIN32
+    if (getenv("ZELPH_UNDER_RLWRAP") == nullptr)
+    {
+        FILE* pipe = popen("command -v rlwrap", "r");
+        if (pipe)
+        {
+            char        buffer[128];
+            std::string rlwrap_path;
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+            {
+                rlwrap_path += buffer;
+            }
+            int status = pclose(pipe);
+            if (status == 0 && !rlwrap_path.empty())
+            {
+                setenv("ZELPH_UNDER_RLWRAP", "1", 1);
+                std::vector<char*> exec_args;
+                exec_args.push_back(const_cast<char*>("rlwrap"));
+                exec_args.push_back(const_cast<char*>("-m")); // Für multiline mit Bracket-Blinking
+                exec_args.push_back(argv[0]);                 // Das Binary selbst
+                for (int i = 1; i < argc; ++i)
+                {
+                    exec_args.push_back(argv[i]);
+                }
+                exec_args.push_back(nullptr);
+                execvp("rlwrap", exec_args.data());
+                perror("execvp failed");
+                return 1;
+            }
+        }
+    }
+#endif
     try
     {
         std::wstring              exit_command = L".exit";
