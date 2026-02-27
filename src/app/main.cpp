@@ -41,7 +41,7 @@ Interactive interactive;
 
 int main(int argc, char** argv)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && defined(NDEBUG)
     if (getenv("ZELPH_UNDER_RLWRAP") == nullptr)
     {
         FILE* pipe = popen("command -v rlwrap", "r");
