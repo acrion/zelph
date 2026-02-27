@@ -63,7 +63,5 @@ Answer:  tim   ancestor   tom
  elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
  6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
- test   test  <0> ⇐ <1>  +  <0>  =  <1>
- !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
 Found one or more contradictions!

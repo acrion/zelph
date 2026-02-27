@@ -96,6 +96,25 @@ static std::vector<FactStructure> get_fact_structures(const Zelph* n, Node fact)
             if (s == p) continue;
             if (left.count(s) == 0) continue; // Subject must be bidirectional
 
+            // Filter out "child fact" nodes: if s is itself a fact node
+            // (has a recognized predicate in its outgoing edges) and that
+            // predicate differs from p, then s is a child/parent relation
+            // node that happens to be bidirectionally connected because
+            // 'fact' is its subject — not a true semantic subject of 'fact'.
+            //
+            // Example: ci_fact = ((3 d+ 5) ci 0) is the subject of
+            // sum_fact = ((3 d+ 5) ci 0) sum 8. The sum_fact node is
+            // bidirectionally connected to ci_fact, but sum_fact is NOT
+            // the subject of ci_fact — it is a child fact. Without this
+            // filter, unify_nodes may explore a spurious structural
+            // interpretation, hit cycle detection, and produce false matches.
+            if (Zelph::Impl::is_hash(s))
+            {
+                Node s_pred = n->parse_relation(s);
+                if (s_pred != 0 && s_pred != p)
+                    continue; // s is a fact node with a different predicate → child fact, skip
+            }
+
             FactStructure fs;
             fs.subject   = s;
             fs.predicate = p;
