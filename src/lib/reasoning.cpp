@@ -135,8 +135,12 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
     Answer ans    = check_fact(condition, core.IsA, {core.Negation});
     bool   result = ans.is_known();
 
-    if (should_log(depth))
-        log(depth, "neg-check", "condition=" + format(condition) + " name='" + string::unicode::to_utf8(get_name(condition, _lang, true)) + "' IsA Negation? " + (result ? "YES" : "NO") + " (Negation core node=" + std::to_string(core.Negation) + ")");
+    // Only log at depth+1 to reduce noise (these are almost always NO)
+    // Exception: log at current depth when the result is YES (rare, important)
+    if (result && should_log(depth))
+        log(depth, "neg-check", "condition=" + format(condition) + " IsA Negation? YES");
+    else if (should_log(depth + 1))
+        log(depth + 1, "neg-check", "condition=" + format(condition) + " IsA Negation? NO");
 
     return result;
 }
@@ -522,9 +526,13 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     if (!silent)
         std::clog << "Starting reasoning with " << _pool->count() << " worker threads." << std::endl;
 
+    int iteration = 0;
     do
     {
         _done = false;
+        ++iteration;
+        if (!silent)
+            std::clog << "--- Reasoning iteration " << iteration << " ---" << std::endl;
         for (Node rule : _pImpl->get_left(core.Causes))
         {
             apply_rule(rule, 0);
@@ -707,13 +715,13 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
         if (best_it != pending.end())
         {
             Node best_cond = *best_it;
-            if (should_log(depth))
+            if (should_log(depth + 1))
             // Log the selected condition with its score
             {
                 adjacency_set rels     = filter(best_cond, core.IsA, core.RelationTypeCategory);
                 std::string   rel_name = "?";
                 if (rels.size() == 1) rel_name = string::unicode::to_utf8(get_name(*rels.begin(), _lang, true));
-                log(depth, "optorder", "Selected condition=" + format(best_cond) + " rel=" + rel_name + " score=" + std::to_string(static_cast<int>(max_score)));
+                log(depth + 1, "optorder", "Selected condition=" + format(best_cond) + " rel=" + rel_name + " score=" + std::to_string(static_cast<int>(max_score)));
             }
 
             sorted->push_back(best_cond);
@@ -735,6 +743,20 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             break;
         }
     }
+
+    if (should_log(depth) && !sorted->empty())
+    {
+        std::string order_str;
+        for (size_t i = 0; i < sorted->size(); ++i)
+        {
+            adjacency_set rels     = filter((*sorted)[i], core.IsA, core.RelationTypeCategory);
+            std::string   rel_name = "?";
+            if (rels.size() == 1) rel_name = string::unicode::to_utf8(get_name(*rels.begin(), _lang, true));
+            order_str += " [" + std::to_string(i) + "]=" + rel_name;
+        }
+        log(depth, "optorder", "Final order:" + order_str);
+    }
+
     return sorted;
 }
 
@@ -821,6 +843,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 excluded->insert(elem); // Each condition pattern node
             }
 
+            if (should_log(depth))
+                log(depth, "evaluate", "Entering conjunction " + format(condition) + " with " + std::to_string(sorted_conditions->size()) + " sub-conditions");
+
             // Recurse into the conjunction
             evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded}), ctx, depth + 1);
         }
@@ -875,6 +900,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                     if (!ctx_copy.rule_deductions.empty())
                     {
+                        if (should_log(depth))
+                            log(depth, "evaluate", "TERMINAL: All conditions satisfied. Calling deduce with rule " + format(rule.node));
+
                         try
                         {
                             deduce(*bindings, rule.node, depth, ctx_copy);
@@ -1071,6 +1099,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         // Define the processing logic for a single match (extracted to be usable in both serial and parallel loops)
         auto process_match = [&](std::shared_ptr<Variables> match)
         {
+            if (should_log(depth))
+            {
+                std::string bindings_str;
+                for (const auto& [k, v] : *match)
+                    bindings_str += " " + format(k) + "=" + format(v);
+                log(depth, "match", "Candidate bindings:" + bindings_str);
+            }
+
             // Reject matches that bind variables to nodes belonging to
             // the current rule's own topology (conjunction set, condition
             // pattern nodes). Without this check, PartOf facts connecting
@@ -1082,6 +1118,8 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 {
                     if (rule.excluded->count(v))
                     {
+                        if (should_log(depth))
+                            log(depth, "match", "REJECTED: binding " + format(k) + "=" + format(v) + " hits excluded node");
                         return;
                     }
                 }
@@ -1092,12 +1130,24 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             if (contradicts(*joined, *joined_unequals))
             {
+                if (should_log(depth))
+                    log(depth, "match", "REJECTED: contradicts unequal constraints");
                 return;
             }
 
             if (joined->empty())
             {
+                if (should_log(depth))
+                    log(depth, "match", "REJECTED: joined bindings empty");
                 return;
+            }
+
+            if (should_log(depth))
+            {
+                std::string joined_str;
+                for (const auto& [k, v] : *joined)
+                    joined_str += " " + format(k) + "=" + format(v);
+                log(depth, "match", "ACCEPTED joined:" + joined_str);
             }
 
             // Move to next condition in the sorted vector
@@ -1105,6 +1155,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             if (next_index < rule.conditions->size())
             {
+                if (should_log(depth))
+                    log(depth, "match", "Advancing to condition " + std::to_string(next_index) + "/" + std::to_string(rule.conditions->size()));
+
                 RulePos next   = rule;
                 next.variables = joined;
                 next.unequals  = joined_unequals;
@@ -1115,6 +1168,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             }
             else if (!ctx.next.empty())
             {
+                if (should_log(depth))
+                    log(depth, "match", "Popping stacked branch (" + std::to_string(ctx.next.size()) + " remaining)");
+
                 RulePos next = ctx.next.back();
                 ctx.next.pop_back();
                 ReasoningContext ctx_copy = ctx;
@@ -1122,11 +1178,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             }
             else
             {
+                if (should_log(depth))
+                    log(depth, "match", "All conditions satisfied -> TERMINAL");
+
                 // Leaf: query or prune
                 ReasoningContext ctx_copy = ctx;
 
                 if (!ctx_copy.rule_deductions.empty())
                 {
+                    if (should_log(depth))
+                        log(depth, "evaluate", "TERMINAL: All conditions satisfied. Calling deduce with rule " + format(rule.node));
+
                     try
                     {
                         deduce(*joined, rule.node, depth, ctx_copy);
@@ -1225,13 +1287,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         else
         {
             // Standard serial execution on the main thread
+            int local_serial_matches = 0;
             while (std::shared_ptr<Variables> match = u->Next())
             {
                 ++_total_matches;
+                ++local_serial_matches;
                 process_match(match);
             }
             // Ensure cleanup
             u->wait_for_completion();
+
+            if (should_log(depth))
+                log(depth, "evaluate", "Leaf condition " + format(condition) + " => " + std::to_string(local_serial_matches) + " match(es)");
         }
     }
 }
@@ -1269,6 +1336,14 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
 
 void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx)
 {
+    if (should_log(depth))
+    {
+        std::string vars_str;
+        for (const auto& [k, v] : variables)
+            vars_str += " " + format(k) + "=" + format(v);
+        log(depth, "deduce", "BEGIN with bindings:" + vars_str);
+    }
+
     // --- Fresh Variable Detection ---
     // Variables that appear in consequences but are not bound by conditions
     // are "fresh variables": each rule firing creates a new node for them.
@@ -1290,15 +1365,32 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             fresh_vars.insert(var);
     }
 
+    if (should_log(depth))
+    {
+        if (!fresh_vars.empty())
+        {
+            std::string fresh_str;
+            for (Node fv : fresh_vars)
+                fresh_str += " " + format(fv);
+            log(depth, "deduce", "Fresh variables:" + fresh_str);
+        }
+        else
+        {
+            log(depth, "deduce", "No fresh variables");
+        }
+    }
+
     // --- Termination Check ---
-    // If fresh variables exist, check whether these consequences have already
-    // been created for the current condition bindings. Without this check,
-    // each reasoning iteration would create new fresh nodes indefinitely.
-    // The check is done against the live network, so it survives serialization.
     if (!fresh_vars.empty())
     {
         if (consequences_already_exist(variables, ctx.rule_deductions, parent, depth))
+        {
+            if (should_log(depth))
+                log(depth, "deduce", "consequences_already_exist => SKIP (termination guard)");
             return;
+        }
+        if (should_log(depth))
+            log(depth, "deduce", "consequences_already_exist => false, proceeding");
     }
 
     // --- Create Fresh Nodes ---
@@ -1311,6 +1403,9 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             fresh = _pImpl->create();
         }
         augmented[var] = fresh;
+
+        if (should_log(depth))
+            log(depth, "deduce", "Created fresh node " + std::to_string(fresh) + " for " + format(var));
     }
 
     // --- Process Deductions ---
@@ -1323,123 +1418,163 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
         adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
 
-        if (relations.size() == 1)
+        if (relations.size() != 1)
         {
-            Node rel = Zelph::Impl::is_var(*relations.begin())
-                         ? string::get(augmented, *relations.begin(), 0ull)
-                         : *relations.begin();
+            if (should_log(depth))
+                log(depth, "deduce", "Deduction " + format(deduction) + " has " + std::to_string(relations.size()) + " relations, skipping");
+            continue;
+        }
 
-            if (rel)
+        Node rel = Zelph::Impl::is_var(*relations.begin())
+                     ? string::get(augmented, *relations.begin(), 0ull)
+                     : *relations.begin();
+
+        if (!rel)
+        {
+            if (should_log(depth))
+                log(depth, "deduce", "Deduction " + format(deduction) + ": relation resolved to null, skipping");
+            continue;
+        }
+
+        adjacency_set var_targets;
+        Node          var_source = parse_fact(deduction, var_targets, parent);
+
+        if (var_targets.empty())
+        {
+            if (should_log(depth))
+                log(depth, "deduce", "Deduction " + format(deduction) + ": no targets found, skipping");
+            continue;
+        }
+
+        // All instantiation and fact creation happens under one lock to
+        // prevent races where parallel threads create the same node.
+        Node          source;
+        adjacency_set targets;
+        Node          d       = 0;
+        bool          wrong   = false;
+        bool          created = false;
+
+        {
+            std::lock_guard<std::mutex> lock_network(_mtx_network);
+
+            // Seed history with the deduction node so that get_preferred_structure()
+            // skips it as a parent and does not mistake it for the subject of var_source.
+            std::vector<Node> history{deduction};
+            source = instantiate_fact(this, var_source, augmented, depth, history);
+
+            if (should_log(depth))
+                log(depth, "deduce", "Instantiated source: " + (source ? format(source) : "NULL") + " (from pattern " + format(var_source) + ")");
+
+            if (source)
             {
-                adjacency_set var_targets;
-                Node          var_source = parse_fact(deduction, var_targets, parent);
-
-                if (!var_targets.empty())
+                bool done = true;
+                for (Node var_t : var_targets)
                 {
-                    // All instantiation and fact creation happens under one lock to
-                    // prevent races where parallel threads create the same node.
-                    Node          source;
-                    adjacency_set targets;
-                    Node          d       = 0;
-                    bool          wrong   = false;
-                    bool          created = false;
+                    history = {deduction};
+                    Node t  = instantiate_fact(this, var_t, augmented, depth, history);
 
+                    if (should_log(depth))
+                        log(depth, "deduce", "Instantiated target: " + (t ? format(t) : "NULL") + " (from pattern " + format(var_t) + ")");
+
+                    if (t)
                     {
-                        std::lock_guard<std::mutex> lock_network(_mtx_network);
-
-                        // Seed history with the deduction node so that get_preferred_structure()
-                        // skips it as a parent and does not mistake it for the subject of var_source.
-                        std::vector<Node> history{deduction};
-                        source = instantiate_fact(this, var_source, augmented, depth, history);
-
-                        if (source)
-                        {
-                            bool done = true;
-                            for (Node var_t : var_targets)
-                            {
-                                history = {deduction};
-                                Node t  = instantiate_fact(this, var_t, augmented, depth, history);
-
-                                if (t)
-                                {
-                                    targets.insert(t);
-                                }
-                                else
-                                {
-                                    done = false;
-                                    break;
-                                }
-                            }
-
-                            if (done)
-                            {
-                                Answer answer = check_fact(source, rel, targets);
-                                if (answer.is_wrong())
-                                    wrong = true;
-                                else if (!answer.is_known() && targets.count(rel) == 0)
-                                {
-                                    try
-                                    {
-                                        d       = fact(source, rel, targets);
-                                        created = true;
-                                    }
-                                    catch (const std::exception&)
-                                    {
-                                        wrong = true;
-                                    }
-                                }
-                            }
-                        }
-                    } // _mtx_network released
-
-                    if (wrong)
-                        throw contradiction_error(ctx.current_condition, augmented, parent);
-
-                    if (created)
+                        targets.insert(t);
+                    }
+                    else
                     {
-                        std::lock_guard<std::mutex> lock(_mtx_output);
-                        bool                        do_print = _print_deductions;
-
-                        if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
-                        {
-                            do_print = true;
-                            _stop_watch.start();
-                        }
-                        else if (!do_print)
-                        {
-                            ++_skipped;
-                        }
-                        else
-                        {
-                            _stop_watch.start();
-                        }
-
-                        if (do_print || _generate_markdown)
-                        {
-                            size_t skipped_val = _skipped.exchange(0);
-                            if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
-
-                            std::wstring input, output;
-                            format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
-                            format_fact(output, _lang, d, 3, {}, parent);
-
-                            std::wstring message = output + L" ⇐ " + input;
-
-                            if (do_print)
-                            {
-                                print(message, true);
-                            }
-
-                            if (_generate_markdown)
-                            {
-                                _markdown->add(L"Deductions", message);
-                            }
-                        }
-
-                        _done = true;
+                        done = false;
+                        break;
                     }
                 }
+
+                if (done)
+                {
+                    Answer answer = check_fact(source, rel, targets);
+
+                    if (should_log(depth))
+                    {
+                        std::string targets_str;
+                        for (Node t : targets)
+                            targets_str += " " + format(t);
+                        log(depth, "deduce", "check_fact(" + format(source) + ", " + format(rel) + "," + targets_str + ") => " + (answer.is_known() ? (answer.is_wrong() ? "WRONG" : "KNOWN/exists") : "UNKNOWN/new") + (targets.count(rel) ? " [target==rel, skip]" : ""));
+                    }
+
+                    if (answer.is_wrong())
+                        wrong = true;
+                    else if (!answer.is_known() && targets.count(rel) == 0)
+                    {
+                        try
+                        {
+                            d       = fact(source, rel, targets);
+                            created = true;
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            if (should_log(depth))
+                                log(depth, "deduce", "fact() threw: " + std::string(ex.what()));
+                            wrong = true;
+                        }
+                    }
+                }
+                else if (should_log(depth))
+                {
+                    log(depth, "deduce", "Target instantiation incomplete, skipping deduction");
+                }
             }
+        } // _mtx_network released
+
+        if (wrong)
+            throw contradiction_error(ctx.current_condition, augmented, parent);
+
+        if (created)
+        {
+            std::lock_guard<std::mutex> lock(_mtx_output);
+            bool                        do_print = _print_deductions;
+
+            if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
+            {
+                do_print = true;
+                _stop_watch.start();
+            }
+            else if (!do_print)
+            {
+                ++_skipped;
+            }
+            else
+            {
+                _stop_watch.start();
+            }
+
+            if (do_print || _generate_markdown)
+            {
+                size_t skipped_val = _skipped.exchange(0);
+                if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
+
+                std::wstring input, output;
+                format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
+                format_fact(output, _lang, d, 3, {}, parent);
+
+                std::wstring message = output + L" ⇐ " + input;
+
+                if (do_print)
+                {
+                    print(message, true);
+                }
+
+                if (_generate_markdown)
+                {
+                    _markdown->add(L"Deductions", message);
+                }
+            }
+
+            _done = true;
+
+            if (should_log(depth))
+                log(depth, "deduce", "CREATED fact " + format(d));
+        }
+        else if (should_log(depth) && !wrong)
+        {
+            log(depth, "deduce", "No new fact created (already exists or skipped)");
         }
     }
 }

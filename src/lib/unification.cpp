@@ -253,6 +253,14 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         }
     }
 
+    if (_n->should_log(_log_depth))
+    {
+        std::string rels_str;
+        for (Node r : _relation_list)
+            rels_str += " " + U_NODE(r);
+        u_log(_log_depth, "Unification: subject=" + U_NODE(_subject) + " relations:" + rels_str + " objects=" + std::to_string(_objects.size()));
+    }
+
     if (_relation_list.empty()) return;
 
     // Always initialize sequential fallback
@@ -448,6 +456,11 @@ bool Unification::increment_fact_index()
                 return false;
             }
 
+            if (_n->should_log(_log_depth))
+            {
+                u_log(_log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+            }
+
             _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
             _fact_index_initialized = true;
         }
@@ -505,7 +518,11 @@ std::shared_ptr<Variables> Unification::Next()
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
 std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const
 {
-    if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject)) return nullptr;
+    if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject))
+    {
+        U_LOG(depth, "extract_bindings FAIL: objects=" + std::to_string(objects.empty()) + " subject=" + (subject == 0 ? "null" : (Zelph::Impl::is_var(subject) ? "var" : U_NODE(subject))));
+        return nullptr;
+    }
 
     auto result = std::make_shared<Variables>();
 
@@ -533,10 +550,18 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     // templates are matched by unification, producing incorrect bindings and
     // causing extreme performance degradation because every sum/ci/co query
     // iterates over them endlessly.
-    if (contains_variable_shallow(_n, subject, depth)) return nullptr;
+    if (contains_variable_shallow(_n, subject, depth))
+    {
+        U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
+        return nullptr;
+    }
     for (Node o : objects)
     {
-        if (contains_variable_shallow(_n, o, depth)) return nullptr;
+        if (contains_variable_shallow(_n, o, depth))
+        {
+            U_LOG(depth, "extract_bindings REJECT: object " + U_NODE(o) + " contains variable (rule template)");
+            return nullptr;
+        }
     }
 
     // Check if the object matches the bound rule variable (if-clause)
@@ -560,8 +585,17 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     {
         if (_relation_variable != 0 && _variables->count(_relation_variable) == 0 && result->count(_relation_variable) == 0)
             (*result)[_relation_variable] = relation;
+
+        U_LOG(depth, "extract_bindings SUCCESS");
+        if (_n->should_log(depth))
+        {
+            for (const auto& [k, v] : *result)
+                u_log(depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+        }
         return result;
     }
+
+    U_LOG(depth, "extract_bindings FAIL: no object matched");
     return nullptr;
 }
 
