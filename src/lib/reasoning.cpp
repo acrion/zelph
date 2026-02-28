@@ -53,6 +53,9 @@ static Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables,
     // 3. Structural recursion
     FactStructure fs = get_preferred_structure(z, pattern, depth);
 
+    if (z->should_log(depth))
+        z->log(depth, "instantiate", "fact=" + z->format(pattern) + " subj=" + z->format(fs.subject) + " pred=" + z->format(fs.predicate) + " objs=" + std::to_string(fs.objects.size()));
+
     if (fs.subject == 0)
     {
         history.pop_back();

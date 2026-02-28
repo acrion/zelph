@@ -198,14 +198,48 @@ namespace zelph::network
                                             if (n->get_right(x).count(fact) > 0
                                                 && n->get_left(x).count(fact) > 0)
                                             {
-                                                // x is connected to fact → child-fact
+                                                // x is connected to fact → child-fact (direct)
                                                 if (n->should_log(depth + 3))
                                                 {
                                                     n->log(depth + 3, "get_fact_structures", "x is child-fact (different pred, connected to fact), continue");
                                                 }
                                                 continue;
                                             }
-                                            // x is NOT connected to fact → genuine alternative subject
+
+                                            // x is NOT directly connected to fact.
+                                            // It might still be a grandchild: a child-fact
+                                            // of s that sits deeper in the tree with no
+                                            // direct edge to fact.  Detect this by checking
+                                            // whether s is x's subject — i.e. s is the only
+                                            // bidirectional non-predicate neighbor of x.
+                                            {
+                                                bool          x_is_child_of_s = true;
+                                                adjacency_set x_right2        = n->get_right(x);
+                                                adjacency_set x_left2         = n->get_left(x);
+                                                for (Node y : x_right2)
+                                                {
+                                                    if (y == s || y == x_pred) continue;
+                                                    if (x_left2.count(y) > 0)
+                                                    {
+                                                        // y is bidirectional with x and is
+                                                        // neither s nor x's predicate
+                                                        // → x has another subject candidate
+                                                        // → x is not simply a child of s
+                                                        x_is_child_of_s = false;
+                                                        break;
+                                                    }
+                                                }
+                                                if (x_is_child_of_s)
+                                                {
+                                                    if (n->should_log(depth + 3))
+                                                    {
+                                                        n->log(depth + 3, "get_fact_structures", "x is grandchild (child of s, not connected to fact), continue");
+                                                    }
+                                                    continue;
+                                                }
+                                            }
+
+                                            // x is genuinely an alternative subject of s
                                             fact_is_subject_of_s = false;
                                             if (n->should_log(depth + 3))
                                             {
