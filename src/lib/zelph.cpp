@@ -866,25 +866,80 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     // a recognized predicate (a RelationTypeCategory instance) in its
     // outgoing connections. We also filter the original structural cases.
 
+    // --- Disambiguation ---
+    // Multiple candidates look like the subject.  This happens when `rule`
+    // is also the subject of other facts, creating extra bidirectional links.
+    //
+    // Strategy: identify and filter out "child-fact" candidates — hash nodes
+    // whose only bidirectional neighbor (besides their own predicate) is `rule`
+    // itself, meaning `rule` is THEIR subject, not the other way around.
+    // This mirrors the proven logic in get_fact_structures().
+
     Node best_candidate   = 0;
     int  valid_candidates = 0;
 
-    // Phase 1: filter candidates whose outgoing edges include a core structural
-    // predicate. This identifies interlopers added by set-membership (PartOf),
-    // IsA tagging (conjunction/negation/RelTypeCategory), cons-cell structure
-    // (Cons), rule creation (Causes), or inequality constraints (Unequal).
     for (Node cand : candidates)
     {
-        bool is_structural = false;
-        for (Node pred : _pImpl->get_right(cand))
+        bool is_child_fact = false;
+
+        if (Impl::is_hash(cand))
         {
-            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA || pred == core.Causes || pred == core.Unequal)
+            Node cand_pred = parse_relation(cand);
+            if (cand_pred != 0)
             {
-                is_structural = true;
-                break;
+                adjacency_set cand_right = _pImpl->get_right(cand);
+                adjacency_set cand_left  = _pImpl->get_left(cand);
+
+                // `rule` must be bidirectional with `cand` for a child-fact relationship
+                if (cand_right.count(rule) > 0 && cand_left.count(rule) > 0)
+                {
+                    // Check whether `cand` has another bidirectional neighbor
+                    // besides `rule` and `cand_pred`.  If not, `rule` is cand's
+                    // only subject candidate → cand is a child-fact of `rule`.
+                    bool has_alternative_subject = false;
+                    for (Node x : cand_right)
+                    {
+                        if (x == rule || x == cand_pred) continue;
+                        if (cand_left.count(x) > 0)
+                        {
+                            // x is bidirectional with cand.  If x is itself a
+                            // hash node, verify it isn't just a grandchild
+                            // (a child-fact of cand whose only bidi neighbor is cand).
+                            if (Impl::is_hash(x))
+                            {
+                                Node x_pred = parse_relation(x);
+                                if (x_pred != 0 && x_pred != cand_pred)
+                                {
+                                    // x has a different predicate — check if its
+                                    // only bidi neighbor (besides its own pred) is cand.
+                                    adjacency_set x_right            = _pImpl->get_right(x);
+                                    adjacency_set x_left             = _pImpl->get_left(x);
+                                    bool          x_is_child_of_cand = true;
+                                    for (Node y : x_right)
+                                    {
+                                        if (y == cand || y == x_pred) continue;
+                                        if (x_left.count(y) > 0)
+                                        {
+                                            x_is_child_of_cand = false;
+                                            break;
+                                        }
+                                    }
+                                    if (x_is_child_of_cand) continue; // grandchild, skip
+                                }
+                            }
+                            has_alternative_subject = true;
+                            break;
+                        }
+                    }
+                    if (!has_alternative_subject)
+                    {
+                        is_child_fact = true;
+                    }
+                }
             }
         }
-        if (!is_structural)
+
+        if (!is_child_fact)
         {
             best_candidate = cand;
             valid_candidates++;
@@ -892,46 +947,10 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     }
 
     if (valid_candidates == 1) return best_candidate;
-    if (valid_candidates == 0) return 0; // Still ambiguous (all filtered)
+    if (valid_candidates == 0) return 0;
 
-    // Phase 2 (fallback): if multiple candidates remain after phase 1, also
-    // filter any candidate that is a fact node with a user-defined predicate.
-    // This handles spurious bidirectional candidates created when `rule` was
-    // used as the subject of another user-defined fact (e.g. a cons cell node
-    // later used as the subject of an arithmetic relation).
-    //
-    // Note: this phase may leave the result ambiguous (0) when a compound
-    // nested subject (e.g. the (A+B) in ((A+B)=C)) is simultaneously used as
-    // the subject of a user-defined relation. That edge case degrades to `??`
-    // rather than producing incorrect output.
-    best_candidate   = 0;
-    valid_candidates = 0;
-
-    for (Node cand : candidates)
-    {
-        bool is_structural = false;
-        for (Node pred : _pImpl->get_right(cand))
-        {
-            if (pred == core.PartOf || pred == core.Cons || pred == core.IsA || pred == core.Causes || pred == core.Unequal)
-            {
-                is_structural = true;
-                break;
-            }
-        }
-        if (!is_structural && parse_relation(cand) != 0)
-            is_structural = true;
-
-        if (!is_structural)
-        {
-            best_candidate = cand;
-            valid_candidates++;
-        }
-    }
-
-    // If filtering leaves exactly one candidate, that's our semantic subject.
-    if (valid_candidates == 1) return best_candidate;
-
-    return 0; // Still ambiguous after both phases
+    // Fallback: still ambiguous — return 0 rather than guessing
+    return 0;
 }
 
 Node Zelph::parse_relation(const Node rule) const
