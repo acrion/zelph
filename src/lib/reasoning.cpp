@@ -1131,6 +1131,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             std::shared_ptr<Variables> joined          = join(*rule.variables, *match);
             std::shared_ptr<Variables> joined_unequals = join(*rule.unequals, *u->Unequals());
 
+            if (should_log(1 /* always log this case */) && match->empty() && !rule.variables->empty())
+            {
+                log(depth, "match", "match is EMPTY, rule.variables has " + std::to_string(rule.variables->size()) + " entries, joined has " + std::to_string(joined->size()) + " entries");
+                log(depth, "match", "rule.variables:");
+                for (const auto& [k, v] : *rule.variables)
+                    log(depth, "    variable", format(k) + " = " + format(v));
+                log(depth, "match", "joined:");
+                for (const auto& [k, v] : *joined)
+                    log(depth, "    variable", format(k) + " = " + format(v));
+            }
+
             if (contradicts(*joined, *joined_unequals))
             {
                 if (should_log(depth))
@@ -1300,8 +1311,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             // Ensure cleanup
             u->wait_for_completion();
 
-            if (should_log(depth))
-                log(depth, "evaluate", "Leaf condition " + format(condition) + " => " + std::to_string(local_serial_matches) + " match(es)");
+            if (should_log(1))
+            {
+                if (local_serial_matches == 0)
+                {
+                    // Unconditional diagnostic: always log when a leaf yields 0 matches.
+                    log(depth, "evaluate", "Leaf condition " + format(condition) + " => 0 matches (vars=" + std::to_string(rule.variables->size()) + ")");
+                }
+                else if (should_log(depth))
+                {
+                    log(depth, "evaluate", "Leaf condition " + format(condition) + " => " + std::to_string(local_serial_matches) + " match(es)");
+                }
+            }
         }
     }
 }

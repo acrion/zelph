@@ -45,4 +45,27 @@ namespace zelph::network
                   "This implementation requires a 64-bit architecture where size_t is also 64 bits. "
                   "Compilation has been halted to prevent undefined behavior.");
 
+    inline std::shared_ptr<Variables> join(const Variables& v1, const Variables& v2)
+    {
+        std::shared_ptr<Variables> result = std::make_shared<Variables>(v1);
+
+        for (auto& var : v2)
+        {
+            auto it = result->find(var.first);
+
+            if (it != result->end())
+            {
+                if (it->second != var.second)
+                {
+                    throw std::runtime_error("Variable sets to be merged do conflict");
+                }
+            }
+            else
+            {
+                (*result)[var.first] = var.second;
+            }
+        }
+
+        return result;
+    }
 }

@@ -253,12 +253,12 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         }
     }
 
-    if (_n->should_log(_log_depth))
+    if (_n->should_log(1) && _n->should_log(_log_depth - (_relation_list.empty() ? 0 : 1)))
     {
         std::string rels_str;
         for (Node r : _relation_list)
             rels_str += " " + U_NODE(r);
-        u_log(_log_depth, "Unification: subject=" + U_NODE(_subject) + " relations:" + rels_str + " objects=" + std::to_string(_objects.size()));
+        u_log(_log_depth, "Unification: condition=" + _n->format(condition) + "subject=" + U_NODE(_subject) + " relations: [" + rels_str + "] objects=" + std::to_string(_objects.size()) + " parent=" + _n->format(parent));
     }
 
     if (_relation_list.empty()) return;
@@ -456,7 +456,7 @@ bool Unification::increment_fact_index()
                 return false;
             }
 
-            if (_n->should_log(_log_depth))
+            if (_n->should_log(1) && _n->should_log(_log_depth - 1))
             {
                 u_log(_log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
             }
