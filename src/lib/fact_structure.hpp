@@ -222,9 +222,38 @@ namespace zelph::network
                                                     if (x_left2.count(y) > 0)
                                                     {
                                                         // y is bidirectional with x and is
-                                                        // neither s nor x's predicate
-                                                        // → x has another subject candidate
-                                                        // → x is not simply a child of s
+                                                        // neither s nor x's predicate.
+                                                        // Before concluding that x has an
+                                                        // alternative subject, check whether
+                                                        // y is itself just a child-fact of x
+                                                        // (i.e. x is y's only subject).
+                                                        if (Zelph::Impl::is_hash(y))
+                                                        {
+                                                            Node y_pred = n->parse_relation(y);
+                                                            if (y_pred != 0 && y_pred != x_pred)
+                                                            {
+                                                                adjacency_set y_right3        = n->get_right(y);
+                                                                adjacency_set y_left3         = n->get_left(y);
+                                                                bool          y_is_child_of_x = true;
+                                                                for (Node z_node : y_right3)
+                                                                {
+                                                                    if (z_node == x || z_node == y_pred) continue;
+                                                                    if (y_left3.count(z_node) > 0)
+                                                                    {
+                                                                        y_is_child_of_x = false;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                                if (y_is_child_of_x)
+                                                                {
+                                                                    if (n->should_log(depth + 3))
+                                                                    {
+                                                                        n->log(depth + 3, "get_fact_structures", "y=" + n->format(y) + " is child-fact of x, skipping");
+                                                                    }
+                                                                    continue; // y is child of x, not an alt subject
+                                                                }
+                                                            }
+                                                        }
                                                         x_is_child_of_s = false;
                                                         break;
                                                     }
