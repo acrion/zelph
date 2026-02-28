@@ -131,11 +131,15 @@ namespace zelph::network
                 // subject.  These appear bidirectionally connected because
                 // fact(fact, child_pred, {child_obj}) creates the bidirectional
                 // link fact <-> child_relation_node.
-                if (Zelph::Impl::is_hash(s)) // s is fact or variable - TODO: exclude variables?
+
+                // Exclude variables from this check. Variables in rule patterns
+                // are hash nodes but act as primitive subjects. They
+                // must not be filtered out as child-facts.
+                if (Zelph::Impl::is_hash(s) && !Zelph::Impl::is_var(s))
                 {
                     if (n->should_log(depth + 2))
                     {
-                        n->log(depth + 2, "get_fact_structures", "s is hash: Checking for child-fact");
+                        n->log(depth + 2, "get_fact_structures", "s is fact: Checking for child-fact");
                     }
 
                     Node s_pred = n->parse_relation(s);
