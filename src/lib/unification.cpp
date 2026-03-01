@@ -286,12 +286,11 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
     _relation_index         = _relation_list.begin();
     _fact_index_initialized = false;
 
-// Optimization for Release mode only: Subject/Object Driven Indexing
-#ifdef NDEBUG
-    if (!_n->should_log(1))
+    if (_n->use_parallel())
     {
-        // parallel only with fixed relation
-        // OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
+        // Subject/Object Driven Indexing
+        //  parallel only with fixed relation
+        //  OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
         bool subject_is_bound = false;
         if (_subject != 0)
         {
@@ -383,7 +382,6 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
             }
         }
     }
-#endif
 }
 
 bool Unification::increment_fact_index()
@@ -402,8 +400,7 @@ bool Unification::increment_fact_index()
             bool optimized_snapshot = false;
             Node current_rel        = *_relation_index;
 
-#ifdef NDEBUG
-            if (!_n->should_log(1))
+            if (_n->use_parallel())
             {
                 // Check if Subject is bound
                 Node s = _subject;
@@ -456,7 +453,6 @@ bool Unification::increment_fact_index()
                     }
                 }
             }
-#endif
 
             if (!optimized_snapshot)
             {

@@ -153,6 +153,8 @@ private:
         { cmd_auto_run(c); };
         _command_map[L".export-wikidata"] = [this](auto& c)
         { cmd_export_wikidata(c); };
+        _command_map[L".parallel"] = [this](auto& c)
+        { cmd_parallel(c); };
     }
 
     // --- Helpers ---
@@ -584,6 +586,7 @@ private:
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
             L".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off)",
             L".auto-run                   – Toggle automatic execution of .run after each input",
+            L".parallel                   – Toggle parallel processing (default: on)",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
             L".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
             L"",
@@ -787,6 +790,10 @@ private:
             {L".auto-run", L".auto-run\n"
                            L"Toggles the automatic execution of the inference engine (.run) after every input.\n"
                            L"Default is ON. Automatically switches to OFF when .load is used."},
+
+            {L".parallel", L".parallel\n"
+                           L"Toggles parallel processing on/off.\n"
+                           L"Default is on for performance."},
 
             {L".wikidata-constraints", L".wikidata-constraints <json_file> <output_dir>\n"
                                        L"Processes the Wikidata dump and exports constraint scripts\n"
@@ -1539,6 +1546,14 @@ private:
     {
         _repl_state->auto_run = !_repl_state->auto_run;
         _n->print(L"Auto-run is now " + std::wstring(_repl_state->auto_run ? L"enabled" : L"disabled") + L".", true);
+    }
+    void cmd_parallel(const std::vector<std::wstring>& cmd)
+    {
+        if (cmd.size() != 1)
+            throw std::runtime_error("Command .parallel takes no arguments");
+
+        _n->toggle_parallel();
+        _n->print(L"Parallel processing is now " + std::wstring(_n->use_parallel() ? L"enabled" : L"disabled") + L".", true);
     }
 };
 

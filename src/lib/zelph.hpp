@@ -155,6 +155,8 @@ namespace zelph
             void                     set_logging(int max_depth);
             void                     log(int depth, const std::string& category, const std::string& message) const;
             bool                     should_log(int depth) const { return _logging && depth <= _max_log_depth; }
+            bool                     use_parallel() const { return _use_parallel; }
+            void                     toggle_parallel() { _use_parallel = !_use_parallel; }
 
             adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
             Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
@@ -212,6 +214,7 @@ namespace zelph
         protected:
             std::string                               _lang{"en"};
             boost::bimap<network::Node, std::wstring> _core_names;
+            bool                                      _use_parallel{true};
 
         private:
             void collect_mermaid_nodes(WrapperNode                                                     current_wrap,
