@@ -33,9 +33,9 @@ namespace zelph::network
 {
     struct FactStructure
     {
-        Node                     subject{};
-        Node                     predicate{};
-        std::unordered_set<Node> objects;
+        Node          subject{};
+        Node          predicate{};
+        adjacency_set objects;
     };
 
     // Determines all possible structural interpretations of a fact node.

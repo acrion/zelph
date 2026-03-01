@@ -875,14 +875,16 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     // itself, meaning `rule` is THEIR subject, not the other way around.
     // This mirrors the proven logic in get_fact_structures().
 
-    Node best_candidate   = 0;
-    int  valid_candidates = 0;
+    std::vector<Node> valid;
+    valid.reserve(candidates.size());
 
     for (Node cand : candidates)
     {
         bool is_child_fact = false;
 
-        if (Impl::is_hash(cand))
+        // A candidate is a child-fact if 'rule' is its only subject.
+        // Rule variables act as hash nodes but are primitive subjects, so exclude them from check.
+        if (Impl::is_hash(cand) && !Impl::is_var(cand))
         {
             Node cand_pred = parse_relation(cand);
             if (cand_pred != 0)
@@ -902,10 +904,10 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
                         if (x == rule || x == cand_pred) continue;
                         if (cand_left.count(x) > 0)
                         {
-                            // x is bidirectional with cand.  If x is itself a
-                            // hash node, verify it isn't just a grandchild
-                            // (a child-fact of cand whose only bidi neighbor is cand).
-                            if (Impl::is_hash(x))
+                            // x is bidirectional with cand.
+                            // If x is a hash node (and not a var) with different predicate,
+                            // check if it is just a grandchild.
+                            if (Impl::is_hash(x) && !Impl::is_var(x))
                             {
                                 Node x_pred = parse_relation(x);
                                 if (x_pred != 0 && x_pred != cand_pred)
@@ -924,7 +926,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
                                             break;
                                         }
                                     }
-                                    if (x_is_child_of_cand) continue; // grandchild, skip
+                                    if (x_is_child_of_cand) continue; // x is grandchild, not alt subject
                                 }
                             }
                             has_alternative_subject = true;
@@ -941,16 +943,64 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
 
         if (!is_child_fact)
         {
-            best_candidate = cand;
-            valid_candidates++;
+            valid.push_back(cand);
         }
     }
 
-    if (valid_candidates == 1) return best_candidate;
-    if (valid_candidates == 0) return 0;
+    if (valid.size() == 1) return valid[0];
+    if (valid.empty()) return 0;
 
-    // Fallback: still ambiguous — return 0 rather than guessing
-    return 0;
+    // Heuristic Preferences if still ambiguous
+
+    // 1) Prefer Variable (Rule Pattern)
+    Node var_pick = 0;
+    for (Node cand : valid)
+    {
+        if (Impl::is_var(cand))
+        {
+            if (var_pick != 0)
+            {
+                var_pick = 0;
+                break;
+            }
+            var_pick = cand;
+        }
+    }
+    if (var_pick != 0) return var_pick;
+
+    // 2) Prefer Atomic (Non-Hash)
+    Node atom_pick = 0;
+    for (Node cand : valid)
+    {
+        if (!Impl::is_hash(cand))
+        {
+            if (atom_pick != 0)
+            {
+                atom_pick = 0;
+                break;
+            }
+            atom_pick = cand;
+        }
+    }
+    if (atom_pick != 0) return atom_pick;
+
+    // 3) Prefer Cons Cell (List/Number)
+    Node cons_pick = 0;
+    for (Node cand : valid)
+    {
+        if (Impl::is_hash(cand) && parse_relation(cand) == core.Cons)
+        {
+            if (cons_pick != 0)
+            {
+                cons_pick = 0;
+                break;
+            }
+            cons_pick = cand;
+        }
+    }
+    if (cons_pick != 0) return cons_pick;
+
+    return 0; // Still ambiguous
 }
 
 Node Zelph::parse_relation(const Node rule) const

@@ -94,9 +94,21 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
             }
             if (global_bindings.count(rule_node))
             {
-                Node bound = zelph::string::get(global_bindings, rule_node, 0);
-                U_LOG(depth, "  Var global bound -> recursing");
+                Node bound = zelph::string::get(global_bindings, rule_node, Node{0});
+                if (bound == graph_node)
+                {
+                    U_LOG(depth, "  -> Var global bound, identical to graph node");
+                    result = true;
+                    break;
+                }
+                U_LOG(depth, "  Var global bound to " + U_NODE(bound) + " (id=" + std::to_string(bound) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
                 result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1);
+                if (_n->should_log(depth) && !result)
+                {
+                    u_log(depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
+                    for (const auto& [k, v] : global_bindings)
+                        u_log(depth, "    key=" + std::to_string(k) + " (" + U_NODE(k) + ") -> val=" + std::to_string(v) + " (" + U_NODE(v) + ")");
+                }
                 break;
             }
 
@@ -206,14 +218,15 @@ static bool contains_variable_shallow(Zelph* n, Node nd, const int depth)
 Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth)
     : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth)
 {
-    // "condition" means here one of the predicates that form a list of conditions (which are connected by "and")
+    // Use get_preferred_structure to robustly decompose the RULE PATTERN (condition).
+    // This handles cases where the pattern itself is a complex structure (like (A cons R)).
+    FactStructure fs = get_preferred_structure(_n, condition, _log_depth);
 
-    adjacency_set relations = _n->filter(condition, _n->core.IsA, _n->core.RelationTypeCategory);
-
-    if (relations.size() == 1) // more than one relation for given condition makes no sense. _relation_list is empty, so Next() won't return anything
+    if (fs.predicate != 0)
     {
-        Node relation = *relations.begin(); // there is always only 1 relation
-        _subject      = _n->parse_fact(condition, _objects, _parent);
+        Node relation = fs.predicate;
+        _subject      = fs.subject;
+        _objects      = fs.objects;
 
         U_LOG(_log_depth, "Init Unification: " + U_NODE(condition));
 
@@ -233,6 +246,12 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                     (*_unequals)[_subject] = object;
             }
         }
+    }
+    else
+    {
+        // Fallback or error logging if structure cannot be determined
+        if (_n->should_log(1))
+            _n->log(1, "Unify", "get_preferred_structure failed for rule condition: " + _n->format(condition));
     }
 
     if (_relation_variable != 0)
@@ -477,6 +496,17 @@ std::shared_ptr<Variables> Unification::Next()
 {
     if (_relation_list.empty()) return nullptr;
 
+    // 1. Check queue for buffered matches (from parallel execution or multiple structures)
+    {
+        std::lock_guard<std::mutex> l(_queue_mtx);
+        if (!_match_queue.empty())
+        {
+            auto match = std::move(_match_queue.front());
+            _match_queue.pop();
+            return match;
+        }
+    }
+
     if (_use_parallel)
     {
         std::unique_lock<std::mutex> lock(_queue_mtx);
@@ -491,16 +521,37 @@ std::shared_ptr<Variables> Unification::Next()
     {
         if (_relation_variable == 0 || string::get(*_variables, _relation_variable, *_relation_index) == *_relation_index)
         {
-            while (increment_fact_index()) // iterate over all matching facts (in snapshot)
+            while (increment_fact_index()) // iterate over all matching facts
             {
-                adjacency_set objects;
-                Node          subject = _n->parse_fact(*_fact_index, objects, *_relation_index);
+                Node fact = *_fact_index;
 
-                auto result = extract_bindings(subject, objects, *_relation_index, _log_depth);
-                if (result)
+                // Get all valid structural interpretations of the fact node.
+                // This allows matching facts that serve as subjects for other facts (nested structures).
+                auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+
+                std::shared_ptr<Variables> first = nullptr;
+
+                for (const auto& fs : structs)
                 {
-                    return result;
+                    // Filter: Ensure the interpretation matches the relation currently being scanned
+                    if (fs.predicate != *_relation_index) continue;
+
+                    auto result = extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth);
+                    if (!result) continue;
+
+                    if (!first)
+                    {
+                        first = std::move(result);
+                    }
+                    else
+                    {
+                        // Buffer additional valid interpretations
+                        std::lock_guard<std::mutex> l(_queue_mtx);
+                        _match_queue.push(std::move(result));
+                    }
                 }
+
+                if (first) return first;
             }
         }
 

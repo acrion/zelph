@@ -1450,7 +1450,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         }
 
         Node rel = Zelph::Impl::is_var(*relations.begin())
-                     ? string::get(augmented, *relations.begin(), 0ull)
+                     ? string::get(augmented, *relations.begin(), Node{0})
                      : *relations.begin();
 
         if (!rel)

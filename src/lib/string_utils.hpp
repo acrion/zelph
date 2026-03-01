@@ -123,15 +123,15 @@ namespace zelph::string
         }
     }
 
-    template <typename T, typename U, typename V>
-    static T get(U container, V key, T return_if_not_found)
+    template <typename U, typename V>
+    static typename U::mapped_type get(const U& container, V key, typename U::mapped_type return_if_not_found)
     {
         auto it = container.find(key);
         return it == container.end() ? return_if_not_found : it->second;
     }
 
-    template <typename T, typename U>
-    static T get(U container, T key)
+    template <typename U, typename V>
+    static typename U::mapped_type get(const U& container, V key)
     {
         auto it = container.find(key);
         return it == container.end() ? key : it->second;
