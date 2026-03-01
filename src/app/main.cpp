@@ -42,7 +42,7 @@ Interactive interactive;
 int main(int argc, char** argv)
 {
 #if !defined(_WIN32) && defined(NDEBUG)
-    if (getenv("ZELPH_UNDER_RLWRAP") == nullptr)
+    if (getenv("ZELPH_NO_RLWRAP") == nullptr)
     {
         FILE* pipe = popen("command -v rlwrap", "r");
         if (pipe)
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
             int status = pclose(pipe);
             if (status == 0 && !rlwrap_path.empty())
             {
-                setenv("ZELPH_UNDER_RLWRAP", "1", 1);
+                setenv("ZELPH_NO_RLWRAP", "1", 1);
                 std::vector<char*> exec_args;
                 exec_args.push_back(const_cast<char*>("rlwrap"));
                 exec_args.push_back(const_cast<char*>("-m"));

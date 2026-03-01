@@ -363,14 +363,19 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
-                                       adjacency_set objects;
-                                       Node subject = _n->parse_fact(fact, objects, fixed_rel);
-                                       auto result = extract_bindings(subject, objects, fixed_rel, _log_depth);
-                                       if (result)
+                                       auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+
+                                       for (const auto& fs : structs)
                                        {
-                                           std::lock_guard<std::mutex> l(_queue_mtx);
-                                           _match_queue.push(std::move(result));
-                                           _queue_cv.notify_one();
+                                           if (fs.predicate != fixed_rel) continue;
+
+                                           auto result = extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth);
+                                           if (result)
+                                           {
+                                               std::lock_guard<std::mutex> l(_queue_mtx);
+                                               _match_queue.push(std::move(result));
+                                               _queue_cv.notify_one();
+                                           }
                                        }
                                    }
                                    {

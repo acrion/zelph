@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ./zelph-io <logfile>
+
+Records a full interactive Zelph REPL transcript (input + output) into <logfile>
+using 'script'. The REPL is started with rlwrap disabled (ZELPH_NO_RLWRAP=1).
+
+Examples:
+  ./zelph-io logs/zelph-session.log
+  ./zelph-io /tmp/zelph.log
+EOF
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+LOGPATH="$1"
+ZELPH_BIN="build-release/bin/zelph"
+
+if ! command -v script >/dev/null 2>&1; then
+  echo "Error: 'script' is not available (install util-linux)." >&2
+  exit 127
+fi
+
+if [[ ! -x "$ZELPH_BIN" ]]; then
+  echo "Error: Zelph binary not found or not executable: $ZELPH_BIN" >&2
+  exit 1
+fi
+
+# Create parent directory if needed
+LOGDIR="$(dirname -- "$LOGPATH")"
+if [[ "$LOGDIR" != "." ]]; then
+  mkdir -p -- "$LOGDIR"
+fi
+
+# Run Zelph under a PTY and capture the full transcript to the log file.
+# rlwrap is disabled by setting ZELPH_NO_RLWRAP=1.
+exec script -q -f -c "env ZELPH_NO_RLWRAP=1 $ZELPH_BIN" "$LOGPATH"
