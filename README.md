@@ -423,7 +423,7 @@ zelph can perform arbitrary-precision addition purely via graph rules. The refer
 https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph
 
 **Key idea:** numbers are Lisp-style cons-lists of digit nodes, stored **LSB-first**.  
-For example, `<42>` is internally `2 cons (4 cons nil)`. The printer reverses digit order for display, so results appear in conventional MSB-first notation.
+For example, `<42>` is internally `2 cons (4 cons nil)`. `format_fact` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
 
 The script consists of three parts:
 
@@ -433,16 +433,16 @@ For all `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}` the script generates:
     - `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
     - `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
 
-This turns digit arithmetic (including carry) into plain facts inside the network.
+This turns digit arithmetic (including carry) into ordinary facts in the network.
 
 2) **Base cases**  
-The recursion ends at `(nil add nil)`:
+The recursion ends at `nil`:
 
     - `((nil add nil) ci 0) sum nil`
     - `((nil add nil) ci 1) sum <1>`
 
 3) **Eight inference rules**  
-The full multi-digit algorithm is expressed by only eight rules:
+The full multi-digit algorithm is expressed by eight rules:
 
     - **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
     - **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
@@ -457,59 +457,49 @@ The full multi-digit algorithm is expressed by only eight rules:
 After importing the script:
 
 ```
-
 .import sample_scripts/arithmetic.zph
 <12345> + <98765>
-
 ```
 
-A0 seeds the internal state:
+A0 seeds the internal addition state (carry-in 0). Because zelph only has S–P–O triples, the nested fact `<12345> add <98765>` is printed in parentheses when it appears as a subject of the outer `ci` fact:
 
 ```
-
-<12345> add <98765> ci 0  ⇐  <12345> + <98765>
-
+((<12345>  add  <98765>)  ci   0 )
 ```
 
-Then D1 peels off digits from the LSB side and propagates carry:
+Now D1 repeatedly peels off the least significant digits and propagates the carry into the recursive tail problem. Each of these intermediate facts is derived by rule application; in the actual REPL output, zelph prints a short justification after `⇐ {...}`. We omit those proof sets here to keep the walkthrough readable.
 
 ```
-
-<1234> add <9876> ci 1  ⇐  {(((5 d+ 5) ci 0) co 1)  <12345> add <98765> ci 0}
-...
-<1> add <9> ci 1  ⇐  {(((2 d+ 8) ci 1) co 1)  <12> add <98> ci 1}
-
+((<1234>  add  <9876>)  ci   1 )
+((<123>  add  <987>)  ci   1 )
+((<12>  add  <98>)  ci   1 )
+((<1>  add  <9>)  ci   1 )
 ```
 
-At the end, the base case provides the final carry handling:
+At the leaf, the base case handles the final carry. In this run the recursion ends with carry-in 1, so the base-case sum is `<1>`:
 
 ```
-
-((nil add nil) ci 1) sum <1>
-
+((( nil   add   nil )  ci   1 )  sum  <1>)
 ```
 
-Now As1 assembles the result on the way back up by constructing `(D cons T)` at each step:
+Then As1 assembles the result on the way back up. Each step uses the lookup facts
+`(((A d+ B) ci C) sum D)` and `(((A d+ B) ci C) co E)` together with the already-known inner sum `T` to construct `(D cons T)` and attach it as the `sum` of the current subproblem:
 
 ```
-
-<1> add <9> ci 1 sum <11>
-<12> add <98> ci 1 sum <111>
-...
-<12345> add <98765> ci 0 sum <111110>
-
+(((<1>  add  <9>)  ci   1 )  sum  <11>)
+(((<12>  add  <98>)  ci   1 )  sum  <111>)
+(((<123>  add  <987>)  ci   1 )  sum  <1111>)
+(((<1234>  add  <9876>)  ci   1 )  sum  <11111>)
+(((<12345>  add  <98765>)  ci   0 )  sum  <111110>)
 ```
 
-Finally, C0 links the internal sum to the user-facing statement:
+Finally, C0 connects the internal result back to the user-facing operation by asserting the equality fact for the original `+` expression:
 
 ```
-
-<12345> + <98765> = <111110>
-
+((<12345>  +  <98765>)  =  <111110>)
 ```
 
-This is “semantic arithmetic”: the computation is not hard-coded — it emerges from the same
-topological primitives used for ordinary knowledge representation.
+This is “semantic arithmetic”: nothing in the engine is hard-coded for addition. The computation emerges from the same topological primitives used for ordinary knowledge representation (facts, sets as conjunctions, cons-lists), plus eight generic inference rules.
 
 #### Example: Querying Prime Numbers from Wikidata
 
