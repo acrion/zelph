@@ -85,3 +85,127 @@ Germany "is located in" Europe
 
 %(def berlin (zelph/resolve "Berlin"))
 ,berlin ~ town
+
+# .import sample_scripts/arithmetic.zph
+
+# Rule-based multi-digit addition for arbitrarily large positive integers.
+#
+# Numbers are stored LSB-first as cons lists: <42> = 2 cons (4 cons nil).
+# format_fact reverses the display order, so results appear in conventional
+# MSB-first notation.
+#
+# Usage after loading this script:
+#   <42> + <9>
+#   <99> + <1>
+
+# ---------------------------------------------------------------------------
+# Digit addition lookup table (200 facts, generated at load time by Janet)
+#
+# For all a,b in {0..9} and carry-in c in {0,1}:
+#   ((a d+ b) ci c) sum s
+#   ((a d+ b) ci c) co  e
+#
+# All six values are digit atoms node("0")..node("9"), not cons cells.
+# ---------------------------------------------------------------------------
+%
+(for a 0 10
+  (for b 0 10
+    (for c 0 2
+      (let [s    (% (+ a b c) 10)
+            e    (math/floor (/ (+ a b c) 10))
+            dpat (zelph/fact (zelph/resolve (string a))
+                             "d+"
+                             (zelph/resolve (string b)))]
+        (let [cipat (zelph/fact dpat "ci" (zelph/resolve (string c)))]
+          (zelph/fact cipat "sum" (zelph/resolve (string s)))
+          (zelph/fact cipat "co"  (zelph/resolve (string e))))))))
+%
+
+# ---------------------------------------------------------------------------
+# Base cases: nil+nil with carry-in 0 and 1
+#
+#   ((nil add nil) ci 0) sum nil   (no digits left, no carry)
+#   ((nil add nil) ci 1) sum <1>   (no digits left, carry produces a new digit)
+# ---------------------------------------------------------------------------
+%
+(let [nil-add (zelph/fact (zelph/resolve "nil") "add" (zelph/resolve "nil"))]
+  (zelph/fact (zelph/fact nil-add "ci" (zelph/resolve "0")) "sum" (zelph/resolve "nil"))
+  (zelph/fact (zelph/fact nil-add "ci" (zelph/resolve "1")) "sum" (zelph/list-chars "1")))
+%
+
+# ---------------------------------------------------------------------------
+# Rule A0 — Trigger: seed internal addition with carry-in 0 for every + fact
+#
+#   (N + M)  =>  ((N add M) ci 0)
+# ---------------------------------------------------------------------------
+(N + M) => ((N add M) ci 0)
+
+# ---------------------------------------------------------------------------
+# Rules D1–D3 — Decompose: propagate carry-out into the recursive subproblem
+# ---------------------------------------------------------------------------
+
+# D1: both operands non-nil
+# Match the head digits A (from left) and B (from right), look up the
+# carry-out E, then assert the recursive add for the tails R and S.
+(*{(((A cons R) add (B cons S)) ci C)
+   (((A d+ B) ci C) co E)}
+  ~ conjunction)
+=> ((R add S) ci E)
+
+# D2: left non-nil, right exhausted — treat missing right digit as 0
+(*{(((A cons R) add nil) ci C)
+   (((A d+ 0) ci C) co E)}
+  ~ conjunction)
+=> ((R add nil) ci E)
+
+# D3: left exhausted, right non-nil — treat missing left digit as 0
+(*{((nil add (B cons S)) ci C)
+   (((0 d+ B) ci C) co E)}
+  ~ conjunction)
+=> ((nil add S) ci E)
+
+# ---------------------------------------------------------------------------
+# Rules As1–As3 — Assemble: once the inner sum T is known, prepend digit D
+#
+# The consequence (D cons T) creates or retrieves the cons cell via the
+# idempotent fact() operation, reusing the node if it already exists.
+# ---------------------------------------------------------------------------
+
+# As1: both operands non-nil
+(*{(((A cons R) add (B cons S)) ci C)
+   (((A d+ B) ci C) sum D)
+   (((A d+ B) ci C) co E)
+   (((R add S) ci E) sum T)}
+  ~ conjunction)
+=> ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+
+# As2: left non-nil, right nil
+(*{(((A cons R) add nil) ci C)
+   (((A d+ 0) ci C) sum D)
+   (((A d+ 0) ci C) co E)
+   (((R add nil) ci E) sum T)}
+  ~ conjunction)
+=> ((((A cons R) add nil) ci C) sum (D cons T))
+
+# As3: left nil, right non-nil
+(*{((nil add (B cons S)) ci C)
+   (((0 d+ B) ci C) sum D)
+   (((0 d+ B) ci C) co E)
+   (((nil add S) ci E) sum T)}
+  ~ conjunction)
+=> (((nil add (B cons S)) ci C) sum (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule C0 — Connect: expose the result under the user-facing + predicate
+#
+# The guard (N + M) ensures that only pairs with an explicit + fact get a
+# result, preventing internal (nil add nil) states from being connected.
+# ---------------------------------------------------------------------------
+(*{(N + M)
+   (((N add M) ci 0) sum T)}
+  ~ conjunction)
+=> ((N + M) = T)
+
+# test arithmetic
+<8> + <23>
+<67> + <45>

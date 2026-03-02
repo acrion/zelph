@@ -7,8 +7,8 @@
 # MSB-first notation.
 #
 # Usage after loading this script:
-#   (<42> + <9>) = X   =>  X = <51>
-#   (<99> + <1>) = X   =>  X = <100>
+#   <42> + <9>
+#   <99> + <1>
 
 # ---------------------------------------------------------------------------
 # Digit addition lookup table (200 facts, generated at load time by Janet)
