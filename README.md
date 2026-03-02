@@ -311,55 +311,59 @@ The elements are linked to this super-node via the `in` (PartOf) relation.
 
 #### Angle Brackets: Lists
 
-Angle brackets `<...>` create **ordered lists**. Unlike sets, the order of elements is preserved using Lisp-style cons cells (`cons` and `nil`).
+Angle brackets `<...>` create **ordered lists** implemented as classic Lisp-style cons lists using the core predicates `cons` and `nil`.
 
-zelph distinguishes between two fundamental input modes for lists, which result in the same internal topology:
+A list is represented by the **outermost cons cell**. There is **no separate container node**: the node returned by list construction *is* the list (exactly as in Lisp).
 
-1. **Node Lists (Space-Separated):** `<item1 item2 item3>`
+> **Important:** zelph does **not** have any built-in notion of “digits”, “numbers”, or arithmetic.
+> Lists are completely generic. Anything numeric (LSB-first interpretation, carry logic, addition, etc.) is defined purely by user rules — for example in `sample_scripts/arithmetic.zph`.
 
-* **Syntax:** At least one whitespace between the brackets.
-* **Semantics:** The existing nodes `item1`, `item2`, and `item3` become the direct elements of the list.
-* **Facts created (Lisp-style cons-list, built right-to-left):**
-    * `Cell2 = B cons nil`
-    * `Cell1 = A cons Cell2` (this IS the list)
-* **Use Case:** Lists of known entities, e.g., `<Berlin Paris London>`.
+---
 
-2. **Compact Lists (Continuous):** `<123>` or `<abc>`
+##### Two list syntaxes
 
-* **Syntax:** No spaces between characters.
-* **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g., `node("1")`, `node("a")`), and these nodes become the direct elements of the cons-list.
-* **Wikidata Integration:** The element nodes map directly to external knowledge. For example, in a numeric list, `node("1")` corresponds exactly to the Wikidata item for the digit 1 ([Q715432](https://www.wikidata.org/wiki/Q715432)). This connects positions in a list directly to semantic knowledge about the character.
+zelph supports two input modes that both create cons lists:
 
-Characters are stored in reversed order internally (LSB-first). This enables recursive arithmetic rules that process the least significant digit first.
+1) **Node Lists (space-separated):** `<item1 item2 item3>`
 
-##### Digits vs. Numbers
+- **Syntax:** At least one whitespace between elements.
+- **Semantics:** The elements are existing nodes (`item1`, `item2`, …) and the list preserves this order.
+- **Construction:** Built right-to-left:
+  - `Cell3 = item3 cons nil`
+  - `Cell2 = item2 cons Cell3`
+  - `Cell1 = item1 cons Cell2`  ← this outermost cons cell **is the list**
 
-A natural distinction between digits and numbers emerges from the cons-list representation:
+2) **Compact Lists (continuous characters):** `<abc>`
 
-- The **digit** "4" is the named node `node("4")`.
-- The **number** 4 is the cons cell `4 cons nil` — a structurally different node.
+- **Syntax:** No spaces inside the brackets.
+- **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
+- **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
+  So `"abc"` becomes the element vector `["c","b","a"]`, yielding:
+  - `Cell3 = "a" cons nil`
+  - `Cell2 = "b" cons Cell3`
+  - `Cell1 = "c" cons Cell2`
 
-This means that the digit concept and the number concept are automatically kept separate without any special mechanism. In a Wikidata context, `node("1")` maps to the Wikidata item for the digit 1 ([Q3450386](https://www.wikidata.org/wiki/Q3450386)), while the cons cell `1 cons nil` represents the number 1 ([Q199](https://www.wikidata.org/wiki/Q199).
+This reversal is **not** “numeric logic” — it is simply the definition of the compact syntax and is useful for many right-to-left processing rules (including, but not limited to, arithmetic scripts).
 
-This architecture connects the structural representation of numbers to semantic knowledge. A list like `<113>` is not just a string of digits — through its element nodes, it is linked to everything known about those digits (e.g., [Q715432](https://www.wikidata.org/wiki/Q715432) which represents the number 113 in Wikidata). Combined with inference rules that manipulate the cons structure, this enables the seamless integration of arithmetic and reasoning described in [Semantic Math](#semantic-math).
+Because of this rule, `<abc>` is internally identical to the explicit node list `<c b a>`.
 
-##### List Topology
+---
 
-A compact list like `<11>` uses Lisp-style cons cells with direct concept node references.
+##### Display: compact vs. spaced
 
-**Topology of `<11>`:**
+When a list consists entirely of single-character named nodes, it is printed it in a reversed compact form without spaces, e.g. `<abc>`.  
+This is a **display heuristic only**. It does not change the underlying topology or impose any numeric meaning.
 
-1. **Concept Node (Digit):** `1` (Named "1", e.g., Wikidata [Q715432](https://www.wikidata.org/wiki/Q715432)).
-2. **Structure (Lisp-style cons-list, built right-to-left, e.g. Wikidata [Q37136](https://www.wikidata.org/wiki/Q37136):**
+---
 
-* `Cell2 = 1 cons nil` (last element)
-* `Cell1 = 1 cons Cell2` (first element — this IS the list)
+##### Digits vs. numbers (emergent, not built-in)
 
-Note that both cons cells reference the *same* concept node `1` as their car (subject). They are nevertheless distinct nodes because their cdr (object) differs: `Cell2` points to `nil`, while `Cell1` points to `Cell2`.
+The cons-list representation naturally distinguishes between:
 
-There is no separate container node — just as in Lisp, the outermost cons cell IS the list. Each cons cell's subject (car) holds an element, and its object (cdr) points to the rest of the list or `nil` for the final element.
+- a **character node** such as `"4"` (a normal named node), and
+- a **single-element list** `( "4" cons nil )` (a different node: a cons cell)
 
-LSB-first storage: For compact lists, the rightmost (least significant) character becomes the outermost cons cell. The compact syntax <123> and the node syntax <3 2 1> produce the same internal structure. format_fact reverses the display order for single-character elements, so both are shown as `<123>`.
+Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. `arithmetic.zph`) and any external naming/mapping you choose to apply.
 
 #### The Focus Operator `*`
 
@@ -377,7 +381,7 @@ As described in [Angle Brackets: Lists](#angle-brackets-lists), zelph represents
 
 1. **Symbolic Math:** Arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. Since numbers are topological structures (cons-lists of digit nodes), you can write inference rules that manipulate them — effectively teaching the network to compute.
 
-2. **Semantic Integration:** Because list elements are the same nodes used throughout the knowledge graph, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows facts about the digit 1 ([Q715432](https://www.wikidata.org/wiki/Q715432)), those facts are accessible wherever `node("1")` appears in a list. The boundary between *calculating* numbers and *reasoning* about them is removed.
+2. **Semantic Integration:** Because list elements are the same nodes used throughout the knowledge graph, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows facts about the digit 1 ([Q3450386](https://www.wikidata.org/wiki/Q3450386)), those facts are accessible wherever `node("1")` appears in a list. The boundary between *calculating* numbers and *reasoning* about them is removed.
 
 #### Example: Defining Addition (Peano)
 
@@ -412,44 +416,104 @@ Zelph immediately applies this rule to the facts we just entered:
 
 Note that `successor` is a user-defined relation here — it is not a predefined core node. The internal structure of lists uses Lisp-style cons cells (`cons`/`nil`), while the succession relationship between numbers is expressed through domain-specific relations like `successor`.
 
-#### Advanced Arithmetic with Fresh Variables and Negation
+#### Rule-based Multi-digit Addition (no fresh variables, no negation)
 
-While the above example demonstrates basic Peano-style addition, zelph's advanced features—fresh variables and negation—enable more complex computations, such as digit-wise addition for arbitrary-sized numbers. These features are not specific to arithmetic; they are general-purpose tools for constructive reasoning and absence-based conditions. However, they shine in arithmetic applications by allowing the dynamic creation of new cons-list structures and recursive decomposition of number representations.
+zelph can perform arbitrary-precision addition purely via graph rules. The reference implementation lives in
+`sample_scripts/arithmetic.zph`:
+https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph
 
-**Conceptual Implementation of Digit-Wise Addition:**
+**Key idea:** numbers are Lisp-style cons-lists of digit nodes, stored **LSB-first**.  
+For example, `<42>` is internally `2 cons (4 cons nil)`. The printer reverses digit order for display, so results appear in conventional MSB-first notation.
 
-Since numbers are represented as Lisp-style cons-lists of digit nodes (e.g., `<42>` is `4 cons (2 cons nil)`), digit-wise addition naturally decomposes into recursive processing of the cons structure.
+The script consists of three parts:
 
-1. **Define Digit Concepts:** Establish the digits and a basic lookup table for single-digit addition (including carry logic).
+1) **Single-digit addition lookup table (generated in Janet)**  
+For all `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}` the script generates:
 
-   ```
-   <0> ~ digit
-   <1> ~ digit
-   ...
-   (<0> + <1>) = <1> carry <0>
-   ```
+- `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
+- `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
 
-2. **Find the Last Digit:** Use the cons structure to find the element at the tail of the list — the cons cell whose cdr is `nil`:
+This turns digit arithmetic (including carry) into plain facts inside the network.
 
-   ```
-   (A cons nil) => (A "is last digit of" *(A cons nil))
-   (*{(B "is last digit of" _Rest) (A cons _Rest)} ~ conjunction) => (B "is last digit of" *(A cons _Rest))
-   ```
+2) **Base cases**  
+The recursion ends at `(nil add nil)`:
 
-   The first rule identifies the last element in a single-element list. The second rule propagates the result up the cons chain: if B is the last digit of the sublist `_Rest`, and `A cons _Rest` extends it, then B is also the last digit of the longer list.
+- `((nil add nil) ci 0) sum nil`
+- `((nil add nil) ci 1) sum <1>`
 
-3. **Compute and Generate Results:** Use **Fresh Variables** to create new result nodes. Variables that appear *only* in the consequence (e.g., `R` for a new cons cell) trigger the creation of new entities.
+3) **Eight inference rules**  
+The full multi-digit algorithm is expressed by only eight rules:
 
-   ```
-   (*{(A "is last digit of" _Num1) (B "is last digit of" _Num2) ( (A + B) = S )} ~ conjunction)
-   => (S cons nil = R) (_Num1 + _Num2 = R)
-   ```
+- **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
+- **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
+  - D1: both operands non-nil
+  - D2/D3: treat missing digits as `0` once one side is `nil`
+- **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
+- **C0 (Connect):** expose the result under the user-facing `=` predicate:
+  `(*{(N + M) (((N add M) ci 0) sum T)} ~ conjunction) => ((N + M) = T)`
 
-To handle multi-digit numbers with carry, recursive rules would decompose the cons structure (separating car from cdr), apply the digit lookup table, handle carries, and construct new cons cells for the result using fresh variables. This is a natural fit for the Lisp-style representation: just as `car`/`cdr` decompose a list in Lisp, zelph's cons relation allows rules to structurally pattern-match on the head and tail of a number. This approach demonstrates how zelph can perform arbitrary precision arithmetic purely through graph transformations on cons-list structures.
+##### Example addition
+
+After importing the script:
+
+```
+
+.import sample_scripts/arithmetic.zph
+<12345> + <98765>
+
+```
+
+A0 seeds the internal state:
+
+```
+
+<12345> add <98765> ci 0  ⇐  <12345> + <98765>
+
+```
+
+Then D1 peels off digits from the LSB side and propagates carry:
+
+```
+
+<1234> add <9876> ci 1  ⇐  {(((5 d+ 5) ci 0) co 1)  <12345> add <98765> ci 0}
+...
+<1> add <9> ci 1  ⇐  {(((2 d+ 8) ci 1) co 1)  <12> add <98> ci 1}
+
+```
+
+At the end, the base case provides the final carry handling:
+
+```
+
+((nil add nil) ci 1) sum <1>
+
+```
+
+Now As1 assembles the result on the way back up by constructing `(D cons T)` at each step:
+
+```
+
+<1> add <9> ci 1 sum <11>
+<12> add <98> ci 1 sum <111>
+...
+<12345> add <98765> ci 0 sum <111110>
+
+```
+
+Finally, C0 links the internal sum to the user-facing statement:
+
+```
+
+<12345> + <98765> = <111110>
+
+```
+
+This is “semantic arithmetic”: the computation is not hard-coded — it emerges from the same
+topological primitives used for ordinary knowledge representation.
 
 #### Example: Querying Prime Numbers from Wikidata
 
-The seamless integration of semantic knowledge and computation means that algorithms operating on numbers can leverage facts from external knowledge bases — without any special glue code. For instance, if the Wikidata graph is loaded, every number that Wikidata classifies as a [prime number (Q49008)](https://www.wikidata.org/wiki/Q49008) is already connected to the corresponding Value Concept nodes in zelph. A simple query is all it takes:
+The seamless integration of semantic knowledge and computation means that algorithms operating on numbers can leverage facts from external knowledge bases — without any special glue code. For instance, if the Wikidata graph is loaded, every number that Wikidata classifies as a [prime number (Q49008)](https://www.wikidata.org/wiki/Q49008) can be mapped to the corresponding zelph nodes (via command `.name`). A simple query is all it takes:
 
 ```
 .lang wikidata
