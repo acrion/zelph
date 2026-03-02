@@ -1136,6 +1136,37 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         return;
     }
 
+    auto is_statement_node = [&](Node nd) -> bool
+    {
+        if (nd == 0 || !_pImpl->exists(nd)) return false;
+
+        Node pred = parse_relation(nd);
+        if (pred == 0) return false;
+
+        // Cons cells are formatted earlier as lists; still a statement node structurally,
+        // but we don't want to force "(...)" around list syntax.
+        if (pred == core.Cons) return true;
+
+        // Predicate must be a relation type
+        if (!check_fact(pred, core.IsA, {core.RelationTypeCategory}).is_correct())
+            return false;
+
+        const auto& r = _pImpl->get_right(nd);
+        const auto& l = _pImpl->get_left(nd);
+
+        // Must actually link to its predicate
+        if (r.count(pred) == 0) return false;
+
+        // Must have at least one bidirectional neighbor besides the predicate (= subject candidate)
+        for (Node x : r)
+            if (x != pred && l.count(x) != 0)
+                return true;
+
+        return false;
+    };
+
+    const bool resolved_is_stmt = is_statement_node(resolved);
+
     // 2. Name Check
     // If the node has a direct name, use it.
     std::wstring name = get_formatted_name(resolved, lang);
@@ -1224,8 +1255,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                         format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
 
                         // Wrap in parentheses if it's a composite expression (not a simple name).
-                        if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
-                            && elem_str.front() != L'<' && elem_str.front() != L'{')
+                        if (!elem_str.empty()
+                            && elem_str.find(L' ') != std::wstring::npos
+                            && elem_str.front() != L'('
+                            && elem_str.front() != L'<'
+                            && elem_str.front() != L'{')
                         {
                             Node eff_e = resolve_var(e);
                             if (elem_str != get_formatted_name(eff_e, lang))
@@ -1286,8 +1320,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             std::wstring elem_str;
             format_fact(elem_str, lang, e, max_objects, variables, resolved, child_history);
 
-            if (!elem_str.empty() && elem_str.find(L' ') != std::wstring::npos
-                && elem_str.front() != L'<' && elem_str.front() != L'{')
+            if (!elem_str.empty()
+                && elem_str.find(L' ') != std::wstring::npos
+                && elem_str.front() != L'('
+                && elem_str.front() != L'<'
+                && elem_str.front() != L'{')
             {
                 Node eff_e = resolve_var(e);
                 if (elem_str != get_formatted_name(eff_e, lang))
@@ -1427,7 +1464,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
         // Wrap subject only if it's a composite fact, not a named atom
         bool needs_parens = false;
-        if (!s_str.empty() && s_str.find(L' ') != std::wstring::npos && s_str.front() != L'<' && s_str.front() != L'{')
+        if (!s_str.empty()
+            && s_str.find(L' ') != std::wstring::npos
+            && s_str.front() != L'('
+            && s_str.front() != L'<'
+            && s_str.front() != L'{')
         {
             Node         eff_subj = resolve_var(subject);
             std::wstring raw_name = get_formatted_name(eff_subj, lang);
@@ -1461,10 +1502,13 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             format_fact(r_str, lang, relation, max_objects, variables, resolved, child_history);
             relation_name = r_str.empty() ? string::mark_identifier(L"?") : r_str;
 
-            // Optional: Wrap complex unnamed relations in parens too?
+            // Wrap complex unnamed relations in parens too.
             // For consistency with subject/object, we usually assume relations are simple,
             // but if r_str has spaces and isn't a container, wrap it.
-            if (relation_name.find(L' ') != std::wstring::npos && relation_name.front() != L'<' && relation_name.front() != L'{')
+            if (relation_name.find(L' ') != std::wstring::npos
+                && relation_name.front() != L'('
+                && relation_name.front() != L'<'
+                && relation_name.front() != L'{')
                 relation_name = L"(" + relation_name + L")";
         }
     }
@@ -1483,7 +1527,11 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
             format_fact(o_str, lang, object, max_objects, variables, resolved, child_history);
 
             // Wrap object only if it's a composite fact, not a named atom
-            if (!o_str.empty() && o_str.find(L' ') != std::wstring::npos && o_str.front() != L'<' && o_str.front() != L'{')
+            if (!o_str.empty()
+                && o_str.find(L' ') != std::wstring::npos
+                && o_str.front() != L'('
+                && o_str.front() != L'<'
+                && o_str.front() != L'{')
             {
                 Node         eff_obj  = resolve_var(object);
                 std::wstring raw_name = get_formatted_name(eff_obj, lang);
@@ -1504,6 +1552,15 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
 
     // The components (subject_name, relation_name, objects_name) are already marked.
     result = subject_name + L" " + relation_name + L" " + objects_name;
+
+    // If this is a statement node used as a value inside another structure,
+    // wrap the whole triple in parentheses to make it valid input syntax.
+    if (parent != 0 && resolved_is_stmt)
+    {
+        Node pred = parse_relation(resolved);
+        if (pred != core.Cons) // lists are handled earlier; don't wrap "<...>"
+            result = L"(" + result + L")";
+    }
 
     boost::replace_all(result, L"\r\n", L" --- ");
     boost::replace_all(result, L"\n", L" --- ");

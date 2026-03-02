@@ -17,7 +17,7 @@ Parallel processing is now disabled.
  seq_spaced   is_defined_as  < seqItem1   seqItem2   seqItem3 >
  nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
  nested_seq_in_set   holds  {< setElem3   setElem4 > < setElem1   setElem2 >}
- container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) {(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z)>
+ container_test   stores  <( tim   ancestor   tom )  just_a_new_node  ( tom   ancestor   paul ) ({(Y  ancestor  Z) (X  ancestor  Y)} => (X  ancestor  Z))>
  mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
 _Variable  with_underscore  _V
  quoted_sequence   ~  <cba>
@@ -33,7 +33,7 @@ Answer:  tim   ancestor   tom
 ( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
 {(C  followed-by  E) ((A  +  B)  =  C) (B  followed-by  D)} => ((A  +  D)  =  E)
-(A  followed-by  B) => <1>  +  A  =  B
+(A  followed-by  B) => ((<1>  +  A)  =  B)
 <0>  followed-by  <1>
 (A  is   human ) => (B  nameof  A)
  tim   is   human 
@@ -57,42 +57,42 @@ Answer:  tim   ancestor   tom
  Berlin   ~   town 
 <zelph/node ((«nil» «add» «?») «ci» «1») «sum» <1>>
 (N  +  M) => ((N  add  M)  ci   0 )
-{(((A  d+  B)  ci  C)  co  E) <A>  add  <B>  ci  C} => ((R  add  S)  ci  E)
-{<A>  add   nil   ci  C (((A  d+   0 )  ci  C)  co  E)} => ((R  add   nil )  ci  E)
+{(((A  d+  B)  ci  C)  co  E) ((<A>  add  <B>)  ci  C)} => ((R  add  S)  ci  E)
+{((<A>  add   nil )  ci  C) (((A  d+   0 )  ci  C)  co  E)} => ((R  add   nil )  ci  E)
 {((( 0   d+  B)  ci  C)  co  E) (( nil   add  <B>)  ci  C)} => (( nil   add  S)  ci  E)
-{(((A  d+  B)  ci  C)  co  E) (((R  add  S)  ci  E)  sum  T) (((A  d+  B)  ci  C)  sum  D) <A>  add  <B>  ci  C} => <A>  add  <B>  ci  C  sum  <D>
-{(((A  d+   0 )  ci  C)  sum  D) (((R  add   nil )  ci  E)  sum  T) <A>  add   nil   ci  C (((A  d+   0 )  ci  C)  co  E)} => <A>  add   nil   ci  C  sum  <D>
+{(((A  d+  B)  ci  C)  co  E) (((R  add  S)  ci  E)  sum  T) (((A  d+  B)  ci  C)  sum  D) ((<A>  add  <B>)  ci  C)} => (((<A>  add  <B>)  ci  C)  sum  <D>)
+{(((A  d+   0 )  ci  C)  sum  D) (((R  add   nil )  ci  E)  sum  T) ((<A>  add   nil )  ci  C) (((A  d+   0 )  ci  C)  co  E)} => (((<A>  add   nil )  ci  C)  sum  <D>)
 {((( 0   d+  B)  ci  C)  co  E) (( nil   add  <B>)  ci  C) ((( nil   add  S)  ci  E)  sum  T) ((( 0   d+  B)  ci  C)  sum  D)} => ((( nil   add  <B>)  ci  C)  sum  <D>)
 {(N  +  M) (((N  add  M)  ci   0 )  sum  T)} => ((N  +  M)  =  T)
 <8>  +  <23>
 <67>  +  <45>
- ??   nameof   tim  ⇐  tim   is   human 
- success   a_val   c_val  ⇐  subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val )))
- test   4   5  ⇐ ( 4   +   5 )  =   9 
-<1>  +  <0>  =  <1> ⇐ <0>  followed-by  <1>
-<8>  add  <23>  ci   0  ⇐ <8>  +  <23>
-<67>  add  <45>  ci   0  ⇐ <67>  +  <45>
-( 4   add   5 )  ci   0  ⇐  4   +   5 
-<1>  add  <0>  ci   0  ⇐ <1>  +  <0>
- Berlin   is located in   Europe  ⇐ {( Berlin   is capital of   Germany ) ( Germany   is located in   Europe )}
- tim   ancestor   paul  ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
- elem5   is last of   mylist  ⇐ { negation  ( elem5   partoflist   mylist )}
- 6  >  4  ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
+( ??   nameof   tim ) ⇐ ( tim   is   human )
+( success   a_val   c_val ) ⇐ ( subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val ))))
+( test   4   5 ) ⇐ (( 4   +   5 )  =   9 )
+((<1>  +  <0>)  =  <1>) ⇐ (<0>  followed-by  <1>)
+((<8>  add  <23>)  ci   0 ) ⇐ (<8>  +  <23>)
+((<67>  add  <45>)  ci   0 ) ⇐ (<67>  +  <45>)
+(( 4   add   5 )  ci   0 ) ⇐ ( 4   +   5 )
+((<1>  add  <0>)  ci   0 ) ⇐ (<1>  +  <0>)
+( Berlin   is located in   Europe ) ⇐ {( Berlin   is capital of   Germany ) ( Germany   is located in   Europe )}
+( tim   ancestor   paul ) ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
+( elem5   is last of   mylist ) ⇐ { negation  ( elem5   partoflist   mylist )}
+( 6  >  4 ) ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
-<6>  add  <4>  ci   1  ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) <67>  add  <45>  ci   0 }
-( nil   add  <2>)  ci   1  ⇐ {((( 8   d+   3 )  ci   0 )  co   1 ) <8>  add  <23>  ci   0 }
-<1>  add  <0>  ci   0   sum  <1> ⇐ {((( 1   d+   0 )  ci   0 )  co   0 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 1   d+   0 )  ci   0 )  sum   1 ) <1>  add  <0>  ci   0 }
-<6>  add  <4>  ci   1   sum  <11> ⇐ {((( 6   d+   4 )  ci   1 )  co   1 ) ((( nil   add   nil )  ci   1 )  sum  <1>) ((( 6   d+   4 )  ci   1 )  sum   1 ) <6>  add  <4>  ci   1 }
-<67>  add  <45>  ci   0   sum  <112> ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) <6>  add  <4>  ci   1   sum  <11> ((( 7   d+   5 )  ci   0 )  sum   2 ) <67>  add  <45>  ci   0 }
-(( nil   add  <2>)  ci   1 )  sum  <3> ⇐ {((( 0   d+   2 )  ci   1 )  co   0 ) (( nil   add  <2>)  ci   1 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 0   d+   2 )  ci   1 )  sum   3 )}
-<67>  +  <45>  =  <112> ⇐ {<67>  +  <45> <67>  add  <45>  ci   0   sum  <112>}
- test   test  <0> ⇐ <1>  +  <0>  =  <1>
- test   test  <45> ⇐ <7>  +  <45>  =  <112>
+((<6>  add  <4>)  ci   1 ) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) ((<67>  add  <45>)  ci   0 )}
+(( nil   add  <2>)  ci   1 ) ⇐ {((( 8   d+   3 )  ci   0 )  co   1 ) ((<8>  add  <23>)  ci   0 )}
+(((<1>  add  <0>)  ci   0 )  sum  <1>) ⇐ {((( 1   d+   0 )  ci   0 )  co   0 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 1   d+   0 )  ci   0 )  sum   1 ) ((<1>  add  <0>)  ci   0 )}
+(((<6>  add  <4>)  ci   1 )  sum  <11>) ⇐ {((( 6   d+   4 )  ci   1 )  co   1 ) ((( nil   add   nil )  ci   1 )  sum  <1>) ((( 6   d+   4 )  ci   1 )  sum   1 ) ((<6>  add  <4>)  ci   1 )}
+(((<67>  add  <45>)  ci   0 )  sum  <112>) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) (((<6>  add  <4>)  ci   1 )  sum  <11>) ((( 7   d+   5 )  ci   0 )  sum   2 ) ((<67>  add  <45>)  ci   0 )}
+((( nil   add  <2>)  ci   1 )  sum  <3>) ⇐ {((( 0   d+   2 )  ci   1 )  co   0 ) (( nil   add  <2>)  ci   1 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 0   d+   2 )  ci   1 )  sum   3 )}
+((<67>  +  <45>)  =  <112>) ⇐ {(<67>  +  <45>) (((<67>  add  <45>)  ci   0 )  sum  <112>)}
+ test   test  <0> ⇐ ((<1>  +  <0>)  =  <1>)
+ test   test  <45> ⇐ ((<7>  +  <45>)  =  <112>)
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
-(( test   test  <45>)  add  <4>)  ci   1  ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) <7>  add  <45>  ci   0 }
-<8>  add  <23>  ci   0   sum  <31> ⇐ {((( 8   d+   3 )  ci   0 )  co   1 ) ((( nil   add  <2>)  ci   1 )  sum  <3>) ((( 8   d+   3 )  ci   0 )  sum   1 ) <8>  add  <23>  ci   0 }
-<8>  +  <23>  =  <31> ⇐ {<8>  +  <23> <8>  add  <23>  ci   0   sum  <31>}
- test   test  <23> ⇐ <8>  +  <23>  =  <31>
+((( test   test  <45>)  add  <4>)  ci   1 ) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) ((<7>  add  <45>)  ci   0 )}
+(((<8>  add  <23>)  ci   0 )  sum  <31>) ⇐ {((( 8   d+   3 )  ci   0 )  co   1 ) ((( nil   add  <2>)  ci   1 )  sum  <3>) ((( 8   d+   3 )  ci   0 )  sum   1 ) ((<8>  add  <23>)  ci   0 )}
+((<8>  +  <23>)  =  <31>) ⇐ {(<8>  +  <23>) (((<8>  add  <23>)  ci   0 )  sum  <31>)}
+ test   test  <23> ⇐ ((<8>  +  <23>)  =  <31>)
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
  !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
 Found one or more contradictions!
