@@ -1278,25 +1278,35 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
         if (u->uses_parallel())
         {
-            // The unification object has already started its own producer tasks in the pool.
-            // We now launch consumer tasks in the same pool. They will execute concurrently with producers.
+            // In parallel mode, Unification's producers read the graph while scanning.
+            // If we process matches immediately (and thus call deduce()), we mutate the graph
+            // concurrently with those reads -> data race / undefined behaviour.
+            //
+            // Therefore: wait for all producers to finish, then drain matches and process
+            // them sequentially (serial semantics, but parallel match discovery).
 
-            size_t num_threads = _pool->count();
-            for (size_t i = 0; i < num_threads; ++i)
+            u->wait_for_completion(); // ensures all producer tasks finished scanning/pushing
+
+            int local_matches = 0;
+            while (std::shared_ptr<Variables> match = u->Next())
             {
-                _pool->enqueue([&, u_ptr = u.get()]()
-                               {
-                    int local_matches = 0;
-                    while (std::shared_ptr<Variables> match = u_ptr->Next())
-                    {
-                        local_matches++;
-                        process_match(match);
-                    }
-                    _total_matches += local_matches; });
+                ++local_matches;
+                process_match(match);
             }
 
-            // Wait for all consumers (and consequently all producers) to finish
-            _pool->wait();
+            _total_matches.fetch_add(local_matches, std::memory_order_relaxed);
+
+            if (should_log(1))
+            {
+                if (local_matches == 0)
+                {
+                    log(depth, "evaluate", "Leaf condition " + format(condition) + " => 0 matches (vars=" + std::to_string(rule.variables->size()) + ")");
+                }
+                else if (should_log(depth))
+                {
+                    log(depth, "evaluate", "Leaf condition " + format(condition) + " => " + std::to_string(local_matches) + " match(es)");
+                }
+            }
         }
         else
         {

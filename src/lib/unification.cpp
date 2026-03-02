@@ -149,17 +149,19 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
         {
             for (const auto& gs : graph_structs)
             {
+                Variables attempt = local_bindings;
+
                 // A. Predicate
-                if (!unify_nodes(_n, rs.predicate, gs.predicate, local_bindings, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1)) continue;
 
                 // B. Subject
-                if (!unify_nodes(_n, rs.subject, gs.subject, local_bindings, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1)) continue;
 
-                // C. Objekte
+                // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
 
                 bool      objects_match = true;
-                Variables temp_bindings = local_bindings;
+                Variables obj_bindings  = attempt;
 
                 // Greedy Match for Objects
                 for (Node r_obj : rs.objects)
@@ -167,9 +169,11 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
                     bool found = false;
                     for (Node g_obj : gs.objects)
                     {
-                        if (unify_nodes(_n, r_obj, g_obj, temp_bindings, global_bindings, history, depth + 1))
+                        Variables try_obj = obj_bindings; // allow backtracking per object choice
+                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1))
                         {
-                            found = true;
+                            obj_bindings = std::move(try_obj);
+                            found        = true;
                             break;
                         }
                     }
@@ -182,10 +186,10 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
 
                 if (objects_match)
                 {
-                    local_bindings = temp_bindings;
+                    local_bindings = std::move(obj_bindings);
                     U_LOG(depth, "    -> Structure Match SUCCESS");
                     result = true;
-                    goto end_loop; // Break out of nested loops
+                    goto end_loop;
                 }
             }
         }
@@ -348,6 +352,11 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                 _use_parallel = true;
                 _snapshot_vec.assign(snapshot.begin(), snapshot.end());
 
+                if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                {
+                    u_log(_log_depth, "parallel snapshot: " + std::to_string(_snapshot_vec.size()) + " candidate facts for relation " + U_NODE(fixed_rel));
+                }
+
                 size_t threads    = std::thread::hardware_concurrency();
                 size_t chunks     = std::min(threads * 4, snapshot.size());
                 size_t chunk_size = snapshot.size() / chunks;
@@ -401,18 +410,121 @@ bool Unification::increment_fact_index()
         if (!_fact_index_initialized)
         {
             // Check if the Subject or Object is already bound. If so, iterate only their connections.
-
             bool optimized_snapshot = false;
             Node current_rel        = *_relation_index;
 
             if (_n->use_parallel())
             {
+                auto is_relation_type = [&](Node x) -> bool
+                {
+                    return _n->check_fact(x, _n->core.IsA, {_n->core.RelationTypeCategory}).is_correct();
+                };
+
+                auto is_in_current_rule_template = [&](Node needle) -> bool
+                {
+                    if (_parent == 0 || needle == 0) return false;
+
+                    if (Zelph::Impl::is_var(needle))
+                        needle = string::get(*_variables, needle, needle);
+
+                    if (needle == 0) return false;
+
+                    if (is_relation_type(needle)) return false;
+
+                    std::deque<Node>         q;
+                    std::unordered_set<Node> seen;
+                    q.push_back(_parent);
+
+                    Node membership_pred = 0;
+                    {
+                        std::unordered_set<Node> preds;
+                        for (Node rel : _n->get_right(_parent)) // Object -> Relation (incoming only => object has outgoing to rel)
+                        {
+                            zelph::network::FactStructure fs;
+                            if (!zelph::network::try_get_preferred_structure(_n, rel, fs, 0)) continue;
+
+                            // _parent must be an object (incoming only => in objects, but not bidirectional)
+                            if (fs.objects.count(_parent) == 0) continue;
+
+                            // Predicate must be a RelationType
+                            if (!is_relation_type(fs.predicate)) continue;
+
+                            preds.insert(fs.predicate);
+                        }
+                        if (preds.size() == 1) membership_pred = *preds.begin();
+                    }
+
+                    while (!q.empty())
+                    {
+                        Node x = q.front();
+                        q.pop_front();
+
+                        if (x == 0) continue;
+                        if (!seen.insert(x).second) continue;
+
+                        if (x == needle) return true;
+
+                        // 1) If x is the conjunction set (_parent): expand over its membership facts
+                        if (x == _parent)
+                        {
+                            for (Node rel : _n->get_right(_parent))
+                            {
+                                zelph::network::FactStructure fs;
+                                if (!zelph::network::try_get_preferred_structure(_n, rel, fs, 0)) continue;
+                                if (fs.objects.count(_parent) == 0) continue;
+
+                                if (membership_pred != 0 && fs.predicate != membership_pred) continue;
+
+                                q.push_back(rel);
+                                q.push_back(fs.subject);
+                                // TODO: Add more objects (besides _parent)?
+                            }
+                            continue;
+                        }
+
+                        // 2) If x is a fact node: expand syntactically into subject/objects.
+                        //    Important: We do not run outward from atoms.
+                        {
+                            zelph::network::FactStructure fx;
+                            if (zelph::network::try_get_preferred_structure(_n, x, fx, 0))
+                            {
+                                q.push_back(fx.subject);
+                                for (Node o : fx.objects)
+                                    q.push_back(o);
+                            }
+                        }
+                    }
+
+                    return false;
+                };
+
+                // Rule template nodes exist in the graph.
+                // The subject/object-driven shortcut is only correct if the lookup node
+                // is NOT part of the current rule template.
+                auto is_concrete_lookup_node = [&](Node nd) -> bool
+                {
+                    if (nd == 0) return false;
+
+                    if (Zelph::Impl::is_var(nd))
+                        nd = string::get(*_variables, nd, nd);
+
+                    if (nd == 0 || Zelph::Impl::is_var(nd) || !_n->exists(nd))
+                        return false;
+
+                    if (is_in_current_rule_template(nd))
+                    {
+                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                            u_log(_log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
+                        return false;
+                    }
+
+                    return true;
+                };
+
                 // Check if Subject is bound
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
-
-                // Only optimize if subject is atomic (see constructor comments)
-                if (s != 0 && !Zelph::Impl::is_var(s) && _n->exists(s))
+                if (is_concrete_lookup_node(s))
                 {
                     // Strategy: Subject Driven
                     // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
@@ -432,14 +544,19 @@ bool Unification::increment_fact_index()
                         }
                     }
                     optimized_snapshot = true;
+                    if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                    {
+                        u_log(_log_depth,
+                              std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                    }
                 }
                 // Check if Object is bound (if Subject wasn't)
                 else if (!_objects.empty())
                 {
-                    Node o = *_objects.begin(); // TODO: We assume a single object variable in a rule (see corresponding TODO in method extract_bindings)
+                    Node o = *_objects.begin();
                     if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
 
-                    if (o != 0 && !Zelph::Impl::is_var(o) && _n->exists(o))
+                    if (is_concrete_lookup_node(o))
                     {
                         // Strategy: Object Driven
                         // Zelph::fact -> connect(Object, Fact). Object points to Fact.
@@ -455,6 +572,11 @@ bool Unification::increment_fact_index()
                             }
                         }
                         optimized_snapshot = true;
+                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                        {
+                            u_log(_log_depth,
+                                  std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                        }
                     }
                 }
             }
