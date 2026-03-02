@@ -326,22 +326,22 @@ zelph supports two input modes that both create cons lists:
 
 1) **Node Lists (space-separated):** `<item1 item2 item3>`
 
-- **Syntax:** At least one whitespace between elements.
-- **Semantics:** The elements are existing nodes (`item1`, `item2`, …) and the list preserves this order.
-- **Construction:** Built right-to-left:
-  - `Cell3 = item3 cons nil`
-  - `Cell2 = item2 cons Cell3`
-  - `Cell1 = item1 cons Cell2`  ← this outermost cons cell **is the list**
+    - **Syntax:** At least one whitespace between elements.
+    - **Semantics:** The elements are existing nodes (`item1`, `item2`, …) and the list preserves this order.
+    - **Construction:** Built right-to-left:
+        - `Cell3 = item3 cons nil`
+        - `Cell2 = item2 cons Cell3`
+        - `Cell1 = item1 cons Cell2`  ← this outermost cons cell **is the list**
 
 2) **Compact Lists (continuous characters):** `<abc>`
 
-- **Syntax:** No spaces inside the brackets.
-- **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
-- **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
+    - **Syntax:** No spaces inside the brackets.
+    - **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
+    - **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
   So `"abc"` becomes the element vector `["c","b","a"]`, yielding:
-  - `Cell3 = "a" cons nil`
-  - `Cell2 = "b" cons Cell3`
-  - `Cell1 = "c" cons Cell2`
+        - `Cell3 = "a" cons nil`
+        - `Cell2 = "b" cons Cell3`
+        - `Cell1 = "c" cons Cell2`
 
 This reversal is **not** “numeric logic” — it is simply the definition of the compact syntax and is useful for many right-to-left processing rules (including, but not limited to, arithmetic scripts).
 
@@ -430,27 +430,27 @@ The script consists of three parts:
 1) **Single-digit addition lookup table (generated in Janet)**  
 For all `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}` the script generates:
 
-- `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
-- `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
+    - `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
+    - `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
 
 This turns digit arithmetic (including carry) into plain facts inside the network.
 
 2) **Base cases**  
 The recursion ends at `(nil add nil)`:
 
-- `((nil add nil) ci 0) sum nil`
-- `((nil add nil) ci 1) sum <1>`
+    - `((nil add nil) ci 0) sum nil`
+    - `((nil add nil) ci 1) sum <1>`
 
 3) **Eight inference rules**  
 The full multi-digit algorithm is expressed by only eight rules:
 
-- **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
-- **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
-  - D1: both operands non-nil
-  - D2/D3: treat missing digits as `0` once one side is `nil`
-- **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
-- **C0 (Connect):** expose the result under the user-facing `=` predicate:
-  `(*{(N + M) (((N add M) ci 0) sum T)} ~ conjunction) => ((N + M) = T)`
+    - **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
+    - **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
+        - D1: both operands non-nil
+        - D2/D3: treat missing digits as `0` once one side is `nil`
+    - **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
+    - **C0 (Connect):** expose the result under the user-facing `=` predicate:  
+        `(*{(N + M) (((N add M) ci 0) sum T)} ~ conjunction) => ((N + M) = T)`
 
 ##### Example addition
 
