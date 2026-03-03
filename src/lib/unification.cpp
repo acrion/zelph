@@ -290,6 +290,8 @@ Unification::Unification(
         _subject      = fs.subject;
         _objects      = fs.objects;
 
+        _subject_pred_hint = get_preferred_structure(_n, _subject, _log_depth).predicate;
+
         if (_n->logging_active() && !Zelph::Impl::is_var(relation))
             _current_rel_ctx = relation;
 
@@ -800,9 +802,17 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     if (_n->logging_active())
         _prof.extract_calls.fetch_add(1, std::memory_order_relaxed);
 
-    if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject))
+    if (Zelph::Impl::is_var(subject))
     {
-        U_LOG(depth, "extract_bindings FAIL: objects=" + std::to_string(objects.empty()) + " subject=" + (subject == 0 ? "null" : (Zelph::Impl::is_var(subject) ? "var" : U_NODE(subject))));
+        if (objects.empty() || subject == 0)
+        {
+            U_LOG(depth, "extract_bindings FAIL: objects=" + std::to_string(objects.empty()) + " subject=" + (subject == 0 ? "null" : (Zelph::Impl::is_var(subject) ? "var" : U_NODE(subject))));
+            return nullptr;
+        }
+    }
+    else if (_subject_pred_hint && _n->get_right(subject).count(_subject_pred_hint) == 0)
+    {
+        if (_n->logging_active()) _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
 

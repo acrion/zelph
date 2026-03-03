@@ -71,10 +71,11 @@ namespace zelph::network
         std::shared_ptr<Variables> _variables;
         std::shared_ptr<Variables> _unequals;
         adjacency_set              _relation_list;
-        Node                       _relation_variable{0};
-        Node                       _subject{0};
+        Node                       _relation_variable{};
+        Node                       _subject{};
         adjacency_set              _objects;
-        int                        _log_depth{0};
+        Node                       _subject_pred_hint{};
+        int                        _log_depth{};
         ReasoningProfiler&         _prof;
         Node                       _current_rel_ctx{};
 
