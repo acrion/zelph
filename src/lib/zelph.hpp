@@ -130,7 +130,7 @@ namespace zelph
 
             void                     set_lang(const std::string& lang);
             std::string              get_lang() { return _lang; }
-            void                     set_print(std::function<void(std::wstring, bool)> print) { _print = print; }
+            void                     set_print(std::function<void(std::wstring, bool)> print);
             std::string              lang() const { return _lang; }
             Node                     node(const std::wstring& name, std::string lang = "");
             void                     register_core_node(Node n, const std::wstring& name);
@@ -152,9 +152,9 @@ namespace zelph
             size_t                   get_node_of_name_size(const std::string& lang) const;
             size_t                   language_count() const;
             size_t                   rule_count() const;
-            void                     set_logging(int max_depth);
+            void                     set_logging(int max_depth) const;
             void                     log(int depth, const std::string& category, const std::string& message) const;
-            bool                     should_log(int depth) const { return _logging && depth <= _max_log_depth; }
+            bool                     should_log(int depth) const;
             bool                     use_parallel() const { return _use_parallel; }
             void                     toggle_parallel() { _use_parallel = !_use_parallel; }
 
@@ -227,10 +227,6 @@ namespace zelph
                                        std::unordered_set<WrapperNode>&                                all_nodes,
                                        int                                                             max_neighbors,
                                        size_t&                                                         placeholder_counter) const;
-
-            std::function<void(std::wstring, bool)> _print;
-            int                                     _max_log_depth{0};
-            bool                                    _logging{false};
         };
     }
 }

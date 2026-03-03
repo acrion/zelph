@@ -45,9 +45,8 @@ std::string Zelph::get_version()
 }
 
 Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
-    : _pImpl{new Impl}
+    : _pImpl{new Impl(print)}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
-    , _print(print)
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
     fact(core.Unequal, core.IsA, {core.RelationTypeCategory});
@@ -72,6 +71,11 @@ void Zelph::set_lang(const std::string& lang)
     {
         _lang = lang;
     }
+}
+
+void Zelph::set_print(std::function<void(std::wstring, bool)> print)
+{
+    _pImpl->_print = print;
 }
 
 // Assigns or updates the name of an existing node for a specific language.
@@ -2014,7 +2018,7 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
 void Zelph::print(const std::wstring& msg, const bool o) const
 {
     std::lock_guard lock(_pImpl->_mtx_print);
-    _print(msg, o);
+    _pImpl->_print(msg, o);
 }
 
 void Zelph::save_to_file(const std::string& filename) const
@@ -2027,11 +2031,16 @@ void Zelph::load_from_file(const std::string& filename) const
     _pImpl->loadFromFile(filename);
 }
 
-void Zelph::set_logging(int max_depth)
+void Zelph::set_logging(int max_depth) const
 {
-    _logging       = max_depth > 0;
-    _max_log_depth = max_depth;
-    std::clog << (_logging ? "Logging enabled with max depth " : "Logging disabled. ") << max_depth << std::endl;
+    _pImpl->_logging       = max_depth != 0;
+    _pImpl->_max_log_depth = max_depth;
+    std::clog << (_pImpl->_logging ? "Logging enabled with max depth " : "Logging disabled. ") << max_depth << std::endl;
+}
+
+bool Zelph::should_log(int depth) const
+{
+    return _pImpl->_logging && depth <= _pImpl->_max_log_depth;
 }
 
 void Zelph::log(int depth, const std::string& category, const std::string& message) const
