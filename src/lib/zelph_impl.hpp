@@ -37,9 +37,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <capnp/serialize-packed.h>
 #include <kj/io.h>
 
+#include <atomic>
 #include <cstdint>
 #include <iostream>
-#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -672,6 +672,10 @@ namespace zelph::network
         mutable std::recursive_mutex _mtx_node_of_name;
         mutable std::recursive_mutex _mtx_name_of_node;
         mutable std::recursive_mutex _mtx_print;
+
+        mutable std::shared_mutex                                              _fs_cache_mtx;
+        mutable ankerl::unordered_dense::map<Node, std::vector<FactStructure>> _fs_cache;
+        mutable std::atomic<bool>                                              _fs_cache_has_entries{false};
 
         std::function<void(std::wstring, bool)> _print;
         int                                     _max_log_depth{0};

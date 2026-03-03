@@ -73,7 +73,7 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
-void Zelph::set_print(std::function<void(std::wstring, bool)> print)
+void Zelph::set_print(std::function<void(std::wstring, bool)> print) const
 {
     _pImpl->_print = print;
 }
@@ -131,6 +131,8 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
                            << L" due to name conflict '" << name
                            << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
             }
+
+            invalidate_fact_structures_cache();
 
             // Merge connections from the conflicting node into this one
             _pImpl->merge(from, into);
@@ -240,6 +242,8 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
                                << L"' in language '" << string::unicode::from_utf8(_lang) << L"'." << std::endl;
                 }
 
+                invalidate_fact_structures_cache();
+
                 // Merge
                 _pImpl->merge(from, into);
 
@@ -262,6 +266,8 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
 void Zelph::cleanup_isolated(size_t& removed_count) const
 {
     removed_count = 0;
+
+    invalidate_fact_structures_cache();
 
     _pImpl->remove_isolated_nodes(removed_count);
 }
@@ -322,6 +328,8 @@ Node Zelph::node(const std::wstring& name, std::string lang)
             return it->second;
         }
     }
+
+    // we do not call invalidate_fact_structures_cache() here, because creating a node is isolated from the network
 
     // 3. Create new node
     Node            new_node = _pImpl->create();
@@ -687,6 +695,7 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             _pImpl->create(answer.relation());
         }
 
+        invalidate_fact_structures_cache();
         _pImpl->connect(subject, answer.relation());
         _pImpl->connect(answer.relation(), subject);
         for (const Node t : objects)
@@ -1630,6 +1639,8 @@ void Zelph::remove_rules() const
     adjacency_set rules = get_rules();
     for (Node rule : rules)
     {
+        invalidate_fact_structures_cache();
+
         _pImpl->remove(rule);
         // Clean up names
         for (auto& lang_map : _pImpl->_name_of_node)
@@ -1659,6 +1670,8 @@ void Zelph::remove_node(Node node) const
     {
         throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));
     }
+
+    invalidate_fact_structures_cache();
 
     _pImpl->remove(node);            // Disconnects edges and removes from adjacency maps
     _pImpl->remove_node_names(node); // Separate method for name cleanup
@@ -1717,6 +1730,39 @@ std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
     }
 
     return results;
+}
+
+bool Zelph::try_get_fact_structures_cached(Node fact, std::vector<FactStructure>& out) const
+{
+    // If cache is currently empty/known-invalid, avoid locking
+    if (!_pImpl->_fs_cache_has_entries.load(std::memory_order_acquire))
+        return false;
+
+    std::shared_lock lock(_pImpl->_fs_cache_mtx);
+    auto             it = _pImpl->_fs_cache.find(fact);
+    if (it == _pImpl->_fs_cache.end()) return false;
+
+    out = it->second; // copy (function returns by value anyway)
+    return true;
+}
+
+void Zelph::store_fact_structures_cached(Node fact, const std::vector<FactStructure>& value) const
+{
+    {
+        std::unique_lock lock(_pImpl->_fs_cache_mtx);
+        _pImpl->_fs_cache[fact] = value;
+    }
+    _pImpl->_fs_cache_has_entries.store(true, std::memory_order_release);
+}
+
+void Zelph::invalidate_fact_structures_cache() const noexcept
+{
+    // If cache already empty, do nothing (avoid lock)
+    if (!_pImpl->_fs_cache_has_entries.exchange(false, std::memory_order_acq_rel))
+        return;
+
+    std::unique_lock lock(_pImpl->_fs_cache_mtx);
+    _pImpl->_fs_cache.clear();
 }
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) const
@@ -2028,6 +2074,8 @@ void Zelph::save_to_file(const std::string& filename) const
 
 void Zelph::load_from_file(const std::string& filename) const
 {
+    invalidate_fact_structures_cache();
+
     _pImpl->loadFromFile(filename);
 }
 

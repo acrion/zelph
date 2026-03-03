@@ -122,10 +122,6 @@ static void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& 
     history.pop_back();
 }
 
-// =============================================================================
-// New member function: is_negated_condition
-// =============================================================================
-
 bool Reasoning::is_negated_condition(Node condition, int depth)
 {
     if (!_pImpl->exists(condition))
@@ -148,9 +144,6 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
     return result;
 }
 
-// =============================================================================
-// New member function: consequences_already_exist
-//
 // Checks whether all deduction patterns of a fresh-variable rule are already
 // satisfied in the network. Condition-bound variables are substituted; fresh
 // variables act as wildcards. Bindings discovered for one deduction carry
@@ -163,8 +156,6 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
 // consequences between the check and the subsequent creation. This is
 // benign: fact() itself is idempotent (check_fact prevents duplicates),
 // but orphaned fresh nodes may result. Use .cleanup to remove them.
-// =============================================================================
-
 bool Reasoning::consequences_already_exist(
     const Variables&     condition_bindings,
     const adjacency_set& deductions,
@@ -308,6 +299,8 @@ void Reasoning::set_markdown_subdir(const std::string& subdir)
 
 void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 {
+    invalidate_fact_structures_cache();
+
     _prune_mode       = true;
     _prune_nodes_mode = false;
     _facts_to_prune.clear();
@@ -333,6 +326,8 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 
 void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes)
 {
+    invalidate_fact_structures_cache();
+
     _prune_mode       = true;
     _prune_nodes_mode = true;
     _facts_to_prune.clear();
@@ -363,6 +358,8 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
 
 void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates)
 {
+    invalidate_fact_structures_cache();
+
     removed_facts      = 0;
     removed_predicates = 0;
 

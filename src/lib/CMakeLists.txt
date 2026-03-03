@@ -190,6 +190,7 @@ add_library(zelph_lib SHARED
     zelph_impl.hpp
     contradiction_error.hpp
     fact_structure.hpp
+    fact_structure_types.hpp
     markdown.cpp
     markdown.hpp
     network.hpp

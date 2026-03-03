@@ -25,19 +25,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "fact_structure_types.hpp"
 #include "zelph_impl.hpp"
 
 #include <vector>
 
 namespace zelph::network
 {
-    struct FactStructure
-    {
-        Node          subject{};
-        Node          predicate{};
-        adjacency_set objects;
-    };
-
     // Determines all possible structural interpretations of a fact node.
     //
     // A fact node F encodes the triple (Subject, Predicate, Objects) via:
@@ -67,6 +61,20 @@ namespace zelph::network
 
         if (fact == 0 || !n->exists(fact)) return structures;
 
+        // ---- Cache lookup (ignores depth; depth is only for logging) ----
+        // Cache stores the *full* disambiguated list (prefer_single=false semantics).
+        std::vector<FactStructure> cached;
+        if (n->try_get_fact_structures_cached(fact, cached))
+        {
+            if (n->should_log(depth))
+            {
+                n->log(depth, "get_fact_structures", "Cache HIT for fact: " + n->format(fact) + " (structures=" + std::to_string(cached.size()) + ")");
+            }
+
+            if (prefer_single && cached.size() > 1) cached.resize(1);
+            return cached;
+        }
+
         // Zelph Topology:
         // S <-> F (Subject is bidirectional)
         // F -> P  (Predicate is outgoing)
@@ -94,7 +102,11 @@ namespace zelph::network
             n->log(depth, "get_fact_structures", "Found predicates: " + std::to_string(predicates.size()));
         }
 
-        if (predicates.empty()) return structures;
+        if (predicates.empty())
+        {
+            n->store_fact_structures_cached(fact, structures);
+            return structures;
+        }
 
         for (Node p : predicates)
         {
@@ -395,6 +407,8 @@ namespace zelph::network
                 }
             }
         }
+
+        n->store_fact_structures_cached(fact, structures);
 
         if (prefer_single && structures.size() > 1)
         {
