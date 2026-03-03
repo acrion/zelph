@@ -316,7 +316,7 @@ Angle brackets `<...>` create **ordered lists** implemented as classic Lisp-styl
 A list is represented by the **outermost cons cell**. There is **no separate container node**: the node returned by list construction *is* the list (exactly as in Lisp).
 
 > **Important:** zelph does **not** have any built-in notion of “digits”, “numbers”, or arithmetic.
-> Lists are completely generic. Anything numeric (LSB-first interpretation, carry logic, addition, etc.) is defined purely by user rules — for example in `sample_scripts/arithmetic.zph`.
+> Lists are completely generic. Anything numeric (LSB-first interpretation, carry logic, addition, etc.) is defined purely by user rules — for example in [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
 
 ---
 
@@ -363,7 +363,7 @@ The cons-list representation naturally distinguishes between:
 - a **character node** such as `"4"` (a normal named node), and
 - a **single-element list** `( "4" cons nil )` (a different node: a cons cell)
 
-Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. `arithmetic.zph`) and any external naming/mapping you choose to apply.
+Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph)) and any external naming/mapping you choose to apply.
 
 #### The Focus Operator `*`
 
@@ -419,8 +419,7 @@ Note that `successor` is a user-defined relation here — it is not a predefined
 #### Rule-based Multi-digit Addition
 
 zelph can perform arbitrary-precision addition purely via graph rules. The reference implementation lives in
-`sample_scripts/arithmetic.zph`:
-https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph
+[sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
 
 **Key idea:** numbers are Lisp-style cons-lists of digit nodes, stored **LSB-first**.  
 For example, `<42>` is internally `2 cons (4 cons nil)`. `format_fact` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
