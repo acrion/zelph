@@ -181,6 +181,7 @@ void console::Interactive::process(std::wstring line) const
                     ++it;
                 }
 
+                _pImpl->_n->profiler_reset_epoch();
                 _pImpl->process_command(cmd);
                 return;
             }
@@ -220,6 +221,7 @@ void console::Interactive::process(std::wstring line) const
                 // Leaving Janet block mode: execute accumulated code
                 if (!state->janet_buffer.empty())
                 {
+                    _pImpl->_n->profiler_reset_epoch();
                     _pImpl->_script_engine->process_janet(state->janet_buffer, false);
                     state->janet_buffer.clear();
 
@@ -245,6 +247,7 @@ void console::Interactive::process(std::wstring line) const
 
             if (zelph::ScriptEngine::is_expression_complete(janet_code))
             {
+                _pImpl->_n->profiler_reset_epoch();
                 _pImpl->_script_engine->process_janet(janet_code, false);
 
                 if (state->auto_run)
@@ -288,6 +291,7 @@ void console::Interactive::process(std::wstring line) const
 
         if (!transformed.empty())
         {
+            _pImpl->_n->profiler_reset_epoch();
             _pImpl->_script_engine->process_janet(transformed, true);
         }
         else

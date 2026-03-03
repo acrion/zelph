@@ -422,7 +422,7 @@ namespace zelph::network
         return results[0];
     }
 
-    inline bool try_get_preferred_structure(const Zelph* n, Node fact, FactStructure& out, int depth = 0)
+    inline bool try_get_preferred_structure(const Zelph* n, Node fact, FactStructure& out, int depth)
     {
         out = get_preferred_structure(n, fact, depth);
         return out.predicate != 0;

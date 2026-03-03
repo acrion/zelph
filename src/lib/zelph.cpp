@@ -2043,6 +2043,11 @@ bool Zelph::should_log(int depth) const
     return _pImpl->_logging && depth <= _pImpl->_max_log_depth;
 }
 
+bool Zelph::logging_active() const
+{
+    return _pImpl->_logging;
+}
+
 void Zelph::log(int depth, const std::string& category, const std::string& message) const
 {
     if (!should_log(depth)) return;

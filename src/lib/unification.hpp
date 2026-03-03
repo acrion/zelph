@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "reasoning_profiler.hpp"
 #include "thread_pool.hpp"
 #include "zelph.hpp"
 
@@ -39,7 +40,15 @@ namespace zelph::network
     class Unification
     {
     public:
-        Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth);
+        Unification(
+            Zelph*                            n,
+            Node                              condition,
+            Node                              parent,
+            const std::shared_ptr<Variables>& variables,
+            const std::shared_ptr<Variables>& unequals,
+            ThreadPool*                       pool,
+            int                               log_depth,
+            ReasoningProfiler&                profiler);
         std::shared_ptr<Variables> Next();
         std::shared_ptr<Variables> Unequals();
         bool                       uses_parallel() const { return _use_parallel; }
@@ -66,6 +75,8 @@ namespace zelph::network
         Node                       _subject{0};
         adjacency_set              _objects;
         int                        _log_depth{0};
+        ReasoningProfiler&         _prof;
+        Node                       _current_rel_ctx{};
 
         // Parallel mode
         ThreadPool*                            _pool{nullptr};

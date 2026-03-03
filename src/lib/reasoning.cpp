@@ -295,8 +295,9 @@ bool Reasoning::consequences_already_exist(
 }
 
 Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
-    : Zelph(print)
-    , _pool(std::make_unique<ThreadPool>(std::thread::hardware_concurrency()))
+    : Zelph{print}
+    , _pool{std::make_unique<ThreadPool>(std::thread::hardware_concurrency())}
+    , _prof{this}
 {
 }
 
@@ -583,6 +584,8 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
 void Reasoning::apply_rule(const Node& rule, Node condition)
 {
+    _prof.note_rule_applied(rule ? rule : condition);
+
     if (should_log(1))
     {
         std::wstring formatted_rule;
@@ -644,6 +647,9 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 // Greedy Sort to optimize execution order based on variable bindings
 std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth)
 {
+    if (logging_active())
+        _prof.optimize_order_calls.fetch_add(1, std::memory_order_relaxed);
+
     auto sorted = std::make_shared<std::vector<Node>>();
     sorted->reserve(conditions.size());
 
@@ -765,6 +771,12 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
 void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 {
+    if (logging_active())
+    {
+        _prof.evaluate_calls.fetch_add(1, std::memory_order_relaxed);
+        ReasoningProfiler::atomic_max(_prof.max_reasoning_depth, (uint64_t)depth);
+    }
+
     if (!rule.conditions || rule.index >= rule.conditions->size()) return;
 
     Node condition = (*rule.conditions)[rule.index]; // Current condition from the sorted vector
@@ -796,6 +808,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
     if (is_conjunction)
     {
+        if (logging_active())
+            _prof.conjunction_sets.fetch_add(1, std::memory_order_relaxed);
+
         if (should_log(depth))
             log(depth, "evaluate", "Node " + format(condition) + " identified as Conjunction Set.");
 
@@ -860,13 +875,19 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     else
     {
         // Leaf Condition (Atomic Fact)
+        if (logging_active())
+            _prof.leaf_conditions.fetch_add(1, std::memory_order_relaxed);
+
         if (should_log(depth))
             log(depth, "evaluate", "Processing leaf condition: " + format(condition));
 
         bool is_negated = is_negated_condition(condition, depth);
 
+        if (logging_active() && is_negated)
+            _prof.negated_conditions.fetch_add(1, std::memory_order_relaxed);
+
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
-            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1);
+            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1, _prof);
 
         // --- Negation Handling ---
         // A condition tagged with `negation` succeeds if and only if
@@ -997,6 +1018,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             if (match)
             {
+                if (logging_active())
+                    _prof.negation_fail.fetch_add(1, std::memory_order_relaxed);
+
                 if (should_log(depth))
                 {
                     log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
@@ -1008,6 +1032,10 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 // Match found => negation fails => prune this branch
                 return;
             }
+
+            if (logging_active())
+                _prof.negation_success.fetch_add(1, std::memory_order_relaxed);
+
             if (should_log(depth))
                 log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
 
@@ -1051,6 +1079,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                 for (Node fn : rel_facts)
                 {
+                    if (logging_active())
+                        _prof.neg_complement_subjects_tested.fetch_add(1, std::memory_order_relaxed);
+
                     // Skip nodes belonging to the rule's own topology
                     if (rule.excluded && rule.excluded->count(fn)) continue;
 
@@ -1370,6 +1401,9 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
 
 void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx)
 {
+    if (logging_active())
+        _prof.deduce_calls.fetch_add(1, std::memory_order_relaxed);
+
     if (should_log(depth))
     {
         std::string vars_str;
@@ -1399,32 +1433,45 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             fresh_vars.insert(var);
     }
 
-    if (should_log(depth))
-    {
-        if (!fresh_vars.empty())
-        {
-            std::string fresh_str;
-            for (Node fv : fresh_vars)
-                fresh_str += " " + format(fv);
-            log(depth, "deduce", "Fresh variables:" + fresh_str);
-        }
-        else
-        {
-            log(depth, "deduce", "No fresh variables");
-        }
-    }
-
     // --- Termination Check ---
     if (!fresh_vars.empty())
     {
+        if (logging_active())
+        {
+            _prof.fresh_vars_total.fetch_add(fresh_vars.size(), std::memory_order_relaxed);
+
+            if (should_log(depth))
+            {
+                std::string fresh_str;
+                for (Node fv : fresh_vars)
+                    fresh_str += " " + format(fv);
+                log(depth, "deduce", "Fresh variables:" + fresh_str);
+            }
+        }
+
         if (consequences_already_exist(variables, ctx.rule_deductions, parent, depth))
         {
-            if (should_log(depth))
-                log(depth, "deduce", "consequences_already_exist => SKIP (termination guard)");
+            if (logging_active())
+            {
+                _prof.termination_guard_checks.fetch_add(1, std::memory_order_relaxed);
+                _prof.termination_guard_skips.fetch_add(1, std::memory_order_relaxed);
+
+                if (should_log(depth))
+                    log(depth, "deduce", "consequences_already_exist => SKIP (termination guard)");
+            }
             return;
         }
-        if (should_log(depth))
-            log(depth, "deduce", "consequences_already_exist => false, proceeding");
+        if (logging_active())
+        {
+            _prof.termination_guard_checks.fetch_add(1, std::memory_order_relaxed);
+
+            if (should_log(depth))
+                log(depth, "deduce", "consequences_already_exist => false, proceeding");
+        }
+    }
+    else if (should_log(depth))
+    {
+        log(depth, "deduce", "No fresh variables");
     }
 
     // --- Create Fresh Nodes ---
@@ -1437,6 +1484,9 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             fresh = _pImpl->create();
         }
         augmented[var] = fresh;
+
+        if (logging_active())
+            _prof.fresh_nodes_created.fetch_add(1, std::memory_order_relaxed);
 
         if (should_log(depth))
             log(depth, "deduce", "Created fresh node " + std::to_string(fresh) + " for " + format(var));
@@ -1534,21 +1584,39 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                     }
 
                     if (answer.is_wrong())
+                    {
+                        if (logging_active())
+                            _prof.check_fact_wrong.fetch_add(1, std::memory_order_relaxed);
+
                         wrong = true;
+                    }
                     else if (!answer.is_known() && targets.count(rel) == 0)
                     {
+                        if (logging_active())
+                            _prof.check_fact_new.fetch_add(1, std::memory_order_relaxed);
+
                         try
                         {
                             d       = fact(source, rel, targets);
                             created = true;
+
+                            if (logging_active())
+                            {
+                                _prof.note_rule_created_fact(parent);
+                                _prof.facts_created.fetch_add(1, std::memory_order_relaxed);
+                                _prof.log_after_deduction(parent, d, depth);
+                            }
                         }
                         catch (const std::exception& ex)
                         {
                             if (should_log(depth))
                                 log(depth, "deduce", "fact() threw: " + std::string(ex.what()));
+
                             wrong = true;
                         }
                     }
+                    else if (logging_active() && answer.is_known())
+                        _prof.check_fact_known.fetch_add(1, std::memory_order_relaxed);
                 }
                 else if (should_log(depth))
                 {

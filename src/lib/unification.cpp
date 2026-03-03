@@ -58,9 +58,22 @@ static std::string u_node_str(const Zelph* z, Node n)
 // --- Helper Functions ---
 
 // Recursive Unification Algorithm with Cycle Detection
-static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, Variables& local_bindings, const Variables& global_bindings, std::vector<std::pair<Node, Node>>& history, int depth)
+static bool unify_nodes(
+    const Zelph* const                  _n,
+    Node                                rule_node,
+    Node                                graph_node,
+    Variables&                          local_bindings,
+    const Variables&                    global_bindings,
+    std::vector<std::pair<Node, Node>>& history,
+    int                                 depth,
+    ReasoningProfiler&                  prof)
 {
-    //    if (depth > 50) return false; // Hard limit fallback
+    if (_n->logging_active())
+    {
+        prof.unify_calls.fetch_add(1, std::memory_order_relaxed);
+        ReasoningProfiler::atomic_max(prof.max_unify_depth, (uint64_t)depth);
+    }
+
     if (rule_node == 0 || graph_node == 0) return false;
 
     U_LOG(depth, "Comparing " + U_NODE(rule_node) + " vs " + U_NODE(graph_node));
@@ -72,7 +85,12 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
     {
         if (pair.first == rule_node && pair.second == graph_node)
         {
-            U_LOG(depth, "  -> Cycle detected (already visiting), assuming match.");
+            if (_n->logging_active())
+            {
+                prof.unify_cycle_hits.fetch_add(1, std::memory_order_relaxed);
+
+                U_LOG(depth, "  -> Cycle detected (already visiting), assuming match.");
+            }
             return true;
         }
     }
@@ -86,14 +104,24 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
         // 1. Variable Binding
         if (Zelph::Impl::is_var(rule_node))
         {
+            if (_n->logging_active())
+                prof.unify_var_seen.fetch_add(1, std::memory_order_relaxed);
+
             if (local_bindings.count(rule_node))
             {
-                U_LOG(depth, "  Var local bound -> recursing");
-                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1);
+                if (_n->logging_active())
+                {
+                    prof.unify_var_local_recurse.fetch_add(1, std::memory_order_relaxed);
+                    U_LOG(depth, "  Var local bound -> recursing");
+                }
+                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, prof);
                 break;
             }
             if (global_bindings.count(rule_node))
             {
+                if (_n->logging_active())
+                    prof.unify_var_global_recurse.fetch_add(1, std::memory_order_relaxed);
+
                 Node bound = zelph::string::get(global_bindings, rule_node, Node{0});
                 if (bound == graph_node)
                 {
@@ -102,7 +130,7 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
                     break;
                 }
                 U_LOG(depth, "  Var global bound to " + U_NODE(bound) + " (id=" + std::to_string(bound) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
-                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1);
+                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, prof);
                 if (_n->should_log(depth) && !result)
                 {
                     u_log(depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
@@ -114,7 +142,11 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
 
             local_bindings[rule_node] = graph_node;
 
-            U_LOG(depth, "  -> Bound " + U_NODE(rule_node) + " to " + U_NODE(graph_node));
+            if (_n->logging_active())
+            {
+                prof.unify_var_bound_new.fetch_add(1, std::memory_order_relaxed);
+                U_LOG(depth, "  -> Bound " + U_NODE(rule_node) + " to " + U_NODE(graph_node));
+            }
 
             result = true;
             break;
@@ -123,7 +155,11 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
         // 2. Direct identity
         if (rule_node == graph_node)
         {
-            U_LOG(depth, "  -> Identical");
+            if (_n->logging_active())
+            {
+                prof.unify_identity_hits.fetch_add(1, std::memory_order_relaxed);
+                U_LOG(depth, "  -> Identical");
+            }
             result = true;
             break;
         }
@@ -145,6 +181,9 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
             break;
         }
 
+        if (_n->logging_active())
+            prof.unify_struct_pair_attempts.fetch_add(1, std::memory_order_relaxed);
+
         for (const auto& rs : rule_structs)
         {
             for (const auto& gs : graph_structs)
@@ -152,16 +191,19 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
                 Variables attempt = local_bindings;
 
                 // A. Predicate
-                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, prof)) continue;
 
                 // B. Subject
-                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1)) continue;
+                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, prof)) continue;
 
                 // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
 
                 bool      objects_match = true;
                 Variables obj_bindings  = attempt;
+
+                if (_n->logging_active())
+                    prof.unify_object_try.fetch_add(1, std::memory_order_relaxed);
 
                 // Greedy Match for Objects
                 for (Node r_obj : rs.objects)
@@ -170,10 +212,15 @@ static bool unify_nodes(const Zelph* const _n, Node rule_node, Node graph_node, 
                     for (Node g_obj : gs.objects)
                     {
                         Variables try_obj = obj_bindings; // allow backtracking per object choice
-                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1))
+                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, prof))
                         {
                             obj_bindings = std::move(try_obj);
                             found        = true;
+
+                            if (_n->logging_active())
+                            {
+                                prof.unify_object_success.fetch_add(1, std::memory_order_relaxed);
+                            }
                             break;
                         }
                     }
@@ -219,9 +266,20 @@ static bool contains_variable_shallow(Zelph* n, Node nd, const int depth)
     return false;
 }
 
-Unification::Unification(Zelph* n, Node condition, Node parent, const std::shared_ptr<Variables>& variables, const std::shared_ptr<Variables>& unequals, ThreadPool* pool, int log_depth)
-    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth)
+Unification::Unification(
+    Zelph*                            n,
+    Node                              condition,
+    Node                              parent,
+    const std::shared_ptr<Variables>& variables,
+    const std::shared_ptr<Variables>& unequals,
+    ThreadPool*                       pool,
+    int                               log_depth,
+    ReasoningProfiler&                profiler)
+    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth), _prof(profiler)
 {
+    if (_n->logging_active())
+        _prof.unification_instances.fetch_add(1, std::memory_order_relaxed);
+
     // Use get_preferred_structure to robustly decompose the RULE PATTERN (condition).
     // This handles cases where the pattern itself is a complex structure (like (A cons R)).
     FactStructure fs = get_preferred_structure(_n, condition, _log_depth);
@@ -231,6 +289,9 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
         Node relation = fs.predicate;
         _subject      = fs.subject;
         _objects      = fs.objects;
+
+        if (_n->logging_active() && !Zelph::Impl::is_var(relation))
+            _current_rel_ctx = relation;
 
         U_LOG(_log_depth, "Init Unification: " + U_NODE(condition));
 
@@ -349,6 +410,15 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
 
             if (snapshot.size() > 0)
             {
+                if (_n->logging_active())
+                {
+                    _prof.unification_parallel_instances.fetch_add(1, std::memory_order_relaxed);
+                    _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
+                    _prof.snapshot_full_relation.fetch_add(1, std::memory_order_relaxed);
+                    _prof.snapshot_facts_total.fetch_add(_snapshot_vec.size(), std::memory_order_relaxed);
+                    if (_current_rel_ctx) _prof.note_relation_scan(_current_rel_ctx, _snapshot_vec.size());
+                }
+
                 _use_parallel = true;
                 _snapshot_vec.assign(snapshot.begin(), snapshot.end());
 
@@ -369,10 +439,12 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
 
                     _pool->enqueue([this, fixed_rel, start, end]()
                                    {
+                                   uint64_t local_scanned = 0;
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
                                        auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+                                       ++local_scanned;
 
                                        for (const auto& fs : structs)
                                        {
@@ -386,6 +458,10 @@ Unification::Unification(Zelph* n, Node condition, Node parent, const std::share
                                                _queue_cv.notify_one();
                                            }
                                        }
+                                   }
+                                   if (_n->logging_active())
+                                   {
+                                       _prof.facts_scanned_parallel.fetch_add(local_scanned, std::memory_order_relaxed);
                                    }
                                    {
                                        std::lock_guard<std::mutex> l(_queue_mtx);
@@ -441,7 +517,7 @@ bool Unification::increment_fact_index()
                         for (Node rel : _n->get_right(_parent)) // Object -> Relation (incoming only => object has outgoing to rel)
                         {
                             zelph::network::FactStructure fs;
-                            if (!zelph::network::try_get_preferred_structure(_n, rel, fs, 0)) continue;
+                            if (!zelph::network::try_get_preferred_structure(_n, rel, fs, _log_depth)) continue;
 
                             // _parent must be an object (incoming only => in objects, but not bidirectional)
                             if (fs.objects.count(_parent) == 0) continue;
@@ -470,7 +546,7 @@ bool Unification::increment_fact_index()
                             for (Node rel : _n->get_right(_parent))
                             {
                                 zelph::network::FactStructure fs;
-                                if (!zelph::network::try_get_preferred_structure(_n, rel, fs, 0)) continue;
+                                if (!zelph::network::try_get_preferred_structure(_n, rel, fs, _log_depth)) continue;
                                 if (fs.objects.count(_parent) == 0) continue;
 
                                 if (membership_pred != 0 && fs.predicate != membership_pred) continue;
@@ -486,7 +562,7 @@ bool Unification::increment_fact_index()
                         //    Important: We do not run outward from atoms.
                         {
                             zelph::network::FactStructure fx;
-                            if (zelph::network::try_get_preferred_structure(_n, x, fx, 0))
+                            if (zelph::network::try_get_preferred_structure(_n, x, fx, _log_depth))
                             {
                                 q.push_back(fx.subject);
                                 for (Node o : fx.objects)
@@ -598,9 +674,26 @@ bool Unification::increment_fact_index()
                 return false;
             }
 
-            if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+            if (_n->logging_active())
             {
-                u_log(_log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+                if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                {
+                    u_log(_log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+                }
+
+                _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
+                _prof.snapshot_facts_total.fetch_add(_facts_snapshot.size(), std::memory_order_relaxed);
+                if (optimized_snapshot)
+                {
+                    // Heuristik: subject-driven wenn subject bound branch genutzt wurde, sonst object-driven
+                    // (hier nicht perfekt unterscheidbar ohne extra flag; wenn du willst, kann ich das sauber flaggen)
+                    _prof.snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed);
+                }
+                else
+                {
+                    _prof.snapshot_full_relation.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (current_rel) _prof.note_relation_scan(current_rel, _facts_snapshot.size());
             }
 
             _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
@@ -617,6 +710,9 @@ bool Unification::increment_fact_index()
 
 std::shared_ptr<Variables> Unification::Next()
 {
+    if (_n->logging_active())
+        _prof.unification_next_calls.fetch_add(1, std::memory_order_relaxed);
+
     if (_relation_list.empty()) return nullptr;
 
     // 1. Check queue for buffered matches (from parallel execution or multiple structures)
@@ -648,9 +744,18 @@ std::shared_ptr<Variables> Unification::Next()
             {
                 Node fact = *_fact_index;
 
+                if (_n->logging_active())
+                    _prof.facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed);
+
                 // Get all valid structural interpretations of the fact node.
                 // This allows matching facts that serve as subjects for other facts (nested structures).
                 auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+
+                if (_n->logging_active())
+                {
+                    _prof.get_fact_structures_calls.fetch_add(1, std::memory_order_relaxed);
+                    _prof.structures_total.fetch_add(structs.size(), std::memory_order_relaxed);
+                }
 
                 std::shared_ptr<Variables> first = nullptr;
 
@@ -692,6 +797,9 @@ std::shared_ptr<Variables> Unification::Next()
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
 std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const
 {
+    if (_n->logging_active())
+        _prof.extract_calls.fetch_add(1, std::memory_order_relaxed);
+
     if (objects.empty() || subject == 0 || Zelph::Impl::is_var(subject))
     {
         U_LOG(depth, "extract_bindings FAIL: objects=" + std::to_string(objects.empty()) + " subject=" + (subject == 0 ? "null" : (Zelph::Impl::is_var(subject) ? "var" : U_NODE(subject))));
@@ -703,9 +811,13 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     U_LOG(depth, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
 
     std::vector<std::pair<Node, Node>> history; // Cycle detection
-    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history, _log_depth))
+    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history, _log_depth, _prof))
     {
-        U_LOG(depth, "  -> Subject Failed");
+        if (_n->logging_active())
+        {
+            U_LOG(depth, "  -> Subject Failed");
+            _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
+        }
         return nullptr;
     }
 
@@ -726,14 +838,22 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     // iterates over them endlessly.
     if (contains_variable_shallow(_n, subject, depth))
     {
-        U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
+        if (_n->logging_active())
+        {
+            _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
+            U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
+        }
         return nullptr;
     }
     for (Node o : objects)
     {
         if (contains_variable_shallow(_n, o, depth))
         {
-            U_LOG(depth, "extract_bindings REJECT: object " + U_NODE(o) + " contains variable (rule template)");
+            if (_n->logging_active())
+            {
+                _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
+                U_LOG(depth, "extract_bindings REJECT: object " + U_NODE(o) + " contains variable (rule template)");
+            }
             return nullptr;
         }
     }
@@ -747,7 +867,7 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
     {
         Variables temp_bindings = *result;
         history.clear(); // Reset history for cycle detection
-        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history, _log_depth))
+        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history, _log_depth, _prof))
         {
             *result        = temp_bindings;
             object_matches = true;
@@ -760,16 +880,28 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
         if (_relation_variable != 0 && _variables->count(_relation_variable) == 0 && result->count(_relation_variable) == 0)
             (*result)[_relation_variable] = relation;
 
-        U_LOG(depth, "extract_bindings SUCCESS");
-        if (_n->should_log(depth))
+        if (_n->logging_active())
         {
-            for (const auto& [k, v] : *result)
-                u_log(depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+            _prof.extract_success.fetch_add(1, std::memory_order_relaxed);
+            if (_current_rel_ctx) _prof.note_relation_match(_current_rel_ctx);
+
+            U_LOG(depth, "extract_bindings SUCCESS");
+
+            if (_n->should_log(depth))
+            {
+                for (const auto& [k, v] : *result)
+                    u_log(depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+            }
         }
+
         return result;
     }
 
-    U_LOG(depth, "extract_bindings FAIL: no object matched");
+    if (_n->logging_active())
+    {
+        _prof.extract_fail_object.fetch_add(1, std::memory_order_relaxed);
+        U_LOG(depth, "extract_bindings FAIL: no object matched");
+    }
     return nullptr;
 }
 

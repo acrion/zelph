@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "markdown.hpp"
+#include "reasoning_profiler.hpp"
 #include "stopwatch.hpp"
 #include "thread_pool.hpp"
 #include "zelph.hpp"
@@ -64,6 +65,7 @@ namespace zelph::network
         explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
         void apply_rule(const network::Node& rule, network::Node condition);
+        void profiler_reset_epoch() { _prof.reset_epoch(); }
         void set_markdown_subdir(const std::string& subdir);
         void prune_facts(Node pattern, size_t& removed_count);
         void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
@@ -104,5 +106,6 @@ namespace zelph::network
         std::unordered_set<Node>                 _facts_to_prune;
         std::unordered_set<Node>                 _nodes_to_prune;
         std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};
+        ReasoningProfiler                        _prof;
     };
 }

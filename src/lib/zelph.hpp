@@ -155,6 +155,7 @@ namespace zelph
             void                     set_logging(int max_depth) const;
             void                     log(int depth, const std::string& category, const std::string& message) const;
             bool                     should_log(int depth) const;
+            bool                     logging_active() const;
             bool                     use_parallel() const { return _use_parallel; }
             void                     toggle_parallel() { _use_parallel = !_use_parallel; }
 
