@@ -416,7 +416,7 @@ Zelph immediately applies this rule to the facts we just entered:
 
 Note that `successor` is a user-defined relation here — it is not a predefined core node. The internal structure of lists uses Lisp-style cons cells (`cons`/`nil`), while the succession relationship between numbers is expressed through domain-specific relations like `successor`.
 
-#### Rule-based Multi-digit Addition (no fresh variables, no negation)
+#### Rule-based Multi-digit Addition
 
 zelph can perform arbitrary-precision addition purely via graph rules. The reference implementation lives in
 `sample_scripts/arithmetic.zph`:
