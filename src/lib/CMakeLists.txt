@@ -195,6 +195,7 @@ add_library(zelph_lib SHARED
     network.hpp
     reasoning.cpp
     reasoning.hpp
+    reasoning_profiler.hpp
     stopwatch.cpp
     stopwatch.hpp
     unification.cpp
