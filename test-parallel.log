@@ -1,7 +1,8 @@
- !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
- !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
- !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
- !  ⇐ {( gene   subclassof   geneclass ) ( gene   instanceof   geneclass )}
+ !  ⇐ {( gene   instanceof   geneclass ) ( gene   subclassof   geneclass )}
+ !  ⇐ {( gene   instanceof   geneclass ) ( gene   subclassof   geneclass )}
+ !  ⇐ {( gene   instanceof   geneclass ) ( gene   subclassof   geneclass )}
+ !  ⇐ {( gene   instanceof   geneclass ) ( gene   subclassof   geneclass )}
+ !  ⇐ {( gene   instanceof   geneclass ) ( gene   subclassof   geneclass )}
  4  <  5 
  5  >  4 
  6  >  5 
@@ -27,6 +28,9 @@
  mixed_container   content  <( myCond  =>  myDeduct ) ( myDeduct2  <=  myCond2 ) { setElem5   setElem6 } ( literal string )>
  nested_seq_in_set   holds  {< setElem3   setElem4 > < setElem1   setElem2 >}
  nested_set_in_seq   holds  <{ seqElem1   seqElem2 } { seqElem3   seqElem4 }>
+ plant   is   green 
+ plant   is   yellow 
+ plant2   is   yellow 
  quoted_sequence   ~  <cba>
  seq_compact   is_defined_as  <123>
  seq_spaced   is_defined_as  < seqItem1   seqItem2   seqItem3 >
@@ -43,17 +47,18 @@
 ( 4   +   5 )  =   9 
 ( 6  >  4 ) ⇐ {( 6  >  5 ) (>  ~   transitive ) ( 5  >  4 )}
 ( ??   nameof   tim ) ⇐ ( tim   is   human )
-( Berlin   is located in   Europe ) ⇐ {( Berlin   is capital of   Germany ) ( Germany   is located in   Europe )}
+( Berlin   is located in   Europe ) ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
 ( earth   is part of   solar system )  is_truth   true 
 ( elem5   is last of   mylist ) ⇐ { negation  ( elem5   partoflist   mylist )}
+( plant2   is not   green ) ⇐ { negation  ( plant2   is   yellow )}
 ( subj   pred  ( obj   is  ( subj2  A ( b   test  C)))) => ( success  A C)
 ( success   a_val   c_val ) ⇐ ( subj   pred  ( obj   is  ( subj2   a_val  ( b   test   c_val ))))
 ( test   4   5 ) ⇐ (( 4   +   5 )  =   9 )
 ( tim   ancestor   paul ) ⇐ {( tom   ancestor   paul ) ( tim   ancestor   tom )}
 (( 4   add   5 )  ci   0 ) ⇐ ( 4   +   5 )
-(( nil   add  <2>)  ci   1 ) ⇐ {((( 8   d+   3 )  ci   0 )  co   1 ) ((<8>  add  <23>)  ci   0 )}
-((( nil   add  <2>)  ci   1 )  sum  <3>) ⇐ {((( 0   d+   2 )  ci   1 )  co   0 ) (( nil   add  <2>)  ci   1 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 0   d+   2 )  ci   1 )  sum   3 )}
-((( test   test  <45>)  add  <4>)  ci   1 ) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) ((<7>  add  <45>)  ci   0 )}
+(( nil   add  <2>)  ci   1 ) ⇐ {((<8>  add  <23>)  ci   0 ) ((( 8   d+   3 )  ci   0 )  co   1 )}
+((( nil   add  <2>)  ci   1 )  sum  <3>) ⇐ {((( 0   d+   2 )  ci   1 )  co   0 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 0   d+   2 )  ci   1 )  sum   3 ) (( nil   add  <2>)  ci   1 )}
+((( test   test  <45>)  add  <4>)  ci   1 ) ⇐ {((<7>  add  <45>)  ci   0 ) ((( 7   d+   5 )  ci   0 )  co   1 )}
 (((<1>  add  <0>)  ci   0 )  sum  <1>) ⇐ {((( 1   d+   0 )  ci   0 )  co   0 ) ((( nil   add   nil )  ci   0 )  sum   nil ) ((( 1   d+   0 )  ci   0 )  sum   1 ) ((<1>  add  <0>)  ci   0 )}
 (((<67>  add  <45>)  ci   0 )  sum  <112>) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) (((<6>  add  <4>)  ci   1 )  sum  <11>) ((( 7   d+   5 )  ci   0 )  sum   2 ) ((<67>  add  <45>)  ci   0 )}
 (((<6>  add  <4>)  ci   1 )  sum  <11>) ⇐ {((( 6   d+   4 )  ci   1 )  co   1 ) ((( nil   add   nil )  ci   1 )  sum  <1>) ((( 6   d+   4 )  ci   1 )  sum   1 ) ((<6>  add  <4>)  ci   1 )}
@@ -62,7 +67,7 @@
 ((<1>  add  <0>)  ci   0 ) ⇐ (<1>  +  <0>)
 ((<67>  +  <45>)  =  <112>) ⇐ {(<67>  +  <45>) (((<67>  add  <45>)  ci   0 )  sum  <112>)}
 ((<67>  add  <45>)  ci   0 ) ⇐ (<67>  +  <45>)
-((<6>  add  <4>)  ci   1 ) ⇐ {((( 7   d+   5 )  ci   0 )  co   1 ) ((<67>  add  <45>)  ci   0 )}
+((<6>  add  <4>)  ci   1 ) ⇐ {((<67>  add  <45>)  ci   0 ) ((( 7   d+   5 )  ci   0 )  co   1 )}
 ((<8>  +  <23>)  =  <31>) ⇐ {(<8>  +  <23>) (((<8>  add  <23>)  ci   0 )  sum  <31>)}
 ((<8>  add  <23>)  ci   0 ) ⇐ (<8>  +  <23>)
 ((A  +  B)  =  C) => ( test  A B)
@@ -74,7 +79,7 @@
 <67>  +  <45>
 <8>  +  <23>
 <zelph/node ((«nil» «add» «?») «ci» «1») «sum» <1>>
-<zelph/node {(X «is capital of» Y) (Y «is located in» Z)} => (X «is located in» Z)>
+<zelph/node {(Y «is located in» Z) (X «is capital of» Y)} => (X «is located in» Z)>
 <zelph/node «Berlin» «is capital of» «Germany»>
 <zelph/node «Berlin»>
 >  ~   transitive 
@@ -84,14 +89,15 @@ Answer:  tim   ~   male
 Found one or more contradictions!
 Importing file test.zph...
 _Variable  with_underscore  _V
+{ negation  (A  is   yellow )} => (A  is not   green )
 { negation  (A  partoflist  L)} => (A  is last of  L)
-{((( 0   d+  B)  ci  C)  co  E) (( nil   add  <B>)  ci  C) ((( nil   add  S)  ci  E)  sum  T) ((( 0   d+  B)  ci  C)  sum  D)} => ((( nil   add  <B>)  ci  C)  sum  <D>)
 {((( 0   d+  B)  ci  C)  co  E) (( nil   add  <B>)  ci  C)} => (( nil   add  S)  ci  E)
-{(((A  d+   0 )  ci  C)  sum  D) (((R  add   nil )  ci  E)  sum  T) ((<A>  add   nil )  ci  C) (((A  d+   0 )  ci  C)  co  E)} => (((<A>  add   nil )  ci  C)  sum  <D>)
+{((( 0   d+  B)  ci  C)  co  E) ((( nil   add  S)  ci  E)  sum  T) ((( 0   d+  B)  ci  C)  sum  D) (( nil   add  <B>)  ci  C)} => ((( nil   add  <B>)  ci  C)  sum  <D>)
+{(((A  d+   0 )  ci  C)  co  E) (((R  add   nil )  ci  E)  sum  T) ((<A>  add   nil )  ci  C) (((A  d+   0 )  ci  C)  sum  D)} => (((<A>  add   nil )  ci  C)  sum  <D>)
 {(((A  d+  B)  ci  C)  co  E) (((R  add  S)  ci  E)  sum  T) (((A  d+  B)  ci  C)  sum  D) ((<A>  add  <B>)  ci  C)} => (((<A>  add  <B>)  ci  C)  sum  <D>)
-{(((A  d+  B)  ci  C)  co  E) ((<A>  add  <B>)  ci  C)} => ((R  add  S)  ci  E)
 {((<A>  add   nil )  ci  C) (((A  d+   0 )  ci  C)  co  E)} => ((R  add   nil )  ci  E)
-{(A  subclassof  B) (A  instanceof  B)} =>  ! 
+{((<A>  add  <B>)  ci  C) (((A  d+  B)  ci  C)  co  E)} => ((R  add  S)  ci  E)
+{(A  instanceof  B) (A  subclassof  B)} =>  ! 
 {(C  followed-by  E) ((A  +  B)  =  C) (B  followed-by  D)} => ((A  +  D)  =  E)
 {(N  +  M) (((N  add  M)  ci   0 )  sum  T)} => ((N  +  M)  =  T)
 {(X R Y) (R  ~   transitive ) (Y R Z)} => (X R Z)

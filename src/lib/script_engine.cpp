@@ -139,7 +139,7 @@ public:
                 # > and < are reserved to act as delimiters.
                 # , is reserved for unquoting Janet variables.
                 # To use them as atoms, we define specific rules below.
-                :reserved (set " \t\r\n\0\v<\"(){}*>,")
+                :reserved (set " \t\r\n\0\v<\"(){}*>,¬")
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
@@ -187,6 +187,10 @@ public:
                 # Returns [:focused value-node]
                 :tag-focused (group (* (constant :focused) "*" :val-any))
 
+                # Negation sugar: ¬Value  (e.g. ¬(A is green))
+                # Returns [:negation value-node]
+                :tag-negation (group (* (constant :negation) "¬" :s* :val-any))
+
                 # Conjunction sugar: comma-separated conditions inside parentheses
                 :conj-cond (group (* (constant :condition) :val-any (any (sequence :s+ :val-any))))
                 :comma-sep (* :s* "," (not :symchars) :s*)
@@ -210,7 +214,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-var :tag-unquote :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-var :tag-unquote :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -818,6 +822,13 @@ public:
                 let_block += " $c" + std::to_string(i);
             let_block += R"() _ (zelph/fact $cs "~" "conjunction")] $cs))";
             return let_block;
+        }
+        else if (type == "negation")
+        {
+            // [:negation inner]
+            // Desugars ¬X to (zelph/negate X)
+            // which tags the pattern node with core.Negation and returns it.
+            return "(zelph/negate " + transform_arg(data[1]) + ")";
         }
         else if (type == "list-nodes")
         {

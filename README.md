@@ -700,56 +700,38 @@ without using the set syntax `{...}` or the `conjunction` core node.
 
 ### Negation in Rules
 
-Negation allows rules to check for the **absence** of a fact pattern. This is achieved by linking a fact pattern to the `negation` core node using `~`.
+Negation allows rules to check for the **absence** of a fact pattern.
+This is achieved by linking a fact pattern to the `negation` core node using `~`.
+Inside conditions (including comma-conjunctions), zelph supports a compact negation form using the prefix operator `¬`.
 
-**Syntax:** `(*(Pattern) ~ negation)`
+**Syntax:** `¬(Pattern)` or (explicitly) `*(Pattern) ~ negation`
 
 The engine evaluates this by checking if **no** facts match the specified pattern given the current variable bindings.
 
-**Example 1: Logical Negation**  
-“If something is yellow, and there is no fact stating it is green, deduce it is not green.”
+> Note: `¬` is optional. If it is inconvenient to type in your environment, simply use the explicit negation syntax shown below. Most terminals support UTF-8 input; if yours doesn’t, the explicit form works everywhere.
+
+**Example**  
+“If something is colored, and there is no fact stating it is green, deduce it is not green.”
 
 Using comma conjunction sugar:
 
 ```
-zelph> (A is yellow, *(A is green) ~ negation) => (A "is not" green)
-{(A  is   yellow )  negation } => (A  is not   green )
+zelph> (A is colored, ¬(A is green)) => (A "is not" green)
 zelph> plant is green
-plant   is   green
-zelph> plant is yellow
-plant   is   yellow
-zelph> plant2 is yellow
-plant2   is   yellow
-( plant2   is not   green ) ⇐ {( plant2   is   yellow )  negation }
+zelph> plant is colored
+zelph> plant2 is colored
+( plant2   is not   green ) ⇐ ...
 ```
 
-The negated condition `*(A is green) ~ negation` marks the **pattern node** `(A is green)` as a negation condition and returns that pattern node (the `*` focus is essential here).
+The negated condition `¬(A is green)` marks the **pattern node** `(A is green)` as a negation condition and returns that pattern node (equivalent to `*(A is green) ~ negation`, where the `*` focus ensures the expression evaluates to the pattern node).
 
 The same rule in fully explicit form:
 
 ```
-(*{(A is yellow) (*(A is green) ~ negation)} ~ conjunction) => (A "is not" green)
+(*{(A is colored) (*(A is green) ~ negation)} ~ conjunction) => (A "is not" green)
 ```
 
-
-**Example 2: Topological Querying (Finding the last element of a list)**
-Negation combined with the cons structure enables analysis of lists. To find the last element,
-we look for a cons cell whose cdr is `nil`:
-
-```
-zelph> <1 2 3>
-< 1   2   3 >
-zelph> (A cons nil) => (A "is last of" *(A cons nil))
-(A  cons  nil) => (A  is last of  < A >)
- 3   is last of  < 3 > ⇐ ( 3   cons   nil )
-zelph> (*{(B "is last of" _Rest) (A cons _Rest)} ~ conjunction) => (B "is last of" *(A cons _Rest))
-{(A  cons  _Rest) (B  is last of  _Rest)} => (B  is last of  < A  ... >)
- 3   is last of  < 2   3 > ⇐ {( 2   cons  < 3 >) ( 3   is last of  < 3 >)}
- 3   is last of  < 1   2   3 > ⇐ {( 1   cons  < 2   3 >) ( 3   is last of  < 2   3 >)}
-```
-
-The first rule handles the base case (single-element list), the second propagates the result
-recursively up the cons chain. This is a general-purpose pattern for any cons-list analysis.
+The [focus operator `*`](#the-focus-operator-) causes the surrounding expression to represent the focused expression. Without it, `((A is green) ~ negation)` would represent the statement that the condition "A is green" is a negation, instead of the condition itself.
 
 ### Fresh Variables (Node Generation)
 
@@ -1340,7 +1322,7 @@ The embedded Janet environment exposes the following functions (as of zelph 0.9.
   Create a cons list from the characters of `str`. Characters are reversed before cons construction, matching the `<...>` compact list syntax.
 
 - **`(zelph/negate pattern)`**  
-  Mark a fact pattern as a negation condition and return the **pattern node** (equivalent to `*(pattern) ~ negation` in zelph syntax).
+  Mark a fact pattern as a negation condition and return the **pattern node** (equivalent to `*(pattern) ~ negation` in zelph syntax). In zelph syntax, this is also what `¬(pattern)` desugars to.
 
 - **`(zelph/rule conditions & consequences)`**  
   Convenience constructor for rules.  
@@ -1827,9 +1809,12 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 | `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query — returns array of `@{symbol node}` tables |
 | *(no equivalent)* | `(zelph/exists "sun" "is" "yellow")` | Check if a fact exists (read-only) |
 | *(no equivalent)* | `(zelph/name node)` | Get the name of a node as a string |
-| *(no equivalent)* | `(zelph/sources "~" "city")` | Find all subjects for a predicate–object pair |
-| *(no equivalent)* | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
-| `(*(P) ~ negation)` | `(zelph/negate (zelph/fact ...))` | Mark a pattern as negation condition |
+| `A ~ city` | `(zelph/sources "~" "city")` | Find all subjects for a predicate–object pair |
+| `Berlin "is located in" L` | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
+| `Berlin R city` | *(no equivalent)* | Find all predicates that connect a given Berlin and city |
+| `S P O` | *(no equivalent)* | List all facts in the network (use with caution on large databases) |
+| `(*(P) ~ negation)` | `(zelph/negate (zelph/fact ...))` | Mark a pattern as negation condition (evaluates to the pattern node) |
+| `¬(P)` | `(zelph/negate P)` | Negation sugar for patterns (evaluates to the pattern node) |
 | `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)` | Create inference rule |
 | `(cond1, cond2, cond3)` | *(desugars to)* set + `~ conjunction` | Conjunction expression (comma sugar), evaluates to the conjunction set node |
 | `(cond1, cond2) => cons` | `(zelph/rule [cond1 cond2] cons)` | Rule using a conjunction of conditions |

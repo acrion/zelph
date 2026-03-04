@@ -68,6 +68,12 @@ elem4 partoflist mylist
 elem5 partoflist mylist
 (A partoflist L, *(A --> X) ~ negation) => (A "is last of" L)
 
+# negation syntax sugar
+(A is yellow, ¬(A is green)) => (A "is not" green)
+plant is green
+plant is yellow
+plant2 is yellow
+
 # contradiction test
 (A instanceof B, A subclassof B) => !
 gene instanceof geneclass

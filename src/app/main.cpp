@@ -27,7 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 
 #ifndef _WIN32
-    #include <cstdlib>     // for system
     #include <sys/types.h> // for fork
     #include <sys/wait.h>  // for waitpid
     #include <unistd.h>    // for execvp, getenv
@@ -136,9 +135,10 @@ int main(int argc, char** argv)
             std::wcout << make_prompt();
             std::wcout.flush();
 
-            std::wstring line;
-            while (std::getline(std::wcin, line))
+            std::string line8;
+            while (std::getline(std::cin, line8))
             {
+                std::wstring line = zelph::string::unicode::from_utf8(line8);
                 if (line == exit_command)
                     break;
 
