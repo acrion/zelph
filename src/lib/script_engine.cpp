@@ -187,8 +187,14 @@ public:
                 # Returns [:focused value-node]
                 :tag-focused (group (* (constant :focused) "*" :val-any))
 
+                # Conjunction sugar: comma-separated conditions inside parentheses
+                :conj-cond (group (* (constant :condition) :val-any (any (sequence :s+ :val-any))))
+                :comma-sep (* :s* "," (not :symchars) :s*)
+
                 # Nested Facts: ( A B C )
-                :tag-nested (group (* (constant :nested) "(" :s* :stmt-any :s* ")"))
+                :tag-nested (choice
+                              (group (* (constant :conjunction) "(" :s* :conj-cond (some (* :comma-sep :conj-cond)) :s* ")"))
+                              (group (* (constant :nested) "(" :s* :stmt-any :s* ")")))
 
                 # Sets: { A B C }
                 :set-content (any (sequence :s* :val-any))
@@ -768,6 +774,50 @@ public:
             for (int32_t i = 1; i < len; ++i)
                 args.push_back(data[i]);
             return build_smart_call("zelph/set", args);
+        }
+        else if (type == "conjunction")
+        {
+            // [:conjunction [:condition v1 v2 ...] [:condition v3 v4 ...] ...]
+            // Build a set of condition facts, mark as conjunction, return the set node.
+            // This is the desugared form of: (*{cond1 cond2 ...} ~ conjunction)
+            std::vector<std::string> cond_codes;
+            for (int32_t i = 1; i < len; ++i)
+            {
+                const Janet* cond_data;
+                int32_t      cond_len;
+                if (!janet_indexed_view(data[i], &cond_data, &cond_len) || cond_len < 2) continue;
+
+                int cond_val_count = cond_len - 1; // excluding :condition tag
+                if (cond_val_count == 1)
+                {
+                    // Single value (e.g. a nested conjunction or negated pattern)
+                    cond_codes.push_back(transform_arg(cond_data[1]));
+                }
+                else
+                {
+                    // Multiple values: treat as fact (S P O...), supports * focus
+                    std::vector<Janet> args;
+                    for (int32_t j = 1; j < cond_len; ++j)
+                        args.push_back(cond_data[j]);
+                    cond_codes.push_back(build_smart_call("zelph/fact", args));
+                }
+            }
+
+            if (cond_codes.empty()) return "nil";
+            if (cond_codes.size() == 1) return cond_codes[0]; // Safety: shouldn't happen with PEG
+
+            // (let [$c0 code0 $c1 code1 ...
+            //       $cs (zelph/set $c0 $c1 ...)
+            //       _ (zelph/fact $cs "~" "conjunction")]
+            //   $cs)
+            std::string let_block = "(let [";
+            for (size_t i = 0; i < cond_codes.size(); ++i)
+                let_block += "$c" + std::to_string(i) + " " + cond_codes[i] + " ";
+            let_block += "$cs (zelph/set";
+            for (size_t i = 0; i < cond_codes.size(); ++i)
+                let_block += " $c" + std::to_string(i);
+            let_block += R"() _ (zelph/fact $cs "~" "conjunction")] $cs))";
+            return let_block;
         }
         else if (type == "list-nodes")
         {

@@ -59,21 +59,18 @@
 # D1: both operands non-nil
 # Match the head digits A (from left) and B (from right), look up the
 # carry-out E, then assert the recursive add for the tails R and S.
-(*{(((A cons R) add (B cons S)) ci C)
-   (((A d+ B) ci C) co E)}
-  ~ conjunction)
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) co E)
 => ((R add S) ci E)
 
 # D2: left non-nil, right exhausted — treat missing right digit as 0
-(*{(((A cons R) add nil) ci C)
-   (((A d+ 0) ci C) co E)}
-  ~ conjunction)
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) co E)
 => ((R add nil) ci E)
 
 # D3: left exhausted, right non-nil — treat missing left digit as 0
-(*{((nil add (B cons S)) ci C)
-   (((0 d+ B) ci C) co E)}
-  ~ conjunction)
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) co E)
 => ((nil add S) ci E)
 
 # ---------------------------------------------------------------------------
@@ -84,27 +81,24 @@
 # ---------------------------------------------------------------------------
 
 # As1: both operands non-nil
-(*{(((A cons R) add (B cons S)) ci C)
-   (((A d+ B) ci C) sum D)
-   (((A d+ B) ci C) co E)
-   (((R add S) ci E) sum T)}
-  ~ conjunction)
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) sum D,
+ ((A d+ B) ci C) co E,
+ ((R add S) ci E) sum T)
 => ((((A cons R) add (B cons S)) ci C) sum (D cons T))
 
 # As2: left non-nil, right nil
-(*{(((A cons R) add nil) ci C)
-   (((A d+ 0) ci C) sum D)
-   (((A d+ 0) ci C) co E)
-   (((R add nil) ci E) sum T)}
-  ~ conjunction)
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) sum D,
+ ((A d+ 0) ci C) co E,
+ ((R add nil) ci E) sum T)
 => ((((A cons R) add nil) ci C) sum (D cons T))
 
 # As3: left nil, right non-nil
-(*{((nil add (B cons S)) ci C)
-   (((0 d+ B) ci C) sum D)
-   (((0 d+ B) ci C) co E)
-   (((nil add S) ci E) sum T)}
-  ~ conjunction)
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) sum D,
+ ((0 d+ B) ci C) co E,
+ ((nil add S) ci E) sum T)
 => (((nil add (B cons S)) ci C) sum (D cons T))
 
 # ---------------------------------------------------------------------------
@@ -113,7 +107,4 @@
 # The guard (N + M) ensures that only pairs with an explicit + fact get a
 # result, preventing internal (nil add nil) states from being connected.
 # ---------------------------------------------------------------------------
-(*{(N + M)
-   (((N add M) ci 0) sum T)}
-  ~ conjunction)
-=> ((N + M) = T)
+(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)

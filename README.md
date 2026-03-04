@@ -230,24 +230,27 @@ This means the graph doesn't just *describe* knowledge; it *structures the execu
 
 ### Facts and Relations
 
-Facts in zelph are represented as triples consisting of a subject, relation type, and object.
-The standard relation type is `~`, which represents a categorical relation (similar to "is a" or "instance of").
-For example:
+A *fact* in zelph is a statement node created from a **subject**, a **predicate**, and an object:
+
+```
+subject predicate object
+```
+
+A predefined predicate is `~`, used for classification:
 
 ```
 X ~ Y
 ```
 
-This means "X is an instance of category Y" or "X is a Y".
+This can be read as "X is an instance of class Y", but depends on the context of your dataset. It is used in zelph’s [internal topology](#internal-representation-of-facts) — there is no need to actually use it in your scripts.
 
 #### Working with Custom Relations
 
-zelph can work with any type of relation, not just the standard `~` relation.
-Here’s how custom relations work:
+zelph can use any predicate node, not just `~`:
 
 ```
 zelph> bright "is opposite of" dark
- bright   is opposite of   dark
+bright   is opposite of   dark
 ```
 
 In this example, using the interactive REPL, we enter a subject-predicate-object triple.
@@ -263,13 +266,17 @@ zelph supports advanced grouping and recursion using parentheses `()`, braces `{
 
 #### Parentheses: Nested Facts
 
-Triples can be nested within other triples. A parenthesized expression `(S P O)` evaluates to the **node representing that specific fact** (the relation node). This allows you to make statements about statements:
+Parentheses `(...)` have **two distinct meanings** in zelph:
+
+A parenthesised statement `(s p o)` creates the fact and evaluates to the **statement node** (i.e. the relation/fact node). This lets you make statements *about* statements:
 
 ```
 (bright "is opposite of" dark) "is a" "symmetric relation"
 ```
 
-Here, the subject of the outer statement is the node representing the fact that bright is opposite of dark.
+Here, the subject of the outer statement is the node representing the inner fact.
+
+> Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid *top-level* statement in the REPL; nested facts are meant to be used *as parts* of a larger statement.
 
 #### Braces: Sets
 
@@ -349,9 +356,51 @@ Because of this rule, `<abc>` is internally identical to the explicit node list 
 
 ---
 
+##### Referring to the *same* cons list in different ways
+
+The list node is the **outermost cons cell**. You can refer to the same list topology using any of these equivalent notations:
+
+1) **Explicit cons chain (nested facts)**
+
+```
+(3 cons (1 cons nil))
+```
+
+2) **Compact list syntax** (character splitting + reversal rule)
+
+```
+<13>
+```
+
+3) **Node-list syntax** (space-separated elements)
+
+```
+<3 1>
+```
+
+Example session:
+
+```
+zelph> (3 cons (1 cons nil)) is prime
+<13>  is   prime
+zelph> <13> is prime
+<13>  is   prime
+zelph> <3 1> is prime
+<13>  is   prime
+```
+
+Why this works:
+
+- `<13>` is parsed as a compact list of characters `"1"` and `"3"`, **reversed before cons construction**, so it becomes the same internal cons chain as `<3 1>`.
+- `format_fact` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
+
+> To avoid confusion: `<13>` is list syntax, **not** a numeric node ID. Numeric IDs are shown elsewhere in parentheses (e.g. `(10)` in Mermaid graphs).
+
+---
+
 ##### Display: compact vs. spaced
 
-When a list consists entirely of single-character named nodes, it is printed it in a reversed compact form without spaces, e.g. `<abc>`.  
+When a list consists entirely of single-character named nodes, it is printed in a reversed compact form without spaces, e.g. `<abc>`.  
 This is a **display heuristic only**. It does not change the underlying topology or impose any numeric meaning.
 
 ---
@@ -449,7 +498,7 @@ The full multi-digit algorithm is expressed by eight rules:
         - D2/D3: treat missing digits as `0` once one side is `nil`
     - **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
     - **C0 (Connect):** expose the result under the user-facing `=` predicate:  
-        `(*{(N + M) (((N add M) ci 0) sum T)} ~ conjunction) => ((N + M) = T)`
+        `(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)`
 
 ##### Example addition
 
@@ -633,6 +682,24 @@ Example rule:
 
 This rule states: *If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced.*
 
+#### Syntax Sugar for Conditions
+
+A parenthesised group that contains commas is parsed as **conjunction syntax sugar**:
+
+```
+(cond1, cond2, cond3)
+```
+
+Each comma-separated condition is itself a normal zelph statement fragment (either a fact pattern like `X R Y`, or a nested expression). The whole parenthesised expression evaluates to a **set node** that is automatically tagged as a conjunction internally (i.e. it desugars to the same topology as `(*{...} ~ conjunction)`).
+
+Practical consequence: you can above example rules as
+
+```
+(R ~ transitive, X R Y, Y R Z) => (X R Z)
+```
+
+without using the set syntax `{...}` or the `conjunction` core node.
+
 ### Negation in Rules
 
 Negation allows rules to check for the **absence** of a fact pattern. This is achieved by linking a fact pattern to the `negation` core node using `~`.
@@ -641,16 +708,31 @@ Negation allows rules to check for the **absence** of a fact pattern. This is ac
 
 The engine evaluates this by checking if **no** facts match the specified pattern given the current variable bindings.
 
-**Example 1: Logical Negation**
-"If the sun is yellow, and there is no fact stating it is green, deduce it is not green."
+**Example 1: Logical Negation**  
+“If something is yellow, and there is no fact stating it is green, deduce it is not green.”
+
+Using comma conjunction sugar:
 
 ```
-zelph> sun is yellow
- sun   is   yellow
-zelph> (*(A is green) ~ negation) => (A "is not" green)
- negation  => (A  is not   green )
- sun   is not   green  ⇐  negation
+zelph> (A is yellow, *(A is green) ~ negation) => (A "is not" green)
+{(A  is   yellow )  negation } => (A  is not   green )
+zelph> plant is green
+plant   is   green
+zelph> plant is yellow
+plant   is   yellow
+zelph> plant2 is yellow
+plant2   is   yellow
+( plant2   is not   green ) ⇐ {( plant2   is   yellow )  negation }
 ```
+
+The negated condition `*(A is green) ~ negation` marks the **pattern node** `(A is green)` as a negation condition and returns that pattern node (the `*` focus is essential here).
+
+The same rule in fully explicit form:
+
+```
+(*{(A is yellow) (*(A is green) ~ negation)} ~ conjunction) => (A "is not" green)
+```
+
 
 **Example 2: Topological Querying (Finding the last element of a list)**
 Negation combined with the cons structure enables analysis of lists. To find the last element,
@@ -1241,6 +1323,61 @@ Equivalent to:
 { red green blue }
 ```
 
+#### Janet API Reference (zelph/*)
+
+The embedded Janet environment exposes the following functions (as of zelph 0.9.4). Unless stated otherwise, functions accept either strings (resolved as node names in the current `.lang`) or `zelph/node` values.
+
+##### Graph construction (mutating)
+
+- **`(zelph/resolve name)`**  
+  Resolve (and create if needed) the node named `name` in the current language.
+
+- **`(zelph/fact s p o & more-objects)`**  
+  Create a fact node for `s p o...` and return the statement node.
+
+- **`(zelph/set nodes...)`**  
+  Create a set super-node from the given elements and return it.
+
+- **`(zelph/list nodes...)`**  
+  Create a cons list from existing nodes; the **first argument becomes the outermost cons cell**.
+
+- **`(zelph/list-chars str)`**  
+  Create a cons list from the characters of `str`. Characters are reversed before cons construction, matching the `<...>` compact list syntax.
+
+- **`(zelph/negate pattern)`**  
+  Mark a fact pattern as a negation condition and return the **pattern node** (equivalent to `*(pattern) ~ negation` in zelph syntax).
+
+- **`(zelph/rule conditions & consequences)`**  
+  Convenience constructor for rules.  
+  `conditions` must be a non-empty array/tuple of fact (pattern) nodes; `consequences` are one or more fact nodes.  
+  Returns the conjunction set node.
+
+##### Querying (read-only)
+
+- **`(zelph/query pattern-node)`**  
+  Execute a query and return an array of tables, mapping variable symbols (e.g. `'X`) to bound `zelph/node` values.  
+  The argument is typically the return value of `(zelph/fact 'X ... 'Y)`.
+
+- **`(zelph/exists s p o & more-objects)`**  
+  Check whether a fact exists **without creating** nodes/facts. Returns boolean.
+
+- **`(zelph/name node &opt lang)`**  
+  Return the node’s name as a string (or `nil` if unnamed). Optional `lang` selects the naming language.
+
+- **`(zelph/sources predicate target)`**  
+  Return all subjects `S` such that `S predicate target` exists (read-only traversal).
+
+- **`(zelph/targets subject predicate)`**  
+  Return all objects `O` such that `subject predicate O` exists (read-only traversal).
+
+##### Cons cell inspection (read-only)
+
+- **`(zelph/car cell)`**  
+  Return the car (first element) of a cons cell, or `nil` if `cell` is not a cons cell.
+
+- **`(zelph/cdr cell)`**  
+  Return the cdr (rest of list) of a cons cell. Returns the `nil` list terminator node for the last cell; returns `nil` if `cell` is not a cons cell.
+
 ### Referencing Janet Variables in zelph: Unquote `,`
 
 The `,` (comma) operator bridges the two languages in the opposite direction: it allows zelph statements to reference values defined in Janet. Prefix any Janet variable name with `,` inside zelph syntax:
@@ -1253,6 +1390,12 @@ The `,` (comma) operator bridges the two languages in the opposite direction: it
 ```
 
 This is equivalent to writing `Berlin "is capital of" Germany`, but the subject and predicate come from Janet variables.
+
+> Important: unquoting is written as `,name` **without whitespace**.  
+> A comma that is followed by whitespace (or `)`) is interpreted as a **conjunction separator** inside `(cond1, cond2, ...)`.
+>
+> - `,pred`  → unquote the Janet variable `pred`
+> - `, pred` → **not** unquote; inside conjunction parentheses it acts as a separator, and outside it is simply invalid syntax
 
 #### How Unquote Works
 
@@ -1683,7 +1826,7 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 | `< Berlin Paris >` | `(zelph/list "Berlin" "Paris")` | Ordered cons-list (first element is the head/outermost cons cell) |
 | `<abc>` | `(zelph/list-chars "abc")` | Compact char cons-list (LSB-first: rightmost char = outermost) |
 | `*expr` | `let` binding to capture and reuse a sub-expression | Focus operator |
-| `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value |
+| `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value (no whitespace after comma) |
 | `% code` | — | Execute Janet inline |
 | `%` (bare) | — | Toggle Janet block mode |
 | `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query — returns array of `@{symbol node}` tables |
@@ -1693,6 +1836,8 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 | *(no equivalent)* | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
 | `(*(P) ~ negation)` | `(zelph/negate (zelph/fact ...))` | Mark a pattern as negation condition |
 | `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)` | Create inference rule |
+| `(cond1, cond2, cond3)` | *(desugars to)* set + `~ conjunction` | Conjunction expression (comma sugar), evaluates to the conjunction set node |
+| `(cond1, cond2) => cons` | `(zelph/rule [cond1 cond2] cons)` | Rule using a conjunction of conditions |
 
 ## Project Status
 

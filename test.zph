@@ -66,10 +66,10 @@ elem2 partoflist mylist
 elem3 partoflist mylist
 elem4 partoflist mylist
 elem5 partoflist mylist
-(*{(A partoflist L) (*(A --> X) ~ negation)} ~ conjunction) => (A "is last of" L)
+(A partoflist L, *(A --> X) ~ negation) => (A "is last of" L)
 
 # contradiction test
-(*{(A instanceof B) (A subclassof B)} ~ conjunction) => !
+(A instanceof B, A subclassof B) => !
 gene instanceof geneclass
 gene subclassof geneclass
 
