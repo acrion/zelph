@@ -584,7 +584,7 @@ private:
             L".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             L".cleanup                    – Remove isolated nodes and clean name mappings",
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
-            L".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off)",
+            L".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
             L".auto-run                   – Toggle automatic execution of .run after each input",
             L".parallel                   – Toggle parallel processing (default: on)",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
@@ -1508,7 +1508,7 @@ private:
     void cmd_log(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() != 2)
-            throw std::runtime_error("Command .log: exactly one maximum recursion depth required (0 = off).");
+            throw std::runtime_error("Command .log: exactly one maximum recursion depth required (0 = off, -1 = only statistics).");
 
         int depth;
         try
