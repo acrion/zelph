@@ -708,7 +708,7 @@ Inside conditions (including comma-conjunctions), zelph supports a compact negat
 
 The engine evaluates this by checking if **no** facts match the specified pattern given the current variable bindings.
 
-> Note: `¬` is optional. If it is inconvenient to type in your environment, simply use the explicit negation syntax shown below. Most terminals support UTF-8 input; if yours doesn’t, the explicit form works everywhere.
+> Note: ¬ is optional. If it is inconvenient to type, you can either copy/paste it, configure a compose key / character picker, or simply use the explicit syntax *(Pattern) ~ negation, which is fully equivalent and works in any ASCII-only setup.
 
 **Example**  
 “If something is colored, and there is no fact stating it is green, deduce it is not green.”
@@ -773,13 +773,41 @@ This capability allows zelph to perform symbolic manipulation and structural tra
 
 ### Variables and Logic (A Predicate Logic Perspective)
 
-zelph’s logic system can be viewed through the lens of first-order logic:
+zelph’s rule language is close in spirit to first-order logic and logic programming, but it is important to keep in mind that zelph operates over a *graph of facts* and a unification-based matcher.
 
-- **Variables:** Single uppercase letters (or words starting with `_`) act as variables.
-- **Universal Quantification ($\forall$):** Variables appearing in the rule are implicitly universally quantified. The rule applies to *all* X, Y, Z, R that satisfy the pattern.
-- **Existential Quantification ($\exists$):** A variable that appears *only* in the consequence acts as an existential quantifier (generates a fresh node).
-- **Conjunction:** The `~ conjunction` tag explicitly defines the set as an AND-operation.
-- **Negation:** The `~ negation` tag explicitly defines a condition as a NOT-operation.
+- **Variables:** Single uppercase letters (or identifiers starting with `_`) act as logic variables. They are scoped to the current query or rule application.
+
+- **Universal quantification (implicit):** Variables that occur in the *conditions* of a rule behave like universally quantified variables. Informally, a rule applies to all bindings of `X`, `Y`, `Z`, `R`, … for which the condition patterns unify with existing facts in the graph.
+
+- **Existential quantification (fresh nodes):** A variable that appears *only in the consequence* is treated as a fresh variable. During inference, zelph may generate a new anonymous node for it (subject to the engine’s termination checks). This is best understood as constructive / generative logic rather than merely “introducing an existential witness”.
+
+- **Conjunction (multi-condition matching):** A conjunction is represented as a set of condition patterns that is tagged as a conjunction. You can write this explicitly as `(*{...} ~ conjunction)`, but in practice the comma syntax is the idiomatic form:
+```
+
+(cond1, cond2, cond3) => consequence
+
+```
+Semantically, this is an AND: all conditions must match under a shared variable assignment.
+
+- **Negation (absence under current bindings):** A negated condition is *not* a boolean operator in the sense of “negate a truth value”. Instead, it is a *non-existence check* against the current fact base **under the variable bindings established by the positive conditions**. The idiomatic syntax is:
+```
+
+¬(Pattern)
+
+```
+which desugars to the explicit form `(*(Pattern) ~ negation)` and evaluates to the pattern node marked as a negation condition.
+
+Operationally, `¬(Pattern)` succeeds iff **no** fact in the graph unifies with `Pattern` given the current bindings. This corresponds closely to the “negation as failure” intuition from logic programming: the engine tries to find a witness; if none exists, the negated condition is considered satisfied.
+
+Example:
+```
+
+(A is yellow, ¬(A is green)) => (A "is not" green)
+
+```
+Read as: for each `A`, if `A is yellow` is known and there is *no* fact that matches `A is green`, then deduce `A "is not" green`.
+
+Note: because the check is performed against the current graph state, the meaning is inherently *closed-world with respect to the loaded facts* (and whatever has been inferred so far). It is therefore best seen as a pragmatic integrity / constraint mechanism on top of an open-ended knowledge graph, rather than classical logical negation in the model-theoretic sense.
 
 ### Examples
 
