@@ -992,8 +992,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
             };
 
-            // No match => negation succeeds => continue with current bindings
-
             if (should_log(depth))
             {
                 std::wstring cond_str;
@@ -1007,36 +1005,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
             }
 
-            // --- Step 1: Try standard Unification ---
-            // This handles the common case where all variables are already
-            // bound by prior positive conditions.
-            std::shared_ptr<Variables> match = u->Next();
-            u->wait_for_completion();
-
-            if (match)
-            {
-                if (logging_active())
-                    _prof.negation_fail.fetch_add(1, std::memory_order_relaxed);
-
-                if (should_log(depth))
-                {
-                    log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
-                    for (const auto& [var, val] : *match)
-                    {
-                        log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
-                    }
-                }
-                // Match found => negation fails => prune this branch
-                return;
-            }
-
-            if (logging_active())
-                _prof.negation_success.fetch_add(1, std::memory_order_relaxed);
-
-            if (should_log(depth))
-                log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
-
-            // --- Step 2: No positive match. Determine how to proceed. ---
             // Parse the negated pattern to inspect its subject.
             adjacency_set pattern_objects;
             Node          pattern_subject = parse_fact(condition, pattern_objects, rule.node);
@@ -1046,17 +1014,41 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             if (!subject_is_unbound)
             {
-                // Subject is bound or constant. The Unification already
-                // checked all facts correctly (iterating by relation,
-                // matching the bound subject). No match → negation
-                // genuinely succeeds with the current bindings.
+                // --- Step 1: Try standard Unification ---
+                // This handles the common case where all variables are already
+                // bound by prior positive conditions.
+                std::shared_ptr<Variables> match = u->Next();
+                u->wait_for_completion();
+
+                if (match)
+                {
+                    if (logging_active())
+                        _prof.negation_fail.fetch_add(1, std::memory_order_relaxed);
+
+                    if (should_log(depth))
+                    {
+                        log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
+                        for (const auto& [var, val] : *match)
+                        {
+                            log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
+                        }
+                    }
+                    // Match found => negation fails => prune this branch
+                    return;
+                }
+
+                if (logging_active())
+                    _prof.negation_success.fetch_add(1, std::memory_order_relaxed);
+
+                if (should_log(depth))
+                    log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
+
                 proceed_with_bindings(rule.variables);
             }
             else
             {
-                // Subject is unbound. The Unification couldn't produce
-                // matches because it requires ALL parts to unify
-                // simultaneously. We use complementary enumeration:
+                // --- Step 2: Complementary enumeration ---
+                // Subject is unbound. We use complementary enumeration:
                 // iterate all facts of this relation, collect unique
                 // subjects (= the domain), and for each check whether
                 // the full pattern holds. Those where it does NOT hold

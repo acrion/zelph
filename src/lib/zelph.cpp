@@ -1357,6 +1357,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     // 5. Proxy / Instance Detection
     // If a node is anonymous and not a container, check if it is an instance of a concept (IsA).
     // If so, display the concept instead of the structural fact "Node IsA Concept".
+    bool is_negation = false;
     if (_pImpl->exists(resolved))
     {
         for (Node rel : _pImpl->get_right(resolved))
@@ -1374,6 +1375,12 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                     // Avoid self-reference loops
                     if (concept_node != resolved)
                     {
+                        if (concept_node == core.Negation)
+                        {
+                            is_negation = true;
+                            continue; // Skip metadata, we will format it structurally below
+                        }
+
 #ifdef DEBUG_FORMAT_FACT
                         std::clog << indent << "[DEBUG format_fact] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
@@ -1566,9 +1573,13 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     // The components (subject_name, relation_name, objects_name) are already marked.
     result = subject_name + L" " + relation_name + L" " + objects_name;
 
+    if (is_negation)
+    {
+        result = L"¬(" + result + L")";
+    }
     // If this is a statement node used as a value inside another structure,
     // wrap the whole triple in parentheses to make it valid input syntax.
-    if (parent != 0 && resolved_is_stmt)
+    else if (parent != 0 && resolved_is_stmt)
     {
         Node pred = parse_relation(resolved);
         if (pred != core.Cons) // lists are handled earlier; don't wrap "<...>"
