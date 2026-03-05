@@ -1963,12 +1963,13 @@ Basic pattern matching.
 
 Combine for intersections.
 
-- Capitals in Europe: `(*{(X "is located in" Europe) (X "is capital of" Germany)} ~ conjunction)`  
+- Capitals in Europe: `X "is located in" Europe, X "is capital of" Y`  
   Output:
   ```
-  {(X  is capital of   Germany ) (X  is located in   Europe )}
   Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
   ```
+
+  > Note: In this example we make use of the comma `,` [syntax sugar for conditions](#syntax-sugar-for-conditions). The same query in normal syntax is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`.
 
 ## Wikidata-Specific Queries
 

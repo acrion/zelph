@@ -221,9 +221,11 @@ public:
                 :stmt-any (sequence :val-any (any (sequence :s+ :val-any)))
 
                 # Top Level Parsing
-                # Everything is captured into a :root group.
+                # Everything is captured into a :root group, or a :conjunction if comma separated.
                 # C++ logic decides if it's a single value or a fact (S P O) based on element count.
-                :main (sequence :s* (group (* (constant :root) :stmt-any)) :s*)})
+                :main (sequence :s* (choice
+                                        (group (* (constant :conjunction) :conj-cond (some (* :comma-sep :conj-cond))))
+                                        (group (* (constant :root) :stmt-any))) :s* -1)})
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))
@@ -996,46 +998,53 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     JanetArray* tree = janet_unwrap_array(result);
     if (tree->count < 1) return "";
 
-    // The PEG now returns `[:root val1 val2 ...]`
     const Janet* root_data;
     int32_t      root_len;
     if (!janet_indexed_view(tree->data[0], &root_data, &root_len)) return "";
 
     std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(root_data[0]));
-    if (type != "root") return "";
-
-    // Check how many items we have
-    // root_data[0] is :root tag
-    // root_data[1..n] are the values
-    int val_count = root_len - 1;
-
-    if (val_count == 0) return "";
-
-    if (val_count == 1)
+    if (type == "root")
     {
-        // A bare parenthesized fact like (A rel B) at the top level is a syntax error:
-        // nested facts are only valid as arguments inside a larger statement, not standalone.
-        const Janet* val_data;
-        int32_t      val_len;
-        if (janet_indexed_view(root_data[1], &val_data, &val_len) && val_len > 0
-            && janet_checktype(val_data[0], JANET_KEYWORD))
+        // Check how many items we have
+        // root_data[0] is :root tag
+        // root_data[1..n] are the values
+        int val_count = root_len - 1;
+
+        if (val_count == 0) return "";
+
+        if (val_count == 1)
         {
-            std::string val_type = reinterpret_cast<const char*>(janet_unwrap_keyword(val_data[0]));
-            if (val_type == "nested")
-                return ""; // Syntax error: (fact) at top level is not a valid statement
+            // A bare parenthesized fact like (A rel B) at the top level is a syntax error:
+            // nested facts are only valid as arguments inside a larger statement, not standalone.
+            const Janet* val_data;
+            int32_t      val_len;
+            if (janet_indexed_view(root_data[1], &val_data, &val_len) && val_len > 0
+                && janet_checktype(val_data[0], JANET_KEYWORD))
+            {
+                std::string val_type = reinterpret_cast<const char*>(janet_unwrap_keyword(val_data[0]));
+                if (val_type == "nested")
+                    return ""; // Syntax error: (fact) at top level is not a valid statement
+            }
+            return _pImpl->transform_arg(root_data[1]);
         }
-        return _pImpl->transform_arg(root_data[1]);
+        else
+        {
+            // Fact (S P O...)
+            std::vector<Janet> fact_args;
+            for (int i = 1; i < root_len; ++i)
+            {
+                fact_args.push_back(root_data[i]);
+            }
+            return _pImpl->build_smart_call("zelph/fact", fact_args);
+        }
     }
-    else
+    else if (type == "conjunction")
     {
-        // Fact (S P O...)
-        std::vector<Janet> fact_args;
-        for (int i = 1; i < root_len; ++i)
-        {
-            fact_args.push_back(root_data[i]);
-        }
-        return _pImpl->build_smart_call("zelph/fact", fact_args);
+        // Direktes Komma-Conjunction am Top-Level
+        return _pImpl->transform_arg(tree->data[0]);
     }
+
+    return "";
 }
 
 void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
@@ -1187,6 +1196,8 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     int  top_tokens   = 0;
     bool in_top_token = false;
 
+    bool has_comma_at_depth_1 = false;
+
     for (char c : code)
     {
         if (in_comment)
@@ -1194,17 +1205,21 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             if (c == '\n') in_comment = false;
             continue;
         }
+
         if (escape)
         {
             escape = false;
             continue;
         }
+
         if (in_string)
         {
             if (c == '\\')
+            {
                 escape = true;
-            else if (c == '"')
-                in_string = false;
+                continue;
+            }
+            if (c == '"') in_string = false;
             continue;
         }
 
@@ -1246,6 +1261,12 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         }
         else
         {
+            // Recognition of comma conjunctions (syntactic sugar) within the outermost parentheses
+            if (c == ',' && depth == 1)
+            {
+                has_comma_at_depth_1 = true;
+            }
+
             // Any other character: atom chars, operators, < > * , etc.
             if (depth == 0 && !in_top_token)
             {
@@ -1256,7 +1277,32 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     }
 
     if (depth != 0 || in_string) return false;
-    if (top_tokens <= 2) return false; // nothing / subject only / S P only   — still needs input to complete a triple
+
+    if (top_tokens == 0) return false;
+    if (top_tokens <= 2)
+    {
+        if (top_tokens == 1)
+        {
+            size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
+            if (first_char_idx != std::string::npos)
+            {
+                char c = code[first_char_idx];
+
+                // If it is a bracketed comma query, it can be evaluated immediately.
+                if (c == '(' && has_comma_at_depth_1)
+                {
+                    return true;
+                }
+
+                // We also evaluate a single set {}, a list <>, a focus *, or negation ¬ directly (enabling fast queries in REPL).
+                if (c == '{' || c == '<' || c == '*' || c == '\xC2')
+                {
+                    return true;
+                }
+            }
+        }
+        return false; // nothing / subject only / S P only — still needs input to complete a triple
+    }
     return true;
 }
 

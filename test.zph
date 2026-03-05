@@ -73,6 +73,7 @@ elem5 partoflist mylist
 plant is green
 plant is yellow
 plant2 is yellow
+A is yellow, ¬(A is green)
 
 # contradiction test
 (A instanceof B, A subclassof B) => !
