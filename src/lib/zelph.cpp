@@ -1930,10 +1930,11 @@ Zelph::FactComponents Zelph::extract_fact_components(Node relation) const
     return components;
 }
 
-void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors) const
+void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors, bool dark_theme, bool horizontal_layout) const
 {
     adjacency_set conditions, deductions;
 
+    // Extract rules and parse conditions/deductions
     for (Node rule : _pImpl->get_left(core.Causes))
     {
         adjacency_set current_deductions;
@@ -1955,7 +1956,26 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     std::unordered_set<WrapperNode>                                all_nodes;
     size_t                                                         placeholder_counter = 0;
 
+    // Traverse the graph up to max_depth
     collect_mermaid_nodes(WrapperNode{false, start}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+
+    // --- COLOR PALETTES ---
+    // Start Node: Light = Yellow/Orange, Dark = Deep Amber/Copper
+    std::string col_start = dark_theme ? "#8a5c00" : "#FFBB00";
+    // Variables: Light = Soft Beige, Dark = Dark Gray-Brown
+    std::string col_var = dark_theme ? "#4e483d" : "#eee8dc";
+    // Conditions: Light = Light Blue, Dark = Muted Deep Blue
+    std::string col_cond = dark_theme ? "#2a5275" : "#87cefa";
+    // Deductions: Light = Light Green, Dark = Muted Forest Green
+    std::string col_ded = dark_theme ? "#3b6327" : "#bcee68";
+    // Placeholders: Light = Light Gray, Dark = Medium Gray
+    std::string col_ph = dark_theme ? "#404040" : "#d3d3d3";
+    // Default Nodes: Light = Very soft Blue-Gray, Dark = Lightened Anthracite
+    std::string col_def = dark_theme ? "#2d2d38" : "#f0f2f5";
+
+    // General styling
+    std::string text_col = dark_theme ? "#e0e0e0" : "#111111";
+    std::string line_col = dark_theme ? "#666666" : "#999999";
 
     // Node IDs, definitions and styles
     std::map<WrapperNode, std::string> node_ids;
@@ -1966,6 +1986,8 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     {
         std::string id;
         std::string raw_label;
+
+        // Generate ID and label based on node type
         if (wn.is_placeholder)
         {
             id        = "ph_" + std::to_string(wn.value);
@@ -1978,44 +2000,49 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
         }
         node_ids[wn] = id;
 
+        // Escape quotes for Mermaid syntax
         std::string label = raw_label;
         boost::replace_all(label, "\"", "\\\"");
 
-        node_defs.push_back("    " + id + "[\"" + label + "\"]");
+        // Use (" ") for rounded rectangle nodes to make them look modern
+        node_defs.push_back("    " + id + "(\"" + label + "\")");
 
+        // Determine node fill color based on its role
         std::string fill_color;
         if (!wn.is_placeholder)
         {
             Node node = wn.value;
             if (node == start)
             {
-                fill_color = "#FFBB00"; // Special color for start node
+                fill_color = col_start;
             }
             else if (Impl::is_var(node))
             {
-                fill_color = "#eee8dc"; // cornsilk2
+                fill_color = col_var;
             }
             else if (conditions.count(node))
             {
-                fill_color = "#87cefa"; // lightskyblue
+                fill_color = col_cond;
             }
             else if (deductions.count(node))
             {
-                fill_color = "#bcee68"; // darkolivegreen2
+                fill_color = col_ded;
+            }
+            else
+            {
+                fill_color = col_def; // Default node color
             }
         }
         else
         {
-            fill_color = "#d3d3d3";
+            fill_color = col_ph;
         }
 
-        if (!fill_color.empty())
-        {
-            style_defs.push_back("    style " + id + " fill:" + fill_color + ",stroke:#333,stroke-width:2px");
-        }
+        // Apply style including border color and text color
+        style_defs.push_back("    style " + id + " fill:" + fill_color + ",stroke:" + line_col + ",stroke-width:1.5px,color:" + text_col);
     }
 
-    // Edges
+    // Prepare edges
     std::vector<std::string> edge_lines;
     edge_lines.reserve(raw_edges.size());
     for (const auto& [from, to, arrow] : raw_edges)
@@ -2023,9 +2050,10 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
         edge_lines.push_back("    " + node_ids[from] + " " + arrow + " " + node_ids[to]);
     }
 
-    // Build Mermaid
+    // Build Mermaid graph definition
     std::stringstream mermaid;
-    mermaid << "graph TD" << std::endl;
+    // Apply layout direction: LR (Left-Right) or TD (Top-Down)
+    mermaid << (horizontal_layout ? "graph LR" : "graph TD") << std::endl;
 
     for (const auto& def : node_defs)
         mermaid << def << std::endl;
@@ -2036,23 +2064,106 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     for (const auto& edge : edge_lines)
         mermaid << edge << std::endl;
 
-    // HTML template
-    const std::string html_header = R"(<!DOCTYPE html>
-<html lang="de">
+    // --- HTML TEMPLATE GENERATION ---
+    std::string mermaid_theme = dark_theme ? "dark" : "default";
+    std::string body_bg       = dark_theme ? "#18181b" : "#ffffff";
+    std::string text_color    = dark_theme ? "#cccccc" : "#333333";
+
+    // CSS drop-shadow: subtle in light mode, slightly more pronounced in dark mode
+    std::string shadow_css = dark_theme ? "drop-shadow(2px 4px 6px rgba(0,0,0,0.5))"
+                                        : "drop-shadow(2px 4px 6px rgba(0,0,0,0.1))";
+
+    // Create the full HTML document string
+    std::string html_header = R"(<!DOCTYPE html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Zelph Graph</title>
+    <title>Zelph Graph Explorer</title>
+    <!-- Load Mermaid.js for graph rendering -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <!-- Load svg-pan-zoom for interactive exploring -->
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
+
     <script>
+        // Initialize Mermaid
         mermaid.initialize({
             startOnLoad: true,
-            theme: 'default',
-            flowchart: { useMaxWidth: true }
+            theme: ')" + mermaid_theme
+                            + R"(',
+            // Disable max width to allow the SVG to grow naturally for panning/zooming
+            flowchart: { useMaxWidth: false }
+        });
+
+        // Wait for Mermaid to finish rendering the SVG, then attach pan/zoom capabilities
+        window.addEventListener('load', function () {
+            // Mermaid renders asynchronously, so we poll briefly until the SVG exists
+            var checkExist = setInterval(function() {
+                var svg = document.querySelector('.mermaid svg');
+                if (svg) {
+                    clearInterval(checkExist);
+
+                    // Force SVG to take full container height/width for panning
+                    svg.style.width = '100%';
+                    svg.style.height = '100%';
+                    svg.style.maxWidth = 'none';
+
+                    // Initialize pan/zoom library
+                    window.panZoom = svgPanZoom(svg, {
+                        zoomEnabled: true,
+                        controlIconsEnabled: true, // Shows UI buttons (+, -, reset)
+                        fit: true,
+                        center: true,
+                        minZoom: 0.1,
+                        maxZoom: 20
+                    });
+                }
+            }, 100); // Check every 100ms
         });
     </script>
+
     <style>
-        body { margin: 20px; background: #ffffff; font-family: sans-serif; }
-        .mermaid { text-align: center; }
+        /* Fullscreen app layout to maximize canvas space */
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background: )" + body_bg
+                            + R"(;
+            color: )" + text_color
+                            + R"(;
+            font-family: sans-serif;
+            overflow: hidden; /* Hide standard browser scrollbars */
+        }
+
+        .mermaid {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 3D and Hover effects for nodes */
+        .node rect, .node circle, .node ellipse, .node polygon, .node path {
+            filter: )" + shadow_css
+                            + R"(;
+            transition: all 0.2s ease-in-out;
+        }
+
+        .node:hover rect, .node:hover circle, .node:hover ellipse, .node:hover polygon, .node:hover path {
+            filter: drop-shadow(0px 0px 8px rgba(135, 206, 250, 0.6));
+            stroke-width: 2.5px !important;
+            cursor: grab;
+        }
+
+        /* Grab cursor for the whole background to indicate panning is possible */
+        .mermaid svg {
+            cursor: grab;
+        }
+        .mermaid svg:active {
+            cursor: grabbing;
+        }
     </style>
 </head>
 <body>
@@ -2065,11 +2176,13 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
 </html>
 )";
 
-    std::ofstream file(file_name);
-    if (!file.is_open())
-        throw std::runtime_error("Cannot open file: " + file_name);
-
-    file << html_header << mermaid.str() << html_footer;
+    // Write generated HTML to the specified file
+    std::ofstream out_file(file_name);
+    if (out_file.is_open())
+    {
+        out_file << html_header << mermaid.str() << html_footer;
+        out_file.close();
+    }
 }
 
 void Zelph::print(const std::wstring& msg, const bool o) const

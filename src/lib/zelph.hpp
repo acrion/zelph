@@ -177,7 +177,7 @@ namespace zelph::network
         Node                 list(const std::vector<std::wstring>& elements);
         Node                 set(const std::unordered_set<Node>& elements);
         FactComponents       extract_fact_components(Node relation) const;
-        void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors) const;
+        void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors, bool dark_theme = true, bool horizontal_layout = true) const;
         void                 print(const std::wstring&, const bool) const;
         static std::string   get_version();
         void                 save_to_file(const std::string& filename) const;
