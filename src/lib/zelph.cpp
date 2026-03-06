@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iostream>
 #include <ranges>
+#include <set>
 #include <sstream>
 
 using std::ranges::all_of;
@@ -612,7 +613,14 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             format_fact(output, _lang, relation, 3);
             print(output, true);
 
-            gen_mermaid_html(relation, "debug.html", 2, 3);
+            gen_mermaid_html(relation,
+                             "debug.html",
+                             2,
+                             3,
+                             {},
+                             true,
+                             true,
+                             true);
             print(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
             print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
             print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
@@ -1099,7 +1107,7 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
 std::string Zelph::format(Node node) const
 {
     std::wstring result;
-    format_fact(result, _lang, node, 3);
+    format_fact(result, _lang, node);
     return string::unicode::to_utf8(result);
 }
 
@@ -1801,6 +1809,8 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) 
     return name;
 }
 
+// #define DEBUG_MERMAID
+
 void Zelph::collect_mermaid_nodes(WrapperNode                                                     current_wrap,
                                   int                                                             max_depth,
                                   std::unordered_set<WrapperNode>&                                visited,
@@ -1810,7 +1820,8 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
                                   std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
                                   std::unordered_set<WrapperNode>&                                all_nodes,
                                   int                                                             max_neighbors,
-                                  size_t&                                                         placeholder_counter) const
+                                  size_t&                                                         placeholder_counter,
+                                  const std::unordered_set<Node>&                                 exclude_nodes) const
 {
     if (--max_depth <= 0 || visited.count(current_wrap))
         return;
@@ -1830,6 +1841,9 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
     for (size_t i = 0; i < limit_left; ++i, ++left_it)
     {
         Node left = *left_it;
+
+        if (exclude_nodes.count(left)) continue;
+
         Node hash = Impl::create_hash({current, left});
 
         if (processed_edge_hashes.insert(hash).second)
@@ -1840,16 +1854,14 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
             all_nodes.insert(WrapperNode{false, left});
         }
 
-        collect_mermaid_nodes(WrapperNode{false, left}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+        collect_mermaid_nodes(WrapperNode{false, left}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
     }
     if (max_neighbors > 0 && num_left > static_cast<size_t>(max_neighbors))
     {
         // Add unique placeholder for lefts
         ++placeholder_counter;
-        size_t      total = num_left;
-        WrapperNode placeholder_wrap{true, placeholder_counter, total};
-        std::string arrow = "-->"; // Simple directed to current
-        raw_edges.emplace_back(placeholder_wrap, WrapperNode{false, current}, arrow);
+        WrapperNode placeholder_wrap{true, placeholder_counter, num_left};
+        raw_edges.emplace_back(placeholder_wrap, WrapperNode{false, current}, std::string("-->"));
         all_nodes.insert(placeholder_wrap);
     }
 
@@ -1861,7 +1873,10 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
     for (size_t i = 0; i < limit_right; ++i, ++right_it)
     {
         Node right = *right_it;
-        Node hash  = Impl::create_hash({current, right});
+
+        if (exclude_nodes.count(right)) continue;
+
+        Node hash = Impl::create_hash({current, right});
 
         if (processed_edge_hashes.insert(hash).second)
         {
@@ -1871,16 +1886,14 @@ void Zelph::collect_mermaid_nodes(WrapperNode                                   
             all_nodes.insert(WrapperNode{false, right});
         }
 
-        collect_mermaid_nodes(WrapperNode{false, right}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+        collect_mermaid_nodes(WrapperNode{false, right}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
     }
     if (max_neighbors > 0 && num_right > static_cast<size_t>(max_neighbors))
     {
         // Add unique placeholder for rights
         ++placeholder_counter;
-        size_t      total = num_right;
-        WrapperNode placeholder_wrap{true, placeholder_counter, total};
-        std::string arrow = "-->";
-        raw_edges.emplace_back(WrapperNode{false, current}, placeholder_wrap, arrow);
+        WrapperNode placeholder_wrap{true, placeholder_counter, num_right};
+        raw_edges.emplace_back(WrapperNode{false, current}, placeholder_wrap, std::string("-->"));
         all_nodes.insert(placeholder_wrap);
     }
 }
@@ -1930,8 +1943,359 @@ Zelph::FactComponents Zelph::extract_fact_components(Node relation) const
     return components;
 }
 
-void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors, bool dark_theme, bool horizontal_layout) const
+// Recursively collects all nodes visually contained in a subgraph, using criteria 1–4 to detect nested subgraphs.
+bool Zelph::collect_subgraph_contents(Node n, std::unordered_set<Node>& contents, std::unordered_set<Node>& visited) const
 {
+    if (!visited.insert(n).second)
+        return false; // cycle protection
+
+    if (!Impl::is_hash(n))
+        return false;
+
+    const auto right = _pImpl->get_right(n);
+    const auto left  = _pImpl->get_left(n);
+
+    // Criterion 2: Find predicate among outgoing connections
+    Node pred_candidate = 0;
+    for (Node p : right)
+    {
+        if ((!Impl::is_hash(p) || Impl::is_var(p))
+            && check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known())
+        {
+            if (pred_candidate != 0) return false;
+            pred_candidate = p;
+        }
+    }
+    if (pred_candidate == 0) return false;
+
+    // Criterion 3: Find subject among bidirectional connections
+    std::vector<Node> bidi_nodes;
+    for (Node s : right)
+    {
+        if (s != pred_candidate && left.count(s) > 0)
+            bidi_nodes.push_back(s);
+    }
+    if (bidi_nodes.empty()) return false;
+
+    Node subj = 0;
+    if (bidi_nodes.size() == 1)
+    {
+        subj = bidi_nodes[0];
+    }
+    else
+    {
+        for (Node s : bidi_nodes)
+        {
+            if (!Impl::is_hash(s))
+            {
+                if (subj != 0) return false;
+                subj = s;
+            }
+        }
+        if (subj == 0) return false;
+    }
+
+    // Criterion 4: Find object among incoming-only connections
+    std::vector<Node> incoming_only;
+    for (Node o : left)
+    {
+        if (right.count(o) == 0)
+            incoming_only.push_back(o);
+    }
+    if (incoming_only.empty()) return false;
+
+    Node obj = 0;
+    if (incoming_only.size() == 1)
+    {
+        obj = incoming_only[0];
+    }
+    else
+    {
+        for (Node o : incoming_only)
+        {
+            if (!Impl::is_hash(o))
+            {
+                if (obj != 0) return false;
+                obj = o;
+            }
+        }
+        if (obj == 0) return false;
+    }
+
+    contents.insert(subj);
+    contents.insert(obj);
+    collect_subgraph_contents(subj, contents, visited);
+    collect_subgraph_contents(obj, contents, visited);
+    return true;
+}
+
+// Determine whether node n should be rendered as a Mermaid subgraph and identify its subject, predicate, and object.
+bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate, Node& object, std::unordered_set<Node>* containment_conflicts) const
+{
+    subject   = 0;
+    predicate = 0;
+    object    = 0;
+
+    // Criterion 1: Must be a hash node
+    if (!Impl::is_hash(n))
+        return false;
+
+#ifdef DEBUG_MERMAID
+    std::clog << "[DEBUG_MERMAID] identify_subgraph node=" << n
+              << " (name: " << string::unicode::to_utf8(get_name(n, _lang, true))
+              << ", format: " << format(n) << ")" << std::endl;
+#endif
+
+    const auto right = _pImpl->get_right(n);
+    const auto left  = _pImpl->get_left(n);
+
+    // Criterion 2: Exactly one outgoing neighbor p where
+    //   (!Impl::is_hash(p) || Impl::is_var(p)) && check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known()
+    Node pred_candidate = 0;
+    for (Node p : right)
+    {
+        if (left.count(p) == 0 // exclude bidirectional
+            && (!Impl::is_hash(p) || Impl::is_var(p))
+            && check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known())
+        {
+            if (pred_candidate != 0)
+            {
+#ifdef DEBUG_MERMAID
+                std::clog << "[DEBUG_MERMAID]   Criterion 2 FAILED: multiple predicate candidates: "
+                          << pred_candidate << " (" << string::unicode::to_utf8(get_name(pred_candidate, _lang, true)) << ") and "
+                          << p << " (" << string::unicode::to_utf8(get_name(p, _lang, true)) << ")" << std::endl;
+#endif
+                return false; // more than one predicate candidate
+            }
+            pred_candidate = p;
+        }
+    }
+    if (pred_candidate == 0)
+    {
+#ifdef DEBUG_MERMAID
+        std::clog << "[DEBUG_MERMAID]   Criterion 2 FAILED: no predicate candidate found among " << right.size() << " outgoing neighbors:" << std::endl;
+        for (Node p : right)
+        {
+            std::clog << "[DEBUG_MERMAID]     outgoing " << p
+                      << " (name: " << string::unicode::to_utf8(get_name(p, _lang, true))
+                      << ", is_hash=" << Impl::is_hash(p)
+                      << ", is_var=" << Impl::is_var(p)
+                      << ", is_RTC=" << check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known()
+                      << ")" << std::endl;
+        }
+#endif
+        return false;
+    }
+    predicate = pred_candidate;
+
+    // Criterion 3: Subject identification via bidirectional connections
+    std::vector<Node> bidi_nodes;
+    for (Node s : right)
+    {
+        if (s != predicate && left.count(s) > 0)
+            bidi_nodes.push_back(s);
+    }
+    if (bidi_nodes.empty())
+    {
+#ifdef DEBUG_MERMAID
+        std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: no bidirectional neighbor found (predicate="
+                  << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << "))" << std::endl;
+        std::clog << "[DEBUG_MERMAID]     right nodes:";
+        for (Node s : right)
+            std::clog << " " << s;
+        std::clog << std::endl;
+        std::clog << "[DEBUG_MERMAID]     left nodes:";
+        for (Node s : left)
+            std::clog << " " << s;
+        std::clog << std::endl;
+#endif
+        return false;
+    }
+
+    if (bidi_nodes.size() == 1)
+    {
+        subject = bidi_nodes[0];
+    }
+    else
+    {
+        // Multiple bidirectional: exactly one must be non-hash or var
+        Node non_hash = 0;
+        for (Node s : bidi_nodes)
+        {
+            if (!Impl::is_hash(s) || Impl::is_var(s))
+            {
+                if (non_hash != 0)
+                {
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: multiple non-hash bidirectional neighbors: "
+                              << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
+                              << s << " (" << string::unicode::to_utf8(get_name(s, _lang, true)) << ")" << std::endl;
+#endif
+                    return false; // ambiguous
+                }
+                non_hash = s;
+            }
+        }
+        if (non_hash == 0)
+        {
+#ifdef DEBUG_MERMAID
+            std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: " << bidi_nodes.size()
+                      << " bidirectional neighbors, ALL are hash nodes:" << std::endl;
+            for (Node s : bidi_nodes)
+            {
+                std::clog << "[DEBUG_MERMAID]     bidi " << s
+                          << " (name: " << string::unicode::to_utf8(get_name(s, _lang, true))
+                          << ", format: " << format(s)
+                          << ", is_hash=" << Impl::is_hash(s)
+                          << ", is_var=" << Impl::is_var(s) << ")" << std::endl;
+            }
+#endif
+            return false;
+        }
+        subject = non_hash;
+    }
+
+    // Criterion 4: Object identification via incoming-only connections
+    std::vector<Node> incoming_only;
+    for (Node o : left)
+    {
+        if (right.count(o) == 0)
+            incoming_only.push_back(o);
+    }
+    if (incoming_only.empty())
+    {
+#ifdef DEBUG_MERMAID
+        std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: no incoming-only neighbor found for node=" << n << std::endl;
+        std::clog << "[DEBUG_MERMAID]     left nodes:";
+        for (Node o : left)
+            std::clog << " " << o << "(in_right=" << (right.count(o) > 0) << ")";
+        std::clog << std::endl;
+#endif
+        return false;
+    }
+
+    if (incoming_only.size() == 1)
+    {
+        object = incoming_only[0];
+    }
+    else
+    {
+        // Multiple incoming: exactly one must be non-hash
+        Node non_hash = 0;
+        for (Node o : incoming_only)
+        {
+            if (!Impl::is_hash(o))
+            {
+                if (non_hash != 0)
+                {
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: multiple non-hash incoming-only neighbors: "
+                              << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
+                              << o << " (" << string::unicode::to_utf8(get_name(o, _lang, true)) << ")" << std::endl;
+#endif
+                    return false; // multiple objects — not handled
+                }
+                non_hash = o;
+            }
+        }
+        if (non_hash == 0)
+        {
+#ifdef DEBUG_MERMAID
+            std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: " << incoming_only.size()
+                      << " incoming-only neighbors, ALL are hash nodes:" << std::endl;
+            for (Node o : incoming_only)
+            {
+                std::clog << "[DEBUG_MERMAID]     incoming-only " << o
+                          << " (name: " << string::unicode::to_utf8(get_name(o, _lang, true))
+                          << ", format: " << format(o)
+                          << ", is_hash=" << Impl::is_hash(o) << ")" << std::endl;
+            }
+#endif
+            return false;
+        }
+        object = non_hash;
+    }
+
+    // Criterion 5: If subject is a subgraph, it must not contain the object
+    {
+        std::unordered_set<Node> subject_contents;
+        std::unordered_set<Node> visited;
+        if (collect_subgraph_contents(subject, subject_contents, visited))
+        {
+            if (subject_contents.count(object))
+            {
+                if (containment_conflicts)
+                {
+                    // Record conflict but allow subgraph creation
+                    containment_conflicts->insert(object);
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 5 CONFLICT (allowed via cloning): subject " << subject
+                              << " contains object " << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                              << ")" << std::endl;
+#endif
+                }
+                else
+                {
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 5 FAILED: subject " << subject
+                              << " contains object " << object << " in its subgraph contents" << std::endl;
+#endif
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Criterion 6: If object is a subgraph, it must not contain the subject
+    {
+        std::unordered_set<Node> object_contents;
+        std::unordered_set<Node> visited;
+        if (collect_subgraph_contents(object, object_contents, visited))
+        {
+            if (object_contents.count(subject))
+            {
+                if (containment_conflicts)
+                {
+                    containment_conflicts->insert(subject);
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 6 CONFLICT (allowed via cloning): object " << object
+                              << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                              << ") contains subject " << subject
+                              << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")" << std::endl;
+#endif
+                }
+                else
+                {
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID]   Criterion 6 FAILED: object " << object
+                              << " contains subject " << subject << " in its subgraph contents" << std::endl;
+#endif
+                    return false;
+                }
+            }
+        }
+    }
+
+#ifdef DEBUG_MERMAID
+    std::clog << "[DEBUG_MERMAID]   SUCCESS: subgraph node=" << n
+              << " subject=" << subject << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")"
+              << " predicate=" << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << ")"
+              << " object=" << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true)) << ")" << std::endl;
+#endif
+
+    return true;
+}
+
+void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors, const std::unordered_set<Node>& exclude_nodes, bool dark_theme, bool horizontal_layout, bool use_subgraphs) const
+{
+    // Helper: check if a node is a predefined core node
+    auto is_predefined_node = [&](Node nd) -> bool
+    {
+        return nd == core.RelationTypeCategory || nd == core.Causes || nd == core.IsA
+            || nd == core.Unequal || nd == core.Contradiction || nd == core.Cons
+            || nd == core.Nil || nd == core.PartOf || nd == core.Conjunction || nd == core.Negation;
+    };
+
     adjacency_set conditions, deductions;
 
     // Extract rules and parse conditions/deductions
@@ -1957,37 +2321,428 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     size_t                                                         placeholder_counter = 0;
 
     // Traverse the graph up to max_depth
-    collect_mermaid_nodes(WrapperNode{false, start}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter);
+    collect_mermaid_nodes(WrapperNode{false, start}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
+
+    // Remove excluded nodes from all_nodes and raw_edges
+    for (auto it = all_nodes.begin(); it != all_nodes.end();)
+    {
+        if (!it->is_placeholder && exclude_nodes.count(it->value))
+            it = all_nodes.erase(it);
+        else
+            ++it;
+    }
+    // Remove edges that involve excluded nodes
+    raw_edges.erase(
+        std::remove_if(raw_edges.begin(), raw_edges.end(), [&](const auto& edge)
+                       {
+                           const auto& [from, to, arrow] = edge;
+                           return (!from.is_placeholder && exclude_nodes.count(from.value))
+                               || (!to.is_placeholder && exclude_nodes.count(to.value)); }),
+        raw_edges.end());
+
+    // === SUBGRAPH IDENTIFICATION WITH CLONE-BASED CONFLICT RESOLUTION ===
+
+    struct SubgraphInfo
+    {
+        Node subject;
+        Node predicate;
+        Node object;
+    };
+    std::map<Node, SubgraphInfo> subgraphs;
+
+    // clone_in_sg[(original_node, subgraph)] = clone_mermaid_id
+    // Tracks which leaf nodes are replaced by clones in which subgraphs.
+    std::map<std::pair<Node, Node>, std::string> clone_in_sg;
+
+    // (original_mermaid_id, clone_mermaid_id) pairs for identity edges
+    std::vector<std::pair<std::string, std::string>> clone_identity_edges;
+
+    size_t clone_counter = 0;
+
+    if (use_subgraphs)
+    {
+        // Phase 1: Identify subgraph candidates, allowing containment conflicts
+#ifdef DEBUG_MERMAID
+        std::clog << "[DEBUG_MERMAID] === SUBGRAPH IDENTIFICATION PHASE ===" << std::endl;
+        std::clog << "[DEBUG_MERMAID] Total nodes to check: " << all_nodes.size() << std::endl;
+#endif
+        for (const WrapperNode& wn : all_nodes)
+        {
+            if (wn.is_placeholder) continue;
+            if (exclude_nodes.count(wn.value)) continue;
+
+            Node                     s, p, o;
+            std::unordered_set<Node> containment_conflicts;
+            if (identify_subgraph_components(wn.value, s, p, o, &containment_conflicts))
+            {
+                bool s_present = all_nodes.count(WrapperNode{false, s, 0}) && !exclude_nodes.count(s);
+                bool o_present = all_nodes.count(WrapperNode{false, o, 0}) && !exclude_nodes.count(o);
+                if (s_present && o_present)
+                {
+                    subgraphs[wn.value] = {s, p, o};
+#ifdef DEBUG_MERMAID
+                    std::clog << "[DEBUG_MERMAID] Registered subgraph: node=" << wn.value
+                              << " S=" << s << " P=" << p << " O=" << o;
+                    if (!containment_conflicts.empty())
+                    {
+                        std::clog << " (containment conflicts:";
+                        for (Node c : containment_conflicts)
+                            std::clog << " " << c;
+                        std::clog << ")";
+                    }
+                    std::clog << std::endl;
+#endif
+                }
+            }
+        }
+
+        // Phase 2: Determine nesting hierarchy
+        std::map<Node, Node> sg_parent;
+        for (auto& [r, info] : subgraphs)
+        {
+            sg_parent[r] = 0;
+            for (auto& [r2, info2] : subgraphs)
+            {
+                if (r2 == r) continue;
+                if (info2.subject == r || info2.object == r)
+                {
+                    sg_parent[r] = r2;
+                    break;
+                }
+            }
+#ifdef DEBUG_MERMAID
+            std::clog << "[DEBUG_MERMAID] Nesting: subgraph " << r
+                      << (sg_parent[r] == 0 ? " is top-level" : " is child of subgraph " + std::to_string(sg_parent[r]))
+                      << std::endl;
+#endif
+        }
+
+        // Phase 3: Clone-based conflict resolution
+        // For each non-subgraph (leaf) node, find all subgraphs where it appears as a direct member
+        // (subject or object). If it appears in more than one subgraph, the outermost keeps the
+        // original and all inner/independent subgraphs get clones.
+
+        auto is_ancestor_of = [&](Node potential_ancestor, Node sg) -> bool
+        {
+            Node current = sg;
+            while (sg_parent.count(current) && sg_parent[current] != 0)
+            {
+                current = sg_parent[current];
+                if (current == potential_ancestor) return true;
+            }
+            return false;
+        };
+
+        std::map<Node, std::vector<Node>> node_to_direct_sgs;
+        for (auto& [r, info] : subgraphs)
+        {
+            // Only track leaf nodes (non-subgraph nodes)
+            if (!subgraphs.count(info.subject))
+                node_to_direct_sgs[info.subject].push_back(r);
+            if (!subgraphs.count(info.object))
+                node_to_direct_sgs[info.object].push_back(r);
+        }
+
+        for (auto& [nd, sgs] : node_to_direct_sgs)
+        {
+            if (sgs.size() <= 1) continue;
+
+            // Pick the "owner" subgraph that keeps the original node.
+            // Priority: outermost ancestor > referenced subgraph > larger ID
+            Node owner = sgs[0];
+            for (size_t i = 1; i < sgs.size(); ++i)
+            {
+                if (is_ancestor_of(sgs[i], owner))
+                {
+                    owner = sgs[i]; // sgs[i] is an ancestor of owner, so it's more outer
+                }
+                else if (!is_ancestor_of(owner, sgs[i]))
+                {
+                    // Independent subgraphs: prefer the one that is referenced by another subgraph
+                    bool owner_ref = false, sgi_ref = false;
+                    for (auto& [r2, info2] : subgraphs)
+                    {
+                        if (info2.subject == owner || info2.object == owner) owner_ref = true;
+                        if (info2.subject == sgs[i] || info2.object == sgs[i]) sgi_ref = true;
+                    }
+                    if ((sgi_ref && !owner_ref)
+                        || (sgs[i] > owner && !(owner_ref && !sgi_ref)))
+                        owner = sgs[i];
+                }
+            }
+
+            // Create clones for all non-owner subgraphs
+            std::string orig_id = "n_" + std::to_string(static_cast<unsigned long long>(nd));
+            for (Node sg : sgs)
+            {
+                if (sg == owner) continue;
+                std::string cid = "clone_" + std::to_string(static_cast<unsigned long long>(nd))
+                                + "_" + std::to_string(++clone_counter);
+                clone_in_sg[{nd, sg}] = cid;
+                clone_identity_edges.emplace_back(orig_id, cid);
+
+#ifdef DEBUG_MERMAID
+                std::clog << "[DEBUG_MERMAID] Clone: node " << nd
+                          << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
+                          << ") cloned as " << cid << " in subgraph " << sg
+                          << " (owner subgraph: " << owner << ")" << std::endl;
+#endif
+            }
+        }
+
+        // Phase 4: Handle subgraph-level conflicts (a subgraph node itself appearing in multiple
+        // independent subgraphs). This is the fallback: if the shared entity is itself a subgraph
+        // (not a leaf), we cannot clone it easily, so we fall back to removing one subgraph.
+        {
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+
+                // Collect all nodes contained in each subgraph (recursively through nesting)
+                std::map<Node, std::unordered_set<Node>> sg_contained;
+                for (auto& [r, info] : subgraphs)
+                {
+                    std::function<void(Node, std::unordered_set<Node>&)> collect;
+                    collect = [&](Node sg_node, std::unordered_set<Node>& out)
+                    {
+                        auto it = subgraphs.find(sg_node);
+                        if (it == subgraphs.end()) return;
+                        out.insert(it->second.subject);
+                        out.insert(it->second.object);
+                        collect(it->second.subject, out);
+                        collect(it->second.object, out);
+                    };
+                    collect(r, sg_contained[r]);
+                }
+
+                // Build reverse map: node -> set of subgraphs containing it (transitively)
+                // But only consider subgraph-nodes (nodes that are themselves subgraphs)
+                std::map<Node, std::set<Node>> subgraph_node_to_sgs;
+                for (auto& [r, contained] : sg_contained)
+                {
+                    for (Node nd : contained)
+                    {
+                        if (subgraphs.count(nd)) // only subgraph-nodes
+                            subgraph_node_to_sgs[nd].insert(r);
+                    }
+                }
+
+                // Helper: check if sg1 is nested inside sg2
+                auto is_nested_in = [&](Node sg1, Node sg2) -> bool
+                {
+                    return sg_contained.count(sg2) && sg_contained[sg2].count(sg1);
+                };
+
+                // Check if a subgraph is "referenced" (appears as subject or object of another subgraph)
+                auto is_referenced = [&](Node sg) -> bool
+                {
+                    for (auto& [r, info] : subgraphs)
+                    {
+                        if (r == sg) continue;
+                        if (info.subject == sg || info.object == sg) return true;
+                    }
+                    return false;
+                };
+
+                // Find a conflicting pair: two independent subgraphs sharing a node
+                Node to_remove = 0;
+                for (auto& [nd, sgs] : subgraph_node_to_sgs)
+                {
+                    if (sgs.size() <= 1) continue;
+                    std::vector<Node> sg_vec(sgs.begin(), sgs.end());
+                    for (size_t i = 0; i < sg_vec.size() && to_remove == 0; ++i)
+                    {
+                        for (size_t j = i + 1; j < sg_vec.size() && to_remove == 0; ++j)
+                        {
+                            Node a = sg_vec[i], b = sg_vec[j];
+                            if (is_nested_in(a, b) || is_nested_in(b, a)) continue;
+
+                            bool a_ref = is_referenced(a), b_ref = is_referenced(b);
+                            if (a_ref && !b_ref)
+                                to_remove = b;
+                            else if (!a_ref && b_ref)
+                                to_remove = a;
+                            else
+                                to_remove = std::min(a, b);
+
+#ifdef DEBUG_MERMAID
+                            std::clog << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
+                                      << " in independent subgraphs " << a << " and " << b
+                                      << " -> removing subgraph " << to_remove << std::endl;
+#endif
+                        }
+                    }
+                    if (to_remove != 0) break;
+                }
+
+                if (to_remove != 0)
+                {
+                    // Also remove clones associated with the removed subgraph
+                    for (auto it = clone_in_sg.begin(); it != clone_in_sg.end();)
+                    {
+                        if (it->first.second == to_remove)
+                            it = clone_in_sg.erase(it);
+                        else
+                            ++it;
+                    }
+                    subgraphs.erase(to_remove);
+                    changed = true;
+                }
+            }
+        }
+
+        // Rebuild sg_parent after potential removals
+        sg_parent.clear();
+        for (auto& [r, info] : subgraphs)
+        {
+            sg_parent[r] = 0;
+            for (auto& [r2, info2] : subgraphs)
+            {
+                if (r2 == r) continue;
+                if (info2.subject == r || info2.object == r)
+                {
+                    sg_parent[r] = r2;
+                    break;
+                }
+            }
+        }
+    }
+
+    // === DETERMINE NODE PLACEMENT ===
+
+    // For each subgraph, find its direct parent subgraph (if any)
+    std::map<Node, Node> sg_parent_final; // subgraph → parent subgraph (0 = top-level)
+    for (auto& [r, info] : subgraphs)
+    {
+        sg_parent_final[r] = 0;
+        for (auto& [r2, info2] : subgraphs)
+        {
+            if (r2 == r) continue;
+            if (info2.subject == r || info2.object == r)
+            {
+                sg_parent_final[r] = r2;
+                break;
+            }
+        }
+    }
+
+    // For each non-subgraph node, determine its innermost containing subgraph
+    std::map<Node, Node> node_container; // node → containing subgraph (0 = top-level)
+    for (const WrapperNode& wn : all_nodes)
+    {
+        if (wn.is_placeholder) continue;
+        Node nd = wn.value;
+        if (subgraphs.count(nd)) continue; // subgraphs are handled separately
+
+        node_container[nd] = 0;
+        for (auto& [r, info] : subgraphs)
+        {
+            if (info.subject == nd || info.object == nd)
+            {
+                // Check if this is the innermost container (no child subgraph also contains nd)
+                bool is_innermost = true;
+                for (auto& [r2, info2] : subgraphs)
+                {
+                    if (r2 == r) continue;
+                    if (sg_parent_final.count(r2) && sg_parent_final[r2] == r) // r2 is a child of r
+                    {
+                        if (info2.subject == nd || info2.object == nd)
+                        {
+                            is_innermost = false;
+                            break;
+                        }
+                    }
+                }
+                if (is_innermost)
+                {
+                    node_container[nd] = r;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Cloned nodes are also "inside" subgraphs, so mark them as contained
+    for (auto& [key, cid] : clone_in_sg)
+    {
+        Node nd = key.first;
+        Node sg = key.second;
+        // The clone replaces the original in this subgraph,
+        // so the original should NOT be considered contained here
+        if (node_container.count(nd) && node_container[nd] == sg)
+        {
+            // The original was assigned to this subgraph as innermost,
+            // but a clone takes its place here. Find the correct container for the original.
+            node_container[nd] = 0; // will be re-assigned below or left at top-level
+            for (auto& [r, info] : subgraphs)
+            {
+                if (r == sg) continue;
+                if (info.subject == nd || info.object == nd)
+                {
+                    // Check this isn't also a clone-target subgraph
+                    if (clone_in_sg.count({nd, r}) == 0)
+                    {
+                        node_container[nd] = r;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // === BUILD INTERNAL EDGE SET ===
+    // Edges that are part of a subgraph's S-P-O structure (to be removed from raw edges)
+    std::set<std::pair<uint64_t, uint64_t>> internal_edge_pairs;
+    for (auto& [r, info] : subgraphs)
+    {
+        // Bidirectional: R ↔ subject
+        internal_edge_pairs.insert({r, info.subject});
+        internal_edge_pairs.insert({info.subject, r});
+        // Outgoing: R → predicate
+        internal_edge_pairs.insert({r, info.predicate});
+        internal_edge_pairs.insert({info.predicate, r});
+        // Incoming: object → R
+        internal_edge_pairs.insert({info.object, r});
+        internal_edge_pairs.insert({r, info.object});
+    }
+
+    // Originals that still have at least one active clone should be highlighted as well.
+    std::unordered_set<Node> cloned_original_nodes;
+    for (const auto& [key, cid] : clone_in_sg)
+        cloned_original_nodes.insert(key.first);
 
     // --- COLOR PALETTES ---
-    // Start Node: Light = Yellow/Orange, Dark = Deep Amber/Copper
-    std::string col_start = dark_theme ? "#8a5c00" : "#FFBB00";
-    // Variables: Light = Soft Beige, Dark = Dark Gray-Brown
-    std::string col_var = dark_theme ? "#4e483d" : "#eee8dc";
-    // Conditions: Light = Light Blue, Dark = Muted Deep Blue
-    std::string col_cond = dark_theme ? "#2a5275" : "#87cefa";
-    // Deductions: Light = Light Green, Dark = Muted Forest Green
-    std::string col_ded = dark_theme ? "#3b6327" : "#bcee68";
-    // Placeholders: Light = Light Gray, Dark = Medium Gray
-    std::string col_ph = dark_theme ? "#404040" : "#d3d3d3";
-    // Default Nodes: Light = Very soft Blue-Gray, Dark = Lightened Anthracite
-    std::string col_def = dark_theme ? "#2d2d38" : "#f0f2f5";
+    std::string col_start  = dark_theme ? "#8a5c00" : "#FFBB00";
+    std::string col_var    = dark_theme ? "#4e483d" : "#eee8dc";
+    std::string col_cond   = dark_theme ? "#2a5275" : "#87cefa";
+    std::string col_ded    = dark_theme ? "#3b6327" : "#bcee68";
+    std::string col_ph     = dark_theme ? "#404040" : "#d3d3d3";
+    std::string col_def    = dark_theme ? "#2d2d38" : "#f0f2f5";
+    std::string col_sg     = dark_theme ? "#1a1a2e" : "#fafbfd";
+    std::string col_predef = dark_theme ? "#5c3566" : "#d4a5e5";
+    std::string col_clone  = dark_theme ? "#3d3022" : "#fff3cd";
 
-    // General styling
     std::string text_col = dark_theme ? "#e0e0e0" : "#111111";
     std::string line_col = dark_theme ? "#666666" : "#999999";
 
-    // Node IDs, definitions and styles
+    std::string predef_stroke = dark_theme ? "#9b59b6" : "#8e44ad";
+    std::string clone_stroke  = dark_theme ? "#d4a017" : "#b8860b";
+
+    // === BUILD NODE IDS AND DEFINITIONS ===
+
     std::map<WrapperNode, std::string> node_ids;
-    std::vector<std::string>           node_defs;
+    std::map<WrapperNode, std::string> node_defs;
     std::vector<std::string>           style_defs;
+
+    // Clone node definitions: clone_id -> definition string
+    std::map<std::string, std::string> clone_node_defs;
 
     for (const WrapperNode& wn : all_nodes)
     {
         std::string id;
         std::string raw_label;
 
-        // Generate ID and label based on node type
         if (wn.is_placeholder)
         {
             id        = "ph_" + std::to_string(wn.value);
@@ -2000,129 +2755,414 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
         }
         node_ids[wn] = id;
 
-        // Escape quotes for Mermaid syntax
         std::string label = raw_label;
-        boost::replace_all(label, "\"", "\\\"");
+        boost::replace_all(label, "\"", "#quot;");
 
-        // Use (" ") for rounded rectangle nodes to make them look modern
-        node_defs.push_back("    " + id + "(\"" + label + "\")");
+        node_defs[wn] = id + "(\"" + label + "\")";
 
-        // Determine node fill color based on its role
+        // Determine fill color
         std::string fill_color;
         if (!wn.is_placeholder)
         {
             Node node = wn.value;
             if (node == start)
-            {
                 fill_color = col_start;
-            }
+            else if (is_predefined_node(node))
+                fill_color = col_predef;
             else if (Impl::is_var(node))
-            {
                 fill_color = col_var;
-            }
             else if (conditions.count(node))
-            {
                 fill_color = col_cond;
-            }
             else if (deductions.count(node))
-            {
                 fill_color = col_ded;
-            }
             else
-            {
-                fill_color = col_def; // Default node color
-            }
+                fill_color = col_def;
         }
         else
         {
             fill_color = col_ph;
         }
 
-        // Apply style including border color and text color
-        style_defs.push_back("    style " + id + " fill:" + fill_color + ",stroke:" + line_col + ",stroke-width:1.5px,color:" + text_col);
+        if (!subgraphs.count(wn.value))
+        {
+            std::string stroke       = line_col;
+            std::string stroke_width = "1.5px";
+            std::string stroke_dasharray;
+
+            if (!wn.is_placeholder)
+            {
+                if (cloned_original_nodes.count(wn.value))
+                {
+                    // Highlight the original as part of the "=" clone family as well.
+                    stroke           = clone_stroke;
+                    stroke_width     = "2px";
+                    stroke_dasharray = ",stroke-dasharray:5 3";
+                }
+                else if (is_predefined_node(wn.value))
+                {
+                    stroke = predef_stroke;
+                }
+            }
+
+            style_defs.push_back(
+                "    style " + id
+                + " fill:" + fill_color
+                + ",stroke:" + stroke
+                + ",stroke-width:" + stroke_width
+                + stroke_dasharray
+                + ",color:" + text_col);
+        }
     }
 
-    // Prepare edges
-    std::vector<std::string> edge_lines;
-    edge_lines.reserve(raw_edges.size());
-    for (const auto& [from, to, arrow] : raw_edges)
+    // Build clone node definitions and styles
+    for (auto& [key, cid] : clone_in_sg)
     {
-        edge_lines.push_back("    " + node_ids[from] + " " + arrow + " " + node_ids[to]);
+        Node        nd    = key.first;
+        std::string label = get_name_hex(nd, true, max_neighbors);
+        boost::replace_all(label, "\"", "#quot;");
+        clone_node_defs[cid] = cid + "(\"" + label + "\")";
+
+        // Clone nodes get a distinctive style (same base color but clone stroke)
+        style_defs.push_back("    style " + cid + " fill:" + col_clone + ",stroke:" + clone_stroke
+                             + ",stroke-width:2px,stroke-dasharray:5 3,color:" + text_col);
     }
 
-    // Build Mermaid graph definition
+    // Subgraph styles
+    for (auto& [r, info] : subgraphs)
+    {
+        std::string sg_id  = "sg_" + std::to_string(static_cast<unsigned long long>(r));
+        std::string fill   = col_sg;
+        std::string stroke = line_col;
+        if (r == start)
+            stroke = dark_theme ? "#8a5c00" : "#FFBB00";
+        style_defs.push_back("    style " + sg_id + " fill:" + fill + ",stroke:" + stroke + ",stroke-width:2px,color:" + text_col);
+    }
+
+    // === GENERATE MERMAID ===
+
     std::stringstream mermaid;
-    // Apply layout direction: LR (Left-Right) or TD (Top-Down)
     mermaid << (horizontal_layout ? "graph LR" : "graph TD") << std::endl;
 
-    for (const auto& def : node_defs)
-        mermaid << def << std::endl;
+    // Helper: resolve the mermaid ID for a node in a given subgraph context.
+    // Returns clone ID if the node is cloned in that subgraph, otherwise the original ID.
+    auto resolve_id_in_sg = [&](Node nd, Node sg) -> std::string
+    {
+        auto clone_it = clone_in_sg.find({nd, sg});
+        if (clone_it != clone_in_sg.end())
+            return clone_it->second;
+        if (subgraphs.count(nd))
+            return "sg_" + std::to_string(static_cast<unsigned long long>(nd));
+        return node_ids[WrapperNode{false, nd, 0}];
+    };
 
-    for (const auto& style : style_defs)
-        mermaid << style << std::endl;
+    // Recursive subgraph emitter
+    std::function<void(Node, int)> emit_subgraph;
+    emit_subgraph = [&](Node sg, int indent_level)
+    {
+        auto&       info = subgraphs[sg];
+        std::string indent(indent_level * 4, ' ');
+        std::string sg_id = "sg_" + std::to_string(static_cast<unsigned long long>(sg));
 
-    for (const auto& edge : edge_lines)
-        mermaid << edge << std::endl;
+        // Generate subgraph label from format_fact
+        std::wstring label_w;
+        format_fact(label_w, _lang, sg, max_neighbors);
+        std::string label = string::unicode::to_utf8(label_w);
+        boost::replace_all(label, "\"", "#quot;");
+
+        mermaid << indent << "subgraph " << sg_id << "[\"" << label << "\"]" << std::endl;
+
+        // Emit subject
+        auto subj_clone_it = clone_in_sg.find({info.subject, sg});
+        if (subj_clone_it != clone_in_sg.end())
+        {
+            // Subject is cloned in this subgraph
+            mermaid << indent << "    " << clone_node_defs[subj_clone_it->second] << std::endl;
+        }
+        else if (subgraphs.count(info.subject))
+        {
+            emit_subgraph(info.subject, indent_level + 1);
+        }
+        else
+        {
+            WrapperNode swn{false, info.subject, 0};
+            mermaid << indent << "    " << node_defs[swn] << std::endl;
+        }
+
+        // Emit object
+        auto obj_clone_it = clone_in_sg.find({info.object, sg});
+        if (obj_clone_it != clone_in_sg.end())
+        {
+            mermaid << indent << "    " << clone_node_defs[obj_clone_it->second] << std::endl;
+        }
+        else if (subgraphs.count(info.object))
+        {
+            emit_subgraph(info.object, indent_level + 1);
+        }
+        else
+        {
+            WrapperNode own{false, info.object, 0};
+            mermaid << indent << "    " << node_defs[own] << std::endl;
+        }
+
+        mermaid << indent << "end" << std::endl;
+    };
+
+    // Emit top-level nodes
+    for (const WrapperNode& wn : all_nodes)
+    {
+        if (wn.is_placeholder)
+        {
+            mermaid << "    " << node_defs[wn] << std::endl;
+            continue;
+        }
+        if (subgraphs.count(wn.value)) continue;                                       // will be emitted as subgraph
+        if (node_container.count(wn.value) && node_container[wn.value] != 0) continue; // inside a subgraph
+        mermaid << "    " << node_defs[wn] << std::endl;
+    }
+
+    // Emit top-level subgraphs
+    for (auto& [r, info] : subgraphs)
+    {
+        if (sg_parent_final[r] == 0)
+            emit_subgraph(r, 1);
+    }
+
+    // Emit styles
+    for (const auto& s : style_defs)
+        mermaid << s << std::endl;
+
+    // === EMIT EDGES ===
+    size_t              edge_index = 0;
+    std::vector<size_t> predefined_edge_indices;
+    std::vector<size_t> clone_edge_indices;
+
+    // 1. Labeled edges for subgraphs (subject -->|predicate| object)
+    for (auto& [r, info] : subgraphs)
+    {
+        std::string subj_id = resolve_id_in_sg(info.subject, r);
+        std::string obj_id  = resolve_id_in_sg(info.object, r);
+
+        std::string pred_label = get_name_hex(info.predicate, false, max_neighbors);
+        boost::replace_all(pred_label, "\"", "#quot;");
+
+        mermaid << "    " << subj_id << " -->|\"" << pred_label << "\"| " << obj_id << std::endl;
+
+        if (is_predefined_node(info.predicate))
+            predefined_edge_indices.push_back(edge_index);
+
+        ++edge_index;
+    }
+
+    // 2. Remaining raw edges (excluding internal subgraph edges)
+    for (const auto& [from, to, arrow] : raw_edges)
+    {
+        // Skip edges that are internal to a subgraph
+        if (!from.is_placeholder && !to.is_placeholder)
+        {
+            auto pair_fwd = std::make_pair(static_cast<uint64_t>(from.value), static_cast<uint64_t>(to.value));
+            auto pair_rev = std::make_pair(static_cast<uint64_t>(to.value), static_cast<uint64_t>(from.value));
+            if (internal_edge_pairs.count(pair_fwd) || internal_edge_pairs.count(pair_rev))
+                continue;
+        }
+
+        // Redirect edges: if an endpoint is a subgraph, point to the subgraph ID instead
+        std::string from_id;
+        if (!from.is_placeholder && subgraphs.count(from.value))
+            from_id = "sg_" + std::to_string(static_cast<unsigned long long>(from.value));
+        else
+            from_id = node_ids[from];
+
+        std::string to_id;
+        if (!to.is_placeholder && subgraphs.count(to.value))
+            to_id = "sg_" + std::to_string(static_cast<unsigned long long>(to.value));
+        else
+            to_id = node_ids[to];
+
+        mermaid << "    " << from_id << " " << arrow << " " << to_id << std::endl;
+        ++edge_index;
+    }
+
+    // 3. Clone identity edges (dotted lines connecting original to clone)
+    for (auto& [orig_id, cid] : clone_identity_edges)
+    {
+        mermaid << "    " << orig_id << " -.-|\"=\"| " << cid << std::endl;
+        clone_edge_indices.push_back(edge_index);
+        ++edge_index;
+    }
+
+    // Emit linkStyle for predefined-predicate edges
+    for (size_t idx : predefined_edge_indices)
+        mermaid << "    linkStyle " << idx << " stroke:" << predef_stroke << ",stroke-width:2.5px" << std::endl;
+
+    // Emit linkStyle for clone identity edges
+    for (size_t idx : clone_edge_indices)
+        mermaid << "    linkStyle " << idx << " stroke:" << clone_stroke << ",stroke-width:1.5px,stroke-dasharray:5 3" << std::endl;
 
     // --- HTML TEMPLATE GENERATION ---
     std::string mermaid_theme = dark_theme ? "dark" : "default";
     std::string body_bg       = dark_theme ? "#18181b" : "#ffffff";
     std::string text_color    = dark_theme ? "#cccccc" : "#333333";
 
-    // CSS drop-shadow: subtle in light mode, slightly more pronounced in dark mode
     std::string shadow_css = dark_theme ? "drop-shadow(2px 4px 6px rgba(0,0,0,0.5))"
                                         : "drop-shadow(2px 4px 6px rgba(0,0,0,0.1))";
 
-    // Create the full HTML document string
     std::string html_header = R"(<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Zelph Graph Explorer</title>
-    <!-- Load Mermaid.js for graph rendering -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-    <!-- Load svg-pan-zoom for interactive exploring -->
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
 
     <script>
-        // Initialize Mermaid
+        function fixSubgraphTitleOverlap(svg) {
+            var clusters = Array.from(svg.querySelectorAll('.cluster'));
+            if (clusters.length === 0) return;
+    
+            // Get element bounding box in SVG root coordinate space
+            function svgBBox(el) {
+                var bb = el.getBBox();
+                var ctm = el.getCTM();
+                var p1 = svg.createSVGPoint();
+                var p2 = svg.createSVGPoint();
+                p1.x = bb.x; p1.y = bb.y;
+                p2.x = bb.x + bb.width; p2.y = bb.y + bb.height;
+                var t1 = p1.matrixTransform(ctm);
+                var t2 = p2.matrixTransform(ctm);
+                return { x: t1.x, y: t1.y, r: t2.x, b: t2.y };
+            }
+    
+            // Gather cluster data
+            var data = [];
+            clusters.forEach(function(cluster) {
+                var rect = null, label = null;
+                for (var i = 0; i < cluster.children.length; i++) {
+                    var c = cluster.children[i];
+                    if (!rect && c.tagName.toLowerCase() === 'rect') rect = c;
+                    if (!label && c.classList && c.classList.contains('cluster-label')) label = c;
+                }
+                if (!rect || !label) return;
+                data.push({
+                    cluster: cluster,
+                    rect: rect,
+                    label: label,
+                    rb: svgBBox(rect),
+                    lb: svgBBox(label)
+                });
+            });
+    
+            // Sort by area ascending: fix innermost clusters first,
+            // so their (possibly grown) rects are correct when outer clusters check.
+            data.sort(function(a, b) {
+                var aA = (a.rb.r - a.rb.x) * (a.rb.b - a.rb.y);
+                var aB = (b.rb.r - b.rb.x) * (b.rb.b - b.rb.y);
+                return aA - aB;
+            });
+    
+            var minGap = 10;
+    
+            for (var i = 0; i < data.length; i++) {
+                var parent = data[i];
+                var labelBottom = parent.lb.b;
+    
+                for (var j = 0; j < data.length; j++) {
+                    if (i === j) continue;
+                    var child = data[j];
+    
+                    // Is child geometrically inside parent? (with tolerance)
+                    var tol = 2;
+                    if (child.rb.x >= parent.rb.x - tol &&
+                        child.rb.y >= parent.rb.y - tol &&
+                        child.rb.r <= parent.rb.r + tol &&
+                        child.rb.b <= parent.rb.b + tol)
+                    {
+                        var overlap = labelBottom + minGap - child.rb.y;
+                        if (overlap > 0) {
+                            // Grow parent rect upward
+                            var ry = parseFloat(parent.rect.getAttribute('y'));
+                            var rh = parseFloat(parent.rect.getAttribute('height'));
+                            parent.rect.setAttribute('y', String(ry - overlap));
+                            parent.rect.setAttribute('height', String(rh + overlap));
+    
+                            // Move label up into the newly created space
+                            var existing = parent.label.getAttribute('transform') || '';
+                            parent.label.setAttribute('transform',
+                                (existing ? existing + ' ' : '')
+                                + 'translate(0,' + (-overlap) + ')');
+    
+                            // Update cached bounds for cascading fixes
+                            parent.rb.y -= overlap;
+                            parent.lb.y -= overlap;
+                            parent.lb.b -= overlap;
+                            labelBottom = parent.lb.b;
+                        }
+                    }
+                }
+            }
+        }
+    
+        function normalizeSubgraphTitles(svg) {
+            svg.querySelectorAll('.cluster-label').forEach(function(labelGroup) {
+                var text = (labelGroup.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!text) return;
+
+                // If Mermaid rendered the label as HTML inside foreignObject, force single-line layout.
+                labelGroup.querySelectorAll('foreignObject *').forEach(function(el) {
+                    el.textContent = text;
+                    el.style.whiteSpace = 'nowrap';
+                    el.style.wordBreak = 'normal';
+                    el.style.overflowWrap = 'normal';
+                    el.style.display = 'inline-block';
+                });
+
+                // If Mermaid rendered the label as SVG text/tspans, collapse it to one text node.
+                var textEl = labelGroup.querySelector('text');
+                if (textEl) {
+                    while (textEl.firstChild) {
+                        textEl.removeChild(textEl.firstChild);
+                    }
+                    textEl.textContent = text;
+                }
+            });
+        }
+
         mermaid.initialize({
             startOnLoad: true,
             theme: ')" + mermaid_theme
                             + R"(',
-            // Disable max width to allow the SVG to grow naturally for panning/zooming
-            flowchart: { useMaxWidth: false }
+                                flowchart: {
+                                                useMaxWidth: false,
+                subGraphTitleMargin: { top: 8, bottom: 8 }
+                                            }
         });
 
-        // Wait for Mermaid to finish rendering the SVG, then attach pan/zoom capabilities
         window.addEventListener('load', function () {
-            // Mermaid renders asynchronously, so we poll briefly until the SVG exists
             var checkExist = setInterval(function() {
                 var svg = document.querySelector('.mermaid svg');
                 if (svg) {
                     clearInterval(checkExist);
 
-                    // Force SVG to take full container height/width for panning
+                    fixSubgraphTitleOverlap(svg);
+                    normalizeSubgraphTitles(svg);
+
                     svg.style.width = '100%';
                     svg.style.height = '100%';
                     svg.style.maxWidth = 'none';
 
-                    // Initialize pan/zoom library
                     window.panZoom = svgPanZoom(svg, {
                         zoomEnabled: true,
-                        controlIconsEnabled: true, // Shows UI buttons (+, -, reset)
+                        controlIconsEnabled: true,
                         fit: true,
                         center: true,
                         minZoom: 0.1,
                         maxZoom: 20
                     });
                 }
-            }, 100); // Check every 100ms
+            }, 100);
         });
     </script>
 
     <style>
-        /* Fullscreen app layout to maximize canvas space */
         body {
             margin: 0;
             padding: 0;
@@ -2133,7 +3173,7 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
             color: )" + text_color
                             + R"(;
             font-family: sans-serif;
-            overflow: hidden; /* Hide standard browser scrollbars */
+            overflow: hidden;
         }
 
         .mermaid {
@@ -2144,7 +3184,6 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
             align-items: center;
         }
 
-        /* 3D and Hover effects for nodes */
         .node rect, .node circle, .node ellipse, .node polygon, .node path {
             filter: )" + shadow_css
                             + R"(;
@@ -2157,12 +3196,17 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
             cursor: grab;
         }
 
-        /* Grab cursor for the whole background to indicate panning is possible */
         .mermaid svg {
             cursor: grab;
         }
         .mermaid svg:active {
             cursor: grabbing;
+        }
+        
+        .cluster-label foreignObject * {
+            white-space: nowrap !important;
+            word-break: normal !important;
+            overflow-wrap: normal !important;
         }
     </style>
 </head>
@@ -2176,7 +3220,6 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
 </html>
 )";
 
-    // Write generated HTML to the specified file
     std::ofstream out_file(file_name);
     if (out_file.is_open())
     {

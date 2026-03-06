@@ -163,7 +163,7 @@ namespace zelph::network
         Node                 parse_relation(const Node rule) const;
         std::wstring         get_formatted_name(Node node, const std::string& lang) const;
         std::string          format(Node node) const;
-        void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr) const;
+        void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects = default_display_max_neighbors, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr) const;
         adjacency_set        filter(const adjacency_set& source, Node target) const;
         adjacency_set        filter(Node fact, Node relationType, Node target) const;
         static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
@@ -177,7 +177,15 @@ namespace zelph::network
         Node                 list(const std::vector<std::wstring>& elements);
         Node                 set(const std::unordered_set<Node>& elements);
         FactComponents       extract_fact_components(Node relation) const;
-        void                 gen_mermaid_html(Node start, std::string file_name, int max_depth, int max_neighbors, bool dark_theme = true, bool horizontal_layout = true) const;
+        bool                 identify_subgraph_components(Node n, Node& subject, Node& predicate, Node& object, std::unordered_set<Node>* containment_conflicts) const;
+        void                 gen_mermaid_html(Node                            start,
+                                              std::string                     file_name,
+                                              int                             max_depth,
+                                              int                             max_neighbors,
+                                              const std::unordered_set<Node>& exclude_nodes,
+                                              bool                            dark_theme,
+                                              bool                            horizontal_layout,
+                                              bool                            use_subgraphs) const;
         void                 print(const std::wstring&, const bool) const;
         static std::string   get_version();
         void                 save_to_file(const std::string& filename) const;
@@ -214,6 +222,8 @@ namespace zelph::network
             const Node Negation;
         } core;
 
+        static constexpr int default_display_max_neighbors{5};
+
     protected:
         std::string                               _lang{"en"};
         boost::bimap<network::Node, std::wstring> _core_names;
@@ -229,6 +239,8 @@ namespace zelph::network
                                    std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
                                    std::unordered_set<WrapperNode>&                                all_nodes,
                                    int                                                             max_neighbors,
-                                   size_t&                                                         placeholder_counter) const;
+                                   size_t&                                                         placeholder_counter,
+                                   const std::unordered_set<Node>&                                 exclude_nodes) const;
+        bool collect_subgraph_contents(Node n, std::unordered_set<Node>& contents, std::unordered_set<Node>& visited) const;
     };
 }

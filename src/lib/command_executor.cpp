@@ -159,7 +159,10 @@ private:
 
     // --- Helpers ---
 
-    void display_node_details(network::Node nd, bool resolved_from_name, int depth, int max_neighbors) const
+#define DEFAULT_DISPLAY_DEPTH 5
+#define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
+
+    void display_node_details(network::Node nd, bool resolved_from_name, int depth = DEFAULT_DISPLAY_DEPTH, int max_neighbors = network::Zelph::default_display_max_neighbors) const
     {
         if (resolved_from_name)
         {
@@ -214,7 +217,10 @@ private:
 
         if (depth > 0)
         {
-            generate_and_print_mermaid_link(nd, depth, max_neighbors);
+            generate_and_print_mermaid_link(nd,
+                                            depth,
+                                            max_neighbors,
+                                            DEFAULT_EXCLUDE_NODES);
         }
 
         auto format_node = [this, max_neighbors](network::Node node) -> std::string
@@ -274,15 +280,27 @@ private:
         std::clog << "------------------------" << std::endl;
     }
 
-    void
-    generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors) const
+    void generate_and_print_mermaid_link(network::Node                            nd,
+                                         int                                      depth,
+                                         int                                      max_neighbors,
+                                         const std::unordered_set<network::Node>& exclude_nodes,
+                                         bool                                     dark_theme        = true,
+                                         bool                                     horizontal_layout = true,
+                                         bool                                     use_subgraphs     = true) const
     {
         std::filesystem::path temp_dir  = std::filesystem::temp_directory_path();
         std::wstring          hex_name  = string::unicode::from_utf8(_n->get_name_hex(nd, false, max_neighbors));
         std::wstring          safe_name = string::sanitize_filename(hex_name);
         std::filesystem::path html_path = temp_dir / (safe_name + L".html");
 
-        _n->gen_mermaid_html(nd, html_path.string(), depth, max_neighbors);
+        _n->gen_mermaid_html(nd,
+                             html_path.string(),
+                             depth,
+                             max_neighbors,
+                             exclude_nodes,
+                             dark_theme,
+                             horizontal_layout,
+                             use_subgraphs);
 
         std::string abs_path = html_path.string();
         std::string file_url = "file://" + abs_path;
@@ -945,7 +963,7 @@ private:
         if (nodes.size() == 1)
         {
             bool resolved_from_name = !_n->get_name(nodes[0], _n->lang(), false).empty() || std::all_of(arg.begin(), arg.end(), ::iswdigit);
-            display_node_details(nodes[0], resolved_from_name && nodes.size() == 1, 3, 3);
+            display_node_details(nodes[0], resolved_from_name && nodes.size() == 1);
         }
         else
         {
@@ -958,7 +976,7 @@ private:
 
             for (network::Node nd : nodes)
             {
-                display_node_details(nd, true, 3, 3);
+                display_node_details(nd, true);
             }
         }
     }
@@ -976,7 +994,7 @@ private:
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
         {
-            display_node_details(it->first, false, 3, 3);
+            display_node_details(it->first, false);
         }
 
         std::clog << "Displayed " << displayed << " nodes." << std::endl;
@@ -995,7 +1013,7 @@ private:
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
         {
-            display_node_details(it->second, false, 3, 3);
+            display_node_details(it->second, false);
         }
     }
     void cmd_connections(const std::vector<std::wstring>& cmd, bool outgoing)
@@ -1030,7 +1048,7 @@ private:
 
         for (size_t i = 0; i < to_display; ++i)
         {
-            display_node_details(vec[i], false, 3, 3);
+            display_node_details(vec[i], false);
         }
     }
     void cmd_remove(const std::vector<std::wstring>& cmd)
@@ -1072,13 +1090,22 @@ private:
         const std::wstring& arg = cmd[1];
         network::Node       nd  = resolve_single_node(arg, true);
         if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
-        int max_depth = 3; // Default
-        if (cmd.size() == 3)
+        int max_depth     = DEFAULT_DISPLAY_DEPTH;
+        int max_neighbors = network::Zelph::default_display_max_neighbors;
+        if (cmd.size() >= 3)
         {
             max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
             if (max_depth < 2) throw std::runtime_error("Command .mermaid: Maximum depth must be greater than 1");
         }
-        generate_and_print_mermaid_link(nd, max_depth, 3);
+        if (cmd.size() >= 4)
+        {
+            max_neighbors = std::stoi(string::unicode::to_utf8(cmd[3]));
+            if (max_neighbors < 1) throw std::runtime_error("Command .mermaid: Maximum neighbors must be at least 1");
+        }
+        generate_and_print_mermaid_link(nd,
+                                        max_depth,
+                                        max_neighbors,
+                                        DEFAULT_EXCLUDE_NODES);
     }
     void cmd_run(const std::vector<std::wstring>&)
     {
