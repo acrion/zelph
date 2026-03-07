@@ -48,6 +48,7 @@ public:
     network::Reasoning* _n;
     JanetTable*         _janet_env = nullptr;
     Janet               _zelph_peg{};
+    bool                _log_janet_functions = false;
 
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
@@ -240,6 +241,34 @@ public:
         janet_gcroot(_zelph_peg);
     }
 
+    static std::string format_janet(Janet j)
+    {
+        JanetString   desc = janet_description(j);
+        JanetByteView view = {desc, janet_string_length(desc)};
+        return std::string(reinterpret_cast<const char*>(view.bytes), view.len);
+    }
+
+    void log_janet_call(const std::string& func_name, int32_t argc, Janet* argv, bool is_entry, Janet ret = janet_wrap_nil()) const
+    {
+        if (!_log_janet_functions) return;
+
+        std::clog << func_name << " ";
+
+        std::clog << "inputs: ";
+        for (int32_t i = 0; i < argc; ++i)
+        {
+            if (i > 0) std::clog << " ";
+            std::clog << format_janet(argv[i]);
+        }
+
+        if (!is_entry)
+        {
+            std::clog << " output: " << format_janet(ret);
+        }
+
+        std::clog << std::endl;
+    }
+
     // Converts Janet Types to Nodes.
     network::Node resolve_janet_arg(Janet arg)
     {
@@ -298,21 +327,34 @@ public:
     {
         janet_arity(argc, 3, -1);
         if (!s_instance) return janet_wrap_boolean(0);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, true);
 
         network::Node s = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node p = s_instance->resolve_janet_arg_no_create(argv[1]);
-        if (!s || !p) return janet_wrap_boolean(0);
+        if (!s || !p)
+        {
+            Janet res = janet_wrap_boolean(0);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set objs;
         for (int32_t i = 2; i < argc; ++i)
         {
             network::Node o = s_instance->resolve_janet_arg_no_create(argv[i]);
-            if (!o) return janet_wrap_boolean(0);
+            if (!o)
+            {
+                Janet res = janet_wrap_boolean(0);
+                if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+                return res;
+            }
             objs.insert(o);
         }
 
         network::Answer ans = s_instance->_n->check_fact(s, p, objs);
-        return janet_wrap_boolean(ans.is_known() ? 1 : 0);
+        Janet           res = janet_wrap_boolean(ans.is_known() ? 1 : 0);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+        return res;
     }
 
     // Return the name of a node as a string, or nil if unnamed.
@@ -321,9 +363,15 @@ public:
     {
         janet_arity(argc, 1, 2);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, true);
 
         network::Node n = zelph_unwrap_node(argv[0]);
-        if (!n) return janet_wrap_nil();
+        if (!n)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, false, res);
+            return res;
+        }
 
         std::string lang = s_instance->_n->lang();
         if (argc >= 2 && janet_checktype(argv[1], JANET_STRING))
@@ -332,10 +380,17 @@ public:
         }
 
         std::wstring name = s_instance->_n->get_name(n, lang, true);
-        if (name.empty()) return janet_wrap_nil();
+        if (name.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, false, res);
+            return res;
+        }
 
         std::string utf8 = string::unicode::to_utf8(name);
-        return janet_cstringv(utf8.c_str());
+        Janet       res  = janet_cstringv(utf8.c_str());
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, false, res);
+        return res;
     }
 
     // Find all subjects connected to target via predicate.
@@ -345,10 +400,16 @@ public:
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_array(janet_array(0));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/sources", argc, argv, true);
 
         network::Node predicate = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node target    = s_instance->resolve_janet_arg_no_create(argv[1]);
-        if (!predicate || !target) return janet_wrap_array(janet_array(0));
+        if (!predicate || !target)
+        {
+            Janet res = janet_wrap_array(janet_array(0));
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/sources", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set sources = s_instance->_n->get_sources(predicate, target);
 
@@ -357,7 +418,9 @@ public:
         {
             janet_array_push(result, zelph_wrap_node(src));
         }
-        return janet_wrap_array(result);
+        Janet res = janet_wrap_array(result);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/sources", argc, argv, false, res);
+        return res;
     }
 
     // Find all objects connected from subject via predicate.
@@ -368,10 +431,16 @@ public:
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_array(janet_array(0));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/targets", argc, argv, true);
 
         network::Node subject   = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node predicate = s_instance->resolve_janet_arg_no_create(argv[1]);
-        if (!subject || !predicate) return janet_wrap_array(janet_array(0));
+        if (!subject || !predicate)
+        {
+            Janet res = janet_wrap_array(janet_array(0));
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/targets", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set targets;
 
@@ -401,7 +470,9 @@ public:
         {
             janet_array_push(result, zelph_wrap_node(nd));
         }
-        return janet_wrap_array(result);
+        Janet res = janet_wrap_array(result);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/targets", argc, argv, false, res);
+        return res;
     }
 
     // Extract the car (first element / subject) of a cons cell.
@@ -410,19 +481,36 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/car", argc, argv, true);
 
         network::Node cell = zelph_unwrap_node(argv[0]);
-        if (!cell || cell == s_instance->_n->core.Nil) return janet_wrap_nil();
+        if (!cell || cell == s_instance->_n->core.Nil)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/car", argc, argv, false, res);
+            return res;
+        }
 
         // Verify this is a cons cell
         if (s_instance->_n->parse_relation(cell) != s_instance->_n->core.Cons)
-            return janet_wrap_nil();
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/car", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set objs;
         network::Node          subject = s_instance->_n->parse_fact(cell, objs, 0);
-        if (!subject) return janet_wrap_nil();
+        if (!subject)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/car", argc, argv, false, res);
+            return res;
+        }
 
-        return zelph_wrap_node(subject);
+        Janet res = zelph_wrap_node(subject);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/car", argc, argv, false, res);
+        return res;
     }
 
     // Extract the cdr (rest of list / object) of a cons cell.
@@ -431,20 +519,36 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/cdr", argc, argv, true);
 
         network::Node cell = zelph_unwrap_node(argv[0]);
         if (!cell || cell == s_instance->_n->core.Nil)
-            return zelph_wrap_node(s_instance->_n->core.Nil);
+        {
+            Janet res = zelph_wrap_node(s_instance->_n->core.Nil);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/cdr", argc, argv, false, res);
+            return res;
+        }
 
         // Verify this is a cons cell
         if (s_instance->_n->parse_relation(cell) != s_instance->_n->core.Cons)
-            return janet_wrap_nil();
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/cdr", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set objs;
         s_instance->_n->parse_fact(cell, objs, 0);
-        if (objs.empty()) return zelph_wrap_node(s_instance->_n->core.Nil);
+        if (objs.empty())
+        {
+            Janet res = zelph_wrap_node(s_instance->_n->core.Nil);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/cdr", argc, argv, false, res);
+            return res;
+        }
 
-        return zelph_wrap_node(*objs.begin());
+        Janet res = zelph_wrap_node(*objs.begin());
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/cdr", argc, argv, false, res);
+        return res;
     }
 
     // Mark a fact pattern as negation and return the pattern node.
@@ -454,13 +558,21 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negate", argc, argv, true);
 
         network::Node n = zelph_unwrap_node(argv[0]);
-        if (!n) return janet_wrap_nil();
+        if (!n)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negate", argc, argv, false, res);
+            return res;
+        }
 
         s_instance->_n->fact(n, s_instance->_n->core.IsA, {s_instance->_n->core.Negation});
 
-        return zelph_wrap_node(n); // Return the pattern node (like focus *)
+        Janet res = zelph_wrap_node(n); // Return the pattern node (like focus *)
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negate", argc, argv, false, res);
+        return res;
     }
 
     // Create a complete inference rule: conjunction of conditions => consequence(s).
@@ -478,6 +590,7 @@ public:
     {
         janet_arity(argc, 2, -1); // At least conditions + 1 consequence
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, true);
 
         // First argument: indexed collection of condition fact nodes
         const Janet* cond_data;
@@ -485,7 +598,7 @@ public:
         if (!janet_indexed_view(argv[0], &cond_data, &cond_len) || cond_len == 0)
         {
             janet_panicf("zelph/rule: first argument must be a non-empty array or tuple of conditions");
-            return janet_wrap_nil();
+            return janet_wrap_nil(); // Unreachable
         }
 
         // Collect condition nodes
@@ -499,7 +612,12 @@ public:
                 janet_panicf("zelph/rule: condition at index %d is not a valid zelph/node", i);
         }
 
-        if (condition_nodes.empty()) return janet_wrap_nil();
+        if (condition_nodes.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, false, res);
+            return res;
+        }
 
         // Create condition set and mark as conjunction
         network::Node condition_set = s_instance->_n->set(condition_nodes);
@@ -515,7 +633,9 @@ public:
                 janet_panicf("zelph/rule: consequence at index %d is not a valid zelph/node", i - 1);
         }
 
-        return zelph_wrap_node(condition_set);
+        Janet res = zelph_wrap_node(condition_set);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, false, res);
+        return res;
     }
 
     // Build a cons list from string characters (for compact <abc> syntax).
@@ -527,12 +647,18 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list-chars", argc, argv, true);
 
         const uint8_t* str   = janet_getstring(argv, 0);
         std::string    raw_s = reinterpret_cast<const char*>(str);
         std::wstring   wstr  = string::unicode::from_utf8(raw_s);
 
-        if (wstr.empty()) return janet_wrap_nil(); // Empty lists are not supported
+        if (wstr.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list-chars", argc, argv, false, res);
+            return res; // Empty lists are not supported
+        }
 
         // Split into individual characters, then reverse so the rightmost character
         // (least significant digit) becomes element[0] and thus the outermost cons cell.
@@ -546,7 +672,9 @@ public:
         std::reverse(elements.begin(), elements.end());
 
         network::Node list_node = s_instance->_n->list(elements);
-        return zelph_wrap_node(list_node);
+        Janet         res       = zelph_wrap_node(list_node);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list-chars", argc, argv, false, res);
+        return res;
     }
 
     // Build a cons list from existing nodes (for < A B > node-list syntax).
@@ -557,6 +685,7 @@ public:
     static Janet janet_cfun_zelph_list(int32_t argc, Janet* argv)
     {
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list", argc, argv, true);
 
         std::vector<network::Node> elements;
         elements.reserve(argc);
@@ -567,15 +696,23 @@ public:
             if (n) elements.push_back(n);
         }
 
-        if (elements.empty()) return janet_wrap_nil();
+        if (elements.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list", argc, argv, false, res);
+            return res;
+        }
 
         network::Node list_node = s_instance->_n->list(elements);
-        return zelph_wrap_node(list_node);
+        Janet         res       = zelph_wrap_node(list_node);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list", argc, argv, false, res);
+        return res;
     }
 
     static Janet janet_cfun_zelph_set(int32_t argc, Janet* argv)
     {
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set", argc, argv, true);
 
         std::unordered_set<network::Node> elements;
         for (int i = 0; i < argc; ++i)
@@ -585,17 +722,25 @@ public:
         }
 
         network::Node set_node = s_instance->_n->set(elements);
-        return zelph_wrap_node(set_node);
+        Janet         res      = zelph_wrap_node(set_node);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set", argc, argv, false, res);
+        return res;
     }
 
     static Janet janet_cfun_zelph_fact(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 3, -1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, true);
 
         network::Node s = s_instance->resolve_janet_arg(argv[0]);
         network::Node p = s_instance->resolve_janet_arg(argv[1]);
-        if (!s || !p) return janet_wrap_nil();
+        if (!s || !p)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
+            return res;
+        }
 
         network::adjacency_set objs;
         for (int i = 2; i < argc; ++i)
@@ -603,10 +748,17 @@ public:
             network::Node o = s_instance->resolve_janet_arg(argv[i]);
             if (o) objs.insert(o);
         }
-        if (objs.empty()) return janet_wrap_nil();
+        if (objs.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
+            return res;
+        }
 
-        network::Node f = s_instance->_n->fact(s, p, objs);
-        return zelph_wrap_node(f);
+        network::Node f   = s_instance->_n->fact(s, p, objs);
+        Janet         res = zelph_wrap_node(f);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
+        return res;
     }
 
     // Resolve a name to a node in the current language (convenience for Janet code)
@@ -614,11 +766,14 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, true);
 
         const uint8_t* str  = janet_getstring(argv, 0);
         std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
         network::Node  n    = s_instance->_n->node(wstr, s_instance->_n->lang());
-        return zelph_wrap_node(n);
+        Janet          res  = zelph_wrap_node(n);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, false, res);
+        return res;
     }
 
     // Execute a query: print the pattern and trigger matching via apply_rule.
@@ -629,9 +784,15 @@ public:
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/query", argc, argv, true);
 
         network::Node n = zelph_unwrap_node(argv[0]);
-        if (!n) return janet_wrap_nil();
+        if (!n)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/query", argc, argv, false, res);
+            return res;
+        }
 
         // Build inverse mapping: variable Node -> symbol name
         // (must be done before apply_rule clears anything)
@@ -678,7 +839,9 @@ public:
             janet_array_push(result_array, janet_wrap_table(entry));
         }
 
-        return janet_wrap_array(result_array);
+        Janet res = janet_wrap_array(result_array);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/query", argc, argv, false, res);
+        return res;
     }
 
     // Helper to generate Janet code for a function call with potential focused arguments.
@@ -974,6 +1137,16 @@ void ScriptEngine::initialize()
     _pImpl->init();
 }
 
+void ScriptEngine::toggle_janet_logging()
+{
+    _pImpl->_log_janet_functions = !_pImpl->_log_janet_functions;
+}
+
+std::string ScriptEngine::get_janet_logging_status() const
+{
+    return _pImpl->_log_janet_functions ? "enabled" : "disabled";
+}
+
 std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
 {
     JanetSymbol      match_sym = janet_csymbol("zelph-safe-parse");
@@ -1188,15 +1361,13 @@ bool ScriptEngine::is_expression_complete(const std::string& code)
 //     for token boundaries; only () and {} affect depth.
 bool ScriptEngine::is_zelph_complete(const std::string& code)
 {
-    int  depth      = 0; // () and {} depth only
+    int  depth      = 0;
     bool in_string  = false;
     bool escape     = false;
     bool in_comment = false;
 
     int  top_tokens   = 0;
     bool in_top_token = false;
-
-    bool has_comma_at_depth_1 = false;
 
     for (char c : code)
     {
@@ -1261,13 +1432,6 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         }
         else
         {
-            // Recognition of comma conjunctions (syntactic sugar) within the outermost parentheses
-            if (c == ',' && depth == 1)
-            {
-                has_comma_at_depth_1 = true;
-            }
-
-            // Any other character: atom chars, operators, < > * , etc.
             if (depth == 0 && !in_top_token)
             {
                 top_tokens++;
@@ -1287,21 +1451,13 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             if (first_char_idx != std::string::npos)
             {
                 char c = code[first_char_idx];
-
-                // If it is a bracketed comma query, it can be evaluated immediately.
-                if (c == '(' && has_comma_at_depth_1)
-                {
-                    return true;
-                }
-
-                // We also evaluate a single set {}, a list <>, a focus *, or negation ¬ directly (enabling fast queries in REPL).
                 if (c == '{' || c == '<' || c == '*' || c == '\xC2')
                 {
                     return true;
                 }
             }
         }
-        return false; // nothing / subject only / S P only — still needs input to complete a triple
+        return false;
     }
     return true;
 }

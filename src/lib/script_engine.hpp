@@ -70,6 +70,10 @@ namespace zelph
         // Inject arguments into the script environment (for script files with args)
         void set_script_args(const std::vector<std::string>& args);
 
+        void toggle_janet_logging();
+
+        std::string get_janet_logging_status() const;
+
         // Check whether a Janet code fragment has balanced delimiters
         // (parentheses, brackets, braces), respecting strings and comments.
         // Returns true when the expression is syntactically complete.

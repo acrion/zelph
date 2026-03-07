@@ -145,6 +145,8 @@ private:
         { cmd_stat(c); };
         _command_map[L".log"] = [this](auto& c)
         { cmd_log(c); };
+        _command_map[L".log-janet"] = [this](auto& c)
+        { cmd_log_janet(c); };
         _command_map[L".save"] = [this](auto& c)
         { cmd_save(c); };
         _command_map[L".import"] = [this](auto& c)
@@ -603,6 +605,7 @@ private:
             L".cleanup                    – Remove isolated nodes and clean name mappings",
             L".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
             L".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
+            L".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
             L".auto-run                   – Toggle automatic execution of .run after each input",
             L".parallel                   – Toggle parallel processing (default: on)",
             L".wikidata-constraints <json> <dir> – Export constraints to a directory",
@@ -804,6 +807,10 @@ private:
                       L"Enables detailed reasoning logging up to the given recursion depth.\n"
                       L"0 disables it.\n"
                       L"Every line is correctly indented according to depth."},
+
+            {L".log-janet", L".log-janet\n"
+                            L"Toggles detailed logging of inputs and outputs for all zelph/* Janet functions.\n"
+                            L"Logs inputs at function entry and both inputs and output at exit."},
 
             {L".auto-run", L".auto-run\n"
                            L"Toggles the automatic execution of the inference engine (.run) after every input.\n"
@@ -1548,6 +1555,14 @@ private:
         }
 
         _n->set_logging(depth);
+    }
+    void cmd_log_janet(const std::vector<std::wstring>& cmd)
+    {
+        if (cmd.size() != 1)
+            throw std::runtime_error("Command .log-janet takes no arguments");
+
+        _script_engine->toggle_janet_logging();
+        _n->print(L"Janet function logging is now " + string::unicode::from_utf8(_script_engine->get_janet_logging_status()) + L".", true);
     }
     void cmd_save(const std::vector<std::wstring>& cmd)
     {
