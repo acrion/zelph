@@ -32,7 +32,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <mutex>
 #include <regex>
 #include <sstream>
@@ -340,7 +339,7 @@ namespace zelph::wikidata
                     std::ofstream out(temp_path);
                     if (!out.is_open())
                     {
-                        std::cerr << "Failed to write temp " << temp_path << "\n";
+                        _zelph->error_stream() << "Failed to write temp " << temp_path << "\n";
                         continue;
                     }
                     for (const auto& l : state.lines)
@@ -354,7 +353,7 @@ namespace zelph::wikidata
                     }
                     catch (const std::filesystem::filesystem_error& e)
                     {
-                        std::cerr << "Failed to rename temp to " << file_path << ": " << e.what() << "\n";
+                        _zelph->error_stream() << "Failed to rename temp to " << file_path << ": " << e.what() << "\n";
                         std::filesystem::remove(temp_path); // Cleanup
                     }
                 }

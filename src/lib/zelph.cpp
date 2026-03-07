@@ -31,7 +31,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <bitset>
 #include <fstream>
-#include <iostream>
 #include <ranges>
 #include <set>
 #include <sstream>
@@ -45,8 +44,8 @@ std::string Zelph::get_version()
     return "0.9.4";
 }
 
-Zelph::Zelph(const std::function<void(const std::wstring&, const bool)>& print)
-    : _pImpl{new Impl(print)}
+Zelph::Zelph(const OutputHandler& output)
+    : _pImpl{new Impl(output)}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
 {
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
@@ -94,7 +93,7 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
     if (lang.empty()) lang = _lang; // Use current default language if none specified
 
 #if _DEBUG
-    // std::wcout << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
+    diagnostic_stream() << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
 #endif
 
     std::lock_guard lock(_pImpl->_mtx_node_of_name);
@@ -127,10 +126,10 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
 
             if (!Impl::is_var(from))
             {
-                std::wclog << L"Warning: Merging Node " << from
-                           << L" into Node " << into
-                           << L" due to name conflict '" << name
-                           << L"' in language '" << string::unicode::from_utf8(lang) << L"'." << std::endl;
+                out_stream() << "Warning: Merging Node " << from
+                             << " into Node " << into
+                             << " due to name conflict '" << name
+                             << "' in language '" << lang << "'." << std::endl;
             }
 
             invalidate_fact_structures_cache();
@@ -237,10 +236,10 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
 
                 if (!Impl::is_var(from))
                 {
-                    std::wclog << L"Warning: Merging Node " << from
-                               << L" into Node " << into
-                               << L" due to name conflict '" << name_in_current_lang
-                               << L"' in language '" << string::unicode::from_utf8(_lang) << L"'." << std::endl;
+                    out_stream() << "Warning: Merging Node " << from
+                                 << " into Node " << into
+                                 << " due to name conflict '" << name_in_current_lang
+                                 << "' in language '" << _lang << "'." << std::endl;
                 }
 
                 invalidate_fact_structures_cache();
@@ -611,7 +610,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             // inconsistent state => debug output TODO
             std::wstring output;
             format_fact(output, _lang, relation, 3);
-            print(output, true);
+            error(output, true);
 
             gen_mermaid_html(relation,
                              "debug.html",
@@ -621,34 +620,34 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
                              true,
                              true,
                              true);
-            print(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
-            print(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
-            print(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
-            print(L"noObjectsAreConnectedFromRelation == " + std::to_wstring(noObjectsAreConnectedFromRelation), true);
+            error(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
+            error(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
+            error(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
+            error(L"noObjectsAreConnectedFromRelation == " + std::to_wstring(noObjectsAreConnectedFromRelation), true);
 
             FactComponents actual = extract_fact_components(relation);
-            print(L"Hash collision detected for relation=" + std::to_wstring(relation), true);
-            print(L"Expected inputs to create_hash:", true);
-            print(L"  Subject:   " + std::to_wstring(subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(subject).to_string()) + L")", true);
-            print(L"  Predicate: " + std::to_wstring(predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(predicate).to_string()) + L")", true);
-            print(L"  Objects:", true);
+            error(L"Hash collision detected for relation=" + std::to_wstring(relation), true);
+            error(L"Expected inputs to create_hash:", true);
+            error(L"  Subject:   " + std::to_wstring(subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(subject).to_string()) + L")", true);
+            error(L"  Predicate: " + std::to_wstring(predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(predicate).to_string()) + L")", true);
+            error(L"  Objects:", true);
             for (Node obj : objects)
             {
-                print(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+                error(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
             }
 
-            print(L"Actual inputs in existing relation:", true);
-            print(L"  Subject:   " + std::to_wstring(actual.subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.subject).to_string()) + L")", true);
-            print(L"  Predicate: " + std::to_wstring(actual.predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.predicate).to_string()) + L")", true);
-            print(L"  Objects:", true);
+            error(L"Actual inputs in existing relation:", true);
+            error(L"  Subject:   " + std::to_wstring(actual.subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.subject).to_string()) + L")", true);
+            error(L"  Predicate: " + std::to_wstring(actual.predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.predicate).to_string()) + L")", true);
+            error(L"  Objects:", true);
             for (Node obj : actual.objects)
             {
-                print(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+                error(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
             }
 
             static int hash_collision_count = 0;
             ++hash_collision_count;
-            print(L"Hash collision count: " + std::to_wstring(hash_collision_count), true);
+            error(L"Hash collision count: " + std::to_wstring(hash_collision_count), true);
 
             assert(false);
         }
@@ -1100,9 +1099,7 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     }
 }
 
-#ifndef NDEBUG
-    #define DEBUG_FORMAT_FACT
-#endif
+// #define DEBUG_FORMAT_FACT
 
 std::string Zelph::format(Node node) const
 {
@@ -1126,7 +1123,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     IncDec incDec(_pImpl->_format_fact_level);
 #ifdef DEBUG_FORMAT_FACT
     std::string indent(_pImpl->_format_fact_level * 2, ' ');
-    std::clog << indent << "[DEBUG format_fact] ENTRY fact=" << fact << " parent=" << parent << std::endl;
+    diagnostic_stream() << indent << "[DEBUG format_fact] ENTRY fact=" << fact << " parent=" << parent << std::endl;
 #endif
 
     if (!history) history = std::make_shared<std::unordered_set<Node>>();
@@ -1151,7 +1148,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     if (history->find(resolved) != history->end())
     {
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
+        diagnostic_stream() << indent << "[DEBUG format_fact] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
 #endif
         result = L"?";
         return;
@@ -1194,7 +1191,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     if (!name.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] Found name '" << string::unicode::to_utf8(name) << "' for node " << resolved << std::endl;
+        diagnostic_stream() << indent << "[DEBUG format_fact] Found name '" << string::unicode::to_utf8(name) << "' for node " << resolved << std::endl;
 #endif
         result = string::mark_identifier(name);
         return;
@@ -1209,7 +1206,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         if (rel_type == core.Cons)
         {
 #ifdef DEBUG_FORMAT_FACT
-            std::clog << indent << "[DEBUG format_fact] DETECTED CONS LIST starting at " << resolved << std::endl;
+            diagnostic_stream() << indent << "[DEBUG format_fact] DETECTED CONS LIST starting at " << resolved << std::endl;
 #endif
             auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
             child_history->insert(resolved);
@@ -1325,7 +1322,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     if (!elements.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] DETECTED SET with " << elements.size() << " elements." << std::endl;
+        diagnostic_stream() << indent << "[DEBUG format_fact] DETECTED SET with " << elements.size() << " elements." << std::endl;
 #endif
         auto child_history = std::make_shared<std::unordered_set<Node>>(*history);
         child_history->insert(resolved);
@@ -1390,14 +1387,14 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
                         }
 
 #ifdef DEBUG_FORMAT_FACT
-                        std::clog << indent << "[DEBUG format_fact] Found IsA proxy to concept=" << concept_node << std::endl;
+                        diagnostic_stream() << indent << "[DEBUG format_fact] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
                         format_fact(result, lang, concept_node, max_objects, variables, parent, history);
 
                         if (!result.empty() && result != L"?")
                         {
 #ifdef DEBUG_FORMAT_FACT
-                            std::clog << indent << "[DEBUG format_fact] Proxy resolved to: " << string::unicode::to_utf8(result) << std::endl;
+                            diagnostic_stream() << indent << "[DEBUG format_fact] Proxy resolved to: " << string::unicode::to_utf8(result) << std::endl;
 #endif
                             return;
                         }
@@ -1411,7 +1408,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
 #ifdef DEBUG_FORMAT_FACT
-    std::clog << indent << "[DEBUG format_fact] Standard path (Statement/Fact)." << std::endl;
+    diagnostic_stream() << indent << "[DEBUG format_fact] Standard path (Statement/Fact)." << std::endl;
 #endif
 
     adjacency_set objects;
@@ -1420,7 +1417,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     bool is_condition = false;
 
 #ifdef DEBUG_FORMAT_FACT
-    std::clog << indent << "[DEBUG format_fact] parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
+    diagnostic_stream() << indent << "[DEBUG format_fact] parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
 #endif
 
     if (subject == 0 && !is_condition)
@@ -1451,14 +1448,14 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
         if (fallback_subj == 0)
         {
 #ifdef DEBUG_FORMAT_FACT
-            std::clog << indent << "[DEBUG format_fact] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
+            diagnostic_stream() << indent << "[DEBUG format_fact] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
 #endif
             result = string::mark_identifier(L"??");
             return;
         }
 
 #ifdef DEBUG_FORMAT_FACT
-        std::clog << indent << "[DEBUG format_fact] Fallback subject found: " << fallback_subj << std::endl;
+        diagnostic_stream() << indent << "[DEBUG format_fact] Fallback subject found: " << fallback_subj << std::endl;
 #endif
 
         // Reconstruct objects: nodes in get_left(resolved) that are neither the subject
@@ -1598,7 +1595,7 @@ void Zelph::format_fact(std::wstring& result, const std::string& lang, Node fact
     boost::replace_all(result, L"\n", L" --- ");
     boost::trim(result);
 #ifdef DEBUG_FORMAT_FACT
-    std::clog << indent << "[DEBUG format_fact] EXIT result='" << string::unicode::to_utf8(result) << "'" << std::endl;
+    diagnostic_stream() << indent << "[DEBUG format_fact] EXIT result='" << string::unicode::to_utf8(result) << "'" << std::endl;
 #endif
 }
 
@@ -2041,9 +2038,9 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
         return false;
 
 #ifdef DEBUG_MERMAID
-    std::clog << "[DEBUG_MERMAID] identify_subgraph node=" << n
-              << " (name: " << string::unicode::to_utf8(get_name(n, _lang, true))
-              << ", format: " << format(n) << ")" << std::endl;
+    diagnostic_stream() << "[DEBUG_MERMAID] identify_subgraph node=" << n
+                        << " (name: " << string::unicode::to_utf8(get_name(n, _lang, true))
+                        << ", format: " << format(n) << ")" << std::endl;
 #endif
 
     const auto right = _pImpl->get_right(n);
@@ -2061,9 +2058,9 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
             if (pred_candidate != 0)
             {
 #ifdef DEBUG_MERMAID
-                std::clog << "[DEBUG_MERMAID]   Criterion 2 FAILED: multiple predicate candidates: "
-                          << pred_candidate << " (" << string::unicode::to_utf8(get_name(pred_candidate, _lang, true)) << ") and "
-                          << p << " (" << string::unicode::to_utf8(get_name(p, _lang, true)) << ")" << std::endl;
+                diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 2 FAILED: multiple predicate candidates: "
+                                    << pred_candidate << " (" << string::unicode::to_utf8(get_name(pred_candidate, _lang, true)) << ") and "
+                                    << p << " (" << string::unicode::to_utf8(get_name(p, _lang, true)) << ")" << std::endl;
 #endif
                 return false; // more than one predicate candidate
             }
@@ -2073,15 +2070,15 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
     if (pred_candidate == 0)
     {
 #ifdef DEBUG_MERMAID
-        std::clog << "[DEBUG_MERMAID]   Criterion 2 FAILED: no predicate candidate found among " << right.size() << " outgoing neighbors:" << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 2 FAILED: no predicate candidate found among " << right.size() << " outgoing neighbors:" << std::endl;
         for (Node p : right)
         {
-            std::clog << "[DEBUG_MERMAID]     outgoing " << p
-                      << " (name: " << string::unicode::to_utf8(get_name(p, _lang, true))
-                      << ", is_hash=" << Impl::is_hash(p)
-                      << ", is_var=" << Impl::is_var(p)
-                      << ", is_RTC=" << check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known()
-                      << ")" << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID]     outgoing " << p
+                                << " (name: " << string::unicode::to_utf8(get_name(p, _lang, true))
+                                << ", is_hash=" << Impl::is_hash(p)
+                                << ", is_var=" << Impl::is_var(p)
+                                << ", is_RTC=" << check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known()
+                                << ")" << std::endl;
         }
 #endif
         return false;
@@ -2098,16 +2095,16 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
     if (bidi_nodes.empty())
     {
 #ifdef DEBUG_MERMAID
-        std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: no bidirectional neighbor found (predicate="
-                  << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << "))" << std::endl;
-        std::clog << "[DEBUG_MERMAID]     right nodes:";
+        diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 3 FAILED: no bidirectional neighbor found (predicate="
+                            << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << "))" << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID]     right nodes:";
         for (Node s : right)
-            std::clog << " " << s;
-        std::clog << std::endl;
-        std::clog << "[DEBUG_MERMAID]     left nodes:";
+            diagnostic_stream() << " " << s;
+        diagnostic_stream() << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID]     left nodes:";
         for (Node s : left)
-            std::clog << " " << s;
-        std::clog << std::endl;
+            diagnostic_stream() << " " << s;
+        diagnostic_stream() << std::endl;
 #endif
         return false;
     }
@@ -2127,9 +2124,9 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
                 if (non_hash != 0)
                 {
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: multiple non-hash bidirectional neighbors: "
-                              << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
-                              << s << " (" << string::unicode::to_utf8(get_name(s, _lang, true)) << ")" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 3 FAILED: multiple non-hash bidirectional neighbors: "
+                                        << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
+                                        << s << " (" << string::unicode::to_utf8(get_name(s, _lang, true)) << ")" << std::endl;
 #endif
                     return false; // ambiguous
                 }
@@ -2139,15 +2136,15 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
         if (non_hash == 0)
         {
 #ifdef DEBUG_MERMAID
-            std::clog << "[DEBUG_MERMAID]   Criterion 3 FAILED: " << bidi_nodes.size()
-                      << " bidirectional neighbors, ALL are hash nodes:" << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 3 FAILED: " << bidi_nodes.size()
+                                << " bidirectional neighbors, ALL are hash nodes:" << std::endl;
             for (Node s : bidi_nodes)
             {
-                std::clog << "[DEBUG_MERMAID]     bidi " << s
-                          << " (name: " << string::unicode::to_utf8(get_name(s, _lang, true))
-                          << ", format: " << format(s)
-                          << ", is_hash=" << Impl::is_hash(s)
-                          << ", is_var=" << Impl::is_var(s) << ")" << std::endl;
+                diagnostic_stream() << "[DEBUG_MERMAID]     bidi " << s
+                                    << " (name: " << string::unicode::to_utf8(get_name(s, _lang, true))
+                                    << ", format: " << format(s)
+                                    << ", is_hash=" << Impl::is_hash(s)
+                                    << ", is_var=" << Impl::is_var(s) << ")" << std::endl;
             }
 #endif
             return false;
@@ -2165,11 +2162,11 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
     if (incoming_only.empty())
     {
 #ifdef DEBUG_MERMAID
-        std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: no incoming-only neighbor found for node=" << n << std::endl;
-        std::clog << "[DEBUG_MERMAID]     left nodes:";
+        diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 4 FAILED: no incoming-only neighbor found for node=" << n << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID]     left nodes:";
         for (Node o : left)
-            std::clog << " " << o << "(in_right=" << (right.count(o) > 0) << ")";
-        std::clog << std::endl;
+            diagnostic_stream() << " " << o << "(in_right=" << (right.count(o) > 0) << ")";
+        diagnostic_stream() << std::endl;
 #endif
         return false;
     }
@@ -2189,9 +2186,9 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
                 if (non_hash != 0)
                 {
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: multiple non-hash incoming-only neighbors: "
-                              << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
-                              << o << " (" << string::unicode::to_utf8(get_name(o, _lang, true)) << ")" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 4 FAILED: multiple non-hash incoming-only neighbors: "
+                                        << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
+                                        << o << " (" << string::unicode::to_utf8(get_name(o, _lang, true)) << ")" << std::endl;
 #endif
                     return false; // multiple objects — not handled
                 }
@@ -2201,14 +2198,14 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
         if (non_hash == 0)
         {
 #ifdef DEBUG_MERMAID
-            std::clog << "[DEBUG_MERMAID]   Criterion 4 FAILED: " << incoming_only.size()
-                      << " incoming-only neighbors, ALL are hash nodes:" << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 4 FAILED: " << incoming_only.size()
+                                << " incoming-only neighbors, ALL are hash nodes:" << std::endl;
             for (Node o : incoming_only)
             {
-                std::clog << "[DEBUG_MERMAID]     incoming-only " << o
-                          << " (name: " << string::unicode::to_utf8(get_name(o, _lang, true))
-                          << ", format: " << format(o)
-                          << ", is_hash=" << Impl::is_hash(o) << ")" << std::endl;
+                diagnostic_stream() << "[DEBUG_MERMAID]     incoming-only " << o
+                                    << " (name: " << string::unicode::to_utf8(get_name(o, _lang, true))
+                                    << ", format: " << format(o)
+                                    << ", is_hash=" << Impl::is_hash(o) << ")" << std::endl;
             }
 #endif
             return false;
@@ -2229,16 +2226,16 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
                     // Record conflict but allow subgraph creation
                     containment_conflicts->insert(object);
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 5 CONFLICT (allowed via cloning): subject " << subject
-                              << " contains object " << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
-                              << ")" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 5 CONFLICT (allowed via cloning): subject " << subject
+                                        << " contains object " << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                                        << ")" << std::endl;
 #endif
                 }
                 else
                 {
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 5 FAILED: subject " << subject
-                              << " contains object " << object << " in its subgraph contents" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 5 FAILED: subject " << subject
+                                        << " contains object " << object << " in its subgraph contents" << std::endl;
 #endif
                     return false;
                 }
@@ -2258,17 +2255,17 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
                 {
                     containment_conflicts->insert(subject);
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 6 CONFLICT (allowed via cloning): object " << object
-                              << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
-                              << ") contains subject " << subject
-                              << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 6 CONFLICT (allowed via cloning): object " << object
+                                        << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                                        << ") contains subject " << subject
+                                        << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")" << std::endl;
 #endif
                 }
                 else
                 {
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID]   Criterion 6 FAILED: object " << object
-                              << " contains subject " << subject << " in its subgraph contents" << std::endl;
+                    diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 6 FAILED: object " << object
+                                        << " contains subject " << subject << " in its subgraph contents" << std::endl;
 #endif
                     return false;
                 }
@@ -2277,10 +2274,10 @@ bool Zelph::identify_subgraph_components(Node n, Node& subject, Node& predicate,
     }
 
 #ifdef DEBUG_MERMAID
-    std::clog << "[DEBUG_MERMAID]   SUCCESS: subgraph node=" << n
-              << " subject=" << subject << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")"
-              << " predicate=" << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << ")"
-              << " object=" << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true)) << ")" << std::endl;
+    diagnostic_stream() << "[DEBUG_MERMAID]   SUCCESS: subgraph node=" << n
+                        << " subject=" << subject << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")"
+                        << " predicate=" << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << ")"
+                        << " object=" << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true)) << ")" << std::endl;
 #endif
 
     return true;
@@ -2363,8 +2360,8 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     {
         // Phase 1: Identify subgraph candidates, allowing containment conflicts
 #ifdef DEBUG_MERMAID
-        std::clog << "[DEBUG_MERMAID] === SUBGRAPH IDENTIFICATION PHASE ===" << std::endl;
-        std::clog << "[DEBUG_MERMAID] Total nodes to check: " << all_nodes.size() << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID] === SUBGRAPH IDENTIFICATION PHASE ===" << std::endl;
+        diagnostic_stream() << "[DEBUG_MERMAID] Total nodes to check: " << all_nodes.size() << std::endl;
 #endif
         for (const WrapperNode& wn : all_nodes)
         {
@@ -2381,16 +2378,16 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
                 {
                     subgraphs[wn.value] = {s, p, o};
 #ifdef DEBUG_MERMAID
-                    std::clog << "[DEBUG_MERMAID] Registered subgraph: node=" << wn.value
-                              << " S=" << s << " P=" << p << " O=" << o;
+                    diagnostic_stream() << "[DEBUG_MERMAID] Registered subgraph: node=" << wn.value
+                                        << " S=" << s << " P=" << p << " O=" << o;
                     if (!containment_conflicts.empty())
                     {
-                        std::clog << " (containment conflicts:";
+                        diagnostic_stream() << " (containment conflicts:";
                         for (Node c : containment_conflicts)
-                            std::clog << " " << c;
-                        std::clog << ")";
+                            diagnostic_stream() << " " << c;
+                        diagnostic_stream() << ")";
                     }
-                    std::clog << std::endl;
+                    diagnostic_stream() << std::endl;
 #endif
                 }
             }
@@ -2411,9 +2408,9 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
                 }
             }
 #ifdef DEBUG_MERMAID
-            std::clog << "[DEBUG_MERMAID] Nesting: subgraph " << r
-                      << (sg_parent[r] == 0 ? " is top-level" : " is child of subgraph " + std::to_string(sg_parent[r]))
-                      << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID] Nesting: subgraph " << r
+                                << (sg_parent[r] == 0 ? " is top-level" : " is child of subgraph " + std::to_string(sg_parent[r]))
+                                << std::endl;
 #endif
         }
 
@@ -2482,10 +2479,10 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
                 clone_identity_edges.emplace_back(orig_id, cid);
 
 #ifdef DEBUG_MERMAID
-                std::clog << "[DEBUG_MERMAID] Clone: node " << nd
-                          << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
-                          << ") cloned as " << cid << " in subgraph " << sg
-                          << " (owner subgraph: " << owner << ")" << std::endl;
+                diagnostic_stream() << "[DEBUG_MERMAID] Clone: node " << nd
+                                    << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
+                                    << ") cloned as " << cid << " in subgraph " << sg
+                                    << " (owner subgraph: " << owner << ")" << std::endl;
 #endif
             }
         }
@@ -2567,9 +2564,9 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
                                 to_remove = std::min(a, b);
 
 #ifdef DEBUG_MERMAID
-                            std::clog << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
-                                      << " in independent subgraphs " << a << " and " << b
-                                      << " -> removing subgraph " << to_remove << std::endl;
+                            diagnostic_stream() << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
+                                                << " in independent subgraphs " << a << " and " << b
+                                                << " -> removing subgraph " << to_remove << std::endl;
 #endif
                         }
                     }
@@ -3228,10 +3225,60 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     }
 }
 
-void Zelph::print(const std::wstring& msg, const bool o) const
+void Zelph::set_output_handler(OutputHandler output) const
 {
     std::lock_guard lock(_pImpl->_mtx_print);
-    _pImpl->_print(msg, o);
+    _pImpl->_output = std::move(output);
+}
+
+void Zelph::emit(OutputChannel channel, const std::wstring& text, bool newline) const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    _pImpl->emit(channel, text, newline);
+}
+
+void Zelph::out(const std::wstring& msg, bool newline) const
+{
+    emit(OutputChannel::Out, msg, newline);
+}
+
+void Zelph::error(const std::wstring& msg, bool newline) const
+{
+    emit(OutputChannel::Error, msg, newline);
+}
+
+void Zelph::diagnostic(const std::wstring& msg, bool newline) const
+{
+    emit(OutputChannel::Diagnostic, msg, newline);
+}
+
+void Zelph::prompt(const std::wstring& msg, bool newline) const
+{
+    emit(OutputChannel::Prompt, msg, newline);
+}
+
+zelph::OutputStream Zelph::out_stream() const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    return OutputStream(_pImpl->_output, OutputChannel::Out, false);
+}
+
+zelph::OutputStream Zelph::diagnostic_stream() const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    return OutputStream(_pImpl->_output, OutputChannel::Diagnostic, false);
+}
+
+zelph::OutputStream Zelph::error_stream() const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    return OutputStream(_pImpl->_output, OutputChannel::Error, false);
+}
+
+zelph::OutputStream Zelph::prompt_stream() const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    return OutputStream(_pImpl->_output, OutputChannel::Prompt, false);
 }
 
 void Zelph::save_to_file(const std::string& filename) const
@@ -3250,7 +3297,7 @@ void Zelph::set_logging(int max_depth) const
 {
     _pImpl->_logging       = max_depth != 0;
     _pImpl->_max_log_depth = max_depth;
-    std::clog << (_pImpl->_logging ? "Logging enabled with max depth " : "Logging disabled. ") << max_depth << std::endl;
+    out_stream() << (_pImpl->_logging ? "Logging enabled with max depth " : "Logging disabled. ") << max_depth << std::endl;
 }
 
 bool Zelph::should_log(int depth) const
@@ -3267,5 +3314,5 @@ void Zelph::log(int depth, const std::string& category, const std::string& messa
 {
     if (!should_log(depth)) return;
     std::string indent(depth * 2, ' ');
-    std::clog << indent << "[depth " << depth << ", " << category << "] " << message << std::endl;
+    out_stream() << indent << "[depth " << depth << ", " << category << "] " << message << std::endl;
 }

@@ -1,0 +1,86 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include "output.hpp"
+#include "string_utils.hpp"
+
+#include <iostream>
+
+namespace zelph
+{
+    void default_output_handler(const OutputEvent& event)
+    {
+#ifdef _WIN32
+        auto write = [&](std::wostream& os)
+        {
+            os.clear();
+            os << event.text;
+            if (event.newline)
+                os << std::endl;
+            else
+                os.flush();
+        };
+
+        switch (event.channel)
+        {
+        case OutputChannel::Out:
+        case OutputChannel::Prompt:
+            write(std::wcout);
+            break;
+        case OutputChannel::Error:
+            write(std::wcerr);
+            break;
+        case OutputChannel::Diagnostic:
+            write(std::wclog);
+            break;
+        }
+#else
+        const std::string utf8 = zelph::string::unicode::to_utf8(event.text);
+
+        auto write = [&](std::ostream& os)
+        {
+            os.clear();
+            os << utf8;
+            if (event.newline)
+                os << '\n';
+            os.flush();
+        };
+
+        switch (event.channel)
+        {
+        case OutputChannel::Out:
+        case OutputChannel::Prompt:
+            write(std::cout);
+            break;
+        case OutputChannel::Error:
+            write(std::cerr);
+            break;
+        case OutputChannel::Diagnostic:
+            write(std::clog);
+            break;
+        }
+#endif
+    }
+}

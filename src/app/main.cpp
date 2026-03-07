@@ -99,11 +99,8 @@ int main(int argc, char** argv)
 
         if (show_version)
         {
-#ifdef _WIN32
-            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
-#else
-            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
-#endif
+            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()));
+
             return 0;
         }
 
@@ -114,14 +111,9 @@ int main(int argc, char** argv)
 
         if (script_files.empty())
         {
-#ifdef _WIN32
-            std::wcout << L"zelph " << zelph::string::unicode::from_utf8(interactive.get_version()) << std::endl;
-#else
-            std::cout << "zelph " << zelph::console::Interactive::get_version() << std::endl;
-#endif
-
-            std::wcout << L"-- REPL mode - type .help for commands, " << exit_command << L" to exit --" << std::endl;
-            std::wcout << std::endl;
+            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(interactive.get_version()));
+            interactive.out(L"-- REPL mode - type .help for commands, " + exit_command + L" to exit --");
+            interactive.out(L"");
 
             auto make_prompt = [&]() -> std::wstring
             {
@@ -132,8 +124,7 @@ int main(int argc, char** argv)
                          + (interactive.is_auto_run_active() ? L"> " : L"-> ");
             };
 
-            std::wcout << make_prompt();
-            std::wcout.flush();
+            interactive.prompt(make_prompt(), false);
 
             std::string line8;
             while (std::getline(std::cin, line8))
@@ -144,9 +135,8 @@ int main(int argc, char** argv)
 
                 if (line.empty())
                 {
-                    std::wcout << L"type .help for help --" << std::endl;
-                    std::wcout << make_prompt();
-                    std::wcout.flush();
+                    interactive.out(L"type .help for help --");
+                    interactive.prompt(make_prompt(), false);
                     continue;
                 }
 
@@ -156,19 +146,18 @@ int main(int argc, char** argv)
                 }
                 catch (const std::exception& e)
                 {
-                    std::wcerr << zelph::string::unicode::from_utf8(e.what()) << std::endl;
+                    interactive.err(zelph::string::unicode::from_utf8(e.what()));
                 }
 
-                std::wcout << make_prompt();
-                std::wcout.flush();
+                interactive.prompt(make_prompt(), false);
             }
 
-            std::wcout << std::endl;
+            interactive.out(L"");
         }
     }
     catch (std::exception& ex)
     {
-        std::wcout << zelph::string::unicode::from_utf8(ex.what()) << std::endl;
+        interactive.err(zelph::string::unicode::from_utf8(ex.what()));
     }
 
     return 0;

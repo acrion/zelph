@@ -31,7 +31,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
@@ -328,7 +327,7 @@ namespace zelph::network
                 oss << "\n";
             }
 
-            std::clog << oss.str() << std::flush;
+            _zelph->diagnostic_stream() << oss.str() << std::flush;
         }
     };
 }

@@ -39,7 +39,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <atomic>
 #include <cstdint>
-#include <iostream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -51,8 +50,8 @@ namespace zelph::network
     class ZELPH_EXPORT Zelph::Impl : public Network
     {
         friend class Zelph;
-        explicit Impl(const std::function<void(const std::wstring&, const bool)>& print)
-            : _print(print)
+        explicit Impl(const OutputHandler& output)
+            : _output(output)
         {
         }
 
@@ -109,13 +108,13 @@ namespace zelph::network
                     _left[pair.getNode()] = std::move(adj);
                 }
 #ifndef NDEBUG
-                std::cerr << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size() << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, true) << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size();
 #else
-                std::cerr << "." << std::flush;
+                OutputStream(_output, OutputChannel::Diagnostic, false) << "." << std::flush;
 #endif
             }
 #ifdef NDEBUG
-            std::cerr << std::endl;
+            OutputStream(_output, OutputChannel::Diagnostic, false) << std::endl;
 #endif
 
 #ifdef CLEAR_ON_LOAD
@@ -139,13 +138,13 @@ namespace zelph::network
                     _right[pair.getNode()] = std::move(adj);
                 }
 #ifndef NDEBUG
-                std::cerr << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size() << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, true) << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size();
 #else
-                std::cerr << "." << std::flush;
+                OutputStream(_output, OutputChannel::Diagnostic, false) << "." << std::flush;
 #endif
             }
 #ifdef NDEBUG
-            std::cerr << std::endl;
+            OutputStream(_output, OutputChannel::Diagnostic, false) << std::endl;
 #endif
         }
 
@@ -154,8 +153,8 @@ namespace zelph::network
             const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
 
             // Debug: Log sizes before serializing large structures
-            std::cerr << "Saving: probabilities size=" << _probabilities.size() << ", left size=" << _left.size() << ", right size=" << _right.size() << std::endl;
-            std::cerr << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size() << std::endl;
+            OutputStream(_output, OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _probabilities.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
+            OutputStream(_output, OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
 
 // Open file
 #ifdef _WIN32
@@ -358,8 +357,8 @@ namespace zelph::network
                 uint32_t rightChunkCount      = impl.getRightChunkCount();
                 uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
                 uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
-                std::cerr << "Loading new format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                          << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, true) << "Loading new format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                                                                       << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
 
                 loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
 
@@ -382,17 +381,17 @@ namespace zelph::network
                         catch (...)
                         {
                             map[pair.getKey()] = L"?";
-                            std::cerr << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey() << std::endl;
+                            OutputStream(_output, OutputChannel::Error, true) << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey();
                         }
                     }
 #ifndef NDEBUG
-                    std::cerr << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount << std::endl;
+                    OutputStream(_output, OutputChannel::Diagnostic, true) << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount;
 #else
-                    std::cerr << "." << std::flush;
+                    OutputStream(_output, OutputChannel::Diagnostic, false) << "." << std::flush;
 #endif
                 }
 #ifdef NDEBUG
-                std::cerr << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, false) << std::endl;
 #endif
 
 // Load _node_of_name (chunked)
@@ -414,17 +413,17 @@ namespace zelph::network
                         catch (...)
                         {
                             map[L"?"] = pair.getValue();
-                            std::cerr << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue() << std::endl;
+                            OutputStream(_output, OutputChannel::Error, true) << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue();
                         }
                     }
 #ifndef NDEBUG
-                    std::cerr << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount << std::endl;
+                    OutputStream(_output, OutputChannel::Diagnostic, true) << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount;
 #else
-                    std::cerr << "." << std::flush;
+                    OutputStream(_output, OutputChannel::Diagnostic, false) << "." << std::flush;
 #endif
                 }
 #ifdef NDEBUG
-                std::cerr << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, false) << std::endl;
 #endif
             }
             catch (std::exception& ex)
@@ -464,7 +463,7 @@ namespace zelph::network
                         catch (...)
                         {
                             inner[pair.getKey()] = L"?";
-                            std::cerr << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey() << std::endl;
+                            OutputStream(_output, OutputChannel::Error, true) << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey();
                         }
                     }
                     _name_of_node[langMap.getLang()] = std::move(inner);
@@ -486,7 +485,7 @@ namespace zelph::network
                         catch (...)
                         {
                             inner[L"?"] = pair.getValue();
-                            std::cerr << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue() << std::endl;
+                            OutputStream(_output, OutputChannel::Error, true) << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue();
                         }
                     }
                     _node_of_name[langMap.getLang()] = std::move(inner);
@@ -497,8 +496,8 @@ namespace zelph::network
                 uint32_t rightChunkCount      = impl_old.getRightChunkCount();
                 uint32_t nameOfNodeChunkCount = 0;
                 uint32_t nodeOfNameChunkCount = 0;
-                std::cerr << "Loading old format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                          << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount << std::endl;
+                OutputStream(_output, OutputChannel::Diagnostic, true) << "Loading old format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                                                                       << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
 
                 loadLeftRightChunks(oldBufferedInput, options, leftChunkCount, rightChunkCount);
             }
@@ -529,7 +528,10 @@ namespace zelph::network
                     {
                         if (it2->second != name)
                         {
-                            std::wclog << L"Warning: Name conflict in language '" << string::unicode::from_utf8(lang) << L"': '" << name << L"' (from merged node) vs '" << it2->second << L"'. Keeping existing name '" << it2->second << L"'." << std::endl;
+                            OutputStream(_output, OutputChannel::Diagnostic, true)
+                                << "Warning: Name conflict in language '" << lang << "': '"
+                                << string::unicode::to_utf8(name) << "' (from merged node) vs '" << string::unicode::to_utf8(it2->second)
+                                << "'. Keeping existing name '" << string::unicode::to_utf8(it2->second) << "'.";
                         }
                         // No need to set, keep existing
                     }
@@ -564,7 +566,8 @@ namespace zelph::network
                             // Conflict, already maps to another node (likely into or other)
                             if (it_existing->second != into)
                             {
-                                std::wclog << L"Warning: Skipping reverse mapping update for name '" << name << L"' in language '" << string::unicode::from_utf8(lang) << L"' due to existing conflicting mapping." << std::endl;
+                                OutputStream(_output, OutputChannel::Diagnostic, true) << "Warning: Skipping reverse mapping update for name '" << string::unicode::to_utf8(name) << "' in language '" << lang
+                                                                                       << "' due to existing conflicting mapping.";
                             }
                             // Else already points to into, ok
                         }
@@ -663,6 +666,12 @@ namespace zelph::network
             }
         }
 
+        void emit(OutputChannel channel, const std::wstring& text, bool newline = true) const
+        {
+            if (_output)
+                _output(OutputEvent{channel, text, newline});
+        }
+
         using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
         using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 
@@ -680,6 +689,7 @@ namespace zelph::network
         std::function<void(std::wstring, bool)> _print;
         int                                     _max_log_depth{0};
         bool                                    _logging{false};
+        OutputHandler                           _output;
 
         int _format_fact_level{0}; // recursion level of method format_fact
     };

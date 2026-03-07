@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "markdown.hpp"
+#include "output.hpp"
 #include "reasoning_profiler.hpp"
 #include "stopwatch.hpp"
 #include "thread_pool.hpp"
@@ -62,7 +63,7 @@ namespace zelph::network
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
-        explicit Reasoning(const std::function<void(const std::wstring&, const bool)>&);
+        explicit Reasoning(const OutputHandler& output = default_output_handler);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void profiler_reset_epoch() { _prof.reset_epoch(); }

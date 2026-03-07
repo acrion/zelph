@@ -31,7 +31,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <codecvt>
 #include <cwctype>
-#include <iostream>
 #include <locale>
 #include <sstream>
 
@@ -47,7 +46,7 @@ namespace zelph::string
             }
             catch (const boost::locale::conv::conversion_error& e)
             {
-                std::wcerr << L"Error converting wstring to UTF-8 string: " << e.what() << std::endl;
+                // Error converting wstring to UTF-8 string: " << e.what()
 
                 std::string result;
                 for (size_t i = 0; i < wstr.length(); ++i)
@@ -86,7 +85,7 @@ namespace zelph::string
                         catch (...)
                         {
                             result += "?";
-                            std::wcerr << L"Replaced invalid character at position " << i << std::endl;
+                            // Replaced invalid character at position " << i
                         }
                     }
                 }

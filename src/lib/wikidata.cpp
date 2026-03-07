@@ -40,7 +40,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <functional>
 #include <iomanip> // for std::setprecision
-#include <iostream>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -109,7 +108,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
     if (!export_constraints)
     {
-        std::clog << "Number of nodes prior import: " << _pImpl->_n->count() << std::endl;
+        _pImpl->_n->diagnostic_stream() << "Number of nodes prior import: " << _pImpl->_n->count() << std::endl;
     }
 
     std::filesystem::path cache_file = _pImpl->_bin_path;
@@ -122,14 +121,14 @@ void Wikidata::import_all(const std::string& constraints_dir)
         {
             try
             {
-                _pImpl->_n->print(L"Loading network from cache " + cache_file.wstring() + L"...", true);
+                _pImpl->_n->diagnostic(L"Loading network from cache " + cache_file.wstring() + L"...", true);
                 _pImpl->_n->load_from_file(_pImpl->_bin_path.string());
-                _pImpl->_n->print(L"Cache loaded successfully.", true);
+                _pImpl->_n->diagnostic(L"Cache loaded successfully.", true);
                 cache_loaded = true;
             }
             catch (std::exception& ex)
             {
-                _pImpl->_n->print(L"Failed to load cache: " + string::unicode::from_utf8(ex.what()), true);
+                _pImpl->_n->diagnostic(L"Failed to load cache: " + string::unicode::from_utf8(ex.what()), true);
             }
         }
     }
@@ -148,11 +147,11 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
         if (export_constraints)
         {
-            _pImpl->_n->print(L"Exporting constraints from file " + _pImpl->_original_source_path.wstring(), true);
+            _pImpl->_n->diagnostic(L"Exporting constraints from file " + _pImpl->_original_source_path.wstring(), true);
         }
         else
         {
-            _pImpl->_n->print(L"Importing file " + _pImpl->_original_source_path.wstring(), true);
+            _pImpl->_n->diagnostic(L"Importing file " + _pImpl->_original_source_path.wstring(), true);
         }
 
         ReadAsync read_async(_pImpl->_original_source_path, 1000); // 1000 lines buffer
@@ -251,22 +250,22 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 eta_minutes %= 60;
                 const int decimal_places = 2;
 
-                std::clog << "Progress: " << std::fixed << std::setprecision(decimal_places)
-                          << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
+                _pImpl->_n->diagnostic_stream() << "Progress: " << std::fixed << std::setprecision(decimal_places)
+                                                << current_percentage << "% " << current_bytes << "/" << total_size << " bytes";
 
                 if (!export_constraints)
                 {
-                    std::clog << " | Nodes: " << _pImpl->_n->count();
+                    _pImpl->_n->diagnostic_stream() << " | Nodes: " << _pImpl->_n->count();
                 }
 
-                std::clog << " | ETA: ";
-                if (eta_hours > 0) std::clog << eta_hours << "h ";
-                if (eta_minutes > 0) std::clog << eta_minutes << "m ";
-                std::clog << eta_seconds << "s";
+                _pImpl->_n->diagnostic_stream() << " | ETA: ";
+                if (eta_hours > 0) _pImpl->_n->diagnostic_stream() << eta_hours << "h ";
+                if (eta_minutes > 0) _pImpl->_n->diagnostic_stream() << eta_minutes << "m ";
+                _pImpl->_n->diagnostic_stream() << eta_seconds << "s";
 
-                std::clog << " | Memory Used: " << std::fixed << std::setprecision(1) << (static_cast<double>(memory_used) / (1024 * 1024 * 1024)) << " GiB"
-                          << " | Estimated Total Memory: " << std::fixed << std::setprecision(1) << (static_cast<double>(estimated_memory) / (1024 * 1024 * 1024)) << " GiB"
-                          << std::endl;
+                _pImpl->_n->diagnostic_stream() << " | Memory Used: " << std::fixed << std::setprecision(1) << (static_cast<double>(memory_used) / (1024 * 1024 * 1024)) << " GiB"
+                                                << " | Estimated Total Memory: " << std::fixed << std::setprecision(1) << (static_cast<double>(estimated_memory) / (1024 * 1024 * 1024)) << " GiB"
+                                                << std::endl;
 
                 last_update_time = current_time;
             }
@@ -285,21 +284,21 @@ void Wikidata::import_all(const std::string& constraints_dir)
         {
             if (export_constraints)
             {
-                std::clog << "Constraints export completed." << std::endl;
+                _pImpl->_n->diagnostic_stream() << "Constraints export completed." << std::endl;
             }
             else
             {
-                std::clog << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
+                _pImpl->_n->diagnostic_stream() << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
 
                 try
                 {
-                    _pImpl->_n->print(L"Saving network to cache " + cache_file.wstring() + L"...", true);
+                    _pImpl->_n->diagnostic(L"Saving network to cache " + cache_file.wstring() + L"...", true);
                     _pImpl->_n->save_to_file(_pImpl->_bin_path.string());
-                    _pImpl->_n->print(L"Cache saved.", true);
+                    _pImpl->_n->diagnostic(L"Cache saved.", true);
                 }
                 catch (std::exception& ex)
                 {
-                    _pImpl->_n->print(L"Failed to save cache: " + string::unicode::from_utf8(ex.what()), true);
+                    _pImpl->_n->error(L"Failed to save cache: " + string::unicode::from_utf8(ex.what()), true);
                 }
             }
         }
@@ -599,7 +598,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
     else
     {
         // Error handling if file can't be opened
-        _pImpl->_n->print(L"Failed to open file: " + string::unicode::from_utf8(filename), true);
+        _pImpl->_n->error(L"Failed to open file: " + string::unicode::from_utf8(filename), true);
     }
 }
 
@@ -713,14 +712,14 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                         {
                             std::wstring output;
                             _pImpl->_n->format_fact(output, "en", fact, 3);
-                            _pImpl->_n->print(id_str + L":       en> " + output, true);
+                            _pImpl->_n->diagnostic(id_str + L":       en> " + output, true);
                             _pImpl->_n->format_fact(output, "wikidata", fact, 3);
-                            _pImpl->_n->print(id_str + L": wikidata> " + output, true);
+                            _pImpl->_n->diagnostic(id_str + L": wikidata> " + output, true);
                         }
                     }
                     catch (std::exception& ex)
                     {
-                        _pImpl->_n->print(string::unicode::from_utf8(ex.what()), true);
+                        _pImpl->_n->error(string::unicode::from_utf8(ex.what()), true);
                     }
 
                     search_pos = id1;
@@ -805,7 +804,7 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
     if (source.empty() || !std::filesystem::exists(source))
         throw std::runtime_error("No original Wikidata JSON found.");
 
-    std::clog << "Exporting " << total_requested << " entities from " << source << " ..." << std::endl;
+    _pImpl->_n->diagnostic_stream() << "Exporting " << total_requested << " entities from " << source << " ..." << std::endl;
 
     // Buffer size doesn't matter much with batching, just needs to be enough to keep busy
     ReadAsync read_async(source, 100);
@@ -854,7 +853,7 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
                         out << '\n';
                         found++;
                         remaining.erase(it);
-                        std::clog << "→ " << filename << std::endl;
+                        _pImpl->_n->out_stream() << "→ " << filename << std::endl;
                     }
                 }
             }
@@ -879,11 +878,11 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
                 eta                   = static_cast<int>(total_time_est - static_cast<double>(elapsed_sec));
             }
 
-            std::clog << "Progress: " << std::fixed << std::setprecision(2) << percent << "% "
-                      << (compressed_pos / (1024 * 1024)) << " MiB (cmp)"
-                      << " | Speed: " << std::fixed << std::setprecision(1) << speed_mib << " MiB/s (dec)"
-                      << " | ETA: " << (eta / 3600) << "h " << ((eta % 3600) / 60) << "m " << (eta % 60) << "s"
-                      << " | Found: " << found << "/" << total_requested << std::endl;
+            _pImpl->_n->diagnostic_stream() << "Progress: " << std::fixed << std::setprecision(2) << percent << "% "
+                                            << (compressed_pos / (1024 * 1024)) << " MiB (cmp)"
+                                            << " | Speed: " << std::fixed << std::setprecision(1) << speed_mib << " MiB/s (dec)"
+                                            << " | ETA: " << (eta / 3600) << "h " << ((eta % 3600) / 60) << "m " << (eta % 60) << "s"
+                                            << " | Found: " << found << "/" << total_requested << std::endl;
 
             last_update = now;
         }
@@ -891,5 +890,5 @@ void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
         if (remaining.empty()) break;
     }
 
-    std::clog << "Export completed." << std::endl;
+    _pImpl->_n->diagnostic_stream() << "Export completed." << std::endl;
 }

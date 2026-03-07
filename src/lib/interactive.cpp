@@ -34,7 +34,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <boost/algorithm/string.hpp>
 #include <boost/tokenizer.hpp>
 
-#include <iostream>
 #include <memory>
 
 #ifdef _WIN32
@@ -50,15 +49,8 @@ using boost::tokenizer;
 class console::Interactive::Impl
 {
 public:
-    explicit Impl(Interactive* enclosing)
-        : _n(new network::Reasoning([](const std::wstring& str, const bool)
-                                    {
-#ifdef _WIN32
-                                        std::wcout << str << std::endl;
-#else
-                                        std::clog << string::unicode::to_utf8(str) << std::endl;
-#endif
-                                    }))
+    explicit Impl(Interactive* enclosing, OutputHandler output)
+        : _n(new network::Reasoning(output))
         , _interactive(enclosing)
         , _script_engine(new ScriptEngine(_n))
         , _repl_state(std::make_shared<ReplState>())
@@ -113,8 +105,8 @@ private:
     const Interactive* _interactive;
 };
 
-console::Interactive::Interactive()
-    : _pImpl(new Impl(this))
+console::Interactive::Interactive(OutputHandler output)
+    : _pImpl(new Impl(this, std::move(output)))
 {
 }
 
@@ -148,15 +140,6 @@ bool console::Interactive::is_accumulating() const
 
 void console::Interactive::process(std::wstring line) const
 {
-    _pImpl->_n->set_print([](const std::wstring& str, bool)
-                          {
-#ifdef _WIN32
-                              std::wcout << string::unmark_identifiers(str) << std::endl;
-#else
-                              std::clog << string::unicode::to_utf8(string::unmark_identifiers(str)) << std::endl;
-#endif
-                          });
-
     try
     {
         // --- 1. Comments (work in all modes) ---
@@ -333,6 +316,31 @@ void console::Interactive::run(const bool print_deductions, const bool generate_
 std::string console::Interactive::get_lang() const
 {
     return _pImpl->_n->get_lang();
+}
+
+void console::Interactive::set_output_handler(OutputHandler output) const
+{
+    _pImpl->_n->set_output_handler(std::move(output));
+}
+
+void console::Interactive::out(const std::wstring& text, bool newline) const
+{
+    _pImpl->_n->emit(OutputChannel::Out, text, newline);
+}
+
+void console::Interactive::err(const std::wstring& text, bool newline) const
+{
+    _pImpl->_n->emit(OutputChannel::Error, text, newline);
+}
+
+void console::Interactive::log(const std::wstring& text, bool newline) const
+{
+    _pImpl->_n->emit(OutputChannel::Diagnostic, text, newline);
+}
+
+void console::Interactive::prompt(const std::wstring& text, bool newline) const
+{
+    _pImpl->_n->emit(OutputChannel::Prompt, text, newline);
 }
 
 #ifdef PROVIDE_C_INTERFACE

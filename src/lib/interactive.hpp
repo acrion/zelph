@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "output.hpp"
+
 #include <zelph_export.h>
 
 #include <string>
@@ -38,8 +40,9 @@ namespace zelph::console
     class ZELPH_EXPORT Interactive
     {
     public:
-        Interactive();
+        explicit Interactive(OutputHandler output = default_output_handler);
         ~Interactive();
+
         void               import_file(const std::wstring& file) const;
         void               process(std::wstring line) const;
         void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
@@ -48,6 +51,12 @@ namespace zelph::console
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;
         void               process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
+
+        void set_output_handler(OutputHandler output) const;
+        void out(const std::wstring& text, bool newline = true) const;
+        void err(const std::wstring& text, bool newline = true) const;
+        void log(const std::wstring& text, bool newline = true) const;
+        void prompt(const std::wstring& text, bool newline = false) const;
 
         Interactive(const Interactive&)            = delete;
         Interactive& operator=(const Interactive&) = delete;

@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "answer.hpp"
 #include "fact_structure_types.hpp"
 #include "network.hpp"
+#include "output.hpp"
 
 #include <zelph_export.h>
 
@@ -91,7 +92,7 @@ namespace zelph::network
     class ZELPH_EXPORT Zelph
     {
     public:
-        explicit Zelph(const std::function<void(const std::wstring&, const bool)>& print);
+        explicit Zelph(const OutputHandler& output = default_output_handler);
         ~Zelph();
 
         struct FactComponents
@@ -186,10 +187,16 @@ namespace zelph::network
                                               bool                            dark_theme,
                                               bool                            horizontal_layout,
                                               bool                            use_subgraphs) const;
-        void                 print(const std::wstring&, const bool) const;
-        static std::string   get_version();
-        void                 save_to_file(const std::string& filename) const;
-        void                 load_from_file(const std::string& filename) const;
+        void                 set_output_handler(OutputHandler output) const;
+        void                 emit(OutputChannel channel, const std::wstring& text, bool newline = true) const;
+
+        void               out(const std::wstring&, bool newline = true) const;
+        void               error(const std::wstring&, bool newline = true) const;
+        void               diagnostic(const std::wstring&, bool newline = true) const;
+        void               prompt(const std::wstring&, bool newline = false) const;
+        static std::string get_version();
+        void               save_to_file(const std::string& filename) const;
+        void               load_from_file(const std::string& filename) const;
 
         Node              count() const;
         void              remove_name(Node node, std::string lang = "");
@@ -203,6 +210,10 @@ namespace zelph::network
         bool              try_get_fact_structures_cached(Node fact, std::vector<FactStructure>& out) const;
         void              store_fact_structures_cached(Node fact, const std::vector<FactStructure>& value) const;
         void              invalidate_fact_structures_cache() const noexcept;
+        OutputStream      out_stream() const;
+        OutputStream      diagnostic_stream() const;
+        OutputStream      error_stream() const;
+        OutputStream      prompt_stream() const;
 
         // member list
         class Impl;

@@ -30,7 +30,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 
 #include <cassert>
-#include <iostream> // For std::clog
 #include <vector>
 
 using namespace zelph::network;
@@ -285,8 +284,8 @@ bool Reasoning::consequences_already_exist(
     return true; // All deductions already exist in the network
 }
 
-Reasoning::Reasoning(const std::function<void(const std::wstring&, const bool)>& print)
-    : Zelph{print}
+Reasoning::Reasoning(const OutputHandler& output)
+    : Zelph{output}
     , _pool{std::make_unique<ThreadPool>(std::thread::hardware_concurrency())}
     , _prof{this}
 {
@@ -393,7 +392,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
         return n == core.IsA || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.Cons || n == core.Nil || n == core.PartOf || n == core.Conjunction;
     };
 
-    std::clog << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
+    diagnostic_stream() << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
@@ -408,9 +407,9 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
         if (incoming_to_pred.size() > 200000)
         {
             std::wstring name = get_name(pred, "wikidata", true);
-            std::clog << "[" << (i + 1) << "/" << all_predicates.size() << "] Checking "
-                      << string::unicode::to_utf8(name) << " (" << pred << ") with "
-                      << incoming_to_pred.size() << " entries..." << std::endl;
+            diagnostic_stream() << "[" << (i + 1) << "/" << all_predicates.size() << "] Checking "
+                                << string::unicode::to_utf8(name) << " (" << pred << ") with "
+                                << incoming_to_pred.size() << " entries..." << std::endl;
         }
 
         size_t valid_usage_count = 0;
@@ -487,7 +486,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
         if (local_removed > 0 && incoming_to_pred.size() > 200000)
         {
-            std::clog << "   -> Purged " << local_removed << " broken facts." << std::endl;
+            out_stream() << "   -> Purged " << local_removed << " broken facts." << std::endl;
         }
 
         if (valid_usage_count == 0)
@@ -525,7 +524,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     }
 
     if (!silent)
-        std::clog << "Starting reasoning with " << _pool->count() << " worker threads." << std::endl;
+        diagnostic(L"Starting reasoning with " + std::to_wstring(_pool->count()) + L" worker threads.");
 
     int iteration = 0;
     do
@@ -533,7 +532,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         _done = false;
         ++iteration;
         if (!silent)
-            std::clog << "--- Reasoning iteration " << iteration << " ---" << std::endl;
+            diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
         for (Node rule : _pImpl->get_left(core.Causes))
         {
             apply_rule(rule, 0);
@@ -543,30 +542,30 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     } while (_done && !suppress_repetition);
 
     if (!silent)
-        std::clog << "Reasoning complete. Total unification matches processed: " << _total_matches
-                  << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
+        diagnostic_stream() << "Reasoning complete. Total unification matches processed: " << _total_matches
+                            << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
 
-    if (_skipped > 0) print(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
+    if (_skipped > 0) diagnostic(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
 
     if (_contradiction)
     {
-        print(L"Found one or more contradictions!", true);
+        diagnostic(L"Found one or more contradictions!", true);
     }
 
     if (_done && suppress_repetition)
     {
-        print(L"Warning: Additional reasoning iterations are required, but have been suppressed.", true);
+        out(L"Warning: Additional reasoning iterations are required, but have been suppressed.", true);
     }
 
     if (!silent)
-        std::clog << "Reasoning summary: " << _total_matches << " matches processed, "
-                  << _total_contradictions << " contradictions found." << std::endl;
+        diagnostic_stream() << "Reasoning summary: " << _total_matches << " matches processed, "
+                            << _total_contradictions << " contradictions found." << std::endl;
     static std::unordered_set<Node> logged_relations;
 
     if (_pool && !silent)
     {
-        std::clog << "Parallel unifications activated for " << logged_relations.size()
-                  << " distinct fixed relations." << std::endl;
+        diagnostic_stream() << "Parallel unifications activated for " << logged_relations.size()
+                            << " distinct fixed relations." << std::endl;
     }
 
     logged_relations.clear();
@@ -574,9 +573,9 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     watch.stop();
 
     if (!silent)
-        std::clog << "Reasoning complete in " << watch.format() << " – "
-                  << _total_matches << " matches processed, "
-                  << _total_contradictions << " contradictions found." << std::endl;
+        diagnostic_stream() << "Reasoning complete in " << watch.format() << " – "
+                            << _total_matches << " matches processed, "
+                            << _total_contradictions << " contradictions found." << std::endl;
 }
 
 void Reasoning::apply_rule(const Node& rule, Node condition)
@@ -627,7 +626,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
                 if (_print_deductions)
                 {
-                    print(message, true);
+                    out(string::unmark_identifiers(message), true);
                 }
 
                 if (_generate_markdown)
@@ -938,7 +937,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                             std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
-                            if (_print_deductions) print(message, true);
+                            if (_print_deductions) out(string::unmark_identifiers(message), true);
                             if (_generate_markdown) _markdown->add(L"Contradictions", message);
                         }
                     }
@@ -986,7 +985,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         {
                             std::wstring output;
                             format_fact(output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
-                            print(L"Answer: " + output, true);
+                            out(L"Answer: " + string::unmark_identifiers(output), true);
                         }
                     }
                 }
@@ -1239,7 +1238,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                         if (_print_deductions)
                         {
-                            print(message, true);
+                            out(string::unmark_identifiers(message), true);
                         }
                         if (_generate_markdown)
                         {
@@ -1290,7 +1289,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     {
                         std::wstring output;
                         format_fact(output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
-                        print(L"Answer: " + output, true);
+                        out(L"Answer: " + string::unmark_identifiers(output), true);
                     }
                 }
             }
@@ -1639,7 +1638,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             if (do_print || _generate_markdown)
             {
                 size_t skipped_val = _skipped.exchange(0);
-                if (skipped_val > 0) print(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
+                if (skipped_val > 0) diagnostic(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
 
                 std::wstring input, output;
                 format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
@@ -1649,7 +1648,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
                 if (do_print)
                 {
-                    print(message, true);
+                    out(string::unmark_identifiers(message), true);
                 }
 
                 if (_generate_markdown)

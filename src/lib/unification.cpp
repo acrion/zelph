@@ -28,16 +28,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 #include "zelph_impl.hpp"
 
-#include <iostream>
 #include <vector>
 
 using namespace zelph::network;
 
 #include <string>
-static void u_log(int depth, const std::string& msg)
+static void u_log(const Zelph* zelph, int depth, const std::string& msg)
 {
     std::string indent(depth * 2, ' ');
-    std::clog << indent << "[depth " << depth << ", Unify] " << msg << std::endl;
+    zelph->diagnostic_stream() << indent << "[depth " << depth << ", Unify] " << msg << std::endl;
 }
 
 static std::string u_node_str(const Zelph* z, Node n)
@@ -52,7 +51,7 @@ static std::string u_node_str(const Zelph* z, Node n)
         return name;
 }
 #define U_LOG(depth, msg) \
-    if (_n->should_log(depth)) { u_log(depth, msg); }
+    if (_n->should_log(depth)) { u_log(_n, depth, msg); }
 #define U_NODE(n) u_node_str(_n, n)
 
 // --- Helper Functions ---
@@ -133,9 +132,9 @@ static bool unify_nodes(
                 result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, prof);
                 if (_n->should_log(depth) && !result)
                 {
-                    u_log(depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
+                    u_log(_n, depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
                     for (const auto& [k, v] : global_bindings)
-                        u_log(depth, "    key=" + std::to_string(k) + " (" + U_NODE(k) + ") -> val=" + std::to_string(v) + " (" + U_NODE(v) + ")");
+                        u_log(_n, depth, "    key=" + std::to_string(k) + " (" + U_NODE(k) + ") -> val=" + std::to_string(v) + " (" + U_NODE(v) + ")");
                 }
                 break;
             }
@@ -344,7 +343,7 @@ Unification::Unification(
         std::string rels_str;
         for (Node r : _relation_list)
             rels_str += " " + U_NODE(r);
-        u_log(_log_depth, "Unification: condition=" + _n->format(condition) + "subject=" + U_NODE(_subject) + " relations: [" + rels_str + "] objects=" + std::to_string(_objects.size()) + " parent=" + _n->format(parent));
+        u_log(_n, _log_depth, "Unification: condition=" + _n->format(condition) + "subject=" + U_NODE(_subject) + " relations: [" + rels_str + "] objects=" + std::to_string(_objects.size()) + " parent=" + _n->format(parent));
     }
 
     if (_relation_list.empty()) return;
@@ -405,9 +404,9 @@ Unification::Unification(
 
             if (snap_ms > 100) // Only log significant snapshots
             {
-                std::clog << "[Timer] Unification snapshot " << fixed_rel
-                          << " size=" << snapshot.size()
-                          << " took=" << snap_ms << "ms" << std::endl;
+                _n->diagnostic_stream() << "[Timer] Unification snapshot " << fixed_rel
+                                        << " size=" << snapshot.size()
+                                        << " took=" << snap_ms << "ms" << std::endl;
             }
 
             if (snapshot.size() > 0)
@@ -426,7 +425,7 @@ Unification::Unification(
 
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                 {
-                    u_log(_log_depth, "parallel snapshot: " + std::to_string(_snapshot_vec.size()) + " candidate facts for relation " + U_NODE(fixed_rel));
+                    u_log(_n, _log_depth, "parallel snapshot: " + std::to_string(_snapshot_vec.size()) + " candidate facts for relation " + U_NODE(fixed_rel));
                 }
 
                 size_t threads    = std::thread::hardware_concurrency();
@@ -592,7 +591,7 @@ bool Unification::increment_fact_index()
                     if (is_in_current_rule_template(nd))
                     {
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                            u_log(_log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
+                            u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
                         return false;
                     }
 
@@ -624,8 +623,7 @@ bool Unification::increment_fact_index()
                     optimized_snapshot = true;
                     if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                     {
-                        u_log(_log_depth,
-                              std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
                     }
                 }
                 // Check if Object is bound (if Subject wasn't)
@@ -652,8 +650,7 @@ bool Unification::increment_fact_index()
                         optimized_snapshot = true;
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                         {
-                            u_log(_log_depth,
-                                  std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                            u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
                         }
                     }
                 }
@@ -680,7 +677,7 @@ bool Unification::increment_fact_index()
             {
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                 {
-                    u_log(_log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+                    u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
                 }
 
                 _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
@@ -900,7 +897,7 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
             if (_n->should_log(depth))
             {
                 for (const auto& [k, v] : *result)
-                    u_log(depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+                    u_log(_n, depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
             }
         }
 

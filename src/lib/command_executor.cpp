@@ -37,7 +37,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <boost/algorithm/string.hpp>
 #include <fstream>
 #include <iomanip>
-#include <iostream>
 #include <map>
 
 using namespace zelph;
@@ -168,20 +167,20 @@ private:
     {
         if (resolved_from_name)
         {
-            std::clog << "Resolved to node ID: " << nd << std::endl;
+            _n->out_stream() << "Resolved to node ID: " << nd << std::endl;
         }
 
-        std::clog << "Node ID: " << nd << std::endl;
+        _n->out_stream() << "Node ID: " << nd << std::endl;
 
         {
             std::wstring core_name = _n->get_core_name(nd);
             if (!core_name.empty())
             {
-                std::clog << "  Core node: " << string::unicode::to_utf8(core_name) << std::endl;
+                _n->out_stream() << "  Core node: " << string::unicode::to_utf8(core_name) << std::endl;
             }
         }
 
-        std::clog << "  Variable: " << (network::Network::is_var(nd) ? "yes" : "no") << std::endl;
+        _n->out_stream() << "  Variable: " << (network::Network::is_var(nd) ? "yes" : "no") << std::endl;
 
         bool         has_wikidata = false;
         std::wstring wikidata_name;
@@ -193,7 +192,7 @@ private:
             if (!name.empty())
             {
                 has_any_name = true;
-                std::clog << "  Name in language '" << lang << "': '" << string::unicode::to_utf8(name) << "'" << std::endl;
+                _n->out_stream() << "  Name in language '" << lang << "': '" << string::unicode::to_utf8(name) << "'" << std::endl;
                 if (lang == "wikidata")
                 {
                     has_wikidata  = true;
@@ -204,7 +203,7 @@ private:
 
         if (!has_any_name)
         {
-            std::clog << "  (No names in any language)" << std::endl;
+            _n->out_stream() << "  (No names in any language)" << std::endl;
         }
 
         if (has_wikidata)
@@ -214,7 +213,7 @@ private:
             const std::string OSC_START = "\033]8;;";
             const char        OSC_SEP   = '\a';
             const std::string OSC_END   = "\033]8;;\a";
-            std::clog << "  Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
+            _n->out_stream() << "  Wikidata URL: " << OSC_START << url << OSC_SEP << url << OSC_END << std::endl;
         }
 
         if (depth > 0)
@@ -255,17 +254,17 @@ private:
                 return;
             }
 
-            std::clog << "  " << header << ":" << std::endl;
+            _n->out_stream() << "  " << header << ":" << std::endl;
             if (conns.size() <= max_neighbors)
             {
                 for (network::Node node : conns)
                 {
-                    std::clog << "    - " << format_node(node) << std::endl;
+                    _n->out_stream() << "    - " << format_node(node) << std::endl;
                 }
             }
             else
             {
-                std::clog << "    (" << conns.size() << " connections)" << std::endl;
+                _n->out_stream() << "    (" << conns.size() << " connections)" << std::endl;
             }
         };
 
@@ -276,10 +275,10 @@ private:
         _n->format_fact(fact_repr, _n->lang(), nd, max_neighbors);
         if (!fact_repr.empty() && fact_repr != L"??")
         {
-            std::clog << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
+            _n->out_stream() << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
         }
 
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
     }
 
     void generate_and_print_mermaid_link(network::Node                            nd,
@@ -311,7 +310,7 @@ private:
         const char        OSC_SEP   = '\a';
         const std::string OSC_END   = "\033]8;;\a";
 
-        std::clog << "  Mermaid HTML: " << OSC_START << file_url << OSC_SEP << file_url << OSC_END << std::endl;
+        _n->out_stream() << "  Mermaid HTML: " << OSC_START << file_url << OSC_SEP << file_url << OSC_END << std::endl;
     }
 
     network::Node resolve_node(const std::wstring& arg, const std::string& lang) const
@@ -380,7 +379,7 @@ public:
         if (!args.empty())
             _script_engine->set_script_args(args);
 
-        std::clog << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
+        _n->diagnostic_stream() << "Importing file " << string::unicode::to_utf8(file) << "..." << std::endl;
         std::ifstream stream(string::unicode::to_utf8(file));
         if (stream.fail()) throw std::runtime_error("Could not open file '" + string::unicode::to_utf8(file) + "'");
         for (std::string line_utf8; std::getline(stream, line_utf8);)
@@ -441,8 +440,8 @@ private:
         // Determine if wikidata language is available for three-column output
         bool has_wikidata_lang = _n->has_language("wikidata");
 
-        _n->print(L"Predicate Usage:", true);
-        _n->print(L"------------------------", true);
+        _n->out(L"Predicate Usage:", true);
+        _n->out(L"------------------------", true);
 
         size_t total           = sorted_predicates.size();
         size_t entries_to_show = limit ? std::min(limit, total) : total;
@@ -468,11 +467,11 @@ private:
                 // `lang` is an empty string to use the current language, `fallback` is `true`.
                 line_output = predicate_name + L"\t" + std::to_wstring(entry.second);
             }
-            _n->print(line_output, true);
+            _n->out(line_output, true);
         }
-        _n->print(L"------------------------", true);
+        _n->out(L"------------------------", true);
         if (limit && limit < total)
-            _n->print(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" predicates.", true);
+            _n->out(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" predicates.", true);
     }
 
     void list_predicate_value_usage(const std::wstring& pred_arg, size_t limit /*= 0*/)
@@ -498,8 +497,8 @@ private:
         if (pred_display.empty())
             pred_display = pred_arg;
 
-        _n->print(L"Value Usage for predicate " + pred_display + L":", true);
-        _n->print(L"------------------------", true);
+        _n->out(L"Value Usage for predicate " + pred_display + L":", true);
+        _n->out(L"------------------------", true);
 
         ankerl::unordered_dense::map<network::Node, size_t> value_counts;
 
@@ -553,16 +552,16 @@ private:
             {
                 line = value_name + L"\t" + std::to_wstring(entry.first);
             }
-            _n->print(line, true);
+            _n->out(line, true);
         }
 
-        _n->print(L"------------------------", true);
-        _n->print(L"Total unique values: " + std::to_wstring(total), true);
+        _n->out(L"------------------------", true);
+        _n->out(L"Total unique values: " + std::to_wstring(total), true);
         if (limit && limit < total)
-            _n->print(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" values.", true);
+            _n->out(L"Showing top " + std::to_wstring(limit) + L" of " + std::to_wstring(total) + L" values.", true);
         if (total == 0)
         {
-            _n->print(L"(No values found for this predicate)", true);
+            _n->out(L"(No values found for this predicate)", true);
         }
     }
 
@@ -835,18 +834,18 @@ private:
             if (cmd.size() == 1)
             {
                 for (const auto& l : general_help_lines)
-                    _n->print(l, true);
+                    _n->out(l, true);
             }
             else if (cmd.size() == 2)
             {
                 auto it = detailed_help.find(cmd[1]);
                 if (it != detailed_help.end())
                 {
-                    _n->print(it->second, true);
+                    _n->out(it->second, true);
                 }
                 else
                 {
-                    _n->print(L"Unknown command: " + cmd[1] + L". Use \".help\" for a list of all commands.", true);
+                    _n->error(L"Unknown command: " + cmd[1] + L". Use \".help\" for a list of all commands.", true);
                 }
             }
             else
@@ -859,7 +858,7 @@ private:
     {
         if (cmd.size() < 2)
         {
-            std::clog << "The current language is '" << _n->get_lang() << "'" << std::endl;
+            _n->out_stream() << "The current language is '" << _n->get_lang() << "'" << std::endl;
         }
         else
         {
@@ -903,22 +902,22 @@ private:
             {
                 node_in_current_lang = _n->node(name_in_current_lang);
                 _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
-                _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') does not exist yet in either language => created it.", true);
+                _n->out(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') does not exist yet in either language => created it.", true);
             }
             else
             {
                 _n->set_name(node_in_target_lang, name_in_current_lang, current_lang, true);
-                _n->print(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
+                _n->out(L"Node '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') exists, assigned name '" + name_in_current_lang + L"' in '" + string::unicode::from_utf8(current_lang) + L"'.", true);
             }
         }
         else if (node_in_target_lang == 0)
         {
             _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
-            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
+            _n->out(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') exists, assigned name '" + name_in_target_lang + L"' in '" + string::unicode::from_utf8(target_lang) + L"'.", true);
         }
         else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false))
         {
-            _n->print(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') have the requested names, but are different nodes => Merging them.", true);
+            _n->out(L"Node '" + name_in_current_lang + L"' ('" + string::unicode::from_utf8(current_lang) + L"') / '" + name_in_target_lang + L"' ('" + string::unicode::from_utf8(target_lang) + L"') have the requested names, but are different nodes => Merging them.", true);
             _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
         }
         else
@@ -941,7 +940,7 @@ private:
 
         _n->remove_name(nd, target_lang);
 
-        _n->print(L"Removed name of node " + std::to_wstring(nd) + L" in language '" + string::unicode::from_utf8(target_lang) + L"' (if it existed).", true);
+        _n->out(L"Removed name of node " + std::to_wstring(nd) + L" in language '" + string::unicode::from_utf8(target_lang) + L"' (if it existed).", true);
     }
     void cmd_node(const std::vector<std::wstring>& cmd)
     {
@@ -974,9 +973,9 @@ private:
         }
         else
         {
-            std::clog << "Found " << nodes.size() << " nodes with name '" << string::unicode::to_utf8(arg)
-                      << "' in current language '" << _n->lang() << "':" << std::endl;
-            std::clog << "------------------------" << std::endl;
+            _n->out_stream() << "Found " << nodes.size() << " nodes with name '" << string::unicode::to_utf8(arg)
+                             << "' in current language '" << _n->lang() << "':" << std::endl;
+            _n->out_stream() << "------------------------" << std::endl;
 
             // Sort by ID for consistent output
             std::sort(nodes.begin(), nodes.end());
@@ -995,8 +994,8 @@ private:
 
         auto view = _n->get_all_nodes_view();
 
-        std::clog << "Listing " << count << " nodes:" << std::endl;
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << "Listing " << count << " nodes:" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
 
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
@@ -1004,7 +1003,7 @@ private:
             display_node_details(it->first, false);
         }
 
-        std::clog << "Displayed " << displayed << " nodes." << std::endl;
+        _n->out_stream() << "Displayed " << displayed << " nodes." << std::endl;
     }
     void cmd_clist(const std::vector<std::wstring>& cmd)
     {
@@ -1014,8 +1013,8 @@ private:
 
         auto view = _n->get_lang_nodes_view(_n->lang());
 
-        std::clog << "Listing first " << count << " nodes named in current language '" << _n->lang() << "'" << std::endl;
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << "Listing first " << count << " nodes named in current language '" << _n->lang() << "'" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
 
         size_t displayed = 0;
         for (auto it = view.begin(); it != view.end() && displayed < count; ++it, ++displayed)
@@ -1048,10 +1047,10 @@ private:
 
         size_t to_display = std::min(max_count, vec.size());
 
-        std::clog << (outgoing ? "Outgoing" : "Incoming")
-                  << " connected nodes of " << base_nd
-                  << " (first " << to_display << " of " << vec.size() << ", sorted by ID):" << std::endl;
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << (outgoing ? "Outgoing" : "Incoming")
+                         << " connected nodes of " << base_nd
+                         << " (first " << to_display << " of " << vec.size() << ", sorted by ID):" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
 
         for (size_t i = 0; i < to_display; ++i)
         {
@@ -1088,8 +1087,8 @@ private:
         }
 
         _n->remove_node(nd);
-        _n->print(L"Removed node " + std::to_wstring(nd) + L" (all edges disconnected, name mappings cleaned).", true);
-        _n->print(L"Consider running .cleanup afterwards if needed.", true);
+        _n->out(L"Removed node " + std::to_wstring(nd) + L" (all edges disconnected, name mappings cleaned).", true);
+        _n->diagnostic(L"Consider running .cleanup afterwards if needed.", true);
     }
     void cmd_mermaid(const std::vector<std::wstring>& cmd)
     {
@@ -1117,19 +1116,19 @@ private:
     void cmd_run(const std::vector<std::wstring>&)
     {
         _n->run(true, false, false);
-        _n->print(L"Ready.", true);
+        _n->diagnostic(L"Ready.", true);
     }
     void cmd_run_once(const std::vector<std::wstring>&)
     {
         _n->run(true, false, true);
-        _n->print(L"Ready.", true);
+        _n->diagnostic(L"Ready.", true);
     }
     void cmd_run_md(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
         std::string subdir = string::unicode::to_utf8(cmd[1]);
         _n->set_markdown_subdir(subdir);
-        _n->print(L"Running with markdown export...", true);
+        _n->diagnostic(L"Running with markdown export...", true);
         if (_data_manager)
         {
             _data_manager->set_logging(false);
@@ -1150,13 +1149,9 @@ private:
 
         bool is_wikidata = (_n->get_lang() == "wikidata");
 
-        auto normal_print = [](const std::wstring& str, bool)
+        auto normal_print = [&](const std::wstring& str, bool)
         {
-#ifdef _WIN32
-            std::wcout << str << std::endl;
-#else
-            std::clog << string::unicode::to_utf8(str) << std::endl;
-#endif
+            _n->out_stream() << string::unicode::to_utf8(str) << std::endl;
         };
 
         std::function<void(const std::wstring&, bool)> encode_print =
@@ -1209,7 +1204,7 @@ private:
             }
         };
 
-        _n->print(L"Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to " + cmd[1] + (is_wikidata ? L" (with Wikidata token encoding)." : L" (plain text)."), true);
+        _n->diagnostic(L"Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to " + cmd[1] + (is_wikidata ? L" (with Wikidata token encoding)." : L" (plain text)."), true);
 
         _n->set_print(encode_print);
 
@@ -1217,10 +1212,10 @@ private:
 
         _n->set_print(normal_print);
 
-        _n->print(L"Ready.", true);
+        _n->diagnostic(L"Ready.", true);
     }
 
-    static void cmd_decode(const std::vector<std::wstring>& cmd)
+    void cmd_decode(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() != 2)
             throw std::runtime_error("Command .decode requires exactly one argument: the input file path");
@@ -1238,7 +1233,7 @@ private:
             if (!line.empty())
             {
                 std::string decoded = compressor.decode(line);
-                std::cout << decoded << std::endl;
+                _n->out_stream() << decoded << std::endl;
             }
         }
     }
@@ -1250,7 +1245,7 @@ private:
         if (_repl_state->auto_run)
         {
             _repl_state->auto_run = false;
-            _n->print(L"Auto-run has been disabled due to loading a large dataset.", true);
+            _n->out(L"Auto-run has been disabled due to loading a large dataset.", true);
         }
 
         std::ofstream log("load.log");
@@ -1260,11 +1255,7 @@ private:
 
           if (o)
           {
-#ifdef _WIN32
-              std::wcout << str << std::endl;
-#else
-            std::clog << string::unicode::to_utf8(str) << std::endl;
-#endif
+            _n->out_stream() << string::unicode::to_utf8(str) << std::endl;
           } });
 
         if (cmd.size() == 2)
@@ -1277,7 +1268,7 @@ private:
             _data_manager->load();
 
             watch.stop();
-            _n->print(L" Time needed for loading/importing: " + string::unicode::from_utf8(watch.format()), true);
+            _n->diagnostic(L" Time needed for loading/importing: " + string::unicode::from_utf8(watch.format()), true);
         }
         else
         {
@@ -1316,7 +1307,7 @@ private:
             throw std::runtime_error("Cannot export constraints: Original Wikidata source file not found or invalid format.");
         }
 
-        _n->print(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
+        _n->diagnostic(L" Time needed for exporting constraints: " + std::to_wstring(static_cast<double>(watch.duration()) / 1000) + L"s", true);
     }
     void cmd_export_wikidata(const std::vector<std::wstring>& cmd)
     {
@@ -1333,7 +1324,7 @@ private:
             throw std::runtime_error("File is not recognized as Wikidata JSON (no matching .json/.json.bz2 found).");
 
         wikidata->export_entities(ids);
-        _n->print(L"Export finished. *.json files are in the current directory.", true);
+        _n->diagnostic(L"Export finished. *.json files are in the current directory.", true);
     }
     void cmd_list_rules(const std::vector<std::wstring>&)
     {
@@ -1341,21 +1332,21 @@ private:
         network::adjacency_set rule_nodes = _n->get_rules();
         if (rule_nodes.empty())
         {
-            _n->print(L"No rules found.", true);
+            _n->out(L"No rules found.", true);
             return;
         }
 
-        _n->print(L"Listing all rules:", true);
-        _n->print(L"------------------------", true);
+        _n->out(L"Listing all rules:", true);
+        _n->out(L"------------------------", true);
 
         for (const auto& rule : rule_nodes)
         {
             std::wstring output;
             // Format the rule for printing
             _n->format_fact(output, _n->lang(), rule, 3);
-            _n->print(output, true);
+            _n->out(output, true);
         }
-        _n->print(L"------------------------", true);
+        _n->out(L"------------------------", true);
     }
     void cmd_list_predicate_usage(const std::vector<std::wstring>& cmd)
     {
@@ -1420,7 +1411,7 @@ private:
     void cmd_remove_rules(const std::vector<std::wstring>&)
     {
         _n->remove_rules();
-        _n->print(L"All rules removed.", true);
+        _n->out(L"All rules removed.", true);
     }
     void cmd_prune(const std::vector<std::wstring>& cmd, bool facts_mode)
     {
@@ -1458,8 +1449,8 @@ private:
         {
             size_t removed = 0;
             _n->prune_facts(pattern_fact, removed);
-            _n->print(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
-            if (removed > 0) _n->print(L"Consider running .cleanup.", true);
+            _n->out(L"Pruned " + std::to_wstring(removed) + L" matching facts.", true);
+            if (removed > 0) _n->diagnostic(L"Consider running .cleanup.", true);
         }
         else
         {
@@ -1471,10 +1462,10 @@ private:
             size_t removed_facts = 0;
             size_t removed_nodes = 0;
             _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
-            _n->print(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
+            _n->out(L"Pruned " + std::to_wstring(removed_facts) + L" matching facts and " + std::to_wstring(removed_nodes) + L" nodes.", true);
             if (removed_facts > 0 || removed_nodes > 0)
             {
-                _n->print(L"Consider running .cleanup.", true);
+                _n->diagnostic(L"Consider running .cleanup.", true);
             }
         }
     }
@@ -1486,58 +1477,58 @@ private:
         size_t removed_facts = 0;
         size_t removed_preds = 0;
 
-        _n->print(L"Scanning for unused predicates and zombie facts...", true);
+        _n->diagnostic(L"Scanning for unused predicates and zombie facts...", true);
 
         _n->purge_unused_predicates(removed_facts, removed_preds);
 
-        _n->print(L"Purged " + std::to_wstring(removed_facts) + L" zombie facts.", true);
-        _n->print(L"Removed " + std::to_wstring(removed_preds) + L" unused predicates.", true);
+        _n->out(L"Purged " + std::to_wstring(removed_facts) + L" zombie facts.", true);
+        _n->out(L"Removed " + std::to_wstring(removed_preds) + L" unused predicates.", true);
 
-        _n->print(L"Cleaning up isolated nodes...", true);
+        _n->diagnostic(L"Cleaning up isolated nodes...", true);
 
         size_t cleanup_count = 0;
         _n->cleanup_isolated(cleanup_count);
-        _n->print(L"Cleanup: removed " + std::to_wstring(cleanup_count) + L" isolated nodes/names.", true);
+        _n->out(L"Cleanup: removed " + std::to_wstring(cleanup_count) + L" isolated nodes/names.", true);
 
-        _n->print(L"Cleaning up name mappings...", true);
+        _n->diagnostic(L"Cleaning up name mappings...", true);
         size_t names_removed = _n->cleanup_names();
-        _n->print(L"Removed " + std::to_wstring(names_removed) + L" dangling name entries.", true);
+        _n->out(L"Removed " + std::to_wstring(names_removed) + L" dangling name entries.", true);
     }
     void cmd_stat(const std::vector<std::wstring>& cmd)
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .stat takes no arguments");
 
-        std::clog << "Network Statistics:" << std::endl;
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << "Network Statistics:" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
 
-        std::clog << "Nodes: " << _n->count() << std::endl;
+        _n->out_stream() << "Nodes: " << _n->count() << std::endl;
 
         size_t ram_usage = zelph::platform::get_process_memory_usage();
         if (ram_usage > 0)
         {
-            std::clog << "RAM Usage: " << std::fixed << std::setprecision(1)
-                      << (static_cast<double>(ram_usage) / (1024 * 1024 * 1024)) << " GiB" << std::endl;
+            _n->out_stream() << "RAM Usage: " << std::fixed << std::setprecision(1)
+                             << (static_cast<double>(ram_usage) / (1024 * 1024 * 1024)) << " GiB" << std::endl;
         }
 
         if (_n->language_count() > 0)
         {
-            std::clog << "Name-of-Node Entries by language:" << std::endl;
+            _n->out_stream() << "Name-of-Node Entries by language:" << std::endl;
             for (const std::string& lang : _n->get_languages())
             {
-                std::clog << "  " << lang << ": " << _n->get_name_of_node_size(lang) << std::endl;
+                _n->out_stream() << "  " << lang << ": " << _n->get_name_of_node_size(lang) << std::endl;
             }
 
-            std::clog << "Name-of-Node Entries by language:" << std::endl;
+            _n->out_stream() << "Name-of-Node Entries by language:" << std::endl;
             for (const std::string& lang : _n->get_languages())
             {
-                std::clog << "  " << lang << ": " << _n->get_node_of_name_size(lang) << std::endl;
+                _n->out_stream() << "  " << lang << ": " << _n->get_node_of_name_size(lang) << std::endl;
             }
         }
 
-        std::clog << "Languages: " << _n->language_count() << std::endl;
-        std::clog << "Rules: " << _n->rule_count() << std::endl;
+        _n->out_stream() << "Languages: " << _n->language_count() << std::endl;
+        _n->out_stream() << "Rules: " << _n->rule_count() << std::endl;
 
-        std::clog << "------------------------" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
     }
     void cmd_log(const std::vector<std::wstring>& cmd)
     {
@@ -1562,7 +1553,7 @@ private:
             throw std::runtime_error("Command .log-janet takes no arguments");
 
         _script_engine->toggle_janet_logging();
-        _n->print(L"Janet function logging is now " + string::unicode::from_utf8(_script_engine->get_janet_logging_status()) + L".", true);
+        _n->out(L"Janet function logging is now " + string::unicode::from_utf8(_script_engine->get_janet_logging_status()) + L".", true);
     }
     void cmd_save(const std::vector<std::wstring>& cmd)
     {
@@ -1575,7 +1566,7 @@ private:
 
         std::string utf8_file = string::unicode::to_utf8(file);
         _n->save_to_file(utf8_file);
-        _n->print(L"Saved network to " + file, true);
+        _n->diagnostic(L"Saved network to " + file, true);
     }
     void cmd_import(const std::vector<std::wstring>& cmd) const
     {
@@ -1587,7 +1578,7 @@ private:
     void cmd_auto_run(const std::vector<std::wstring>&)
     {
         _repl_state->auto_run = !_repl_state->auto_run;
-        _n->print(L"Auto-run is now " + std::wstring(_repl_state->auto_run ? L"enabled" : L"disabled") + L".", true);
+        _n->out(L"Auto-run is now " + std::wstring(_repl_state->auto_run ? L"enabled" : L"disabled") + L".", true);
     }
     void cmd_parallel(const std::vector<std::wstring>& cmd)
     {
@@ -1595,7 +1586,7 @@ private:
             throw std::runtime_error("Command .parallel takes no arguments");
 
         _n->toggle_parallel();
-        _n->print(L"Parallel processing is now " + std::wstring(_n->use_parallel() ? L"enabled" : L"disabled") + L".", true);
+        _n->out(L"Parallel processing is now " + std::wstring(_n->use_parallel() ? L"enabled" : L"disabled") + L".", true);
     }
 };
 

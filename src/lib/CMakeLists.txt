@@ -194,6 +194,8 @@ add_library(zelph_lib SHARED
     markdown.cpp
     markdown.hpp
     network.hpp
+    output.cpp
+    output.hpp
     reasoning.cpp
     reasoning.hpp
     reasoning_profiler.hpp

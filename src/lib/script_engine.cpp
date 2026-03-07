@@ -252,21 +252,18 @@ public:
     {
         if (!_log_janet_functions) return;
 
-        std::clog << func_name << " ";
-
-        std::clog << "inputs: ";
+        std::ostringstream oss;
+        oss << func_name << " inputs: ";
         for (int32_t i = 0; i < argc; ++i)
         {
-            if (i > 0) std::clog << " ";
-            std::clog << format_janet(argv[i]);
+            if (i > 0) oss << " ";
+            oss << format_janet(argv[i]);
         }
 
         if (!is_entry)
-        {
-            std::clog << " output: " << format_janet(ret);
-        }
+            oss << " output: " << format_janet(ret);
 
-        std::clog << std::endl;
+        _n->diagnostic(string::unicode::from_utf8(oss.str()));
     }
 
     // Converts Janet Types to Nodes.
@@ -1250,7 +1247,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             {
                 std::wstring output;
                 _pImpl->_n->format_fact(output, _pImpl->_n->lang(), n, 3);
-                if (!output.empty() && output != L"??") _pImpl->_n->print(output, false);
+                if (!output.empty() && output != L"??") _pImpl->_n->out(string::unmark_identifiers(output), true);
 
                 if (!_pImpl->_scoped_variables.empty())
                 {
@@ -1262,7 +1259,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
         {
             if (!janet_checktype(out, JANET_NIL))
             {
-                janet_eprintf("%v\n", out);
+                _pImpl->_n->out(string::unicode::from_utf8(Impl::format_janet(out)), true);
             }
         }
     }
