@@ -40,7 +40,6 @@ set(OLD_ENV_CXX $ENV{CXX})
 set(OLD_ENV_PATH $ENV{PATH})
 
 if (MSVC)
-    set(JANET_LIB_NAME "janet.lib")
     set(MESON_OPTIONS "--vsenv")
 
     set(CLEAN_PATH_LIST "")
@@ -55,7 +54,6 @@ if (MSVC)
     set(ENV{PATH} "${NEW_NATIVE_PATH}")
 
     set(BUILD_COMMAND meson compile -C build --verbose)
-
 else ()
     set(JANET_LIB_NAME "libjanet.a")
     set(MESON_OPTIONS "")
@@ -109,12 +107,29 @@ set(ENV{CC} "${OLD_ENV_CC}")
 set(ENV{CXX} "${OLD_ENV_CXX}")
 set(ENV{PATH} "${OLD_ENV_PATH}")
 
-add_library(janet_lib STATIC IMPORTED)
+if (MSVC)
+    file(GLOB JANET_RUNTIME_DLLS "${janet_SOURCE_DIR}/build/janet-*.dll")
+    list(LENGTH JANET_RUNTIME_DLLS JANET_RUNTIME_DLL_COUNT)
+    if (JANET_RUNTIME_DLL_COUNT EQUAL 0)
+        message(FATAL_ERROR "Janet runtime DLL not found in ${janet_SOURCE_DIR}/build")
+    endif ()
+    list(GET JANET_RUNTIME_DLLS 0 JANET_RUNTIME_DLL)
 
-set_target_properties(janet_lib PROPERTIES
-    IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/${JANET_LIB_NAME}
-    INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
-)
+    add_library(janet_lib SHARED IMPORTED)
+
+    set_target_properties(janet_lib PROPERTIES
+        IMPORTED_IMPLIB "${janet_SOURCE_DIR}/build/janet.lib"
+        IMPORTED_LOCATION "${JANET_RUNTIME_DLL}"
+        INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
+    )
+else ()
+    add_library(janet_lib STATIC IMPORTED)
+
+    set_target_properties(janet_lib PROPERTIES
+        IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/${JANET_LIB_NAME}
+        INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
+    )
+endif ()
 
 target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
 

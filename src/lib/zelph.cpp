@@ -2827,9 +2827,9 @@ void Zelph::gen_mermaid_html(Node start, std::string file_name, int max_depth, i
     // Subgraph styles
     for (auto& [r, info] : subgraphs)
     {
-        std::string sg_id  = "sg_" + std::to_string(static_cast<unsigned long long>(r));
-        std::string fill   = col_sg;
-        std::string stroke = line_col;
+        std::string        sg_id  = "sg_" + std::to_string(static_cast<unsigned long long>(r));
+        const std::string& fill   = col_sg;
+        std::string        stroke = line_col;
         if (r == start)
             stroke = dark_theme ? "#8a5c00" : "#FFBB00";
         style_defs.push_back("    style " + sg_id + " fill:" + fill + ",stroke:" + stroke + ",stroke-width:2px,color:" + text_col);

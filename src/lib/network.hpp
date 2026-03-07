@@ -33,7 +33,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <limits>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>

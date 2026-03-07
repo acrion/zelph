@@ -111,7 +111,7 @@ int main(int argc, char** argv)
 
         if (script_files.empty())
         {
-            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(interactive.get_version()));
+            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()));
             interactive.out(L"-- REPL mode - type .help for commands, " + exit_command + L" to exit --");
             interactive.out(L"");
 

@@ -32,6 +32,13 @@ message(STATUS "CMAKE_CXX_COMPILER_ID = ${CMAKE_CXX_COMPILER_ID}")
 if (MSVC)
     target_compile_definitions(zelph PRIVATE BOOST_LIB_DIAGNOSTIC)
     target_link_libraries(zelph PRIVATE zelph_lib)
+
+    add_custom_command(TARGET zelph POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:zelph>
+                $<TARGET_FILE_DIR:zelph>
+        COMMAND_EXPAND_LISTS
+    )
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
