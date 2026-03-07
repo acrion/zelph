@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string_utils.hpp"
 
+#include <zelph_export.h>
+
 #include <functional>
 #include <ios>
 #include <ostream>
@@ -55,7 +57,7 @@ namespace zelph
 
     using OutputHandler = std::function<void(const OutputEvent&)>;
 
-    void default_output_handler(const OutputEvent& event);
+    ZELPH_EXPORT void default_output_handler(const OutputEvent& event);
 
     class OutputCollector
     {
