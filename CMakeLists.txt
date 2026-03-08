@@ -65,3 +65,6 @@ add_subdirectory(src/lib)
 add_subdirectory(src/app)
 
 install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})
+
+enable_testing()
+add_subdirectory(src/test)
