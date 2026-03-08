@@ -42,46 +42,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
-    struct WrapperNode
-    {
-        bool     is_placeholder = false;
-        uint64_t value          = 0;
-        size_t   total_count    = 0; // Renamed for total nodes count (only for placeholders)
-
-        bool operator==(const WrapperNode& other) const
-        {
-            return is_placeholder == other.is_placeholder && value == other.value && total_count == other.total_count;
-        }
-
-        bool operator<(const WrapperNode& other) const
-        {
-            if (is_placeholder != other.is_placeholder)
-            {
-                return is_placeholder < other.is_placeholder;
-            }
-            if (value != other.value)
-            {
-                return value < other.value;
-            }
-            return total_count < other.total_count;
-        }
-    };
-}
-
-namespace std
-{
-    template <>
-    struct hash<zelph::network::WrapperNode>
-    {
-        size_t operator()(const zelph::network::WrapperNode& wn) const
-        {
-            return hash<bool>()(wn.is_placeholder) ^ hash<uint64_t>()(wn.value) ^ hash<size_t>()(wn.total_count);
-        }
-    };
-}
-
-namespace zelph::network
-{
     using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
     using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
 
@@ -129,7 +89,7 @@ namespace zelph::network
         Node var() const;
 
         void                     set_lang(const std::string& lang);
-        std::string              get_lang() { return _lang; }
+        std::string              get_lang() const { return _lang; }
         void                     set_print(std::function<void(std::wstring, bool)> print) const;
         std::string              lang() const { return _lang; }
         Node                     node(const std::wstring& name, std::string lang = "");
@@ -172,21 +132,15 @@ namespace zelph::network
         adjacency_set        get_right(const Node b) const;
         bool                 has_left_edge(Node b, Node a) const;
         bool                 has_right_edge(Node a, Node b) const;
+        static Node          create_hash(const adjacency_set& vec);
+        static bool          is_hash(Node a);
+        static bool          is_var(Node a);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
         Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
         Node                 list(const std::vector<Node>& elements);
         Node                 list(const std::vector<std::wstring>& elements);
         Node                 set(const std::unordered_set<Node>& elements);
         FactComponents       extract_fact_components(Node relation) const;
-        bool                 identify_subgraph_components(Node n, Node& subject, Node& predicate, Node& object, std::unordered_set<Node>* containment_conflicts) const;
-        void                 gen_mermaid_html(Node                            start,
-                                              std::string                     file_name,
-                                              int                             max_depth,
-                                              int                             max_neighbors,
-                                              const std::unordered_set<Node>& exclude_nodes,
-                                              bool                            dark_theme,
-                                              bool                            horizontal_layout,
-                                              bool                            use_subgraphs) const;
         void                 set_output_handler(OutputHandler output) const;
         void                 emit(OutputChannel channel, const std::wstring& text, bool newline = true) const;
 
@@ -239,19 +193,5 @@ namespace zelph::network
         std::string                               _lang{"en"};
         boost::bimap<network::Node, std::wstring> _core_names;
         bool                                      _use_parallel{true};
-
-    private:
-        void collect_mermaid_nodes(WrapperNode                                                     current_wrap,
-                                   int                                                             max_depth,
-                                   std::unordered_set<WrapperNode>&                                visited,
-                                   std::unordered_set<Node>&                                       processed_edge_hashes,
-                                   const adjacency_set&                                            conditions,
-                                   const adjacency_set&                                            deductions,
-                                   std::vector<std::tuple<WrapperNode, WrapperNode, std::string>>& raw_edges,
-                                   std::unordered_set<WrapperNode>&                                all_nodes,
-                                   int                                                             max_neighbors,
-                                   size_t&                                                         placeholder_counter,
-                                   const std::unordered_set<Node>&                                 exclude_nodes) const;
-        bool collect_subgraph_contents(Node n, std::unordered_set<Node>& contents, std::unordered_set<Node>& visited) const;
     };
 }

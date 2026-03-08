@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "command_executor.hpp"
 
+#include "mermaid.hpp"
 #include "network.hpp"
 #include "platform_utils.hpp"
 #include "reasoning.hpp"
@@ -294,14 +295,15 @@ private:
         std::wstring          safe_name = string::sanitize_filename(hex_name);
         std::filesystem::path html_path = temp_dir / (safe_name + L".html");
 
-        _n->gen_mermaid_html(nd,
-                             html_path.string(),
-                             depth,
-                             max_neighbors,
-                             exclude_nodes,
-                             dark_theme,
-                             horizontal_layout,
-                             use_subgraphs);
+        console::gen_mermaid_html(_n,
+                                  nd,
+                                  html_path.string(),
+                                  depth,
+                                  max_neighbors,
+                                  exclude_nodes,
+                                  dark_theme,
+                                  horizontal_layout,
+                                  use_subgraphs);
 
         std::string abs_path = html_path.string();
         std::string file_url = "file://" + abs_path;

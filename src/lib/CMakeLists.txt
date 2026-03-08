@@ -234,6 +234,8 @@ add_library(zelph_lib SHARED
     data_manager.cpp
     interactive.cpp
     interactive.hpp
+    mermaid.cpp
+    mermaid.hpp
     read_async.cpp
     read_async.hpp
     repl_state.hpp
