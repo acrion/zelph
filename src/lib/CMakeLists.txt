@@ -200,9 +200,6 @@ add_library(zelph_lib SHARED
     adjacency_set.hpp
     answer.cpp
     answer.hpp
-    zelph.cpp
-    zelph.hpp
-    zelph_impl.hpp
     contradiction_error.hpp
     fact_structure.hpp
     fact_structure_types.hpp
@@ -211,22 +208,30 @@ add_library(zelph_lib SHARED
     network.hpp
     output.cpp
     output.hpp
+    platform_utils.cpp
+    platform_utils.hpp
     reasoning.cpp
+    reasoning_deduce.cpp
+    reasoning_evaluate.cpp
+    reasoning_pruning.cpp
     reasoning.hpp
     reasoning_profiler.hpp
     stopwatch.cpp
     stopwatch.hpp
-    unification.cpp
-    unification.hpp
-    platform_utils.cpp
-    platform_utils.hpp
     script_engine.cpp
     script_engine.hpp
     string_utils.cpp
     string_utils.hpp
     thread_pool.hpp
+    unification.cpp
+    unification.hpp
     wikidata_text_compressor.hpp
     wikidata_token_encoder.hpp
+    zelph.cpp
+    zelph_names.cpp
+    zelph_maintenance.cpp
+    zelph.hpp
+    zelph_impl.hpp
     # zelph::console
     command_executor.cpp
     command_executor.hpp

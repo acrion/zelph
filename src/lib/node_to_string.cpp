@@ -31,6 +31,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <mutex>
 
+// #define DEBUG_FORMAT_FACT
+
 namespace zelph::console
 {
     int                  format_fact_level = 0;

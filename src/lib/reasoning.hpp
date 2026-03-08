@@ -60,33 +60,54 @@ namespace zelph::network
         adjacency_set        rule_deductions;
     };
 
+    // --- Free helper functions (implemented in reasoning.cpp) ---
+
+    // Recursively substitute variables in a fact pattern to produce a concrete fact.
+    // Used by evaluate and deduce to instantiate rule patterns with current bindings.
+    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history);
+
+    // Recursively collect all variable nodes from a fact pattern.
+    // Used to detect "fresh variables" that appear only in rule consequences.
+    void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, int depth, std::vector<Node>& history);
+
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
+        // --- Implemented in reasoning.cpp (orchestration) ---
+
         explicit Reasoning(const OutputHandler& output = default_output_handler);
+        void set_markdown_subdir(const std::string& subdir);
+        void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void profiler_reset_epoch() { _prof.reset_epoch(); }
-        void set_markdown_subdir(const std::string& subdir);
+
+        // --- Implemented in reasoning_pruning.cpp ---
+
         void prune_facts(Node pattern, size_t& removed_count);
         void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
         void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
-        // When set to a non-null pointer, query results (variable bindings)
-        // are collected into the pointed-to vector instead of being printed.
-        // The caller is responsible for setting this back to nullptr after
-        // the query completes. Thread-safe: guarded by _mtx_output.
-        void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
 
     private:
-        void                               evaluate(RulePos rule, ReasoningContext& ctx, int depth);
-        static bool                        contradicts(const Variables& variables, const Variables& unequals);
-        void                               deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx);
+        // --- Implemented in reasoning.cpp (orchestration) ---
+
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
-        bool                               is_negated_condition(Node condition, int depth);
-        bool                               consequences_already_exist(const Variables&     condition_bindings,
-                                                                      const adjacency_set& deductions,
-                                                                      Node                 parent,
-                                                                      const int            depth);
+        static bool                        contradicts(const Variables& variables, const Variables& unequals);
+
+        // --- Implemented in reasoning_evaluate.cpp ---
+
+        void evaluate(RulePos rule, ReasoningContext& ctx, int depth);
+        bool is_negated_condition(Node condition, int depth);
+
+        // --- Implemented in reasoning_deduce.cpp ---
+
+        void deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx);
+        bool consequences_already_exist(const Variables&     condition_bindings,
+                                        const adjacency_set& deductions,
+                                        Node                 parent,
+                                        const int            depth);
+
+        // --- Members ---
 
         std::atomic<bool>                        _done{false};
         std::unique_ptr<wikidata::Markdown>      _markdown;
