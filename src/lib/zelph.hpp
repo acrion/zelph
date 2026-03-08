@@ -124,7 +124,6 @@ namespace zelph::network
         Node                 parse_relation(const Node rule) const;
         std::wstring         get_formatted_name(Node node, const std::string& lang) const;
         std::string          format(Node node) const;
-        void                 format_fact(std::wstring& result, const std::string& lang, Node fact, const int max_objects = default_display_max_neighbors, const Variables& variables = {}, Node parent = 0, std::shared_ptr<std::unordered_set<Node>> history = nullptr) const;
         adjacency_set        filter(const adjacency_set& source, Node target) const;
         adjacency_set        filter(Node fact, Node relationType, Node target) const;
         static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
@@ -186,8 +185,6 @@ namespace zelph::network
             const Node Conjunction;
             const Node Negation;
         } core;
-
-        static constexpr int default_display_max_neighbors{5};
 
     protected:
         std::string                               _lang{"en"};

@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "script_engine.hpp"
+#include "node_to_string.hpp"
 #include "reasoning.hpp"
 #include "string_utils.hpp"
 
@@ -206,7 +207,7 @@ public:
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
                 # 2. Node List: < a b > — space-separated, stored as cons list (last element outermost).
-                #    The user writes elements in the order they should be displayed; format_fact reverses
+                #    The user writes elements in the order they should be displayed; node_to_wstring reverses
                 #    the internal order back for output. For numbers, write digits in reverse: <3 2 1>
                 #    represents the number 123 (same internal form as the compact <123>).
                 # The loop (if-not ">" :val-any) ensures we don't consume the closing delimiter.
@@ -1246,7 +1247,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             if (n)
             {
                 std::wstring output;
-                _pImpl->_n->format_fact(output, _pImpl->_n->lang(), n, 3);
+                console::node_to_wstring(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
                 if (!output.empty() && output != L"??") _pImpl->_n->out(string::unmark_identifiers(output), true);
 
                 if (!_pImpl->_scoped_variables.empty())

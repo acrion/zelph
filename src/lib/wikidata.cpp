@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "wikidata.hpp"
 
+#include "node_to_string.hpp"
 #include "platform_utils.hpp"
 #include "read_async.hpp"
 #include "string_utils.hpp"
@@ -711,9 +712,9 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                         if (log)
                         {
                             std::wstring output;
-                            _pImpl->_n->format_fact(output, "en", fact, 3);
+                            console::node_to_wstring(_pImpl->_n, output, "en", fact, 3);
                             _pImpl->_n->diagnostic(id_str + L":       en> " + output, true);
-                            _pImpl->_n->format_fact(output, "wikidata", fact, 3);
+                            console::node_to_wstring(_pImpl->_n, output, "wikidata", fact, 3);
                             _pImpl->_n->diagnostic(id_str + L": wikidata> " + output, true);
                         }
                     }

@@ -66,8 +66,6 @@ namespace zelph::network
             }
             _last     = impl.getLast();
             _last_var = impl.getLastVar();
-
-            _format_fact_level = impl.getFormatFactLevel();
         }
 
         void loadSmallData(const ZelphImplOld::Reader& impl_old)
@@ -81,8 +79,6 @@ namespace zelph::network
             }
             _last     = impl_old.getLast();
             _last_var = impl_old.getLastVar();
-
-            _format_fact_level = impl_old.getFormatFactLevel();
         }
 
         void loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount)
@@ -198,8 +194,6 @@ namespace zelph::network
                 nodeOfNameChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
             impl.setNodeOfNameChunkCount(static_cast<uint32_t>(nodeOfNameChunkTotal));
-
-            impl.setFormatFactLevel(_format_fact_level);
 
             // Calculate and set chunk counts for left/right
             size_t leftChunkCount  = (_left.size() + chunkSize - 1) / chunkSize;
@@ -690,7 +684,5 @@ namespace zelph::network
         int                                     _max_log_depth{0};
         bool                                    _logging{false};
         OutputHandler                           _output;
-
-        int _format_fact_level{0}; // recursion level of method format_fact
     };
 }

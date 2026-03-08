@@ -115,37 +115,37 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 Key commands include:
 
-- `.help [command]`          – Show help
-- `.exit`                    – Exit interactive mode
-- `.lang [code]`             – Show or set current language (e.g., `en`, `de`, `wikidata`)
+- `.help [command]` – Show help
+- `.exit` – Exit interactive mode
+- `.lang [code]` – Show or set current language (e.g., `en`, `de`, `wikidata`)
 - `.name <node|id> <new_name>` – Set node name in current language
 - `.name <node|id> <lang> <new_name>` – Set node name in specific language
 - `.delname <node|id> [lang]` – Delete node name in current (or specified) language
-- `.node <name|id>`          – Show detailed node information (names, connections, representation, Wikidata URL)
-- `.list <count>`            – List first N existing nodes (internal order, with details)
-- `.clist <count>`           – List first N nodes named in current language (sorted by ID if feasible)
-- `.out <name|id> [count]`   – List outgoing connected nodes (default: 20)
-- `.in <name|id> [count]`    – List incoming connected nodes (default: 20)
-- `.mermaid <name> [depth]`  – Generate Mermaid HTML file for a node (default depth 3)
-- `.run`                     – Full inference
-- `.run-once`                – Single inference pass
-- `.run-md <subdir>`         – Inference + Markdown export
-- `.run-file <file>`         – Inference + write deduced facts to file (compressed if wikidata)
-- `.decode <file>`           – Decode a file produced by `.run-file`
-- `.list-rules`              – List all defined rules
+- `.node <name|id>` – Show detailed node information (names, connections, representation, Wikidata URL)
+- `.list <count>` – List first N existing nodes (internal order, with details)
+- `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
+- `.out <name|id> [count]` – List outgoing connected nodes (default: 20)
+- `.in <name|id> [count]` – List incoming connected nodes (default: 20)
+- `.mermaid <name> [depth]` – Generate Mermaid HTML file for a node (default depth 3)
+- `.run` – Full inference
+- `.run-once` – Single inference pass
+- `.run-md <subdir>` – Inference + Markdown export
+- `.run-file <file>` – Inference + write deduced facts to file (compressed if wikidata)
+- `.decode <file>` – Decode a file produced by `.run-file`
+- `.list-rules` – List all defined rules
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent)
 - `.list-predicate-value-usage <pred> [max]` – Show object/value usage statistics (top N most frequent values)
-- `.remove-rules`            – Remove all inference rules
-- `.remove <name|id>`        – Remove a node (destructive: disconnects all edges and cleans names)
-- `.import <file.zph>`       – Load and execute a zelph script
-- `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
-- `.save <file.bin>`         – Save current network to binary file
-- `.prune-facts <pattern>`   – Remove all facts matching the query pattern (only statements)
-- `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
-- `.cleanup`                 – Remove isolated nodes
-- `.stat`                    – Show network statistics (nodes, RAM usage, name entries, languages, rules)
-- `.log <max-depth>`         – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)
-- `.auto-run`                – Toggle automatic execution of `.run` after each input (default: on)
+- `.remove-rules` – Remove all inference rules
+- `.remove <name|id>` – Remove a node (destructive: disconnects all edges and cleans names)
+- `.import <file.zph>` – Load and execute a zelph script
+- `.load <file>` – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
+- `.save <file.bin>` – Save current network to binary file
+- `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
+- `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
+- `.cleanup` – Remove isolated nodes
+- `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)
+- `.auto-run` – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 - `.export-wikidata <json> <id1> [id2 ...]` – Extracts exact JSON lines for Q-IDs (no import)
 
@@ -164,7 +164,7 @@ zelph offers powerful analysis capabilities for the complete Wikidata knowledge 
 
 ### Community and Support
 
-Development of zelph is supported by the [Wikimedia Community Fund](https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Wikidata_Contradiction_Detection_and_Constraint_Integration_(ID:_23553409)).
+Development of zelph is supported by the [Wikimedia Community Fund](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Wikidata_Contradiction_Detection_and_Constraint_Integration_(ID:_23553409)>).
 
 The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
 
@@ -200,18 +200,18 @@ This unique approach enables powerful meta-reasoning about relations.
 
 zelph initializes with a small set of fundamental nodes that define the ontology of the system. These nodes are available in every language setting (though their names can be localized).
 
-| Core Node                | Symbol        | Internal Name          | Description                                                                                                                              |
-|:-------------------------|:--------------|:-----------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
-| **RelationTypeCategory** | `->`          | `RelationTypeCategory` | The meta-category of all relations. Every relation predicate in zelph is an instance (`~`) of this node.                                 |
-| **IsA**                  | `~`           | `IsA`                  | The fundamental categorical relation. Used for classification, e.g. to classify a Set as a Conjunction. |
-| **Causes**               | `=>`          | `Causes`               | Defines inference rules. Connects a condition set to a consequence.                                                                      |
-| **PartOf**               | `in`          | `PartOf`               | Defines membership in Sets.                                                                                   |
+| Core Node                | Symbol        | Internal Name          | Description                                                                                                                            |
+| :----------------------- | :------------ | :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| **RelationTypeCategory** | `->`          | `RelationTypeCategory` | The meta-category of all relations. Every relation predicate in zelph is an instance (`~`) of this node.                               |
+| **IsA**                  | `~`           | `IsA`                  | The fundamental categorical relation. Used for classification, e.g. to classify a Set as a Conjunction.                                |
+| **Causes**               | `=>`          | `Causes`               | Defines inference rules. Connects a condition set to a consequence.                                                                    |
+| **PartOf**               | `in`          | `PartOf`               | Defines membership in Sets.                                                                                                            |
 | **Cons**                 | `cons`        | `Cons`                 | The fundamental list-building relation (Lisp-style). The subject is the first element (car), the object is the rest of the list (cdr). |
 | **Nil**                  | `nil`         | `Nil`                  | The empty list terminator. Marks the end of a cons-list.                                                                               |
-| **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                           |
-| **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                                |
-| **Negation**             | `negation`    | `Negation`             | Used to classify a condition in a rule as negative (match if the fact does *not* exist).                                                     |
-| **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                               |
+| **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                         |
+| **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                              |
+| **Negation**             | `negation`    | `Negation`             | Used to classify a condition in a rule as negative (match if the fact does _not_ exist).                                               |
+| **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                             |
 
 These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an instance of `->` (i.e., "IsA" is a "Relation Type"). This self-referential bootstrapping allows zelph to reason about its own structure.
 
@@ -219,18 +219,18 @@ These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an
 
 A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
 
-In many traditional semantic web stacks (like OWL/RDF), the ontology is *descriptive*. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., [HermiT](http://www.hermit-reasoner.com) or [Pellet](https://github.com/stardog-union/pellet)). The operational semantics are external to the data.
+In many traditional semantic web stacks (like OWL/RDF), the ontology is _descriptive_. For example, an OWL "cardinality restriction" describes a constraint, but the actual logic to enforce that constraint resides hidden in the external reasoner's codebase (e.g., [HermiT](http://www.hermit-reasoner.com) or [Pellet](https://github.com/stardog-union/pellet)). The operational semantics are external to the data.
 
 In zelph, **the logic is intrinsic to the data**.
 
-* **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
-* **Math is Data:** Numbers are not opaque literals but Lisp-style cons-lists of digit nodes that interact with semantic entities.
+- **Rules are Data:** Inference rules are not separate scripts; they are specific topological structures within the graph itself.
+- **Math is Data:** Numbers are not opaque literals but Lisp-style cons-lists of digit nodes that interact with semantic entities.
 
-This means the graph doesn't just *describe* knowledge; it *structures the execution* of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior or the arithmetic logic of the system, creating a system that is not just a database, but an **executable graph**.
+This means the graph doesn't just _describe_ knowledge; it _structures the execution_ of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior or the arithmetic logic of the system, creating a system that is not just a database, but an **executable graph**.
 
 ### Facts and Relations
 
-A *fact* in zelph is a statement node created from a **subject**, a **predicate**, and an object:
+A _fact_ in zelph is a statement node created from a **subject**, a **predicate**, and an object:
 
 ```
 subject predicate object
@@ -266,7 +266,7 @@ zelph supports advanced grouping and recursion using parentheses `()`, braces `{
 
 #### Parentheses: Nested Facts
 
-A parenthesised statement `(s p o)` creates the fact and evaluates to the **statement node** (i.e. the relation/fact node). This lets you make statements *about* statements:
+A parenthesised statement `(s p o)` creates the fact and evaluates to the **statement node** (i.e. the relation/fact node). This lets you make statements _about_ statements:
 
 ```
 (bright "is opposite of" dark) "is a" "symmetric relation"
@@ -274,7 +274,7 @@ A parenthesised statement `(s p o)` creates the fact and evaluates to the **stat
 
 Here, the subject of the outer statement is the node representing the inner fact.
 
-> Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid *top-level* statement in the REPL; nested facts are meant to be used *as parts* of a larger statement.
+> Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid _top-level_ statement in the REPL; nested facts are meant to be used _as parts_ of a larger statement.
 
 #### Braces: Sets
 
@@ -309,16 +309,16 @@ zelph>
 A set `{A B C}` creates a **Super-Node** (representing the set itself).
 The elements are linked to this super-node via the `in` (PartOf) relation.
 
-* **Syntax:** `{A B}`
-* **Facts created:**
-    * `A in SetNode`
-    * `B in SetNode`
+- **Syntax:** `{A B}`
+- **Facts created:**
+  - `A in SetNode`
+  - `B in SetNode`
 
 #### Angle Brackets: Lists
 
 Angle brackets `<...>` create **ordered lists** implemented as classic Lisp-style cons lists using the core predicates `cons` and `nil`.
 
-A list is represented by the **outermost cons cell**. There is **no separate container node**: the node returned by list construction *is* the list (exactly as in Lisp).
+A list is represented by the **outermost cons cell**. There is **no separate container node**: the node returned by list construction _is_ the list (exactly as in Lisp).
 
 > **Important:** zelph does **not** have any built-in notion of “digits”, “numbers”, or arithmetic.
 > Lists are completely generic. Anything numeric (LSB-first interpretation, carry logic, addition, etc.) is defined purely by user rules — for example in [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
@@ -329,24 +329,19 @@ A list is represented by the **outermost cons cell**. There is **no separate con
 
 zelph supports two input modes that both create cons lists:
 
-1) **Node Lists (space-separated):** `<item1 item2 item3>`
+1. **Node Lists (space-separated):** `<item1 item2 item3>`
+   - **Syntax:** At least one whitespace between elements.
+   - **Semantics:** The elements are existing nodes (`item1`, `item2`, …) and the list preserves this order.
+   - **Construction:** Built right-to-left:
+     - `Cell3 = item3 cons nil`
+     - `Cell2 = item2 cons Cell3`
+     - `Cell1 = item1 cons Cell2` ← this outermost cons cell **is the list**
 
-    - **Syntax:** At least one whitespace between elements.
-    - **Semantics:** The elements are existing nodes (`item1`, `item2`, …) and the list preserves this order.
-    - **Construction:** Built right-to-left:
-        - `Cell3 = item3 cons nil`
-        - `Cell2 = item2 cons Cell3`
-        - `Cell1 = item1 cons Cell2`  ← this outermost cons cell **is the list**
-
-2) **Compact Lists (continuous characters):** `<abc>`
-
-    - **Syntax:** No spaces inside the brackets.
-    - **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
-    - **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
-  So `"abc"` becomes the element vector `["c","b","a"]`, yielding:
-        - `Cell3 = "a" cons nil`
-        - `Cell2 = "b" cons Cell3`
-        - `Cell1 = "c" cons Cell2`
+2. **Compact Lists (continuous characters):** `<abc>`
+   - **Syntax:** No spaces inside the brackets.
+   - **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
+   - **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
+     So `"abc"` becomes the element vector `["c","b","a"]`, yielding: - `Cell3 = "a" cons nil` - `Cell2 = "b" cons Cell3` - `Cell1 = "c" cons Cell2`
 
 This reversal is **not** “numeric logic” — it is simply the definition of the compact syntax and is useful for many right-to-left processing rules (including, but not limited to, arithmetic scripts).
 
@@ -354,23 +349,23 @@ Because of this rule, `<abc>` is internally identical to the explicit node list 
 
 ---
 
-##### Referring to the *same* cons list in different ways
+##### Referring to the _same_ cons list in different ways
 
 The list node is the **outermost cons cell**. You can refer to the same list topology using any of these equivalent notations:
 
-1) **Explicit cons chain (nested facts)**
+1. **Explicit cons chain (nested facts)**
 
 ```
 (3 cons (1 cons nil))
 ```
 
-2) **Compact list syntax** (character splitting + reversal rule)
+2. **Compact list syntax** (character splitting + reversal rule)
 
 ```
 <13>
 ```
 
-3) **Node-list syntax** (space-separated elements)
+3. **Node-list syntax** (space-separated elements)
 
 ```
 <3 1>
@@ -390,7 +385,7 @@ zelph> <3 1> is prime
 Why this works:
 
 - `<13>` is parsed as a compact list of characters `"1"` and `"3"`, **reversed before cons construction**, so it becomes the same internal cons chain as `<3 1>`.
-- `format_fact` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
+- `node_to_wstring` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
 
 > To avoid confusion: `<13>` is list syntax, **not** a numeric node ID. Numeric IDs are shown elsewhere in parentheses (e.g. `(10)` in Mermaid graphs).
 
@@ -428,7 +423,7 @@ As described in [Angle Brackets: Lists](#angle-brackets-lists), zelph represents
 
 1. **Symbolic Math:** Arithmetic operations can be defined as graph transformation rules rather than hard-coded calculations. Since numbers are topological structures (cons-lists of digit nodes), you can write inference rules that manipulate them — effectively teaching the network to compute.
 
-2. **Semantic Integration:** Because list elements are the same nodes used throughout the knowledge graph, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows facts about the digit 1 ([Q3450386](https://www.wikidata.org/wiki/Q3450386)), those facts are accessible wherever `node("1")` appears in a list. The boundary between *calculating* numbers and *reasoning* about them is removed.
+2. **Semantic Integration:** Because list elements are the same nodes used throughout the knowledge graph, semantic knowledge flows into arithmetic and vice versa. If Wikidata knows facts about the digit 1 ([Q3450386](https://www.wikidata.org/wiki/Q3450386)), those facts are accessible wherever `node("1")` appears in a list. The boundary between _calculating_ numbers and _reasoning_ about them is removed.
 
 #### Example: Defining Addition (Peano)
 
@@ -451,7 +446,7 @@ zelph> (A successor B) => ((<1> + A) = B)
 (A  successor  B) => < 1 >  +  A  =  B
 ```
 
-The rule states: *If A is followed by B (in the number succession), then '1 + A' equals 'B'.*
+The rule states: _If A is followed by B (in the number succession), then '1 + A' equals 'B'._
 Zelph immediately applies this rule to the facts we just entered:
 
 ```
@@ -469,34 +464,34 @@ zelph can perform arbitrary-precision addition purely via graph rules. The refer
 [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
 
 **Key idea:** numbers are Lisp-style cons-lists of digit nodes, stored **LSB-first**.  
-For example, `<42>` is internally `2 cons (4 cons nil)`. `format_fact` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
+For example, `<42>` is internally `2 cons (4 cons nil)`. `node_to_wstring` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
 
 The script consists of three parts:
 
-1) **Single-digit addition lookup table (generated in Janet)**  
-For all `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}` the script generates:
+1.  **Single-digit addition lookup table (generated in Janet)**  
+    For all `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}` the script generates:
 
-    - `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
-    - `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
+        - `((a d+ b) ci c) sum s`  with `s = (a + b + c) mod 10`
+        - `((a d+ b) ci c) co e`   with `e = floor((a + b + c) / 10)`
 
 This turns digit arithmetic (including carry) into ordinary facts in the network.
 
-2) **Base cases**  
-The recursion ends at `nil`:
+2.  **Base cases**  
+    The recursion ends at `nil`:
 
-    - `((nil add nil) ci 0) sum nil`
-    - `((nil add nil) ci 1) sum <1>`
+        - `((nil add nil) ci 0) sum nil`
+        - `((nil add nil) ci 1) sum <1>`
 
-3) **Eight inference rules**  
-The full multi-digit algorithm is expressed by eight rules:
+3.  **Eight inference rules**  
+    The full multi-digit algorithm is expressed by eight rules:
 
-    - **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
-    - **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
-        - D1: both operands non-nil
-        - D2/D3: treat missing digits as `0` once one side is `nil`
-    - **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
-    - **C0 (Connect):** expose the result under the user-facing `=` predicate:  
-        `(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)`
+        - **A0 (Trigger):** `(N + M) => ((N add M) ci 0)`
+        - **D1–D3 (Decompose):** propagate carry-out into the recursive sub-problem
+            - D1: both operands non-nil
+            - D2/D3: treat missing digits as `0` once one side is `nil`
+        - **As1–As3 (Assemble):** once the inner sum `T` is known, prepend digit `D` via `(D cons T)`
+        - **C0 (Connect):** expose the result under the user-facing `=` predicate:
+            `(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)`
 
 ##### Example addition
 
@@ -624,7 +619,7 @@ graph TD
 The directions of the relations are as follows:
 
 | Element       | Example        | Relation Direction |
-|---------------|----------------|--------------------|
+| ------------- | -------------- | ------------------ |
 | Subject       | white          | bidirectional      |
 | Object        | black          | backward           |
 | Relation Type | is opposite of | forward            |
@@ -669,16 +664,16 @@ Example rule:
 **Breakdown of the syntax:**
 
 1. `{...}`: Creates a **Set** containing three fact templates:
-    * `R` is a transitive relation.
-    * `X` is related to `Y` via `R`.
-    * `Y` is related to `Z` via `R`.
+   - `R` is a transitive relation.
+   - `X` is related to `Y` via `R`.
+   - `Y` is related to `Z` via `R`.
 2. `~ conjunction`: Defines that this Set represents a logical "AND" (Conjunction). The inference engine only evaluates sets marked as conjunctions.
 3. `(*...)`: The surrounding parentheses create the fact `Set ~ conjunction`.
 4. `*`: The **Focus Operator** at the beginning ensures that the expression returns the **Set Node** itself, not the fact node `Set ~ conjunction`.
 5. `=>`: The inference operator. It links the condition Set (Subject) to the consequence (Object).
 6. `(X R Z)`: The consequence fact.
 
-This rule states: *If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced.*
+This rule states: _If there exists a set of facts matching the pattern in the conjunction, then the fact `X R Z` is deduced._
 
 #### Syntax Sugar for Conditions
 
@@ -708,7 +703,7 @@ Inside conditions (including comma-conjunctions), zelph supports a compact negat
 
 The engine evaluates this by checking if **no** facts match the specified pattern given the current variable bindings.
 
-> Note: ¬ is optional. If it is inconvenient to type, you can either copy/paste it, configure a compose key / character picker, or simply use the explicit syntax *(Pattern) ~ negation, which is fully equivalent and works in any ASCII-only setup.
+> Note: ¬ is optional. If it is inconvenient to type, you can either copy/paste it, configure a compose key / character picker, or simply use the explicit syntax \*(Pattern) ~ negation, which is fully equivalent and works in any ASCII-only setup.
 
 **Example**  
 “If something is colored, and there is no fact stating it is green, deduce it is not green.”
@@ -766,48 +761,54 @@ Consider a rule that transforms an arithmetic structure:
 ((A + B) = C) => (test A B)
 ```
 
-This rule matches any fact where the *subject* is itself a fact `(A + B)` and the relation is `=`.
+This rule matches any fact where the _subject_ is itself a fact `(A + B)` and the relation is `=`.
 If the network contains `(3 + 5) = 8`, zelph recursively unifies `A` with `3`, `B` with `5`, and `C` with `8`.
 
 This capability allows zelph to perform symbolic manipulation and structural transformation of data, treating "code" (like mathematical expressions) as graph data that can be queried and transformed.
 
 ### Variables and Logic (A Predicate Logic Perspective)
 
-zelph’s rule language is close in spirit to first-order logic and logic programming, but it is important to keep in mind that zelph operates over a *graph of facts* and a unification-based matcher.
+zelph’s rule language is close in spirit to first-order logic and logic programming, but it is important to keep in mind that zelph operates over a _graph of facts_ and a unification-based matcher.
 
 - **Variables:** Single uppercase letters (or identifiers starting with `_`) act as logic variables. They are scoped to the current query or rule application.
 
-- **Universal quantification (implicit):** Variables that occur in the *conditions* of a rule behave like universally quantified variables. Informally, a rule applies to all bindings of `X`, `Y`, `Z`, `R`, … for which the condition patterns unify with existing facts in the graph.
+- **Universal quantification (implicit):** Variables that occur in the _conditions_ of a rule behave like universally quantified variables. Informally, a rule applies to all bindings of `X`, `Y`, `Z`, `R`, … for which the condition patterns unify with existing facts in the graph.
 
-- **Existential quantification (fresh nodes):** A variable that appears *only in the consequence* is treated as a fresh variable. During inference, zelph may generate a new anonymous node for it (subject to the engine’s termination checks). This is best understood as constructive / generative logic rather than merely “introducing an existential witness”.
+- **Existential quantification (fresh nodes):** A variable that appears _only in the consequence_ is treated as a fresh variable. During inference, zelph may generate a new anonymous node for it (subject to the engine’s termination checks). This is best understood as constructive / generative logic rather than merely “introducing an existential witness”.
 
 - **Conjunction (multi-condition matching):** A conjunction is represented as a set of condition patterns that is tagged as a conjunction. You can write this explicitly as `(*{...} ~ conjunction)`, but in practice the comma syntax is the idiomatic form:
+
 ```
 
 (cond1, cond2, cond3) => consequence
 
 ```
+
 Semantically, this is an AND: all conditions must match under a shared variable assignment.
 
-- **Negation (absence under current bindings):** A negated condition is *not* a boolean operator in the sense of “negate a truth value”. Instead, it is a *non-existence check* against the current fact base **under the variable bindings established by the positive conditions**. The idiomatic syntax is:
+- **Negation (absence under current bindings):** A negated condition is _not_ a boolean operator in the sense of “negate a truth value”. Instead, it is a _non-existence check_ against the current fact base **under the variable bindings established by the positive conditions**. The idiomatic syntax is:
+
 ```
 
 ¬(Pattern)
 
 ```
+
 which desugars to the explicit form `(*(Pattern) ~ negation)` and evaluates to the pattern node marked as a negation condition.
 
 Operationally, `¬(Pattern)` succeeds iff **no** fact in the graph unifies with `Pattern` given the current bindings. This corresponds closely to the “negation as failure” intuition from logic programming: the engine tries to find a witness; if none exists, the negated condition is considered satisfied.
 
 Example:
+
 ```
 
 (A is yellow, ¬(A is green)) => (A "is not" green)
 
 ```
-Read as: for each `A`, if `A is yellow` is known and there is *no* fact that matches `A is green`, then deduce `A "is not" green`.
 
-Note: because the check is performed against the current graph state, the meaning is inherently *closed-world with respect to the loaded facts* (and whatever has been inferred so far). It is therefore best seen as a pragmatic integrity / constraint mechanism on top of an open-ended knowledge graph, rather than classical logical negation in the model-theoretic sense.
+Read as: for each `A`, if `A is yellow` is known and there is _no_ fact that matches `A is green`, then deduce `A "is not" green`.
+
+Note: because the check is performed against the current graph state, the meaning is inherently _closed-world with respect to the loaded facts_ (and whatever has been inferred so far). It is therefore best seen as a pragmatic integrity / constraint mechanism on top of an open-ended knowledge graph, rather than classical logical negation in the model-theoretic sense.
 
 ### Examples
 
@@ -1103,7 +1104,7 @@ This capability is fully utilized in the Wikidata integration, where node names 
 
 zelph embeds [Janet](https://janet-lang.org), a lightweight functional programming language, as its scripting layer. Janet serves as the programmatic backbone behind zelph's syntax: every zelph statement is parsed into a Janet expression before execution. This integration enables users to go beyond zelph's declarative syntax and use loops, conditionals, macros, and data structures to generate facts, rules, and queries programmatically.
 
-Importantly, Janet operates exclusively at *input time* — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside.
+Importantly, Janet operates exclusively at _input time_ — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside.
 
 ### Entering Janet Code
 
@@ -1154,7 +1155,7 @@ zelph registers a set of functions in the Janet environment that mirror zelph's 
 
 #### Nodes and Names: `zelph/resolve`
 
-Every named entity in zelph's graph is a *node*. The function `zelph/resolve` takes a string and returns the corresponding node in the current language (as set by `.lang`), creating it if it does not yet exist:
+Every named entity in zelph's graph is a _node_. The function `zelph/resolve` takes a string and returns the corresponding node in the current language (as set by `.lang`), creating it if it does not yet exist:
 
 ```
 %(def berlin (zelph/resolve "Berlin"))
@@ -1246,7 +1247,7 @@ Since results are standard Janet arrays and tables, all of Janet's collection fu
 %
 ```
 
-**Important:** `zelph/query` is designed for pattern matching with variables. To check whether a specific fact exists, filter the returned bindings directly rather than calling `zelph/query` with a fully concrete pattern. Note that `zelph/fact` always *creates* a fact as a side effect — passing concrete nodes to `zelph/fact` inside a filter would unintentionally add facts to the graph.
+**Important:** `zelph/query` is designed for pattern matching with variables. To check whether a specific fact exists, filter the returned bindings directly rather than calling `zelph/query` with a fully concrete pattern. Note that `zelph/fact` always _creates_ a fact as a side effect — passing concrete nodes to `zelph/fact` inside a filter would unintentionally add facts to the graph.
 
 Each `zelph/query` call resets the variable scope, so consecutive queries produce independent results with fresh variable bindings.
 
@@ -1328,7 +1329,7 @@ Equivalent to:
 { red green blue }
 ```
 
-#### Janet API Reference (zelph/*)
+#### Janet API Reference (zelph/\*)
 
 The embedded Janet environment exposes the following functions (as of zelph 0.9.4). Unless stated otherwise, functions accept either strings (resolved as node names in the current `.lang`) or `zelph/node` values.
 
@@ -1399,7 +1400,7 @@ This is equivalent to writing `Berlin "is capital of" Germany`, but the subject 
 > Important: unquoting is written as `,name` **without whitespace**.  
 > A comma that is followed by whitespace (or `)`) is interpreted as a **conjunction separator** inside `(cond1, cond2, ...)`.
 >
-> - `,pred`  → unquote the Janet variable `pred`
+> - `,pred` → unquote the Janet variable `pred`
 > - `, pred` → **not** unquote; inside conjunction parentheses it acts as a separator, and outside it is simply invalid syntax
 
 #### How Unquote Works
@@ -1419,7 +1420,7 @@ This means you can use either form depending on your needs:
 ,node-b ~ city    # Resolves "Berlin" in current .lang
 ```
 
-For Wikidata work where IDs are language-independent, both forms are equivalent. For multilingual scenarios, `zelph/resolve` gives you explicit control over *when* the name is resolved.
+For Wikidata work where IDs are language-independent, both forms are equivalent. For multilingual scenarios, `zelph/resolve` gives you explicit control over _when_ the name is resolved.
 
 #### Unquote in Complex Structures
 
@@ -1622,8 +1623,7 @@ Both return `nil` for invalid input. `zelph/cdr` returns the `nil` node for the 
 %(zelph/cdr (zelph/cdr list-42))        # → <zelph/node> for nil
 ``​`
 
-**Important:** `zelph/sources` and `zelph/targets` do *not* work for decomposing cons cells, because cons cells are relation nodes (fact nodes) in the graph, not entities that appear as subjects or objects in higher-level facts. Use `zelph/car` and `zelph/cdr` instead.
-
+**Important:** `zelph/sources` and `zelph/targets` do _not_ work for decomposing cons cells, because cons cells are relation nodes (fact nodes) in the graph, not entities that appear as subjects or objects in higher-level facts. Use `zelph/car` and `zelph/cdr` instead.
 
 ##### Practical Example: Inspecting a List
 
@@ -1821,31 +1821,31 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 
 ### Summary: zelph Syntax and Janet Equivalents
 
-| zelph Syntax | Janet Equivalent | Description |
-|:---|:---|:---|
-| `Berlin` | `(zelph/resolve "Berlin")` | Resolve a name to a node |
-| `X`, `_Var` | `'X`, `'_Var` | Variable (single uppercase letter or `_`-prefixed) |
-| `sun is yellow` | `(zelph/fact "sun" "is" "yellow")` | Create a fact (triple) |
-| `(sun is yellow)` | `(zelph/fact "sun" "is" "yellow")` | Nested fact (returns relation node) |
-| `{ red green blue }` | `(zelph/set "red" "green" "blue")` | Unordered set |
-| `< Berlin Paris >` | `(zelph/list "Berlin" "Paris")` | Ordered cons-list (first element is the head/outermost cons cell) |
-| `<abc>` | `(zelph/list-chars "abc")` | Compact char cons-list (LSB-first: rightmost char = outermost) |
-| `*expr` | `let` binding to capture and reuse a sub-expression | Focus operator |
-| `,var` in zelph | Direct variable reference in generated code | Unquote a Janet value (no whitespace after comma) |
-| `% code` | — | Execute Janet inline |
-| `%` (bare) | — | Toggle Janet block mode |
-| `X ~ human` | `(zelph/query (zelph/fact 'X "~" "human"))` | Query — returns array of `@{symbol node}` tables |
-| *(no equivalent)* | `(zelph/exists "sun" "is" "yellow")` | Check if a fact exists (read-only) |
-| *(no equivalent)* | `(zelph/name node)` | Get the name of a node as a string |
-| `A ~ city` | `(zelph/sources "~" "city")` | Find all subjects for a predicate–object pair |
-| `Berlin "is located in" L` | `(zelph/targets "Berlin" "is located in")` | Find all objects for a subject–predicate pair |
-| `Berlin R city` | *(no equivalent)* | Find all predicates that connect a given Berlin and city |
-| `S P O` | *(no equivalent)* | List all facts in the network (use with caution on large databases) |
-| `(*(P) ~ negation)` | `(zelph/negate (zelph/fact ...))` | Mark a pattern as negation condition (evaluates to the pattern node) |
-| `¬(P)` | `(zelph/negate P)` | Negation sugar for patterns (evaluates to the pattern node) |
-| `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)` | Create inference rule |
-| `(cond1, cond2, cond3)` | *(desugars to)* set + `~ conjunction` | Conjunction expression (comma sugar), evaluates to the conjunction set node |
-| `(cond1, cond2) => cons` | `(zelph/rule [cond1 cond2] cons)` | Rule using a conjunction of conditions |
+| zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |
+| :------------------------------ | :-------------------------------------------------- | :-------------------------------------------------------------------------- |
+| `Berlin`                        | `(zelph/resolve "Berlin")`                          | Resolve a name to a node                                                    |
+| `X`, `_Var`                     | `'X`, `'_Var`                                       | Variable (single uppercase letter or `_`-prefixed)                          |
+| `sun is yellow`                 | `(zelph/fact "sun" "is" "yellow")`                  | Create a fact (triple)                                                      |
+| `(sun is yellow)`               | `(zelph/fact "sun" "is" "yellow")`                  | Nested fact (returns relation node)                                         |
+| `{ red green blue }`            | `(zelph/set "red" "green" "blue")`                  | Unordered set                                                               |
+| `< Berlin Paris >`              | `(zelph/list "Berlin" "Paris")`                     | Ordered cons-list (first element is the head/outermost cons cell)           |
+| `<abc>`                         | `(zelph/list-chars "abc")`                          | Compact char cons-list (LSB-first: rightmost char = outermost)              |
+| `*expr`                         | `let` binding to capture and reuse a sub-expression | Focus operator                                                              |
+| `,var` in zelph                 | Direct variable reference in generated code         | Unquote a Janet value (no whitespace after comma)                           |
+| `% code`                        | —                                                   | Execute Janet inline                                                        |
+| `%` (bare)                      | —                                                   | Toggle Janet block mode                                                     |
+| `X ~ human`                     | `(zelph/query (zelph/fact 'X "~" "human"))`         | Query — returns array of `@{symbol node}` tables                            |
+| _(no equivalent)_               | `(zelph/exists "sun" "is" "yellow")`                | Check if a fact exists (read-only)                                          |
+| _(no equivalent)_               | `(zelph/name node)`                                 | Get the name of a node as a string                                          |
+| `A ~ city`                      | `(zelph/sources "~" "city")`                        | Find all subjects for a predicate–object pair                               |
+| `Berlin "is located in" L`      | `(zelph/targets "Berlin" "is located in")`          | Find all objects for a subject–predicate pair                               |
+| `Berlin R city`                 | _(no equivalent)_                                   | Find all predicates that connect a given Berlin and city                    |
+| `S P O`                         | _(no equivalent)_                                   | List all facts in the network (use with caution on large databases)         |
+| `(*(P) ~ negation)`             | `(zelph/negate (zelph/fact ...))`                   | Mark a pattern as negation condition (evaluates to the pattern node)        |
+| `¬(P)`                          | `(zelph/negate P)`                                  | Negation sugar for patterns (evaluates to the pattern node)                 |
+| `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)`         | Create inference rule                                                       |
+| `(cond1, cond2, cond3)`         | _(desugars to)_ set + `~ conjunction`               | Conjunction expression (comma sugar), evaluates to the conjunction set node |
+| `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |
 
 ## Project Status
 
@@ -1946,6 +1946,7 @@ Basic pattern matching.
 
 - Find capitals: `X "is capital of" Y`  
   Output:
+
   ```
   X  is capital of  Y
   Answer:  Berlin   is capital of   Germany
@@ -1965,6 +1966,7 @@ Combine for intersections.
 
 - Capitals in Europe: `X "is located in" Europe, X "is capital of" Y`  
   Output:
+
   ```
   Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
   ```
@@ -2231,7 +2233,7 @@ This command is general-purpose:
 
 zelph provides several additional commands for working with Wikidata:
 
-* **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
+- **Export Constraints:** Extract constraints from the dump and generate zelph scripts for them:
   ```
   .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
   ```

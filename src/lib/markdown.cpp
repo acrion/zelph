@@ -116,9 +116,9 @@ namespace zelph::wikidata
 
     std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message)
     {
-        // Converts the formatted fact string (from format_fact) to Markdown.
+        // Converts the formatted fact string (from node_to_wstring) to Markdown.
         // Parses tokens within « », extracts ID and text if " - " present (Wikidata mode), else assumes token is the Wikidata ID or fallback name.
-        // Creates links like [text](ID.md), italicizing if property (P...). Uses the pre-formatted ID from format_fact for accurate linking.
+        // Creates links like [text](ID.md), italicizing if property (P...). Uses the pre-formatted ID from node_to_wstring for accurate linking.
 
         std::list<std::string> wikidataIds;
         std::wstring           markdownContent = message;

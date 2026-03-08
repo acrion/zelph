@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "reasoning.hpp"
 #include "contradiction_error.hpp"
 #include "fact_structure.hpp"
+#include "node_to_string.hpp"
 #include "string_utils.hpp"
 #include "unification.hpp"
 
@@ -585,7 +586,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     if (should_log(1))
     {
         std::wstring formatted_rule;
-        format_fact(formatted_rule, _lang, rule, 3);
+        console::node_to_wstring(this, formatted_rule, _lang, rule, 3);
         log(0, "rule", "=== Applying rule " + string::unicode::to_utf8(formatted_rule) + " ===");
     }
     ReasoningContext ctx;
@@ -621,7 +622,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
             if (_print_deductions || _generate_markdown)
             {
                 std::wstring output;
-                format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                console::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                 std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                 if (_print_deductions)
@@ -934,7 +935,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             ++_total_contradictions;
 
                             std::wstring output;
-                            format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                            console::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                             std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                             if (_print_deductions) out(string::unmark_identifiers(message), true);
@@ -984,7 +985,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         else
                         {
                             std::wstring output;
-                            format_fact(output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
+                            console::node_to_wstring(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
                             out(L"Answer: " + string::unmark_identifiers(output), true);
                         }
                     }
@@ -994,7 +995,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             if (should_log(depth))
             {
                 std::wstring cond_str;
-                format_fact(cond_str, _lang, condition, 3, *rule.variables, rule.node);
+                console::node_to_wstring(this, cond_str, _lang, condition, 3, *rule.variables, rule.node);
                 log(depth, "neg-eval", "Processing negated condition " + string::unicode::to_utf8(cond_str));
 
                 log(depth, "neg-eval", "Current variable bindings:");
@@ -1233,7 +1234,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         ++_total_contradictions;
 
                         std::wstring output;
-                        format_fact(output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                        console::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
                         std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
 
                         if (_print_deductions)
@@ -1288,7 +1289,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     else
                     {
                         std::wstring output;
-                        format_fact(output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
+                        console::node_to_wstring(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
                         out(L"Answer: " + string::unmark_identifiers(output), true);
                     }
                 }
@@ -1641,8 +1642,8 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 if (skipped_val > 0) diagnostic(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
 
                 std::wstring input, output;
-                format_fact(input, _lang, ctx.current_condition, 3, augmented, parent);
-                format_fact(output, _lang, d, 3, {}, parent);
+                console::node_to_wstring(this, input, _lang, ctx.current_condition, 3, augmented, parent);
+                console::node_to_wstring(this, output, _lang, d, 3, {}, parent);
 
                 std::wstring message = output + L" ⇐ " + input;
 

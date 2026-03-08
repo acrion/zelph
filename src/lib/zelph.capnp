@@ -46,7 +46,7 @@ struct ZelphImplOld {
   nodeCount @3 :UInt64;
   nameOfNode @4 :List(NameLangMap);
   nodeOfName @5 :List(NodeLangMap);
-  formatFactLevel @6 :Int32;
+  formatFactLevel @6 :Int32; # Deprecated
   leftChunkCount @7 :UInt32;  # Number of chunks for left
   rightChunkCount @8 :UInt32;  # Number of chunks for right
 }
@@ -58,7 +58,7 @@ struct ZelphImpl {
   nodeCount @3 :UInt64; # TODO Deprecated
   nameOfNode @4 :List(NameLangMap);
   nodeOfName @5 :List(NodeLangMap);
-  formatFactLevel @6 :Int32;
+  formatFactLevel @6 :Int32; # Deprecated
   leftChunkCount @7 :UInt32;  # Number of chunks for left
   rightChunkCount @8 :UInt32;  # Number of chunks for right
   nameOfNodeChunkCount @9 :UInt32;  # Number of chunks for name_of_node (over all languages)

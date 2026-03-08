@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "mermaid.hpp"
 #include "network.hpp"
+#include "node_to_string.hpp"
 #include "platform_utils.hpp"
 #include "reasoning.hpp"
 #include "script_engine.hpp"
@@ -164,7 +165,7 @@ private:
 #define DEFAULT_DISPLAY_DEPTH 5
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
 
-    void display_node_details(network::Node nd, bool resolved_from_name, int depth = DEFAULT_DISPLAY_DEPTH, int max_neighbors = network::Zelph::default_display_max_neighbors) const
+    void display_node_details(network::Node nd, bool resolved_from_name, int depth = DEFAULT_DISPLAY_DEPTH, int max_neighbors = console::default_display_max_neighbors) const
     {
         if (resolved_from_name)
         {
@@ -232,7 +233,7 @@ private:
             if (node_str == node_name || node_name.empty())
             {
                 std::wstring fact_repr;
-                _n->format_fact(fact_repr, _n->lang(), node, max_neighbors);
+                console::node_to_wstring(_n, fact_repr, _n->lang(), node, max_neighbors);
                 if (!fact_repr.empty() && fact_repr != L"??")
                 {
                     return string::unicode::to_utf8(fact_repr) + " (ID " + std::to_string(node) + ")";
@@ -273,7 +274,7 @@ private:
         display_connections(_n->get_right(nd), "Outgoing connections to");
 
         std::wstring fact_repr;
-        _n->format_fact(fact_repr, _n->lang(), nd, max_neighbors);
+        console::node_to_wstring(_n, fact_repr, _n->lang(), nd, max_neighbors);
         if (!fact_repr.empty() && fact_repr != L"??")
         {
             _n->out_stream() << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
@@ -1099,7 +1100,7 @@ private:
         network::Node       nd  = resolve_single_node(arg, true);
         if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
         int max_depth     = DEFAULT_DISPLAY_DEPTH;
-        int max_neighbors = network::Zelph::default_display_max_neighbors;
+        int max_neighbors = default_display_max_neighbors;
         if (cmd.size() >= 3)
         {
             max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
@@ -1345,7 +1346,7 @@ private:
         {
             std::wstring output;
             // Format the rule for printing
-            _n->format_fact(output, _n->lang(), rule, 3);
+            console::node_to_wstring(_n, output, _n->lang(), rule, 3);
             _n->out(output, true);
         }
         _n->out(L"------------------------", true);

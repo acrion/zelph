@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "mermaid.hpp"
 
 #include "adjacency_set.hpp"
+#include "node_to_string.hpp"
 #include "zelph.hpp"
 
 #include <boost/algorithm/string.hpp>
@@ -1094,9 +1095,9 @@ void console::gen_mermaid_html(const network::Zelph* const              z,
         std::string indent(indent_level * 4, ' ');
         std::string sg_id = "sg_" + std::to_string(static_cast<unsigned long long>(sg));
 
-        // Generate subgraph label from z->format_fact
+        // Generate subgraph label from z->node_to_wstring
         std::wstring label_w;
-        z->format_fact(label_w, z->get_lang(), sg, max_neighbors);
+        console::node_to_wstring(z, label_w, z->get_lang(), sg, max_neighbors);
         std::string label = string::unicode::to_utf8(label_w);
         boost::replace_all(label, "\"", "#quot;");
 

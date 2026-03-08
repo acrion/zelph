@@ -236,6 +236,8 @@ add_library(zelph_lib SHARED
     interactive.hpp
     mermaid.cpp
     mermaid.hpp
+    node_to_string.cpp
+    node_to_string.hpp
     read_async.cpp
     read_async.hpp
     repl_state.hpp
