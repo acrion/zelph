@@ -518,7 +518,8 @@ void console::gen_mermaid_html(const network::Zelph* const              z,
                                const std::unordered_set<network::Node>& exclude_nodes,
                                bool                                     dark_theme,
                                bool                                     horizontal_layout,
-                               bool                                     use_subgraphs)
+                               bool                                     use_subgraphs,
+                               size_t                                   min_mermaid_nodes)
 {
     // Helper: check if a node is a predefined z->core node
     auto is_predefined_node = [&](network::Node nd) -> bool
@@ -546,41 +547,21 @@ void console::gen_mermaid_html(const network::Zelph* const              z,
         }
     }
 
-    std::unordered_set<WrapperNode>                                visited;
-    std::unordered_set<network::Node>                              processed_edge_hashes;
-    std::vector<std::tuple<WrapperNode, WrapperNode, std::string>> raw_edges;
-    std::unordered_set<WrapperNode>                                all_nodes;
-    size_t                                                         placeholder_counter = 0;
-
-    // Traverse the graph up to max_depth
-    collect_mermaid_nodes(z, WrapperNode{false, start}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
-
-    // Remove excluded nodes from all_nodes and raw_edges
-    for (auto it = all_nodes.begin(); it != all_nodes.end();)
-    {
-        if (!it->is_placeholder && exclude_nodes.count(it->value))
-            it = all_nodes.erase(it);
-        else
-            ++it;
-    }
-    // Remove edges that involve excluded nodes
-    raw_edges.erase(
-        std::remove_if(raw_edges.begin(), raw_edges.end(), [&](const auto& edge)
-                       {
-                           const auto& [from, to, arrow] = edge;
-                           return (!from.is_placeholder && exclude_nodes.count(from.value))
-                               || (!to.is_placeholder && exclude_nodes.count(to.value)); }),
-        raw_edges.end());
-
-    // === SUBGRAPH IDENTIFICATION WITH CLONE-BASED CONFLICT RESOLUTION ===
-
     struct SubgraphInfo
     {
         network::Node subject;
         network::Node predicate;
         network::Node object;
     };
-    std::map<network::Node, SubgraphInfo> subgraphs;
+    std::map<network::Node, SubgraphInfo>                          subgraphs;
+    int                                                            effective_depth = (max_depth == 1 && min_mermaid_nodes > 0) ? 2 : max_depth;
+    bool                                                           dynamic_depth   = (max_depth == 1 && min_mermaid_nodes > 0);
+    std::unordered_set<WrapperNode>                                visited;
+    std::unordered_set<network::Node>                              processed_edge_hashes;
+    std::vector<std::tuple<WrapperNode, WrapperNode, std::string>> raw_edges;
+    std::unordered_set<WrapperNode>                                all_nodes;
+    size_t                                                         placeholder_counter = 0;
+    size_t                                                         clone_counter       = 0;
 
     // clone_in_sg[(original_node, subgraph)] = clone_mermaid_id
     // Tracks which leaf nodes are replaced by clones in which subgraphs.
@@ -589,257 +570,318 @@ void console::gen_mermaid_html(const network::Zelph* const              z,
     // (original_mermaid_id, clone_mermaid_id) pairs for identity edges
     std::vector<std::pair<std::string, std::string>> clone_identity_edges;
 
-    size_t clone_counter = 0;
-
-    if (use_subgraphs)
+    // --- BEGIN dynamic depth loop ---
+    for (;;)
     {
-        // Phase 1: Identify subgraph candidates, allowing containment conflicts
+        visited.clear();
+        processed_edge_hashes.clear();
+        raw_edges.clear();
+        all_nodes.clear();
+        placeholder_counter = 0;
+        collect_mermaid_nodes(z, WrapperNode{false, start}, effective_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
+
+        // Remove excluded nodes from all_nodes and raw_edges
+        for (auto it = all_nodes.begin(); it != all_nodes.end();)
+        {
+            if (!it->is_placeholder && exclude_nodes.count(it->value))
+                it = all_nodes.erase(it);
+            else
+                ++it;
+        }
+        // Remove edges that involve excluded nodes
+        raw_edges.erase(
+            std::remove_if(raw_edges.begin(), raw_edges.end(), [&](const auto& edge)
+                           {
+                           const auto& [from, to, arrow] = edge;
+                           return (!from.is_placeholder && exclude_nodes.count(from.value))
+                               || (!to.is_placeholder && exclude_nodes.count(to.value)); }),
+            raw_edges.end());
+
+        // === SUBGRAPH IDENTIFICATION WITH CLONE-BASED CONFLICT RESOLUTION ===
+        subgraphs.clear();
+        clone_in_sg.clear();
+        clone_identity_edges.clear();
+        clone_counter = 0;
+
+        if (use_subgraphs)
+        {
+            // Phase 1: Identify subgraph candidates, allowing containment conflicts
 #ifdef DEBUG_MERMAID
-        diagnostic_stream() << "[DEBUG_MERMAID] === SUBGRAPH IDENTIFICATION PHASE ===" << std::endl;
-        diagnostic_stream() << "[DEBUG_MERMAID] Total nodes to check: " << all_nodes.size() << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID] === SUBGRAPH IDENTIFICATION PHASE ===" << std::endl;
+            diagnostic_stream() << "[DEBUG_MERMAID] Total nodes to check: " << all_nodes.size() << std::endl;
 #endif
+            for (const WrapperNode& wn : all_nodes)
+            {
+                if (wn.is_placeholder) continue;
+                if (exclude_nodes.count(wn.value)) continue;
+
+                network::Node                     s, p, o;
+                std::unordered_set<network::Node> containment_conflicts;
+                if (identify_subgraph_components(z, wn.value, s, p, o, &containment_conflicts))
+                {
+                    bool s_present = all_nodes.count(WrapperNode{false, s, 0}) && !exclude_nodes.count(s);
+                    bool o_present = all_nodes.count(WrapperNode{false, o, 0}) && !exclude_nodes.count(o);
+                    if (s_present && o_present)
+                    {
+                        subgraphs[wn.value] = {s, p, o};
+#ifdef DEBUG_MERMAID
+                        diagnostic_stream() << "[DEBUG_MERMAID] Registered subgraph: node=" << wn.value
+                                            << " S=" << s << " P=" << p << " O=" << o;
+                        if (!containment_conflicts.empty())
+                        {
+                            diagnostic_stream() << " (containment conflicts:";
+                            for (network::Node c : containment_conflicts)
+                                diagnostic_stream() << " " << c;
+                            diagnostic_stream() << ")";
+                        }
+                        diagnostic_stream() << std::endl;
+#endif
+                    }
+                }
+            }
+
+            // Phase 2: Determine nesting hierarchy
+            std::map<network::Node, network::Node> sg_parent;
+            for (auto& [r, info] : subgraphs)
+            {
+                sg_parent[r] = 0;
+                for (auto& [r2, info2] : subgraphs)
+                {
+                    if (r2 == r) continue;
+                    if (info2.subject == r || info2.object == r)
+                    {
+                        sg_parent[r] = r2;
+                        break;
+                    }
+                }
+#ifdef DEBUG_MERMAID
+                diagnostic_stream() << "[DEBUG_MERMAID] Nesting: subgraph " << r
+                                    << (sg_parent[r] == 0 ? " is top-level" : " is child of subgraph " + std::to_string(sg_parent[r]))
+                                    << std::endl;
+#endif
+            }
+
+            // Phase 3: Clone-based conflict resolution
+            // For each non-subgraph (leaf) node, find all subgraphs where it appears as a direct member
+            // (subject or object). If it appears in more than one subgraph, the outermost keeps the
+            // original and all inner/independent subgraphs get clones.
+
+            auto is_ancestor_of = [&](network::Node potential_ancestor, network::Node sg) -> bool
+            {
+                network::Node current = sg;
+                while (sg_parent.count(current) && sg_parent[current] != 0)
+                {
+                    current = sg_parent[current];
+                    if (current == potential_ancestor) return true;
+                }
+                return false;
+            };
+
+            std::map<network::Node, std::vector<network::Node>> node_to_direct_sgs;
+            for (auto& [r, info] : subgraphs)
+            {
+                // Only track leaf nodes (non-subgraph nodes)
+                if (!subgraphs.count(info.subject))
+                    node_to_direct_sgs[info.subject].push_back(r);
+                if (!subgraphs.count(info.object))
+                    node_to_direct_sgs[info.object].push_back(r);
+            }
+
+            for (auto& [nd, sgs] : node_to_direct_sgs)
+            {
+                if (sgs.size() <= 1) continue;
+
+                // Pick the "owner" subgraph that keeps the original node.
+                // Priority: outermost ancestor > referenced subgraph > larger ID
+                network::Node owner = sgs[0];
+                for (size_t i = 1; i < sgs.size(); ++i)
+                {
+                    if (is_ancestor_of(sgs[i], owner))
+                    {
+                        owner = sgs[i]; // sgs[i] is an ancestor of owner, so it's more outer
+                    }
+                    else if (!is_ancestor_of(owner, sgs[i]))
+                    {
+                        // Independent subgraphs: prefer the one that is referenced by another subgraph
+                        bool owner_ref = false, sgi_ref = false;
+                        for (auto& [r2, info2] : subgraphs)
+                        {
+                            if (info2.subject == owner || info2.object == owner) owner_ref = true;
+                            if (info2.subject == sgs[i] || info2.object == sgs[i]) sgi_ref = true;
+                        }
+                        if ((sgi_ref && !owner_ref)
+                            || (sgs[i] > owner && !(owner_ref && !sgi_ref)))
+                            owner = sgs[i];
+                    }
+                }
+
+                // Create clones for all non-owner subgraphs
+                std::string orig_id = "n_" + std::to_string(static_cast<unsigned long long>(nd));
+                for (network::Node sg : sgs)
+                {
+                    if (sg == owner) continue;
+                    std::string cid = "clone_" + std::to_string(static_cast<unsigned long long>(nd))
+                                    + "_" + std::to_string(++clone_counter);
+                    clone_in_sg[{nd, sg}] = cid;
+                    clone_identity_edges.emplace_back(orig_id, cid);
+
+#ifdef DEBUG_MERMAID
+                    diagnostic_stream() << "[DEBUG_MERMAID] Clone: node " << nd
+                                        << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
+                                        << ") cloned as " << cid << " in subgraph " << sg
+                                        << " (owner subgraph: " << owner << ")" << std::endl;
+#endif
+                }
+            }
+
+            // Phase 4: Handle subgraph-level conflicts (a subgraph node itself appearing in multiple
+            // independent subgraphs). This is the fallback: if the shared entity is itself a subgraph
+            // (not a leaf), we cannot clone it easily, so we fall back to removing one subgraph.
+            {
+                bool changed = true;
+                while (changed)
+                {
+                    changed = false;
+
+                    // Collect all nodes contained in each subgraph (recursively through nesting)
+                    std::map<network::Node, std::unordered_set<network::Node>> sg_contained;
+                    for (auto& [r, info] : subgraphs)
+                    {
+                        std::function<void(network::Node, std::unordered_set<network::Node>&)> collect;
+                        collect = [&](network::Node sg_node, std::unordered_set<network::Node>& out)
+                        {
+                            auto it = subgraphs.find(sg_node);
+                            if (it == subgraphs.end()) return;
+                            out.insert(it->second.subject);
+                            out.insert(it->second.object);
+                            collect(it->second.subject, out);
+                            collect(it->second.object, out);
+                        };
+                        collect(r, sg_contained[r]);
+                    }
+
+                    // Build reverse map: node -> set of subgraphs containing it (transitively)
+                    // But only consider subgraph-nodes (nodes that are themselves subgraphs)
+                    std::map<network::Node, std::set<network::Node>> subgraph_node_to_sgs;
+                    for (auto& [r, contained] : sg_contained)
+                    {
+                        for (network::Node nd : contained)
+                        {
+                            if (subgraphs.count(nd)) // only subgraph-nodes
+                                subgraph_node_to_sgs[nd].insert(r);
+                        }
+                    }
+
+                    // Helper: check if sg1 is nested inside sg2
+                    auto is_nested_in = [&](network::Node sg1, network::Node sg2) -> bool
+                    {
+                        return sg_contained.count(sg2) && sg_contained[sg2].count(sg1);
+                    };
+
+                    // Check if a subgraph is "referenced" (appears as subject or object of another subgraph)
+                    auto is_referenced = [&](network::Node sg) -> bool
+                    {
+                        for (auto& [r, info] : subgraphs)
+                        {
+                            if (r == sg) continue;
+                            if (info.subject == sg || info.object == sg) return true;
+                        }
+                        return false;
+                    };
+
+                    // Find a conflicting pair: two independent subgraphs sharing a node
+                    network::Node to_remove = 0;
+                    for (auto& [nd, sgs] : subgraph_node_to_sgs)
+                    {
+                        if (sgs.size() <= 1) continue;
+                        std::vector<network::Node> sg_vec(sgs.begin(), sgs.end());
+                        for (size_t i = 0; i < sg_vec.size() && to_remove == 0; ++i)
+                        {
+                            for (size_t j = i + 1; j < sg_vec.size() && to_remove == 0; ++j)
+                            {
+                                network::Node a = sg_vec[i], b = sg_vec[j];
+                                if (is_nested_in(a, b) || is_nested_in(b, a)) continue;
+
+                                bool a_ref = is_referenced(a), b_ref = is_referenced(b);
+                                if (a_ref && !b_ref)
+                                    to_remove = b;
+                                else if (!a_ref && b_ref)
+                                    to_remove = a;
+                                else
+                                    to_remove = std::min(a, b);
+
+#ifdef DEBUG_MERMAID
+                                diagnostic_stream() << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
+                                                    << " in independent subgraphs " << a << " and " << b
+                                                    << " -> removing subgraph " << to_remove << std::endl;
+#endif
+                            }
+                        }
+                        if (to_remove != 0) break;
+                    }
+
+                    if (to_remove != 0)
+                    {
+                        // Also remove clones associated with the removed subgraph
+                        for (auto it = clone_in_sg.begin(); it != clone_in_sg.end();)
+                        {
+                            if (it->first.second == to_remove)
+                                it = clone_in_sg.erase(it);
+                            else
+                                ++it;
+                        }
+                        subgraphs.erase(to_remove);
+                        changed = true;
+                    }
+                }
+            }
+
+            // Rebuild sg_parent after potential removals
+            sg_parent.clear();
+            for (auto& [r, info] : subgraphs)
+            {
+                sg_parent[r] = 0;
+                for (auto& [r2, info2] : subgraphs)
+                {
+                    if (r2 == r) continue;
+                    if (info2.subject == r || info2.object == r)
+                    {
+                        sg_parent[r] = r2;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!dynamic_depth)
+            break;
+
+        // Count effective visible nodes: each subgraph counts as 1,
+        // nodes inside subgraphs are not counted.
+        size_t effective_count = subgraphs.size();
         for (const WrapperNode& wn : all_nodes)
         {
             if (wn.is_placeholder) continue;
-            if (exclude_nodes.count(wn.value)) continue;
-
-            network::Node                     s, p, o;
-            std::unordered_set<network::Node> containment_conflicts;
-            if (identify_subgraph_components(z, wn.value, s, p, o, &containment_conflicts))
+            if (subgraphs.count(wn.value)) continue;
+            bool inside_sg = false;
+            for (auto& [r, info] : subgraphs)
             {
-                bool s_present = all_nodes.count(WrapperNode{false, s, 0}) && !exclude_nodes.count(s);
-                bool o_present = all_nodes.count(WrapperNode{false, o, 0}) && !exclude_nodes.count(o);
-                if (s_present && o_present)
+                if (info.subject == wn.value || info.object == wn.value)
                 {
-                    subgraphs[wn.value] = {s, p, o};
-#ifdef DEBUG_MERMAID
-                    diagnostic_stream() << "[DEBUG_MERMAID] Registered subgraph: node=" << wn.value
-                                        << " S=" << s << " P=" << p << " O=" << o;
-                    if (!containment_conflicts.empty())
-                    {
-                        diagnostic_stream() << " (containment conflicts:";
-                        for (network::Node c : containment_conflicts)
-                            diagnostic_stream() << " " << c;
-                        diagnostic_stream() << ")";
-                    }
-                    diagnostic_stream() << std::endl;
-#endif
-                }
-            }
-        }
-
-        // Phase 2: Determine nesting hierarchy
-        std::map<network::Node, network::Node> sg_parent;
-        for (auto& [r, info] : subgraphs)
-        {
-            sg_parent[r] = 0;
-            for (auto& [r2, info2] : subgraphs)
-            {
-                if (r2 == r) continue;
-                if (info2.subject == r || info2.object == r)
-                {
-                    sg_parent[r] = r2;
+                    inside_sg = true;
                     break;
                 }
             }
-#ifdef DEBUG_MERMAID
-            diagnostic_stream() << "[DEBUG_MERMAID] Nesting: subgraph " << r
-                                << (sg_parent[r] == 0 ? " is top-level" : " is child of subgraph " + std::to_string(sg_parent[r]))
-                                << std::endl;
-#endif
+            if (!inside_sg)
+                ++effective_count;
         }
 
-        // Phase 3: Clone-based conflict resolution
-        // For each non-subgraph (leaf) node, find all subgraphs where it appears as a direct member
-        // (subject or object). If it appears in more than one subgraph, the outermost keeps the
-        // original and all inner/independent subgraphs get clones.
+        if (effective_count >= min_mermaid_nodes || effective_depth >= 100)
+            break;
 
-        auto is_ancestor_of = [&](network::Node potential_ancestor, network::Node sg) -> bool
-        {
-            network::Node current = sg;
-            while (sg_parent.count(current) && sg_parent[current] != 0)
-            {
-                current = sg_parent[current];
-                if (current == potential_ancestor) return true;
-            }
-            return false;
-        };
-
-        std::map<network::Node, std::vector<network::Node>> node_to_direct_sgs;
-        for (auto& [r, info] : subgraphs)
-        {
-            // Only track leaf nodes (non-subgraph nodes)
-            if (!subgraphs.count(info.subject))
-                node_to_direct_sgs[info.subject].push_back(r);
-            if (!subgraphs.count(info.object))
-                node_to_direct_sgs[info.object].push_back(r);
-        }
-
-        for (auto& [nd, sgs] : node_to_direct_sgs)
-        {
-            if (sgs.size() <= 1) continue;
-
-            // Pick the "owner" subgraph that keeps the original node.
-            // Priority: outermost ancestor > referenced subgraph > larger ID
-            network::Node owner = sgs[0];
-            for (size_t i = 1; i < sgs.size(); ++i)
-            {
-                if (is_ancestor_of(sgs[i], owner))
-                {
-                    owner = sgs[i]; // sgs[i] is an ancestor of owner, so it's more outer
-                }
-                else if (!is_ancestor_of(owner, sgs[i]))
-                {
-                    // Independent subgraphs: prefer the one that is referenced by another subgraph
-                    bool owner_ref = false, sgi_ref = false;
-                    for (auto& [r2, info2] : subgraphs)
-                    {
-                        if (info2.subject == owner || info2.object == owner) owner_ref = true;
-                        if (info2.subject == sgs[i] || info2.object == sgs[i]) sgi_ref = true;
-                    }
-                    if ((sgi_ref && !owner_ref)
-                        || (sgs[i] > owner && !(owner_ref && !sgi_ref)))
-                        owner = sgs[i];
-                }
-            }
-
-            // Create clones for all non-owner subgraphs
-            std::string orig_id = "n_" + std::to_string(static_cast<unsigned long long>(nd));
-            for (network::Node sg : sgs)
-            {
-                if (sg == owner) continue;
-                std::string cid = "clone_" + std::to_string(static_cast<unsigned long long>(nd))
-                                + "_" + std::to_string(++clone_counter);
-                clone_in_sg[{nd, sg}] = cid;
-                clone_identity_edges.emplace_back(orig_id, cid);
-
-#ifdef DEBUG_MERMAID
-                diagnostic_stream() << "[DEBUG_MERMAID] Clone: node " << nd
-                                    << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
-                                    << ") cloned as " << cid << " in subgraph " << sg
-                                    << " (owner subgraph: " << owner << ")" << std::endl;
-#endif
-            }
-        }
-
-        // Phase 4: Handle subgraph-level conflicts (a subgraph node itself appearing in multiple
-        // independent subgraphs). This is the fallback: if the shared entity is itself a subgraph
-        // (not a leaf), we cannot clone it easily, so we fall back to removing one subgraph.
-        {
-            bool changed = true;
-            while (changed)
-            {
-                changed = false;
-
-                // Collect all nodes contained in each subgraph (recursively through nesting)
-                std::map<network::Node, std::unordered_set<network::Node>> sg_contained;
-                for (auto& [r, info] : subgraphs)
-                {
-                    std::function<void(network::Node, std::unordered_set<network::Node>&)> collect;
-                    collect = [&](network::Node sg_node, std::unordered_set<network::Node>& out)
-                    {
-                        auto it = subgraphs.find(sg_node);
-                        if (it == subgraphs.end()) return;
-                        out.insert(it->second.subject);
-                        out.insert(it->second.object);
-                        collect(it->second.subject, out);
-                        collect(it->second.object, out);
-                    };
-                    collect(r, sg_contained[r]);
-                }
-
-                // Build reverse map: node -> set of subgraphs containing it (transitively)
-                // But only consider subgraph-nodes (nodes that are themselves subgraphs)
-                std::map<network::Node, std::set<network::Node>> subgraph_node_to_sgs;
-                for (auto& [r, contained] : sg_contained)
-                {
-                    for (network::Node nd : contained)
-                    {
-                        if (subgraphs.count(nd)) // only subgraph-nodes
-                            subgraph_node_to_sgs[nd].insert(r);
-                    }
-                }
-
-                // Helper: check if sg1 is nested inside sg2
-                auto is_nested_in = [&](network::Node sg1, network::Node sg2) -> bool
-                {
-                    return sg_contained.count(sg2) && sg_contained[sg2].count(sg1);
-                };
-
-                // Check if a subgraph is "referenced" (appears as subject or object of another subgraph)
-                auto is_referenced = [&](network::Node sg) -> bool
-                {
-                    for (auto& [r, info] : subgraphs)
-                    {
-                        if (r == sg) continue;
-                        if (info.subject == sg || info.object == sg) return true;
-                    }
-                    return false;
-                };
-
-                // Find a conflicting pair: two independent subgraphs sharing a node
-                network::Node to_remove = 0;
-                for (auto& [nd, sgs] : subgraph_node_to_sgs)
-                {
-                    if (sgs.size() <= 1) continue;
-                    std::vector<network::Node> sg_vec(sgs.begin(), sgs.end());
-                    for (size_t i = 0; i < sg_vec.size() && to_remove == 0; ++i)
-                    {
-                        for (size_t j = i + 1; j < sg_vec.size() && to_remove == 0; ++j)
-                        {
-                            network::Node a = sg_vec[i], b = sg_vec[j];
-                            if (is_nested_in(a, b) || is_nested_in(b, a)) continue;
-
-                            bool a_ref = is_referenced(a), b_ref = is_referenced(b);
-                            if (a_ref && !b_ref)
-                                to_remove = b;
-                            else if (!a_ref && b_ref)
-                                to_remove = a;
-                            else
-                                to_remove = std::min(a, b);
-
-#ifdef DEBUG_MERMAID
-                            diagnostic_stream() << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
-                                                << " in independent subgraphs " << a << " and " << b
-                                                << " -> removing subgraph " << to_remove << std::endl;
-#endif
-                        }
-                    }
-                    if (to_remove != 0) break;
-                }
-
-                if (to_remove != 0)
-                {
-                    // Also remove clones associated with the removed subgraph
-                    for (auto it = clone_in_sg.begin(); it != clone_in_sg.end();)
-                    {
-                        if (it->first.second == to_remove)
-                            it = clone_in_sg.erase(it);
-                        else
-                            ++it;
-                    }
-                    subgraphs.erase(to_remove);
-                    changed = true;
-                }
-            }
-        }
-
-        // Rebuild sg_parent after potential removals
-        sg_parent.clear();
-        for (auto& [r, info] : subgraphs)
-        {
-            sg_parent[r] = 0;
-            for (auto& [r2, info2] : subgraphs)
-            {
-                if (r2 == r) continue;
-                if (info2.subject == r || info2.object == r)
-                {
-                    sg_parent[r] = r2;
-                    break;
-                }
-            }
-        }
+        ++effective_depth;
     }
+    // --- END dynamic depth loop ---
 
     // === DETERMINE NODE PLACEMENT ===
 
@@ -893,7 +935,7 @@ void console::gen_mermaid_html(const network::Zelph* const              z,
                 }
             }
         }
-    }
+    } // if (use_subgraphs)
 
     // Cloned nodes are also "inside" subgraphs, so mark them as contained
     for (auto& [key, cid] : clone_in_sg)

@@ -44,5 +44,6 @@ namespace zelph::console
                           const std::unordered_set<network::Node>& exclude_nodes,
                           bool                                     dark_theme,
                           bool                                     horizontal_layout,
-                          bool                                     use_subgraphs);
+                          bool                                     use_subgraphs,
+                          size_t                                   min_mermaid_nodes = 10);
 }

@@ -162,10 +162,9 @@ private:
 
     // --- Helpers ---
 
-#define DEFAULT_DISPLAY_DEPTH 5
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
 
-    void display_node_details(network::Node nd, bool resolved_from_name, int depth = DEFAULT_DISPLAY_DEPTH, int max_neighbors = console::default_display_max_neighbors) const
+    void display_node_details(network::Node nd, bool resolved_from_name, int depth = 1, int max_neighbors = console::default_display_max_neighbors) const
     {
         if (resolved_from_name)
         {
@@ -1099,12 +1098,12 @@ private:
         const std::wstring& arg = cmd[1];
         network::Node       nd  = resolve_single_node(arg, true);
         if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
-        int max_depth     = DEFAULT_DISPLAY_DEPTH;
+        int max_depth     = 1;
         int max_neighbors = default_display_max_neighbors;
         if (cmd.size() >= 3)
         {
             max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
-            if (max_depth < 2) throw std::runtime_error("Command .mermaid: Maximum depth must be greater than 1");
+            if (max_depth < 1) throw std::runtime_error("Command .mermaid: Maximum depth must be greater than 0. Note: when using 1, a dynamic depth based on the node count will be used.");
         }
         if (cmd.size() >= 4)
         {

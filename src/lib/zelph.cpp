@@ -630,7 +630,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             console::gen_mermaid_html(this,
                                       relation,
                                       "debug.html",
-                                      2,
+                                      1,
                                       3,
                                       {},
                                       true,
