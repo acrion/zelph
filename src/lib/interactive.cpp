@@ -133,11 +133,11 @@ void console::Interactive::process(std::string line) const
         size_t first_char_pos = line.find_first_not_of(" \t");
 
         // --- 2. Commands starting with '.' (work in all modes) ---
-        if (first_char_pos != std::string::npos && line[first_char_pos] == L'.')
+        if (first_char_pos != std::string::npos && line[first_char_pos] == '.')
         {
             std::vector<std::string> parts = zelph::string::tokenize_quoted(line);
 
-            if (!parts.empty() && !parts[0].empty() && parts[0][0] == L'.')
+            if (!parts.empty() && !parts[0].empty() && parts[0][0] == '.')
             {
                 _pImpl->_n->profiler_reset_epoch();
                 _pImpl->process_command(parts);
@@ -153,8 +153,7 @@ void console::Interactive::process(std::string line) const
         // --- 4. Accumulating an incomplete inline Janet expression ---
         if (state->accumulating_inline_janet)
         {
-            std::string utf8_line = line;
-            state->janet_buffer += utf8_line + "\n";
+            state->janet_buffer += line + "\n";
 
             if (zelph::ScriptEngine::is_expression_complete(state->janet_buffer))
             {
@@ -168,7 +167,7 @@ void console::Interactive::process(std::string line) const
             return;
         }
 
-        std::string trimmed_utf8 = zelph::string::trim(line); // was: string::trim_in_place
+        std::string trimmed_utf8 = zelph::string::trim(line);
 
         // --- 5. Mode toggle: bare '%' on a line ---
         if (trimmed_utf8 == "%")
@@ -221,18 +220,15 @@ void console::Interactive::process(std::string line) const
         // --- 7. Janet block mode: accumulate lines ---
         if (state->script_mode == ScriptMode::Janet)
         {
-            std::string utf8_line = line;
-            state->janet_buffer += utf8_line + "\n";
+            state->janet_buffer += line + "\n";
             return;
         }
 
         // --- 8. Zelph mode: accumulate until statement is complete, then parse ---
-        std::string utf8_line = line;
-
         if (state->accumulating_zelph)
-            state->zelph_buffer += "\n" + utf8_line;
+            state->zelph_buffer += "\n" + line;
         else
-            state->zelph_buffer = utf8_line;
+            state->zelph_buffer = line;
 
         if (!zelph::ScriptEngine::is_zelph_complete(state->zelph_buffer))
         {

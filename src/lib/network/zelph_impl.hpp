@@ -26,7 +26,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "network.hpp"
-#include "string/string_utils.hpp"
 #include "zelph.hpp"
 
 #include "io/zelph.capnp.h"

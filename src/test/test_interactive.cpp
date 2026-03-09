@@ -27,7 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "interactive.hpp"
 #include "io/output.hpp"
-#include "string/string_utils.hpp"
 
 #include <ranges>
 #include <sstream>
@@ -41,13 +40,13 @@ namespace
     {
         std::string result;
         bool        in_space = true;
-        for (wchar_t c : s)
+        for (char c : s)
         {
-            if (c == L' ' || c == L'\t')
+            if (c == ' ' || c == '\t')
             {
                 if (!in_space)
                 {
-                    result += L' ';
+                    result += ' ';
                     in_space = true;
                 }
             }
@@ -57,7 +56,7 @@ namespace
                 in_space = false;
             }
         }
-        if (!result.empty() && result.back() == L' ')
+        if (!result.empty() && result.back() == ' ')
             result.pop_back();
         return result;
     }
@@ -126,7 +125,7 @@ namespace
             {
                 std::string answer = n.substr(prefix.size());
                 // Strip leading space after "Answer:"
-                if (!answer.empty() && answer[0] == L' ')
+                if (!answer.empty() && answer[0] == ' ')
                     answer = answer.substr(1);
                 answers.push_back(answer);
             }

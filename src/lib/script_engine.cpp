@@ -383,8 +383,7 @@ public:
             return res;
         }
 
-        std::string utf8 = name;
-        Janet       res  = janet_cstringv(utf8.c_str());
+        Janet res = janet_cstringv(name.c_str());
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, false, res);
         return res;
     }
@@ -647,9 +646,8 @@ public:
 
         const uint8_t* str   = janet_getstring(argv, 0);
         std::string    raw_s = reinterpret_cast<const char*>(str);
-        std::string    wstr  = raw_s;
 
-        if (wstr.empty())
+        if (raw_s.empty())
         {
             Janet res = janet_wrap_nil();
             if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list-chars", argc, argv, false, res);
@@ -1462,5 +1460,5 @@ bool ScriptEngine::is_var(std::string token)
     static const std::string variable_names("ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
     if (token.empty()) return false;
     if (token.size() == 1) return variable_names.find(*token.begin()) != std::string::npos;
-    return *token.begin() == L'_';
+    return *token.begin() == '_';
 }

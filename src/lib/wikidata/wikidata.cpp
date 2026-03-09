@@ -328,10 +328,10 @@ std::vector<std::string> extract_ids(const std::string& str, const std::string& 
         size_t start = str.find(id_tag, pos);
         if (start == std::string::npos) break;
         start += id_tag.size();
-        size_t end = str.find(L'\"', start);
+        size_t end = str.find('\"', start);
         if (end == std::string::npos) break;
         std::string id = str.substr(start, end - start);
-        if (id.find(L'$') == std::string::npos)
+        if (id.find('$') == std::string::npos)
         {
             ids.push_back(id);
         }
@@ -446,8 +446,8 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             if (numeric_start == std::string::npos) return "# No second numeric-id found for qualifier";
 
             numeric_start += numeric_id_tag.size();
-            size_t numeric_end = json.find(L',', numeric_start);
-            if (numeric_end == std::string::npos) numeric_end = json.find(L'}', numeric_start);
+            size_t numeric_end = json.find(',', numeric_start);
+            if (numeric_end == std::string::npos) numeric_end = json.find('}', numeric_start);
 
             if (numeric_end == std::string::npos) return "# Invalid numeric-id end";
 
@@ -518,15 +518,15 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
             while (stmt_end < line.size() && bracket_count > 0)
             {
                 char c = line[stmt_end];
-                if (c == L'"')
+                if (c == '"')
                 {
                     in_string = !in_string;
                 }
                 else if (!in_string)
                 {
-                    if (c == L'{')
+                    if (c == '{')
                         ++bracket_count;
-                    else if (c == L'}')
+                    else if (c == '}')
                         --bracket_count;
                 }
                 ++stmt_end;
@@ -544,7 +544,7 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
             if (type_start != std::string::npos)
             {
                 type_start += mainsnak_type_tag.size();
-                size_t type_end = stmt_json.find(L',', type_start);
+                size_t type_end = stmt_json.find(',', type_start);
                 if (type_end != std::string::npos)
                 {
                     std::string numeric_id     = stmt_json.substr(type_start, type_end - type_start);
@@ -619,7 +619,7 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
                     if (descriptions == std::string::npos || language0 < descriptions)
                     {
-                        id1                         = line.find(L'\"', language0 + language_tag.size() + 1);
+                        id1                         = line.find('\"', language0 + language_tag.size() + 1);
                         name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
                     }
                 }
@@ -640,10 +640,10 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
     while ((property0 = line.find(property_tag, id1 + 1)) != std::string::npos)
     {
-        size_t      property1    = line.find(L'\"', property0 + property_tag.size());
+        size_t      property1    = line.find('\"', property0 + property_tag.size());
         std::string property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
 
-        if (property_str.empty() || property_str[0] != L'P')
+        if (property_str.empty() || property_str[0] != 'P')
         {
             throw std::runtime_error("Invalid property '" + property_str + "' in " + line);
         }
@@ -664,9 +664,9 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
             size_t id0 = search_pos + claim_value_tag.size();
 
             bool success = true;
-            while (++id0 < line.size() && line[id0] != L',')
+            while (++id0 < line.size() && line[id0] != ',')
             {
-                if (line[id0] < L'0' || line[id0] > L'9')
+                if (line[id0] < '0' || line[id0] > '9')
                 {
                     success = false;
                     break;
@@ -678,7 +678,7 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
                 if (line.substr(id0 + 1, object_tag.size()) == object_tag)
                 {
                     id0 += object_tag.size() + 1;
-                    id1                    = line.find(L'\"', id0);
+                    id1                    = line.find('\"', id0);
                     std::string object_str = line.substr(id0, id1 - id0);
 
                     try
@@ -765,12 +765,12 @@ void Wikidata::process_entry(const std::string& line, const std::string& additio
 
     if (id0 != std::string::npos)
     {
-        size_t      id1 = line.find(L'\"', id0 + id_tag.size() + 1);
+        size_t      id1 = line.find('\"', id0 + id_tag.size() + 1);
         std::string id_str(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
 
         if (export_constraints)
         {
-            if (id_str.size() > 1 && id_str[0] == L'P')
+            if (id_str.size() > 1 && id_str[0] == 'P')
             {
                 process_constraints(line, id_str, constraints_dir);
             }

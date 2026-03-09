@@ -212,10 +212,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
                         // Wrap in parentheses if it's a composite expression (not a simple name).
                         if (!elem_str.empty()
-                            && elem_str.find(L' ') != std::string::npos
-                            && elem_str.front() != L'('
-                            && elem_str.front() != L'<'
-                            && elem_str.front() != L'{')
+                            && elem_str.find(' ') != std::string::npos
+                            && elem_str.front() != '('
+                            && elem_str.front() != '<'
+                            && elem_str.front() != '{')
                         {
                             network::Node eff_e = resolve_var(e);
                             if (elem_str != z->get_formatted_name(eff_e, lang))
@@ -277,10 +277,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
             node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
 
             if (!elem_str.empty()
-                && elem_str.find(L' ') != std::string::npos
-                && elem_str.front() != L'('
-                && elem_str.front() != L'<'
-                && elem_str.front() != L'{')
+                && elem_str.find(' ') != std::string::npos
+                && elem_str.front() != '('
+                && elem_str.front() != '<'
+                && elem_str.front() != '{')
             {
                 network::Node eff_e = resolve_var(e);
                 if (elem_str != z->get_formatted_name(eff_e, lang))
@@ -428,10 +428,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         // Wrap subject only if it's a composite fact, not a named atom
         bool needs_parens = false;
         if (!s_str.empty()
-            && s_str.find(L' ') != std::string::npos
-            && s_str.front() != L'('
-            && s_str.front() != L'<'
-            && s_str.front() != L'{')
+            && s_str.find(' ') != std::string::npos
+            && s_str.front() != '('
+            && s_str.front() != '<'
+            && s_str.front() != '{')
         {
             network::Node eff_subj = resolve_var(subject);
             std::string   raw_name = z->get_formatted_name(eff_subj, lang);
@@ -468,10 +468,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
             // Wrap complex unnamed relations in parens too.
             // For consistency with subject/object, we usually assume relations are simple,
             // but if r_str has spaces and isn't a container, wrap it.
-            if (relation_name.find(L' ') != std::string::npos
-                && relation_name.front() != L'('
-                && relation_name.front() != L'<'
-                && relation_name.front() != L'{')
+            if (relation_name.find(' ') != std::string::npos
+                && relation_name.front() != '('
+                && relation_name.front() != '<'
+                && relation_name.front() != '{')
                 relation_name = "(" + relation_name + ")";
         }
     }
@@ -491,10 +491,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
             // Wrap object only if it's a composite fact, not a named atom
             if (!o_str.empty()
-                && o_str.find(L' ') != std::string::npos
-                && o_str.front() != L'('
-                && o_str.front() != L'<'
-                && o_str.front() != L'{')
+                && o_str.find(' ') != std::string::npos
+                && o_str.front() != '('
+                && o_str.front() != '<'
+                && o_str.front() != '{')
             {
                 network::Node eff_obj  = resolve_var(object);
                 std::string   raw_name = z->get_formatted_name(eff_obj, lang);

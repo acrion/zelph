@@ -209,7 +209,7 @@ private:
 
         if (has_wikidata)
         {
-            std::string       prefix    = (wikidata_name[0] == L'P') ? "Property:" : "";
+            std::string       prefix    = (wikidata_name[0] == 'P') ? "Property:" : "";
             std::string       url       = "https://www.wikidata.org/wiki/" + prefix + wikidata_name;
             const std::string OSC_START = "\033]8;;";
             const char        OSC_SEP   = '\a';
@@ -625,12 +625,12 @@ private:
             "          _who \"is father of\" paul",
             "          Answer:  peter   is father of   paul",
             "",
-            "Rules:    (*{(condition1) (condition2) (...)} ~ conjunction) => (deduction)",
+            "Rules:    (condition1, condition2, ...) => (deduction)",
             "          Example:",
             "          Berlin \"is capital of\" Germany",
             "          Germany \"is located in\" Europe",
-            "          (*{(X \"is capital of\" Y)",
-            "             (Y \"is located in\" Z)} ~ conjunction)",
+            "            (X \"is capital of\" Y,",
+            "             Y \"is located in\" Z)",
             "          => (X \"is located in\" Z)",
             "          Answer: Berlin   is located in   Europe",
             "                  ⇐ {( Germany   is located in   Europe )",
@@ -1128,7 +1128,7 @@ private:
     void cmd_run_md(const std::vector<std::string>& cmd)
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
-        std::string subdir = cmd[1];
+        const std::string& subdir = cmd[1];
         _n->set_markdown_subdir(subdir);
         _n->diagnostic("Running with markdown export...", true);
         if (_data_manager)
@@ -1142,8 +1142,8 @@ private:
         if (cmd.size() != 2)
             throw std::runtime_error("Command .run-file requires exactly one argument: the output file path");
 
-        std::string   outfile = cmd[1];
-        std::ofstream out(outfile);
+        const std::string& outfile = cmd[1];
+        std::ofstream      out(outfile);
         if (!out.is_open())
             throw std::runtime_error("Command .run-file: Cannot open output file '" + outfile + "'");
 
@@ -1171,9 +1171,9 @@ private:
             std::string reasons = str.substr(pos + 3);
             string::trim_in_place(reasons);
 
-            if (!reasons.empty() && reasons.front() == L'(')
+            if (!reasons.empty() && reasons.front() == '(')
                 reasons.erase(0, 1);
-            if (!reasons.empty() && reasons.back() == L')')
+            if (!reasons.empty() && reasons.back() == ')')
                 reasons.erase(reasons.size() - 1);
             string::trim_in_place(reasons);
 
@@ -1222,8 +1222,8 @@ private:
         if (cmd.size() != 2)
             throw std::runtime_error("Command .decode requires exactly one argument: the input file path");
 
-        std::string   infile = cmd[1];
-        std::ifstream in(infile);
+        const std::string& infile = cmd[1];
+        std::ifstream      in(infile);
         if (!in.is_open())
             throw std::runtime_error("Command .decode: Cannot open input file '" + infile + "'");
 
@@ -1285,7 +1285,7 @@ private:
         chrono::StopWatch watch;
         watch.start();
 
-        std::string           dir        = cmd[2];
+        const std::string&    dir        = cmd[2];
         std::filesystem::path input_path = cmd[1];
 
         // Specific Logic: This command strictly requires Wikidata capability.
