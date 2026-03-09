@@ -207,7 +207,7 @@ public:
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
                 # 2. Node List: < a b > — space-separated, stored as cons list (last element outermost).
-                #    The user writes elements in the order they should be displayed; node_to_wstring reverses
+                #    The user writes elements in the order they should be displayed; node_to_string reverses
                 #    the internal order back for output. For numbers, write digits in reverse: <3 2 1>
                 #    represents the number 123 (same internal form as the compact <123>).
                 # The loop (if-not ">" :val-any) ensures we don't consume the closing delimiter.
@@ -264,7 +264,7 @@ public:
         if (!is_entry)
             oss << " output: " << format_janet(ret);
 
-        _n->diagnostic(string::unicode::from_utf8(oss.str()));
+        _n->diagnostic(oss.str());
     }
 
     // Converts Janet Types to Nodes.
@@ -278,7 +278,7 @@ public:
         {
             // It's a standard named Node (Atom)
             const uint8_t* str  = janet_unwrap_string(arg);
-            std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+            std::string    wstr = reinterpret_cast<const char*>(str);
             return _n->node(wstr, _n->lang());
         }
         else if (janet_checktype(arg, JANET_SYMBOL))
@@ -289,7 +289,7 @@ public:
             if (_scoped_variables.count(s_sym)) return _scoped_variables[s_sym];
 
             network::Node v = _n->var();
-            _n->set_name(v, string::unicode::from_utf8(s_sym), _n->lang(), false);
+            _n->set_name(v, s_sym, _n->lang(), false);
             _scoped_variables[s_sym] = v;
             return v;
         }
@@ -307,7 +307,7 @@ public:
         else if (janet_checktype(arg, JANET_STRING))
         {
             const uint8_t* str  = janet_unwrap_string(arg);
-            std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+            std::string    wstr = reinterpret_cast<const char*>(str);
 
             // Check regular named nodes
             network::Node n = _n->get_node(wstr, _n->lang());
@@ -377,7 +377,7 @@ public:
             lang = reinterpret_cast<const char*>(janet_unwrap_string(argv[1]));
         }
 
-        std::wstring name = s_instance->_n->get_name(n, lang, true);
+        std::string name = s_instance->_n->get_name(n, lang, true);
         if (name.empty())
         {
             Janet res = janet_wrap_nil();
@@ -385,7 +385,7 @@ public:
             return res;
         }
 
-        std::string utf8 = string::unicode::to_utf8(name);
+        std::string utf8 = name;
         Janet       res  = janet_cstringv(utf8.c_str());
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/name", argc, argv, false, res);
         return res;
@@ -649,7 +649,7 @@ public:
 
         const uint8_t* str   = janet_getstring(argv, 0);
         std::string    raw_s = reinterpret_cast<const char*>(str);
-        std::wstring   wstr  = string::unicode::from_utf8(raw_s);
+        std::string    wstr  = raw_s;
 
         if (wstr.empty())
         {
@@ -662,11 +662,9 @@ public:
         // (least significant digit) becomes element[0] and thus the outermost cons cell.
         // Example: "123" -> ['3','2','1'] -> list builds 3 cons (2 cons (1 cons nil))
         // This matches the node-list syntax where the user writes <3 2 1> for the number 123.
-        std::vector<std::wstring> elements;
-        elements.reserve(wstr.length());
-        for (wchar_t c : wstr)
-            elements.emplace_back(1, c);
-
+        std::vector<std::string> elements;
+        string::for_each_codepoint(raw_s, [&](const std::string& cp)
+                                   { elements.push_back(cp); });
         std::reverse(elements.begin(), elements.end());
 
         network::Node list_node = s_instance->_n->list(elements);
@@ -767,7 +765,7 @@ public:
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, true);
 
         const uint8_t* str  = janet_getstring(argv, 0);
-        std::wstring   wstr = string::unicode::from_utf8(reinterpret_cast<const char*>(str));
+        std::string    wstr = reinterpret_cast<const char*>(str);
         network::Node  n    = s_instance->_n->node(wstr, s_instance->_n->lang());
         Janet          res  = zelph_wrap_node(n);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, false, res);
@@ -1246,9 +1244,9 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             network::Node n = zelph_unwrap_node(out);
             if (n)
             {
-                std::wstring output;
-                string::node_to_wstring(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
-                if (!output.empty() && output != L"??") _pImpl->_n->out(string::unmark_identifiers(output), true);
+                std::string output;
+                string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
+                if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
 
                 if (!_pImpl->_scoped_variables.empty())
                 {
@@ -1260,7 +1258,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
         {
             if (!janet_checktype(out, JANET_NIL))
             {
-                _pImpl->_n->out(string::unicode::from_utf8(Impl::format_janet(out)), true);
+                _pImpl->_n->out(Impl::format_janet(out), true);
             }
         }
     }
@@ -1460,11 +1458,11 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     return true;
 }
 
-bool ScriptEngine::is_var(std::wstring token)
+bool ScriptEngine::is_var(std::string token)
 {
     // Legacy helper, might still be useful outside of PEG context
-    static const std::wstring variable_names(L"ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
+    static const std::string variable_names("ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
     if (token.empty()) return false;
-    if (token.size() == 1) return variable_names.find(*token.begin()) != std::wstring::npos;
+    if (token.size() == 1) return variable_names.find(*token.begin()) != std::string::npos;
     return *token.begin() == L'_';
 }

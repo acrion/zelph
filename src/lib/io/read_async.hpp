@@ -39,7 +39,7 @@ namespace zelph::io
         std::streamsize get_total_size() const;
 
         // Returns wide string (performs conversion)
-        bool get_line(std::wstring& line, std::streamoff& streampos) const;
+        bool get_line(std::string& line, std::streamoff& streampos) const;
 
         // Returns raw UTF-8 string (no conversion)
         bool get_line_utf8(std::string& line, std::streamoff& streampos) const;

@@ -51,16 +51,16 @@ public:
     {
         _n->set_lang("zelph");
 
-        _n->register_core_node(_n->core.RelationTypeCategory, L"->");
-        _n->register_core_node(_n->core.Causes, L"=>");
-        _n->register_core_node(_n->core.IsA, L"~");
-        _n->register_core_node(_n->core.Unequal, L"!=");
-        _n->register_core_node(_n->core.Contradiction, L"!");
-        _n->register_core_node(_n->core.Cons, L"cons");
-        _n->register_core_node(_n->core.Nil, L"nil");
-        _n->register_core_node(_n->core.PartOf, L"in");
-        _n->register_core_node(_n->core.Conjunction, L"conjunction");
-        _n->register_core_node(_n->core.Negation, L"negation");
+        _n->register_core_node(_n->core.RelationTypeCategory, "->");
+        _n->register_core_node(_n->core.Causes, "=>");
+        _n->register_core_node(_n->core.IsA, "~");
+        _n->register_core_node(_n->core.Unequal, "!=");
+        _n->register_core_node(_n->core.Contradiction, "!");
+        _n->register_core_node(_n->core.Cons, "cons");
+        _n->register_core_node(_n->core.Nil, "nil");
+        _n->register_core_node(_n->core.PartOf, "in");
+        _n->register_core_node(_n->core.Conjunction, "conjunction");
+        _n->register_core_node(_n->core.Negation, "negation");
 
         _script_engine->initialize();
 
@@ -70,7 +70,7 @@ public:
             _script_engine.get(),
             _data_manager,
             _repl_state,
-            [this](const std::wstring& line)
+            [this](const std::string& line)
             { _interactive->process(line); });
     }
 
@@ -80,7 +80,7 @@ public:
     }
 
     // Member function to delegate to CommandExecutor
-    void process_command(const std::vector<std::wstring>& cmd) const;
+    void process_command(const std::vector<std::string>& cmd) const;
 
     std::shared_ptr<io::DataManager> _data_manager;
     network::Reasoning* const        _n;
@@ -105,7 +105,7 @@ console::Interactive::~Interactive()
     delete _pImpl;
 }
 
-void console::Interactive::process_file(const std::wstring& file, const std::vector<std::string>& args) const
+void console::Interactive::process_file(const std::string& file, const std::vector<std::string>& args) const
 {
     _pImpl->_command_executor->import_file(file, args);
 }
@@ -128,26 +128,26 @@ bool console::Interactive::is_accumulating() const
         || s->script_mode == ScriptMode::Janet;
 }
 
-void console::Interactive::process(std::wstring line) const
+void console::Interactive::process(std::string line) const
 {
     try
     {
         // --- 1. Comments (work in all modes) ---
-        if (boost::starts_with(line, L"#")) return;
+        if (boost::starts_with(line, "#")) return;
 
-        size_t first_char_pos = line.find_first_not_of(L" \t");
+        size_t first_char_pos = line.find_first_not_of(" \t");
 
         // --- 2. Commands starting with '.' (work in all modes) ---
-        if (first_char_pos != std::wstring::npos && line[first_char_pos] == L'.')
+        if (first_char_pos != std::string::npos && line[first_char_pos] == L'.')
         {
-            tokenizer<escaped_list_separator<wchar_t>, std::wstring::const_iterator, std::wstring> tok(line, escaped_list_separator<wchar_t>(L"\\", L" \t", L"\""));
-            auto                                                                                   it = tok.begin();
+            tokenizer<escaped_list_separator<char>, std::string::const_iterator, std::string> tok(line, escaped_list_separator<char>("\\", " \t", "\""));
+            auto                                                                              it = tok.begin();
             while (it != tok.end() && it->empty())
                 ++it;
 
             if (it != tok.end() && (*it)[0] == L'.')
             {
-                std::vector<std::wstring> cmd;
+                std::vector<std::string> cmd;
                 while (it != tok.end())
                 {
                     if (!it->empty()) cmd.push_back(*it);
@@ -161,14 +161,14 @@ void console::Interactive::process(std::wstring line) const
         }
 
         // --- 3. Empty lines ---
-        if (first_char_pos == std::wstring::npos) return;
+        if (first_char_pos == std::string::npos) return;
 
         auto& state = _pImpl->_repl_state;
 
         // --- 4. Accumulating an incomplete inline Janet expression (from a previous % line) ---
         if (state->accumulating_inline_janet)
         {
-            std::string utf8_line = string::unicode::to_utf8(line);
+            std::string utf8_line = line;
             state->janet_buffer += utf8_line + "\n";
 
             if (zelph::ScriptEngine::is_expression_complete(state->janet_buffer))
@@ -183,7 +183,7 @@ void console::Interactive::process(std::wstring line) const
             return;
         }
 
-        std::string trimmed_utf8 = string::unicode::to_utf8(line);
+        std::string trimmed_utf8 = line;
         boost::trim(trimmed_utf8);
 
         // --- 5. Mode toggle: bare '%' on a line ---
@@ -237,13 +237,13 @@ void console::Interactive::process(std::wstring line) const
         // --- 7. Janet block mode: accumulate lines ---
         if (state->script_mode == ScriptMode::Janet)
         {
-            std::string utf8_line = string::unicode::to_utf8(line);
+            std::string utf8_line = line;
             state->janet_buffer += utf8_line + "\n";
             return;
         }
 
         // --- 8. Zelph mode: accumulate until statement is complete, then parse ---
-        std::string utf8_line = string::unicode::to_utf8(line);
+        std::string utf8_line = line;
 
         if (state->accumulating_zelph)
             state->zelph_buffer += "\n" + utf8_line;
@@ -283,17 +283,17 @@ void console::Interactive::process(std::wstring line) const
     }
     catch (std::exception& ex)
     {
-        throw std::runtime_error("Error in line \"" + string::unicode::to_utf8(line) + "\": " + ex.what());
+        throw std::runtime_error("Error in line \"" + line + "\": " + ex.what());
     }
 }
 
-void console::Interactive::import_file(const std::wstring& file) const
+void console::Interactive::import_file(const std::string& file) const
 {
     _pImpl->_command_executor->import_file(file);
 }
 
 // Delegation method
-void console::Interactive::Impl::process_command(const std::vector<std::wstring>& cmd) const
+void console::Interactive::Impl::process_command(const std::vector<std::string>& cmd) const
 {
     _command_executor->execute(cmd);
 }
@@ -313,22 +313,22 @@ void console::Interactive::set_output_handler(io::OutputHandler output) const
     _pImpl->_n->set_output_handler(std::move(output));
 }
 
-void console::Interactive::out(const std::wstring& text, bool newline) const
+void console::Interactive::out(const std::string& text, bool newline) const
 {
     _pImpl->_n->emit(io::OutputChannel::Out, text, newline);
 }
 
-void console::Interactive::err(const std::wstring& text, bool newline) const
+void console::Interactive::err(const std::string& text, bool newline) const
 {
     _pImpl->_n->emit(io::OutputChannel::Error, text, newline);
 }
 
-void console::Interactive::log(const std::wstring& text, bool newline) const
+void console::Interactive::log(const std::string& text, bool newline) const
 {
     _pImpl->_n->emit(io::OutputChannel::Diagnostic, text, newline);
 }
 
-void console::Interactive::prompt(const std::wstring& text, bool newline) const
+void console::Interactive::prompt(const std::string& text, bool newline) const
 {
     _pImpl->_n->emit(io::OutputChannel::Prompt, text, newline);
 }
@@ -341,7 +341,7 @@ extern "C" void zelph_process_c(const char* line, size_t len)
     if (len > 0)
     {
         std::string l(line, 0, len);
-        interactive.process(string::unicode::from_utf8(l));
+        interactive.process(l);
     }
 }
 

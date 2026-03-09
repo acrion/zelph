@@ -70,11 +70,11 @@ namespace zelph::io
     std::string Markdown::get_template(const std::string& id) const
     {
         std::string         name;
-        const network::Node node = _zelph->get_node(string::unicode::from_utf8(id), "wikidata");
+        const network::Node node = _zelph->get_node(id, "wikidata");
         if (node != 0)
         {
-            const std::wstring w_name = _zelph->get_name(node, "en", true);
-            name                      = string::unicode::to_utf8(string::unicode::unescape(w_name));
+            const std::string w_name = _zelph->get_name(node, "en", true);
+            name                     = string::unicode::unescape(w_name);
         }
         if (name.empty()) name = id;
 
@@ -84,12 +84,12 @@ namespace zelph::io
     }
 
     // Simple but sufficient 64-bit hash for block content
-    uint64_t Markdown::hash_block(const std::vector<std::wstring>& block_lines)
+    uint64_t Markdown::hash_block(const std::vector<std::string>& block_lines)
     {
         uint64_t h = 0xcbf29ce484222325ULL;
         for (const auto& line : block_lines)
         {
-            std::string utf8 = string::unicode::to_utf8(line);
+            std::string utf8 = line;
             for (char c : utf8)
             {
                 h ^= static_cast<uint64_t>(c);
@@ -101,7 +101,7 @@ namespace zelph::io
         return h;
     }
 
-    std::string Markdown::get_wikidata_id(const std::wstring& token, const std::string& lang) const
+    std::string Markdown::get_wikidata_id(const std::string& token, const std::string& lang) const
     {
         // Get node for this token
         uint64_t node = _zelph->get_node(token, lang);
@@ -111,101 +111,101 @@ namespace zelph::io
             node = _zelph->get_node(token, "zelph"); // fallback
         }
 
-        return node == 0 ? "" : string::unicode::to_utf8(_zelph->get_name(node, "wikidata", true));
+        return node == 0 ? "" : _zelph->get_name(node, "wikidata", true);
     }
 
-    std::pair<std::list<std::string>, std::wstring> Markdown::convert_to_md(const std::wstring& message)
+    std::pair<std::list<std::string>, std::string> Markdown::convert_to_md(const std::string& message)
     {
-        // Converts the formatted fact string (from node_to_wstring) to Markdown.
+        // Converts the formatted fact string (from node_to_string) to Markdown.
         // Parses tokens within « », extracts ID and text if " - " present (Wikidata mode), else assumes token is the Wikidata ID or fallback name.
-        // Creates links like [text](ID.md), italicizing if property (P...). Uses the pre-formatted ID from node_to_wstring for accurate linking.
+        // Creates links like [text](ID.md), italicizing if property (P...). Uses the pre-formatted ID from node_to_string for accurate linking.
 
         std::list<std::string> wikidataIds;
-        std::wstring           markdownContent = message;
+        std::string            markdownContent = message;
 
         // Find the position of the '⇐' character
-        size_t       cutoffPos    = *message.begin() == '!' ? std::wstring::npos : message.find(L'⇐');
-        std::wstring processRange = (cutoffPos != std::wstring::npos) ? message.substr(0, cutoffPos) : message;
+        size_t      cutoffPos    = *message.begin() == '!' ? std::string::npos : message.find("⇐");
+        std::string processRange = (cutoffPos != std::string::npos) ? message.substr(0, cutoffPos) : message;
 
         // Regular expression to find tokens enclosed in «» characters
-        std::wregex tokenRegex(L"«([^»]+)»");
+        std::regex tokenRegex("«([^»]+)»");
 
         // Find all tokens in the message
-        std::wsregex_iterator tokensBegin(processRange.begin(), processRange.end(), tokenRegex);
-        std::wsregex_iterator tokensEnd;
+        std::sregex_iterator tokensBegin(processRange.begin(), processRange.end(), tokenRegex);
+        std::sregex_iterator tokensEnd;
 
         // Process each token to collect IDs
-        for (std::wsregex_iterator i = tokensBegin; i != tokensEnd; ++i)
+        for (std::sregex_iterator i = tokensBegin; i != tokensEnd; ++i)
         {
-            const std::wsmatch& match = *i;
-            std::wstring        token = match[1].str();
+            const std::smatch& match = *i;
+            std::string        token = match[1].str();
 
-            size_t sep_pos = token.find(L" - ");
-            if (sep_pos != std::wstring::npos)
+            size_t sep_pos = token.find(" - ");
+            if (sep_pos != std::string::npos)
             {
-                std::wstring id_part = token.substr(0, sep_pos);
-                wikidataIds.push_back(string::unicode::to_utf8(id_part));
+                std::string id_part = token.substr(0, sep_pos);
+                wikidataIds.push_back(id_part);
             }
             else
             {
-                wikidataIds.push_back(string::unicode::to_utf8(token)); // Assume token is ID
+                wikidataIds.push_back(token); // Assume token is ID
             }
         }
 
         // Replace all «token» with [token](token.md) in the Markdown content
-        std::wstring::const_iterator contentStart = markdownContent.begin();
-        std::wstring::const_iterator contentEnd   = markdownContent.end();
-        std::wsmatch                 contentMatch;
+        std::string::const_iterator contentStart = markdownContent.begin();
+        std::string::const_iterator contentEnd   = markdownContent.end();
+        std::smatch                 contentMatch;
 
         // Create a copy of the original content to build the result
-        std::wstring result;
+        std::string result;
 
         // Find and replace all tokens in the original message
         while (std::regex_search(contentStart, contentEnd, contentMatch, tokenRegex))
         {
             // Add the part before the match
-            result += std::wstring(contentStart, contentMatch[0].first);
+            result += std::string(contentStart, contentMatch[0].first);
 
             // Get the token without «»
-            std::wstring token = contentMatch[1].str();
+            std::string token = contentMatch[1].str();
 
-            size_t       sep_pos = token.find(L" - ");
-            std::wstring tokenText;
-            std::string  id_str;
-            if (sep_pos != std::wstring::npos)
+            size_t      sep_pos = token.find(" - ");
+            std::string tokenText;
+            std::string id_str;
+            if (sep_pos != std::string::npos)
             {
-                std::wstring id_part = token.substr(0, sep_pos);
-                tokenText            = token.substr(sep_pos + 3);
-                id_str               = string::unicode::to_utf8(id_part);
+                std::string id_part = token.substr(0, sep_pos);
+                tokenText           = token.substr(sep_pos + 3);
+                id_str              = id_part;
             }
             else
             {
                 tokenText = token;
-                id_str    = string::unicode::to_utf8(token);
+                id_str    = token;
             }
 
             std::string url = id_str + ".md";
 
             if (!id_str.empty() && id_str[0] == 'P')
             {
-                tokenText = L"*" + tokenText + L"*";
+                tokenText = "*" + tokenText + "*";
             }
 
             // Add the formatted Markdown link
-            result += L"[" + tokenText + L"](" + string::unicode::from_utf8(url) + L")";
+            result += "[" + tokenText + "](" + url + ")";
 
             // Move the start iterator past the match
             contentStart = contentMatch[0].second;
         }
 
         // Add any remaining content after the last match
-        result = L"- " + result + std::wstring(contentStart, contentEnd);
+        result = "- " + result + std::string(contentStart, contentEnd);
         result = string::unicode::unescape(result);
 
         return std::make_pair(wikidataIds, result);
     }
 
-    void Markdown::add(const std::wstring& heading, const std::wstring& message) const
+    void Markdown::add(const std::string& heading, const std::string& message) const
     {
         auto [ids, markdown_code] = convert_to_md(message);
 
@@ -246,18 +246,18 @@ namespace zelph::io
                 {
                     if (std::filesystem::exists(file_path))
                     {
-                        std::wifstream file(file_path, std::ios::binary);
+                        std::ifstream file(file_path, std::ios::binary);
                         file.imbue(std::locale(""));
-                        std::wstring line;
+                        std::string line;
                         while (std::getline(file, line))
                             state.lines.push_back(line);
                     }
                     else
                     {
-                        std::string         templ = get_template(id);
-                        std::wistringstream ss(string::unicode::from_utf8(templ));
+                        std::string        templ = get_template(id);
+                        std::istringstream ss(templ);
                         ss.imbue(std::locale(""));
-                        std::wstring line;
+                        std::string line;
                         while (std::getline(ss, line))
                             state.lines.push_back(line);
                     }
@@ -266,13 +266,13 @@ namespace zelph::io
                     size_t i = 0;
                     while (i < state.lines.size())
                     {
-                        if (state.lines[i].starts_with(L"## "))
+                        if (state.lines[i].starts_with("## "))
                         {
                             size_t start = i;
                             ++i;
-                            while (i < state.lines.size() && !state.lines[i].starts_with(L"## "))
+                            while (i < state.lines.size() && !state.lines[i].starts_with("## "))
                                 ++i;
-                            std::vector<std::wstring> block(state.lines.begin() + static_cast<std::ptrdiff_t>(start), state.lines.begin() + static_cast<std::ptrdiff_t>(i));
+                            std::vector<std::string> block(state.lines.begin() + static_cast<std::ptrdiff_t>(start), state.lines.begin() + static_cast<std::ptrdiff_t>(i));
                             state.block_hashes.insert(hash_block(block));
                         }
                         else
@@ -286,10 +286,10 @@ namespace zelph::io
                 bool changed = false;
                 for (auto& [heading, markdown_code] : adds)
                 {
-                    std::vector<std::wstring> markdown_lines;
-                    std::wistringstream       mstream(markdown_code);
+                    std::vector<std::string> markdown_lines;
+                    std::istringstream       mstream(markdown_code);
                     mstream.imbue(std::locale(""));
-                    std::wstring ml;
+                    std::string ml;
                     while (std::getline(mstream, ml))
                         markdown_lines.push_back(ml);
 
@@ -297,9 +297,9 @@ namespace zelph::io
                         continue;
 
                     // Build full block: heading + empty line + markdown lines
-                    std::vector<std::wstring> new_block;
-                    new_block.emplace_back(L"## " + heading);
-                    new_block.emplace_back(L"");
+                    std::vector<std::string> new_block;
+                    new_block.emplace_back("## " + heading);
+                    new_block.emplace_back("");
                     new_block.insert(new_block.end(), markdown_lines.begin(), markdown_lines.end());
 
                     uint64_t block_hash = hash_block(new_block);
@@ -307,14 +307,14 @@ namespace zelph::io
                         continue; // duplicate → skip
 
                     // Insert into content
-                    std::wstring formatted_heading = new_block[0];
-                    auto         it                = std::find(state.lines.begin(), state.lines.end(), formatted_heading);
+                    std::string formatted_heading = new_block[0];
+                    auto        it                = std::find(state.lines.begin(), state.lines.end(), formatted_heading);
                     if (it == state.lines.end())
                     {
                         // New heading → append at end
                         if (!state.lines.empty() && !state.lines.back().empty())
                         {
-                            state.lines.emplace_back(L"");
+                            state.lines.emplace_back("");
                         }
                         state.lines.insert(state.lines.end(), new_block.begin(), new_block.end());
                     }
@@ -343,7 +343,7 @@ namespace zelph::io
                         continue;
                     }
                     for (const auto& l : state.lines)
-                        out << string::unicode::to_utf8(l) << "\n";
+                        out << l << "\n";
 
                     out.close();
 

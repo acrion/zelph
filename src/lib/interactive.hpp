@@ -43,20 +43,20 @@ namespace zelph::console
         explicit Interactive(io::OutputHandler output = io::default_output_handler);
         ~Interactive();
 
-        void               import_file(const std::wstring& file) const;
-        void               process(std::wstring line) const;
+        void               import_file(const std::string& file) const;
+        void               process(std::string line) const;
         void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
         std::string        get_lang() const;
         static std::string get_version();
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;
-        void               process_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
+        void               process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
 
         void set_output_handler(io::OutputHandler output) const;
-        void out(const std::wstring& text, bool newline = true) const;
-        void err(const std::wstring& text, bool newline = true) const;
-        void log(const std::wstring& text, bool newline = true) const;
-        void prompt(const std::wstring& text, bool newline = false) const;
+        void out(const std::string& text, bool newline = true) const;
+        void err(const std::string& text, bool newline = true) const;
+        void log(const std::string& text, bool newline = true) const;
+        void prompt(const std::string& text, bool newline = false) const;
 
         Interactive(const Interactive&)            = delete;
         Interactive& operator=(const Interactive&) = delete;

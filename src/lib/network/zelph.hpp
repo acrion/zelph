@@ -41,8 +41,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
-    using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
-    using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
+    using name_of_node_map = ankerl::unordered_dense::map<Node, std::string>;
+    using node_of_name_map = ankerl::unordered_dense::map<std::string, Node>;
 
     // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
     // provides low-level API for graph manipulation, and handles raw binary serialization (I/O)
@@ -92,8 +92,8 @@ namespace zelph::network
         void                 set_lang(const std::string& lang);
         std::string          get_lang() const { return _lang; }
         std::string          lang() const { return _lang; }
-        void                 set_print(std::function<void(std::wstring, bool)> print) const;
-        Node                 node(const std::wstring& name, std::string lang = "");
+        void                 set_print(std::function<void(std::string, bool)> print) const;
+        Node                 node(const std::string& name, std::string lang = "");
         bool                 exists(uint64_t nd) const;
         adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
         adjacency_set        filter(const adjacency_set& source, Node target) const;
@@ -109,7 +109,7 @@ namespace zelph::network
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
         Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
         Node                 list(const std::vector<Node>& elements);
-        Node                 list(const std::vector<std::wstring>& elements);
+        Node                 list(const std::vector<std::string>& elements);
         Node                 set(const std::unordered_set<Node>& elements);
         Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
         Node                 parse_relation(const Node rule) const;
@@ -121,11 +121,11 @@ namespace zelph::network
         void                 invalidate_fact_structures_cache() const noexcept;
         FactComponents       extract_fact_components(Node relation) const;
         void                 set_output_handler(io::OutputHandler output) const;
-        void                 emit(io::OutputChannel channel, const std::wstring& text, bool newline = true) const;
-        void                 out(const std::wstring&, bool newline = true) const;
-        void                 error(const std::wstring&, bool newline = true) const;
-        void                 diagnostic(const std::wstring&, bool newline = true) const;
-        void                 prompt(const std::wstring&, bool newline = false) const;
+        void                 emit(io::OutputChannel channel, const std::string& text, bool newline = true) const;
+        void                 out(const std::string&, bool newline = true) const;
+        void                 error(const std::string&, bool newline = true) const;
+        void                 diagnostic(const std::string&, bool newline = true) const;
+        void                 prompt(const std::string&, bool newline = false) const;
         io::OutputStream     out_stream() const;
         io::OutputStream     diagnostic_stream() const;
         io::OutputStream     error_stream() const;
@@ -139,23 +139,23 @@ namespace zelph::network
 
         // --- Implemented in zelph_names.cpp (name management) ---
 
-        void                     set_name(Node node, const std::wstring& name, std::string lang, bool merge_on_conflict);
-        Node                     set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang);
-        std::wstring             get_name(const Node node, std::string lang = "", const bool fallback = false) const;
-        std::wstring             get_formatted_name(Node node, const std::string& lang) const;
+        void                     set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
+        Node                     set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang);
+        std::string              get_name(const Node node, std::string lang = "", const bool fallback = false) const;
+        std::string              get_formatted_name(Node node, const std::string& lang) const;
         bool                     has_name(Node node, const std::string& lang) const;
         void                     remove_name(Node node, std::string lang = "");
         void                     unset_name(Node node, std::string lang = "");
-        Node                     get_node(const std::wstring& name, std::string lang = "") const;
-        void                     register_core_node(Node n, const std::wstring& name);
-        Node                     get_core_node(const std::wstring& name) const;
-        std::wstring             get_core_name(Node n) const;
+        Node                     get_node(const std::string& name, std::string lang = "") const;
+        void                     register_core_node(Node n, const std::string& name);
+        Node                     get_core_node(const std::string& name) const;
+        std::string              get_core_name(Node n) const;
         std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
         std::string              format(Node node) const;
         std::vector<std::string> get_languages() const;
         bool                     has_language(const std::string& language) const;
         name_of_node_map         get_nodes_in_language(const std::string& lang) const;
-        std::vector<Node>        resolve_nodes_by_name(const std::wstring& name) const;
+        std::vector<Node>        resolve_nodes_by_name(const std::string& name) const;
         size_t                   get_name_of_node_size(const std::string& lang) const;
         size_t                   get_node_of_name_size(const std::string& lang) const;
         size_t                   language_count() const;
@@ -191,8 +191,8 @@ namespace zelph::network
         } core;
 
     protected:
-        std::string                               _lang{"en"};
-        boost::bimap<network::Node, std::wstring> _core_names;
-        bool                                      _use_parallel{true};
+        std::string                              _lang{"en"};
+        boost::bimap<network::Node, std::string> _core_names;
+        bool                                     _use_parallel{true};
     };
 }

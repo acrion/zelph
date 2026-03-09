@@ -51,7 +51,7 @@ namespace zelph::io
     struct OutputEvent
     {
         OutputChannel channel;
-        std::wstring  text;
+        std::string   text;
         bool          newline{true};
     };
 
@@ -90,7 +90,7 @@ namespace zelph::io
     class OutputStream
     {
     public:
-        using WManip   = std::wostream& (*)(std::wostream&);
+        using WManip   = std::ostream& (*)(std::ostream&);
         using IOSManip = std::ios_base& (*)(std::ios_base&);
 
         OutputStream(OutputHandler handler, OutputChannel channel, bool default_newline = true)
@@ -143,33 +143,20 @@ namespace zelph::io
 
         OutputStream& operator<<(const std::string& value)
         {
-            _stream << string::unicode::from_utf8(value);
+            _stream << value;
             return *this;
         }
 
         OutputStream& operator<<(std::string_view value)
         {
-            _stream << string::unicode::from_utf8(std::string(value));
+            _stream << std::string(value);
             return *this;
         }
 
         OutputStream& operator<<(const char* value)
         {
             if (value)
-                _stream << string::unicode::from_utf8(value);
-            return *this;
-        }
-
-        OutputStream& operator<<(const wchar_t* value)
-        {
-            if (value)
                 _stream << value;
-            return *this;
-        }
-
-        OutputStream& operator<<(std::wstring_view value)
-        {
-            _stream << value;
             return *this;
         }
 
@@ -201,32 +188,32 @@ namespace zelph::io
             if (!_handler)
                 return;
 
-            std::wstring text = _stream.str();
+            std::string text = _stream.str();
 
             if (text.empty() && !newline)
                 return;
 
             _handler(OutputEvent{_channel, text, newline});
 
-            _stream.str(L"");
+            _stream.str("");
             _stream.clear();
         }
 
     private:
         static WManip endl_manip()
         {
-            return static_cast<WManip>(std::endl<wchar_t, std::char_traits<wchar_t>>);
+            return static_cast<WManip>(std::endl<char, std::char_traits<char>>);
         }
 
         static WManip flush_manip()
         {
-            return static_cast<WManip>(std::flush<wchar_t, std::char_traits<wchar_t>>);
+            return static_cast<WManip>(std::flush<char, std::char_traits<char>>);
         }
 
-        OutputHandler       _handler;
-        OutputChannel       _channel;
-        bool                _default_newline{true};
-        bool                _moved_from{false};
-        std::wostringstream _stream;
+        OutputHandler      _handler;
+        OutputChannel      _channel;
+        bool               _default_newline{true};
+        bool               _moved_from{false};
+        std::ostringstream _stream;
     };
 }

@@ -256,8 +256,8 @@ namespace zelph::network
             auto rel_name = [&](Node r) -> std::string
             {
                 if (!r) return "0";
-                std::wstring wn = _zelph->get_name(r, _zelph->lang(), true);
-                if (!wn.empty()) return zelph::string::unicode::to_utf8(wn);
+                std::string wn = _zelph->get_name(r, _zelph->lang(), true);
+                if (!wn.empty()) return wn;
                 return _zelph->format(r);
             };
 

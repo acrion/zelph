@@ -169,7 +169,7 @@ bool refill_cache(ReadAsync::Impl* impl)
     return true;
 }
 
-bool ReadAsync::get_line(std::wstring& line, std::streamoff& streampos) const
+bool ReadAsync::get_line(std::string& line, std::streamoff& streampos) const
 {
     // Check if we have data in the local cache
     if (_pImpl->_consumer_index >= _pImpl->_consumer_cache.size())
@@ -179,7 +179,7 @@ bool ReadAsync::get_line(std::wstring& line, std::streamoff& streampos) const
 
     // No lock needed here, we are working on thread-local cache
     const auto& e = _pImpl->_consumer_cache[_pImpl->_consumer_index++];
-    line          = string::unicode::from_utf8(e._line);
+    line          = e._line;
     streampos     = e._streampos;
     return true;
 }

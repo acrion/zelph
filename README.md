@@ -385,7 +385,7 @@ zelph> <3 1> is prime
 Why this works:
 
 - `<13>` is parsed as a compact list of characters `"1"` and `"3"`, **reversed before cons construction**, so it becomes the same internal cons chain as `<3 1>`.
-- `node_to_wstring` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
+- `node_to_string` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
 
 > To avoid confusion: `<13>` is list syntax, **not** a numeric node ID. Numeric IDs are shown elsewhere in parentheses (e.g. `(10)` in Mermaid graphs).
 
@@ -464,7 +464,7 @@ zelph can perform arbitrary-precision addition purely via graph rules. The refer
 [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
 
 **Key idea:** numbers are Lisp-style cons-lists of digit nodes, stored **LSB-first**.  
-For example, `<42>` is internally `2 cons (4 cons nil)`. `node_to_wstring` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
+For example, `<42>` is internally `2 cons (4 cons nil)`. `node_to_string` reverses digit order for display when list elements are single-character nodes, so results appear in conventional MSB-first notation. (This is a formatting choice; zelph does not treat digits specially at the semantic level.)
 
 The script consists of three parts:
 

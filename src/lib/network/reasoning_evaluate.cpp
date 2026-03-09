@@ -200,12 +200,12 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             _contradiction = true;
                             ++_total_contradictions;
 
-                            std::wstring output;
-                            string::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                            std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
+                            std::string output;
+                            string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                            std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
 
                             if (_print_deductions) out(string::unmark_identifiers(message), true);
-                            if (_generate_markdown) _markdown->add(L"Contradictions", message);
+                            if (_generate_markdown) _markdown->add("Contradictions", message);
                         }
                     }
                     else if (_prune_mode)
@@ -250,9 +250,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         else
                         {
-                            std::wstring output;
-                            string::node_to_wstring(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
-                            out(L"Answer: " + string::unmark_identifiers(output), true);
+                            std::string output;
+                            string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
+                            out("Answer: " + string::unmark_identifiers(output), true);
                         }
                     }
                 }
@@ -260,14 +260,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             if (should_log(depth))
             {
-                std::wstring cond_str;
-                string::node_to_wstring(this, cond_str, _lang, condition, 3, *rule.variables, rule.node);
-                log(depth, "neg-eval", "Processing negated condition " + string::unicode::to_utf8(cond_str));
+                std::string cond_str;
+                string::node_to_string(this, cond_str, _lang, condition, 3, *rule.variables, rule.node);
+                log(depth, "neg-eval", "Processing negated condition " + cond_str);
 
                 log(depth, "neg-eval", "Current variable bindings:");
                 for (const auto& [var, val] : *rule.variables)
                 {
-                    log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
+                    log(depth, "neg-eval", get_name(var, _lang, true) + " (id=" + std::to_string(var) + ") -> " + get_name(val, _lang, true) + " (id=" + std::to_string(val) + ")");
                 }
             }
 
@@ -296,7 +296,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
                         for (const auto& [var, val] : *match)
                         {
-                            log(depth, "neg-eval", string::unicode::to_utf8(get_name(var, _lang, true)) + " (id=" + std::to_string(var) + ") -> " + string::unicode::to_utf8(get_name(val, _lang, true)) + " (id=" + std::to_string(val) + ")");
+                            log(depth, "neg-eval", get_name(var, _lang, true) + " (id=" + std::to_string(var) + ") -> " + get_name(val, _lang, true) + " (id=" + std::to_string(val) + ")");
                         }
                     }
                     // Match found => negation fails => prune this branch
@@ -499,9 +499,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         _contradiction = true;
                         ++_total_contradictions;
 
-                        std::wstring output;
-                        string::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                        std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
+                        std::string output;
+                        string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                        std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
 
                         if (_print_deductions)
                         {
@@ -509,7 +509,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         if (_generate_markdown)
                         {
-                            _markdown->add(L"Contradictions", message);
+                            _markdown->add("Contradictions", message);
                         }
                     }
                 }
@@ -554,9 +554,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     else
                     {
-                        std::wstring output;
-                        string::node_to_wstring(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
-                        out(L"Answer: " + string::unmark_identifiers(output), true);
+                        std::string output;
+                        string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
+                        out("Answer: " + string::unmark_identifiers(output), true);
                     }
                 }
             }

@@ -178,7 +178,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
 
 #ifdef DEBUG_MERMAID
     diagnostic_stream() << "[DEBUG_MERMAID] identify_subgraph node=" << n
-                        << " (name: " << string::unicode::to_utf8(get_name(n, _lang, true))
+                        << " (name: " << get_name(n, _lang, true)
                         << ", format: " << format(n) << ")" << std::endl;
 #endif
 
@@ -198,8 +198,8 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
             {
 #ifdef DEBUG_MERMAID
                 diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 2 FAILED: multiple predicate candidates: "
-                                    << pred_candidate << " (" << string::unicode::to_utf8(get_name(pred_candidate, _lang, true)) << ") and "
-                                    << p << " (" << string::unicode::to_utf8(get_name(p, _lang, true)) << ")" << std::endl;
+                                    << pred_candidate << " (" << get_name(pred_candidate, _lang, true) << ") and "
+                                    << p << " (" << get_name(p, _lang, true) << ")" << std::endl;
 #endif
                 return false; // more than one predicate candidate
             }
@@ -213,7 +213,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
         for (network::Node p : right)
         {
             diagnostic_stream() << "[DEBUG_MERMAID]     outgoing " << p
-                                << " (name: " << string::unicode::to_utf8(get_name(p, _lang, true))
+                                << " (name: " << get_name(p, _lang, true)
                                 << ", is_hash=" << network::Zelph::is_hash(p)
                                 << ", is_var=" << network::Zelph::is_var(p)
                                 << ", is_RTC=" << check_fact(p, z->core.IsA, {z->core.RelationTypeCategory}).is_known()
@@ -235,7 +235,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
     {
 #ifdef DEBUG_MERMAID
         diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 3 FAILED: no bidirectional neighbor found (predicate="
-                            << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << "))" << std::endl;
+                            << predicate << " (" << get_name(predicate, _lang, true) << "))" << std::endl;
         diagnostic_stream() << "[DEBUG_MERMAID]     right nodes:";
         for (network::Node s : right)
             diagnostic_stream() << " " << s;
@@ -264,8 +264,8 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
                 {
 #ifdef DEBUG_MERMAID
                     diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 3 FAILED: multiple non-hash bidirectional neighbors: "
-                                        << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
-                                        << s << " (" << string::unicode::to_utf8(get_name(s, _lang, true)) << ")" << std::endl;
+                                        << non_hash << " (" << get_name(non_hash, _lang, true) << ") and "
+                                        << s << " (" << get_name(s, _lang, true) << ")" << std::endl;
 #endif
                     return false; // ambiguous
                 }
@@ -280,7 +280,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
             for (network::Node s : bidi_nodes)
             {
                 diagnostic_stream() << "[DEBUG_MERMAID]     bidi " << s
-                                    << " (name: " << string::unicode::to_utf8(get_name(s, _lang, true))
+                                    << " (name: " << get_name(s, _lang, true)
                                     << ", format: " << format(s)
                                     << ", is_hash=" << network::Zelph::is_hash(s)
                                     << ", is_var=" << network::Zelph::is_var(s) << ")" << std::endl;
@@ -326,8 +326,8 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
                 {
 #ifdef DEBUG_MERMAID
                     diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 4 FAILED: multiple non-hash incoming-only neighbors: "
-                                        << non_hash << " (" << string::unicode::to_utf8(get_name(non_hash, _lang, true)) << ") and "
-                                        << o << " (" << string::unicode::to_utf8(get_name(o, _lang, true)) << ")" << std::endl;
+                                        << non_hash << " (" << get_name(non_hash, _lang, true) << ") and "
+                                        << o << " (" << get_name(o, _lang, true) << ")" << std::endl;
 #endif
                     return false; // multiple objects — not handled
                 }
@@ -342,7 +342,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
             for (network::Node o : incoming_only)
             {
                 diagnostic_stream() << "[DEBUG_MERMAID]     incoming-only " << o
-                                    << " (name: " << string::unicode::to_utf8(get_name(o, _lang, true))
+                                    << " (name: " << get_name(o, _lang, true)
                                     << ", format: " << format(o)
                                     << ", is_hash=" << network::Zelph::is_hash(o) << ")" << std::endl;
             }
@@ -366,7 +366,7 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
                     containment_conflicts->insert(object);
 #ifdef DEBUG_MERMAID
                     diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 5 CONFLICT (allowed via cloning): subject " << subject
-                                        << " contains object " << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                                        << " contains object " << object << " (" << get_name(object, _lang, true)
                                         << ")" << std::endl;
 #endif
                 }
@@ -395,9 +395,9 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
                     containment_conflicts->insert(subject);
 #ifdef DEBUG_MERMAID
                     diagnostic_stream() << "[DEBUG_MERMAID]   Criterion 6 CONFLICT (allowed via cloning): object " << object
-                                        << " (" << string::unicode::to_utf8(get_name(object, _lang, true))
+                                        << " (" << get_name(object, _lang, true)
                                         << ") contains subject " << subject
-                                        << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")" << std::endl;
+                                        << " (" << get_name(subject, _lang, true) << ")" << std::endl;
 #endif
                 }
                 else
@@ -414,9 +414,9 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
 
 #ifdef DEBUG_MERMAID
     diagnostic_stream() << "[DEBUG_MERMAID]   SUCCESS: subgraph node=" << n
-                        << " subject=" << subject << " (" << string::unicode::to_utf8(get_name(subject, _lang, true)) << ")"
-                        << " predicate=" << predicate << " (" << string::unicode::to_utf8(get_name(predicate, _lang, true)) << ")"
-                        << " object=" << object << " (" << string::unicode::to_utf8(get_name(object, _lang, true)) << ")" << std::endl;
+                        << " subject=" << subject << " (" << get_name(subject, _lang, true) << ")"
+                        << " predicate=" << predicate << " (" << get_name(predicate, _lang, true) << ")"
+                        << " object=" << object << " (" << get_name(object, _lang, true) << ")" << std::endl;
 #endif
 
     return true;
@@ -727,7 +727,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
 
 #ifdef DEBUG_MERMAID
                     diagnostic_stream() << "[DEBUG_MERMAID] Clone: node " << nd
-                                        << " (" << string::unicode::to_utf8(get_name(nd, _lang, true))
+                                        << " (" << get_name(nd, _lang, true)
                                         << ") cloned as " << cid << " in subgraph " << sg
                                         << " (owner subgraph: " << owner << ")" << std::endl;
 #endif
@@ -1137,10 +1137,10 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         std::string indent(indent_level * 4, ' ');
         std::string sg_id = "sg_" + std::to_string(static_cast<unsigned long long>(sg));
 
-        // Generate subgraph label from z->node_to_wstring
-        std::wstring label_w;
-        string::node_to_wstring(z, label_w, z->get_lang(), sg, max_neighbors);
-        std::string label = string::unicode::to_utf8(label_w);
+        // Generate subgraph label from z->node_to_string
+        std::string label_w;
+        string::node_to_string(z, label_w, z->get_lang(), sg, max_neighbors);
+        std::string label = label_w;
         boost::replace_all(label, "\"", "#quot;");
 
         mermaid << indent << "subgraph " << sg_id << "[\"" << label << "\"]" << std::endl;

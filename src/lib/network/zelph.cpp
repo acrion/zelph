@@ -72,12 +72,12 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
-void Zelph::set_print(std::function<void(std::wstring, bool)> print) const
+void Zelph::set_print(std::function<void(std::string, bool)> print) const
 {
     _pImpl->_print = print;
 }
 
-Node Zelph::node(const std::wstring& name, std::string lang)
+Node Zelph::node(const std::string& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
     if (name.empty())
@@ -252,8 +252,8 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
                                                                        { return connectedFromRelation.count(t) == 1; });
 
             // inconsistent state => debug output TODO
-            std::wstring output;
-            string::node_to_wstring(this, output, _lang, relation, 3);
+            std::string output;
+            string::node_to_string(this, output, _lang, relation, 3);
             error(output, true);
 
             io::gen_mermaid_html(this,
@@ -265,34 +265,34 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
                                  true,
                                  true,
                                  true);
-            error(L"relationConnectsToSubject         == " + std::to_wstring(relationConnectsToSubject), true);
-            error(L"subjectConnectsToRelation         == " + std::to_wstring(subjectConnectsToRelation), true);
-            error(L"allObjectsConnectToRelation       == " + std::to_wstring(allObjectsConnectToRelation), true);
-            error(L"noObjectsAreConnectedFromRelation == " + std::to_wstring(noObjectsAreConnectedFromRelation), true);
+            error("relationConnectsToSubject         == " + std::to_string(relationConnectsToSubject), true);
+            error("subjectConnectsToRelation         == " + std::to_string(subjectConnectsToRelation), true);
+            error("allObjectsConnectToRelation       == " + std::to_string(allObjectsConnectToRelation), true);
+            error("noObjectsAreConnectedFromRelation == " + std::to_string(noObjectsAreConnectedFromRelation), true);
 
             FactComponents actual = extract_fact_components(relation);
-            error(L"Hash collision detected for relation=" + std::to_wstring(relation), true);
-            error(L"Expected inputs to create_hash:", true);
-            error(L"  Subject:   " + std::to_wstring(subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(subject).to_string()) + L")", true);
-            error(L"  Predicate: " + std::to_wstring(predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(predicate).to_string()) + L")", true);
-            error(L"  Objects:", true);
+            error("Hash collision detected for relation=" + std::to_string(relation), true);
+            error("Expected inputs to create_hash:", true);
+            error("  Subject:   " + std::to_string(subject) + " (hex: 0x" + string::to_hex(subject) + ", bin: " + std::bitset<64>(subject).to_string() + ")", true);
+            error("  Predicate: " + std::to_string(predicate) + " (hex: 0x" + string::to_hex(predicate) + ", bin: " + std::bitset<64>(predicate).to_string() + ")", true);
+            error("  Objects:", true);
             for (Node obj : objects)
             {
-                error(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+                error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
             }
 
-            error(L"Actual inputs in existing relation:", true);
-            error(L"  Subject:   " + std::to_wstring(actual.subject) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.subject)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.subject).to_string()) + L")", true);
-            error(L"  Predicate: " + std::to_wstring(actual.predicate) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(actual.predicate)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(actual.predicate).to_string()) + L")", true);
-            error(L"  Objects:", true);
+            error("Actual inputs in existing relation:", true);
+            error("  Subject:   " + std::to_string(actual.subject) + " (hex: 0x" + string::to_hex(actual.subject) + ", bin: " + std::bitset<64>(actual.subject).to_string() + ")", true);
+            error("  Predicate: " + std::to_string(actual.predicate) + " (hex: 0x" + string::to_hex(actual.predicate) + ", bin: " + std::bitset<64>(actual.predicate).to_string() + ")", true);
+            error("  Objects:", true);
             for (Node obj : actual.objects)
             {
-                error(L"    " + std::to_wstring(obj) + L" (hex: 0x" + string::unicode::from_utf8(string::to_hex(obj)) + L", bin: " + string::unicode::from_utf8(std::bitset<64>(obj).to_string()) + L")", true);
+                error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
             }
 
             static int hash_collision_count = 0;
             ++hash_collision_count;
-            error(L"Hash collision count: " + std::to_wstring(hash_collision_count), true);
+            error("Hash collision count: " + std::to_string(hash_collision_count), true);
 
             assert(false);
         }
@@ -363,10 +363,10 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                     // or
                     // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
 
-                    const std::wstring name_subject_object = get_name(subject, _lang, true);
-                    const std::wstring name_relationType   = get_name(predicate, _lang, true);
+                    const std::string name_subject_object = get_name(subject, _lang, true);
+                    const std::string name_relationType   = get_name(predicate, _lang, true);
 
-                    throw std::runtime_error("fact(): facts with same subject and object are only supported for facts with a single object: " + string::unicode::to_utf8(name_subject_object) + " " + string::unicode::to_utf8(name_relationType) + " " + string::unicode::to_utf8(name_subject_object));
+                    throw std::runtime_error("fact(): facts with same subject and object are only supported for facts with a single object: " + name_subject_object + " " + name_relationType + " " + name_subject_object);
                 }
             }
             else
@@ -397,7 +397,7 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
  * the same Node value. This is guaranteed because fact(subject, predicate, objects) computes
  * the Node via a reproducible hash based on the triple (subject, predicate, objects) and
  * returns the existing Node if one with that exact triple already exists; it never creates
- * duplicates. For the string-based overload, node(const std::wstring&) additionally ensures
+ * duplicates. For the string-based overload, node(const std::string&) additionally ensures
  * that identical names map to the same Node before fact() is called.
  *
  * This structural identity is essential for rule-based arithmetic and consistent
@@ -425,7 +425,7 @@ Node Zelph::list(const std::vector<Node>& elements)
  * Builds a Lisp-style cons list from a vector of wide strings (typically single characters
  * or digits).
  *
- * Each wstring is first converted to a Node via node(element), then the general
+ * Each string is first converted to a Node via node(element), then the general
  * Node-based sequence() overload is called. This centralizes the cons-building logic
  * and guarantees both overloads produce exactly the same Lisp-style structure.
  *
@@ -443,7 +443,7 @@ Node Zelph::list(const std::vector<Node>& elements)
  *    {Nil}) — a structurally different node. Giving the cons cell the same name "4" would
  *    conflate two concepts that are better kept separate.
  */
-Node Zelph::list(const std::vector<std::wstring>& elements)
+Node Zelph::list(const std::vector<std::string>& elements)
 {
     if (elements.empty()) return core.Nil;
 
@@ -800,28 +800,28 @@ void Zelph::set_output_handler(io::OutputHandler output) const
     _pImpl->_output = std::move(output);
 }
 
-void Zelph::emit(io::OutputChannel channel, const std::wstring& text, bool newline) const
+void Zelph::emit(io::OutputChannel channel, const std::string& text, bool newline) const
 {
     std::lock_guard lock(_pImpl->_mtx_print);
     _pImpl->emit(channel, text, newline);
 }
 
-void Zelph::out(const std::wstring& msg, bool newline) const
+void Zelph::out(const std::string& msg, bool newline) const
 {
     emit(io::OutputChannel::Out, msg, newline);
 }
 
-void Zelph::error(const std::wstring& msg, bool newline) const
+void Zelph::error(const std::string& msg, bool newline) const
 {
     emit(io::OutputChannel::Error, msg, newline);
 }
 
-void Zelph::diagnostic(const std::wstring& msg, bool newline) const
+void Zelph::diagnostic(const std::string& msg, bool newline) const
 {
     emit(io::OutputChannel::Diagnostic, msg, newline);
 }
 
-void Zelph::prompt(const std::wstring& msg, bool newline) const
+void Zelph::prompt(const std::string& msg, bool newline) const
 {
     emit(io::OutputChannel::Prompt, msg, newline);
 }

@@ -3,12 +3,12 @@
 using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("zelph::network");
 
-struct NodeValuePair {  # For _name_of_node: key=Node (UInt64), value=Text (UTF-8 wstring)
+struct NodeValuePair {  # For _name_of_node: key=Node (UInt64), value=Text (UTF-8 string)
   key @0 :UInt64;
   value @1 :Text;
 }
 
-struct ValueNodePair {  # For _node_of_name: key=Text (UTF-8 wstring), value=Node (UInt64)
+struct ValueNodePair {  # For _node_of_name: key=Text (UTF-8 string), value=Node (UInt64)
   key @0 :Text;
   value @1 :UInt64;
 }

@@ -45,7 +45,7 @@ Interactive interactive;
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
-    _setmode(_fileno(stdout), _O_U16TEXT);
+    SetConsoleOutputCP(CP_UTF8);
 #elif defined(NDEBUG)
     if (getenv("ZELPH_NO_RLWRAP") == nullptr)
     {
@@ -80,9 +80,9 @@ int main(int argc, char** argv)
 #endif
     try
     {
-        std::wstring              exit_command = L".exit";
-        std::vector<std::wstring> script_files;
-        bool                      show_version = false;
+        std::string              exit_command = ".exit";
+        std::vector<std::string> script_files;
+        bool                     show_version = false;
 
         std::vector<std::string> script_args;
 
@@ -95,7 +95,7 @@ int main(int argc, char** argv)
             }
             else if (script_files.empty())
             {
-                script_files.push_back(zelph::string::unicode::from_utf8(arg));
+                script_files.push_back(arg);
             }
             else
             {
@@ -105,7 +105,7 @@ int main(int argc, char** argv)
 
         if (show_version)
         {
-            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()));
+            interactive.out("zelph " + zelph::console::Interactive::get_version());
 
             return 0;
         }
@@ -117,31 +117,30 @@ int main(int argc, char** argv)
 
         if (script_files.empty())
         {
-            interactive.out(L"zelph " + zelph::string::unicode::from_utf8(zelph::console::Interactive::get_version()));
-            interactive.out(L"-- REPL mode - type .help for commands, " + exit_command + L" to exit --");
-            interactive.out(L"");
+            interactive.out("zelph " + zelph::console::Interactive::get_version());
+            interactive.out("-- REPL mode - type .help for commands, " + exit_command + " to exit --");
+            interactive.out("");
 
-            auto make_prompt = [&]() -> std::wstring
+            auto make_prompt = [&]() -> std::string
             {
                 if (interactive.is_accumulating())
-                    return L"";
+                    return "";
                 else
-                    return zelph::string::unicode::from_utf8(interactive.get_lang())
-                         + (interactive.is_auto_run_active() ? L"> " : L"-> ");
+                    return interactive.get_lang()
+                         + (interactive.is_auto_run_active() ? "> " : "-> ");
             };
 
             interactive.prompt(make_prompt(), false);
 
-            std::string line8;
-            while (std::getline(std::cin, line8))
+            std::string line;
+            while (std::getline(std::cin, line))
             {
-                std::wstring line = zelph::string::unicode::from_utf8(line8);
                 if (line == exit_command)
                     break;
 
                 if (line.empty())
                 {
-                    interactive.out(L"type .help for help --");
+                    interactive.out("type .help for help --");
                     interactive.prompt(make_prompt(), false);
                     continue;
                 }
@@ -152,18 +151,18 @@ int main(int argc, char** argv)
                 }
                 catch (const std::exception& e)
                 {
-                    interactive.err(zelph::string::unicode::from_utf8(e.what()));
+                    interactive.err(e.what());
                 }
 
                 interactive.prompt(make_prompt(), false);
             }
 
-            interactive.out(L"");
+            interactive.out("");
         }
     }
     catch (std::exception& ex)
     {
-        interactive.err(zelph::string::unicode::from_utf8(ex.what()));
+        interactive.err(ex.what());
     }
 
     return 0;

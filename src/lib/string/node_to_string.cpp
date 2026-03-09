@@ -46,7 +46,7 @@ bool zelph::string::is_inside_node_to_wstring()
     return format_fact_level > 0;
 }
 
-void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::wstring& result, const std::string& lang, network::Node fact, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
+void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::string& result, const std::string& lang, network::Node fact, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
 {
     // Formats a fact into a string representation.
 
@@ -63,7 +63,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     IncDec incDec(format_fact_level);
 #ifdef DEBUG_FORMAT_FACT
     std::string indent(format_fact_level * 2, ' ');
-    diagnostic_stream() << indent << "[DEBUG node_to_wstring] ENTRY fact=" << fact << " parent=" << parent << std::endl;
+    diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY fact=" << fact << " parent=" << parent << std::endl;
 #endif
 
     if (!history) history = std::make_shared<std::unordered_set<network::Node>>();
@@ -88,9 +88,9 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     if (history->find(resolved) != history->end())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_wstring] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
+        diagnostic_stream() << indent << "[DEBUG node_to_string] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
 #endif
-        result = L"?";
+        result = "?";
         return;
     }
 
@@ -127,11 +127,11 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
 
     // 2. Name Check
     // If the node has a direct name, use it.
-    std::wstring name = z->get_formatted_name(resolved, lang);
+    std::string name = z->get_formatted_name(resolved, lang);
     if (!name.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_wstring] Found name '" << string::unicode::to_utf8(name) << "' for node " << resolved << std::endl;
+        diagnostic_stream() << indent << "[DEBUG node_to_string] Found name '" << name << "' for node " << resolved << std::endl;
 #endif
         result = string::mark_identifier(name);
         return;
@@ -146,7 +146,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
         if (rel_type == z->core.Cons)
         {
 #ifdef DEBUG_FORMAT_FACT
-            diagnostic_stream() << indent << "[DEBUG node_to_wstring] DETECTED CONS LIST starting at " << resolved << std::endl;
+            diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED CONS LIST starting at " << resolved << std::endl;
 #endif
             auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
             child_history->insert(resolved);
@@ -184,7 +184,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
                 bool all_single_char = std::all_of(list_elements.begin(), list_elements.end(), [&](network::Node e) -> bool
                                                    {
                         network::Node         eff = resolve_var(e);
-                        std::wstring nm  = z->get_formatted_name(eff, lang);
+                        std::string nm  = z->get_formatted_name(eff, lang);
                         return nm.length() == 1; });
 
                 if (all_single_char)
@@ -193,41 +193,41 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
                     // conventional display is MSB-first. Omit spaces to match input syntax.
                     std::vector<network::Node> display_elements(list_elements.rbegin(), list_elements.rend());
 
-                    result = L"<";
+                    result = "<";
                     for (network::Node e : display_elements)
                     {
-                        std::wstring elem_str;
-                        string::node_to_wstring(z, elem_str, lang, resolve_var(e), max_objects, variables, resolved, child_history);
-                        result += boost::algorithm::trim_copy_if(elem_str, boost::algorithm::is_any_of(L"«»"));
+                        std::string elem_str;
+                        string::node_to_string(z, elem_str, lang, resolve_var(e), max_objects, variables, resolved, child_history);
+                        result += boost::algorithm::trim_copy_if(elem_str, boost::algorithm::is_any_of("«»"));
                     }
-                    result += L">";
+                    result += ">";
                 }
                 else
                 {
-                    result     = L"<";
+                    result     = "<";
                     bool first = true;
                     for (network::Node e : list_elements)
                     {
-                        if (!first) result += L" ";
-                        std::wstring elem_str;
-                        string::node_to_wstring(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
+                        if (!first) result += " ";
+                        std::string elem_str;
+                        string::node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
 
                         // Wrap in parentheses if it's a composite expression (not a simple name).
                         if (!elem_str.empty()
-                            && elem_str.find(L' ') != std::wstring::npos
+                            && elem_str.find(L' ') != std::string::npos
                             && elem_str.front() != L'('
                             && elem_str.front() != L'<'
                             && elem_str.front() != L'{')
                         {
                             network::Node eff_e = resolve_var(e);
                             if (elem_str != z->get_formatted_name(eff_e, lang))
-                                elem_str = L"(" + elem_str + L")";
+                                elem_str = "(" + elem_str + ")";
                         }
 
                         result += elem_str;
                         first = false;
                     }
-                    result += L">";
+                    result += ">";
                 }
                 return;
             }
@@ -262,7 +262,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     if (!elements.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_wstring] DETECTED SET with " << elements.size() << " elements." << std::endl;
+        diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED SET with " << elements.size() << " elements." << std::endl;
 #endif
         auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
         child_history->insert(resolved);
@@ -270,16 +270,16 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
         std::vector<network::Node> sorted_elements(elements.begin(), elements.end());
         std::sort(sorted_elements.begin(), sorted_elements.end());
 
-        result     = L"{";
+        result     = "{";
         bool first = true;
         for (network::Node e : sorted_elements)
         {
-            if (!first) result += L" ";
-            std::wstring elem_str;
-            node_to_wstring(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
+            if (!first) result += " ";
+            std::string elem_str;
+            node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
 
             if (!elem_str.empty()
-                && elem_str.find(L' ') != std::wstring::npos
+                && elem_str.find(L' ') != std::string::npos
                 && elem_str.front() != L'('
                 && elem_str.front() != L'<'
                 && elem_str.front() != L'{')
@@ -287,14 +287,14 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
                 network::Node eff_e = resolve_var(e);
                 if (elem_str != z->get_formatted_name(eff_e, lang))
                 {
-                    elem_str = L"(" + elem_str + L")";
+                    elem_str = "(" + elem_str + ")";
                 }
             }
 
             result += elem_str;
             first = false;
         }
-        result += L"}";
+        result += "}";
 
         return;
     }
@@ -327,14 +327,14 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
                         }
 
 #ifdef DEBUG_FORMAT_FACT
-                        diagnostic_stream() << indent << "[DEBUG node_to_wstring] Found IsA proxy to concept=" << concept_node << std::endl;
+                        diagnostic_stream() << indent << "[DEBUG node_to_string] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
-                        string::node_to_wstring(z, result, lang, concept_node, max_objects, variables, parent, history);
+                        string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history);
 
-                        if (!result.empty() && result != L"?")
+                        if (!result.empty() && result != "?")
                         {
 #ifdef DEBUG_FORMAT_FACT
-                            diagnostic_stream() << indent << "[DEBUG node_to_wstring] Proxy resolved to: " << string::unicode::to_utf8(result) << std::endl;
+                            diagnostic_stream() << indent << "[DEBUG node_to_string] Proxy resolved to: " << result << std::endl;
 #endif
                             return;
                         }
@@ -348,7 +348,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_wstring] Standard path (Statement/Fact)." << std::endl;
+    diagnostic_stream() << indent << "[DEBUG node_to_string] Standard path (Statement/Fact)." << std::endl;
 #endif
 
     network::adjacency_set objects;
@@ -357,7 +357,7 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     bool is_condition = false;
 
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_wstring] z->parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
+    diagnostic_stream() << indent << "[DEBUG node_to_string] z->parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
 #endif
 
     if (subject == 0 && !is_condition)
@@ -388,14 +388,14 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
         if (fallback_subj == 0)
         {
 #ifdef DEBUG_FORMAT_FACT
-            diagnostic_stream() << indent << "[DEBUG node_to_wstring] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
+            diagnostic_stream() << indent << "[DEBUG node_to_string] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
 #endif
-            result = string::mark_identifier(L"??");
+            result = string::mark_identifier("??");
             return;
         }
 
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_wstring] Fallback subject found: " << fallback_subj << std::endl;
+        diagnostic_stream() << indent << "[DEBUG node_to_string] Fallback subject found: " << fallback_subj << std::endl;
 #endif
 
         // Reconstruct objects: nodes in get_left(resolved) that are neither the subject
@@ -419,24 +419,24 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
     child_history->insert(resolved);
 
-    std::wstring subject_name, relation_name;
+    std::string subject_name, relation_name;
 
     if (!is_condition || subject)
     {
         // Recursion for Subject
-        std::wstring s_str;
-        node_to_wstring(z, s_str, lang, subject, max_objects, variables, resolved, child_history);
+        std::string s_str;
+        node_to_string(z, s_str, lang, subject, max_objects, variables, resolved, child_history);
 
         // Wrap subject only if it's a composite fact, not a named atom
         bool needs_parens = false;
         if (!s_str.empty()
-            && s_str.find(L' ') != std::wstring::npos
+            && s_str.find(L' ') != std::string::npos
             && s_str.front() != L'('
             && s_str.front() != L'<'
             && s_str.front() != L'{')
         {
             network::Node eff_subj = resolve_var(subject);
-            std::wstring  raw_name = z->get_formatted_name(eff_subj, lang);
+            std::string   raw_name = z->get_formatted_name(eff_subj, lang);
             // Compare the formatted string with the MARKED raw name
             if (s_str != string::mark_identifier(raw_name))
             {
@@ -445,16 +445,16 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
         }
 
         if (needs_parens)
-            subject_name = L"(" + s_str + L")";
+            subject_name = "(" + s_str + ")";
         else
-            subject_name = s_str.empty() ? (is_condition ? L"" : string::mark_identifier(L"?")) : s_str;
+            subject_name = s_str.empty() ? (is_condition ? "" : string::mark_identifier("?")) : s_str;
 
         network::Node relation = z->parse_relation(resolved);
         // Recursion for Relation (usually just get name, but handle complex relations)
         // Here we can assume relations are mostly named or simple, preventing deep noise
         relation = resolve_var(relation);
 
-        std::wstring raw_rel_name = z->get_formatted_name(relation, lang);
+        std::string raw_rel_name = z->get_formatted_name(relation, lang);
         if (!raw_rel_name.empty())
         {
             // Relation has a name -> mark it manually, as we didn't recurse
@@ -463,64 +463,64 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
         else
         {
             // Recurse -> returns marked string
-            std::wstring r_str;
-            node_to_wstring(z, r_str, lang, relation, max_objects, variables, resolved, child_history);
-            relation_name = r_str.empty() ? string::mark_identifier(L"?") : r_str;
+            std::string r_str;
+            node_to_string(z, r_str, lang, relation, max_objects, variables, resolved, child_history);
+            relation_name = r_str.empty() ? string::mark_identifier("?") : r_str;
 
             // Wrap complex unnamed relations in parens too.
             // For consistency with subject/object, we usually assume relations are simple,
             // but if r_str has spaces and isn't a container, wrap it.
-            if (relation_name.find(L' ') != std::wstring::npos
+            if (relation_name.find(L' ') != std::string::npos
                 && relation_name.front() != L'('
                 && relation_name.front() != L'<'
                 && relation_name.front() != L'{')
-                relation_name = L"(" + relation_name + L")";
+                relation_name = "(" + relation_name + ")";
         }
     }
 
-    std::wstring objects_name;
+    std::string objects_name;
 
     if (objects.size() > max_objects)
     {
-        objects_name = string::mark_identifier(L"(... " + std::to_wstring(objects.size()) + L" objects ...)");
+        objects_name = string::mark_identifier("(... " + std::to_string(objects.size()) + " objects ...)");
     }
     else
     {
         for (network::Node object : objects)
         {
-            std::wstring o_str;
-            node_to_wstring(z, o_str, lang, object, max_objects, variables, resolved, child_history);
+            std::string o_str;
+            node_to_string(z, o_str, lang, object, max_objects, variables, resolved, child_history);
 
             // Wrap object only if it's a composite fact, not a named atom
             if (!o_str.empty()
-                && o_str.find(L' ') != std::wstring::npos
+                && o_str.find(L' ') != std::string::npos
                 && o_str.front() != L'('
                 && o_str.front() != L'<'
                 && o_str.front() != L'{')
             {
                 network::Node eff_obj  = resolve_var(object);
-                std::wstring  raw_name = z->get_formatted_name(eff_obj, lang);
+                std::string   raw_name = z->get_formatted_name(eff_obj, lang);
                 // Compare formatted string with MARKED raw name
                 if (o_str != string::mark_identifier(raw_name))
                 {
-                    o_str = L"(" + o_str + L")";
+                    o_str = "(" + o_str + ")";
                 }
             }
 
-            if (o_str.empty()) o_str = string::mark_identifier(L"?");
+            if (o_str.empty()) o_str = string::mark_identifier("?");
 
-            if (!objects_name.empty()) objects_name += L" ";
+            if (!objects_name.empty()) objects_name += " ";
             objects_name += o_str;
         }
-        if (objects_name.empty()) objects_name = string::mark_identifier(L"?");
+        if (objects_name.empty()) objects_name = string::mark_identifier("?");
     }
 
     // The components (subject_name, relation_name, objects_name) are already marked.
-    result = subject_name + L" " + relation_name + L" " + objects_name;
+    result = subject_name + " " + relation_name + " " + objects_name;
 
     if (is_negation)
     {
-        result = L"¬(" + result + L")";
+        result = "¬(" + result + ")";
     }
     // If this is a statement node used as a value inside another structure,
     // wrap the whole triple in parentheses to make it valid input syntax.
@@ -528,13 +528,13 @@ void zelph::string::node_to_wstring(const zelph::network::Zelph* const z, std::w
     {
         network::Node pred = z->parse_relation(resolved);
         if (pred != z->core.Cons) // lists are handled earlier; don't wrap "<...>"
-            result = L"(" + result + L")";
+            result = "(" + result + ")";
     }
 
-    boost::replace_all(result, L"\r\n", L" --- ");
-    boost::replace_all(result, L"\n", L" --- ");
+    boost::replace_all(result, "\r\n", " --- ");
+    boost::replace_all(result, "\n", " --- ");
     boost::trim(result);
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_wstring] EXIT result='" << string::unicode::to_utf8(result) << "'" << std::endl;
+    diagnostic_stream() << indent << "[DEBUG node_to_string] EXIT result='" << result << "'" << std::endl;
 #endif
 }

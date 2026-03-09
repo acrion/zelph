@@ -40,12 +40,12 @@ using namespace zelph::network;
 // If another node already has this name *and* merge_on_conflict is true,
 // the other node's connections are merged into this node, and the other node
 // is subsequently removed.
-void Zelph::set_name(const Node node, const std::wstring& name, std::string lang, const bool merge_on_conflict)
+void Zelph::set_name(const Node node, const std::string& name, std::string lang, const bool merge_on_conflict)
 {
     if (lang.empty()) lang = _lang; // Use current default language if none specified
 
 #if _DEBUG
-    diagnostic_stream() << L"Node " << node << L" has name '" << name << L"' (" << std::wstring(lang.begin(), lang.end()) << L")" << std::endl;
+    diagnostic_stream() << "Node " << node << " has name '" << name << "' (" << std::string(lang.begin(), lang.end()) << ")" << std::endl;
 #endif
 
     std::lock_guard lock(_pImpl->_mtx_node_of_name);
@@ -72,7 +72,7 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
             if (Impl::is_var(from) != Impl::is_var(into))
             {
                 std::stringstream s;
-                s << "Requested name '" << string::unicode::to_utf8(name) << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+                s << "Requested name '" << name << "' is already used by node " << existing->second << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
                 throw std::runtime_error(s.str());
             }
 
@@ -114,7 +114,7 @@ void Zelph::set_name(const Node node, const std::wstring& name, std::string lang
 // This overload is primarily used by the interactive `.name` command.
 // It either finds an existing node via the foreign-language name or creates a new one if none exists.
 // At the same time, it updates or corrects the name in the current default language.
-Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstring& name_in_given_lang, std::string lang)
+Node Zelph::set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang)
 {
     if (lang.empty() || lang == _lang)
     {
@@ -154,8 +154,8 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
         auto& node_of_name_cur = _pImpl->_node_of_name[_lang];
 
         // Get the previously stored name in the current language (if any)
-        auto         it_current_name  = name_of_node_cur.find(result_node);
-        std::wstring old_current_name = (it_current_name != name_of_node_cur.end()) ? it_current_name->second : L"";
+        auto        it_current_name  = name_of_node_cur.find(result_node);
+        std::string old_current_name = (it_current_name != name_of_node_cur.end()) ? it_current_name->second : "";
 
         // If the stored current-language name differs from the desired one → update it
         if (old_current_name != name_in_current_lang)
@@ -182,7 +182,7 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
                 if (Impl::is_var(from) != Impl::is_var(into))
                 {
                     std::stringstream s;
-                    s << "Requested name '" << string::unicode::to_utf8(name_in_current_lang) << "' is already used by node " << into << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+                    s << "Requested name '" << name_in_current_lang << "' is already used by node " << into << " in language '" << lang << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
                     throw std::runtime_error(s.str());
                 }
 
@@ -215,7 +215,7 @@ Node Zelph::set_name(const std::wstring& name_in_current_lang, const std::wstrin
     return result_node; // The (possibly newly created or merged) node
 }
 
-std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallback) const
+std::string Zelph::get_name(const Node node, std::string lang, const bool fallback) const
 {
     if (lang.empty()) lang = _lang;
 
@@ -233,7 +233,7 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
     if (!fallback)
     {
         // return empty string if this node has no name
-        return L"";
+        return "";
     }
 
     // try English as fallback language
@@ -278,13 +278,13 @@ std::wstring Zelph::get_name(const Node node, std::string lang, const bool fallb
         }
     }
 
-    return L"";
+    return "";
 }
 
 // If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
 // for nodes that have both a name in the requested language and a Wikidata ID. This allows Markdown::convert_to_md to parse
 // and create appropriate links using the ID for the URL and the name for display text.
-std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang) const
+std::string Zelph::get_formatted_name(const Node node, const std::string& lang) const
 {
     const bool is_wikidata_mode = has_language("wikidata") && lang != "wikidata";
     if (!is_wikidata_mode)
@@ -292,9 +292,9 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
         return get_name(node, lang, true);
     }
 
-    std::wstring wikidata_name = get_name(node, "wikidata", false);
+    std::string wikidata_name = get_name(node, "wikidata", false);
 
-    std::wstring name;
+    std::string name;
     if (lang == "zelph")
     {
         // In Wikidata mode, the output of get_formatted_name may be used by the Markdown export (command `.run-md`).
@@ -325,7 +325,7 @@ std::wstring Zelph::get_formatted_name(const Node node, const std::string& lang)
     {
         if (!wikidata_name.empty() && wikidata_name != name)
         {
-            name = wikidata_name + L" - " + name;
+            name = wikidata_name + " - " + name;
         }
         return name;
     }
@@ -354,7 +354,7 @@ void Zelph::remove_name(Node node, std::string lang)
         return; // nothing to remove
     }
 
-    std::wstring old_name = name_it->second;
+    std::string old_name = name_it->second;
     name_map.erase(name_it);
 
     auto& rev_map = _pImpl->_node_of_name[lang];
@@ -372,7 +372,7 @@ void Zelph::unset_name(Node node, std::string lang /*= ""*/)
     auto  it       = name_map.find(node);
     if (it != name_map.end())
     {
-        std::wstring old_name = it->second;
+        std::string old_name = it->second;
         name_map.erase(it);
 
         auto& reverse_map = _pImpl->_node_of_name[lang];
@@ -380,7 +380,7 @@ void Zelph::unset_name(Node node, std::string lang /*= ""*/)
     }
 }
 
-Node Zelph::get_node(const std::wstring& name, std::string lang) const
+Node Zelph::get_node(const std::string& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
     std::lock_guard lock(_pImpl->_mtx_node_of_name);
@@ -403,26 +403,26 @@ Node Zelph::get_node(const std::wstring& name, std::string lang) const
     }
 }
 
-void Zelph::register_core_node(Node n, const std::wstring& name)
+void Zelph::register_core_node(Node n, const std::string& name)
 {
     _core_names.insert({n, name});
 }
 
-Node Zelph::get_core_node(const std::wstring& name) const
+Node Zelph::get_core_node(const std::string& name) const
 {
     auto it = _core_names.right.find(name);
     return (it != _core_names.right.end()) ? it->second : 0;
 }
 
-std::wstring Zelph::get_core_name(Node n) const
+std::string Zelph::get_core_name(Node n) const
 {
     auto it = _core_names.left.find(n);
-    return (it != _core_names.left.end()) ? it->second : L"";
+    return (it != _core_names.left.end()) ? it->second : "";
 }
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) const
 {
-    std::string name = string::unicode::to_utf8(get_name(node, _lang, true));
+    std::string name = get_name(node, _lang, true);
 
     if (name.empty())
     {
@@ -432,9 +432,9 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) 
         }
         else
         {
-            std::wstring output;
-            string::node_to_wstring(this, output, _lang, node, max_neighbors);
-            name = string::unicode::to_utf8(output);
+            std::string output;
+            string::node_to_string(this, output, _lang, node, max_neighbors);
+            name = output;
         }
     }
     else if (prepend_num && !Impl::is_hash(node) && !Impl::is_var(node))
@@ -447,9 +447,9 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) 
 
 std::string Zelph::format(Node node) const
 {
-    std::wstring result;
-    string::node_to_wstring(this, result, _lang, node);
-    return string::unicode::to_utf8(result);
+    std::string result;
+    string::node_to_string(this, result, _lang, node);
+    return result;
 }
 
 std::vector<std::string> Zelph::get_languages() const
@@ -484,7 +484,7 @@ name_of_node_map Zelph::get_nodes_in_language(const std::string& lang) const
     return it->second;
 }
 
-std::vector<Node> Zelph::resolve_nodes_by_name(const std::wstring& name) const
+std::vector<Node> Zelph::resolve_nodes_by_name(const std::string& name) const
 {
     std::vector<network::Node> results;
 

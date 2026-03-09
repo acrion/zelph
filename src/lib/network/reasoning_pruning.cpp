@@ -139,9 +139,9 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
         if (incoming_to_pred.size() > 200000)
         {
-            std::wstring name = get_name(pred, "wikidata", true);
+            std::string name = get_name(pred, "wikidata", true);
             diagnostic_stream() << "[" << (i + 1) << "/" << all_predicates.size() << "] Checking "
-                                << string::unicode::to_utf8(name) << " (" << pred << ") with "
+                                << name << " (" << pred << ") with "
                                 << incoming_to_pred.size() << " entries..." << std::endl;
         }
 

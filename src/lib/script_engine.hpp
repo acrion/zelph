@@ -81,7 +81,7 @@ namespace zelph
 
         static bool is_zelph_complete(const std::string& code);
 
-        static bool is_var(std::wstring token);
+        static bool is_var(std::string token);
 
         ScriptEngine(const ScriptEngine&)            = delete;
         ScriptEngine& operator=(const ScriptEngine&) = delete;

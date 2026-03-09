@@ -37,10 +37,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 namespace
 {
     // Collapse runs of whitespace to a single space, trim leading/trailing.
-    std::wstring normalize(const std::wstring& s)
+    std::string normalize(const std::string& s)
     {
-        std::wstring result;
-        bool         in_space = true;
+        std::string result;
+        bool        in_space = true;
         for (wchar_t c : s)
         {
             if (c == L' ' || c == L'\t')
@@ -63,7 +63,7 @@ namespace
     }
 
     // Return the text of the last non-empty Out-channel event.
-    std::wstring last_out_text(const zelph::io::OutputCollector& collector)
+    std::string last_out_text(const zelph::io::OutputCollector& collector)
     {
         const auto& events = collector.events();
         for (const auto& event : std::ranges::reverse_view(events))
@@ -76,23 +76,23 @@ namespace
 
     // Check whether the last Out line starts with the expected pattern
     // after whitespace normalization on both sides.
-    [[maybe_unused]] bool last_output_starts_with(const zelph::io::OutputCollector& collector, const std::wstring& expected)
+    [[maybe_unused]] bool last_output_starts_with(const zelph::io::OutputCollector& collector, const std::string& expected)
     {
-        std::wstring last = normalize(last_out_text(collector));
-        std::wstring exp  = normalize(expected);
+        std::string last = normalize(last_out_text(collector));
+        std::string exp  = normalize(expected);
         if (exp.empty() || last.size() < exp.size()) return false;
         return last.compare(0, exp.size(), exp) == 0;
     }
 
     // Check whether ANY Out-channel event starts with the expected pattern (normalized).
-    bool any_output_starts_with(const zelph::io::OutputCollector& collector, const std::wstring& expected)
+    bool any_output_starts_with(const zelph::io::OutputCollector& collector, const std::string& expected)
     {
-        std::wstring exp = normalize(expected);
+        std::string exp = normalize(expected);
         if (exp.empty()) return false;
         for (const auto& e : collector.events())
         {
             if (e.channel != zelph::io::OutputChannel::Out) continue;
-            std::wstring n = normalize(e.text);
+            std::string n = normalize(e.text);
             if (n.size() >= exp.size() && n.compare(0, exp.size(), exp) == 0)
                 return true;
         }
@@ -100,31 +100,31 @@ namespace
     }
 
     // Check whether ANY Out-channel event contains the substring (normalized).
-    bool any_output_contains(const zelph::io::OutputCollector& collector, const std::wstring& sub)
+    bool any_output_contains(const zelph::io::OutputCollector& collector, const std::string& sub)
     {
-        std::wstring exp = normalize(sub);
+        std::string exp = normalize(sub);
         if (exp.empty()) return false;
         for (const auto& e : collector.events())
         {
             if (e.channel != zelph::io::OutputChannel::Out) continue;
-            if (normalize(e.text).find(exp) != std::wstring::npos)
+            if (normalize(e.text).find(exp) != std::string::npos)
                 return true;
         }
         return false;
     }
 
     // Collect all "Answer:" lines as normalized answer text (prefix stripped).
-    std::vector<std::wstring> collect_answers(const zelph::io::OutputCollector& collector)
+    std::vector<std::string> collect_answers(const zelph::io::OutputCollector& collector)
     {
-        std::vector<std::wstring> answers;
-        const std::wstring        prefix = L"Answer:";
+        std::vector<std::string> answers;
+        const std::string        prefix = "Answer:";
         for (const auto& e : collector.events())
         {
             if (e.channel != zelph::io::OutputChannel::Out) continue;
-            std::wstring n = normalize(e.text);
+            std::string n = normalize(e.text);
             if (n.size() > prefix.size() && n.compare(0, prefix.size(), prefix) == 0)
             {
-                std::wstring answer = n.substr(prefix.size());
+                std::string answer = n.substr(prefix.size());
                 // Strip leading space after "Answer:"
                 if (!answer.empty() && answer[0] == L' ')
                     answer = answer.substr(1);
@@ -135,10 +135,10 @@ namespace
     }
 
     // Check that a specific answer is present (order-independent, normalized).
-    bool answers_contain(const zelph::io::OutputCollector& collector, const std::wstring& expected)
+    bool answers_contain(const zelph::io::OutputCollector& collector, const std::string& expected)
     {
-        std::wstring              exp = normalize(expected);
-        std::vector<std::wstring> all = collect_answers(collector);
+        std::string              exp = normalize(expected);
+        std::vector<std::string> all = collect_answers(collector);
         for (const auto& a : all)
         {
             if (a == exp) return true;
@@ -151,7 +151,7 @@ namespace
     {
         for (const auto& e : collector.events())
         {
-            if (normalize(e.text).find(L"Found one or more contradictions!") != std::wstring::npos)
+            if (normalize(e.text).find("Found one or more contradictions!") != std::string::npos)
                 return true;
         }
         return false;
@@ -164,7 +164,7 @@ namespace
         std::string        line;
         while (std::getline(iss, line))
         {
-            interactive.process(zelph::string::unicode::from_utf8(line));
+            interactive.process(line);
         }
     }
 
@@ -183,7 +183,7 @@ namespace
         {
             zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
-            interactive.process(zelph::string::unicode::from_utf8(".parallel"));
+            interactive.process(".parallel");
             collector.clear();
             test_fn(collector, interactive);
         }
@@ -200,8 +200,8 @@ TEST_CASE("parsing: dot-dot predicate")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, "g .. h\nh .. i");
-        CHECK(any_output_starts_with(collector, L"g .. h"));
-        CHECK(any_output_starts_with(collector, L"h .. i")); });
+        CHECK(any_output_starts_with(collector, "g .. h"));
+        CHECK(any_output_starts_with(collector, "h .. i")); });
 }
 
 TEST_CASE("parsing: arrow predicates")
@@ -212,8 +212,8 @@ TEST_CASE("parsing: arrow predicates")
 atom_A => atom_B
 atom_C <= atom_D
 )");
-        CHECK(any_output_starts_with(collector, L"atom_A => atom_B"));
-        CHECK(any_output_starts_with(collector, L"atom_C <= atom_D")); });
+        CHECK(any_output_starts_with(collector, "atom_A => atom_B"));
+        CHECK(any_output_starts_with(collector, "atom_C <= atom_D")); });
 }
 
 // NOTE: <=> parsing is currently broken (displays as ??). Uncomment when fixed.
@@ -222,7 +222,7 @@ atom_C <= atom_D
 //     run_both_modes([](auto& collector, auto& interactive)
 //     {
 //         process_lines(interactive, "(a <=> b) is_type equivalence");
-//         CHECK(any_output_contains(collector, L"<=>"));
+//         CHECK(any_output_contains(collector, "<=>"));
 //     });
 // }
 
@@ -235,7 +235,7 @@ TEST_CASE("parsing: compact sequence")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, "seq_compact is_defined_as <123>");
-        CHECK(any_output_contains(collector, L"<123>")); });
+        CHECK(any_output_contains(collector, "<123>")); });
 }
 
 TEST_CASE("parsing: spaced sequence")
@@ -243,7 +243,7 @@ TEST_CASE("parsing: spaced sequence")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, "seq_spaced is_defined_as < seqItem1 seqItem2 seqItem3 >");
-        CHECK(any_output_contains(collector, L"< seqItem1 seqItem2 seqItem3 >")); });
+        CHECK(any_output_contains(collector, "< seqItem1 seqItem2 seqItem3 >")); });
 }
 
 TEST_CASE("parsing: quoted sequence is reversed")
@@ -251,7 +251,7 @@ TEST_CASE("parsing: quoted sequence is reversed")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(quoted_sequence ~ < "a" "b" "c" >)");
-        CHECK(any_output_contains(collector, L"<cba>")); });
+        CHECK(any_output_contains(collector, "<cba>")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +263,8 @@ TEST_CASE("parsing: nested sequence in set")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, "nested_seq_in_set holds { <setElem1 setElem2> <setElem3 setElem4> }");
-        CHECK(any_output_contains(collector, L"< setElem1 setElem2 >"));
-        CHECK(any_output_contains(collector, L"< setElem3 setElem4 >")); });
+        CHECK(any_output_contains(collector, "< setElem1 setElem2 >"));
+        CHECK(any_output_contains(collector, "< setElem3 setElem4 >")); });
 }
 
 TEST_CASE("parsing: mixed container")
@@ -272,10 +272,10 @@ TEST_CASE("parsing: mixed container")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(mixed_container content < (myCond => myDeduct) (myDeduct2 <= myCond2) { setElem5 setElem6 } "literal string" >)");
-        CHECK(any_output_contains(collector, L"myCond => myDeduct"));
-        CHECK(any_output_contains(collector, L"myDeduct2 <= myCond2"));
-        CHECK(any_output_contains(collector, L"setElem5"));
-        CHECK(any_output_contains(collector, L"setElem6")); });
+        CHECK(any_output_contains(collector, "myCond => myDeduct"));
+        CHECK(any_output_contains(collector, "myDeduct2 <= myCond2"));
+        CHECK(any_output_contains(collector, "setElem5"));
+        CHECK(any_output_contains(collector, "setElem6")); });
 }
 
 TEST_CASE("parsing: deep nesting")
@@ -284,8 +284,8 @@ TEST_CASE("parsing: deep nesting")
                    {
         process_lines(interactive, R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
         // Display truncates inner levels to ??, but the parser must accept the input.
-        CHECK(any_output_contains(collector, L"Level1"));
-        CHECK(any_output_contains(collector, L"Level1Object")); });
+        CHECK(any_output_contains(collector, "Level1"));
+        CHECK(any_output_contains(collector, "Level1Object")); });
 }
 
 TEST_CASE("parsing: set with facts")
@@ -293,8 +293,8 @@ TEST_CASE("parsing: set with facts")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, "set_logic ~ { (myItem1 IsA myItem2) (myItem2 IsA myItem3) }");
-        CHECK(any_output_contains(collector, L"myItem1 IsA myItem2"));
-        CHECK(any_output_contains(collector, L"myItem2 IsA myItem3")); });
+        CHECK(any_output_contains(collector, "myItem1 IsA myItem2"));
+        CHECK(any_output_contains(collector, "myItem2 IsA myItem3")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -309,9 +309,9 @@ TEST_CASE("focus operator and variable query")
 (*tim ~ human) ~ male
 tim _predicate _object
 )");
-        CHECK(any_output_starts_with(collector, L"tim ~ male"));
-        CHECK(answers_contain(collector, L"tim ~ human"));
-        CHECK(answers_contain(collector, L"tim ~ male")); });
+        CHECK(any_output_starts_with(collector, "tim ~ male"));
+        CHECK(answers_contain(collector, "tim ~ human"));
+        CHECK(answers_contain(collector, "tim ~ male")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ TEST_CASE("nested unification: pattern matching in equations")
 ((A + B) = C) => (test A B)
 (4 + 5) = 9
 )");
-        CHECK(any_output_starts_with(collector, L"( test 4 5 )")); });
+        CHECK(any_output_starts_with(collector, "( test 4 5 )")); });
 }
 
 TEST_CASE("nested unification: deep structure matching")
@@ -337,7 +337,7 @@ TEST_CASE("nested unification: deep structure matching")
 (subj pred (obj is (subj2 A (b test C)))) => (success A C)
 subj pred (obj is (subj2 a_val (b test c_val)))
 )");
-        CHECK(any_output_starts_with(collector, L"( success a_val c_val )")); });
+        CHECK(any_output_starts_with(collector, "( success a_val c_val )")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ TEST_CASE("complex conjunction rule with followed-by")
 5 followed-by 42
 9 followed-by 43
 )");
-        CHECK(any_output_starts_with(collector, L"(( 4 + 42 ) = 43 )")); });
+        CHECK(any_output_starts_with(collector, "(( 4 + 42 ) = 43 )")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +370,7 @@ TEST_CASE("peano-style successor rule")
 (A followed-by B) => ((<1> + A) = B)
 <0> followed-by <1>
 )");
-        CHECK(any_output_starts_with(collector, L"((<1> + <0>) = <1>)")); });
+        CHECK(any_output_starts_with(collector, "((<1> + <0>) = <1>)")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ elem4 partoflist mylist
 elem5 partoflist mylist
 (A partoflist L, *(A --> X) ~ negation) => (A "is last of" L)
 )");
-        CHECK(any_output_starts_with(collector, L"( elem5 is last of mylist )")); });
+        CHECK(any_output_starts_with(collector, "( elem5 is last of mylist )")); });
 }
 
 TEST_CASE("negation: syntax sugar with not-green rule")
@@ -408,7 +408,7 @@ plant2 is yellow
 )");
         // plant is both yellow and green, so rule does not fire for plant.
         // plant2 is yellow but not green, so the rule fires.
-        CHECK(any_output_starts_with(collector, L"( plant2 is not green )")); });
+        CHECK(any_output_starts_with(collector, "( plant2 is not green )")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +424,7 @@ TEST_CASE("contradiction detection")
 gene instanceof geneclass
 gene subclassof geneclass
 )");
-        CHECK(any_output_starts_with(collector, L"!"));
+        CHECK(any_output_starts_with(collector, "!"));
         CHECK(has_contradiction(collector)); });
 }
 
@@ -447,7 +447,7 @@ Germany "is located in" Europe
 (zelph/fact cond "=>" (zelph/fact 'X "is located in" 'Z)))
 %
 )");
-        CHECK(any_output_starts_with(collector, L"( Berlin is located in Europe )")); });
+        CHECK(any_output_starts_with(collector, "( Berlin is located in Europe )")); });
 }
 
 TEST_CASE("janet: unquote referencing janet variable")
@@ -458,7 +458,7 @@ TEST_CASE("janet: unquote referencing janet variable")
 %(def berlin (zelph/resolve "Berlin"))
 ,berlin ~ town
 )");
-        CHECK(any_output_starts_with(collector, L"Berlin ~ town")); });
+        CHECK(any_output_starts_with(collector, "Berlin ~ town")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +473,7 @@ TEST_CASE("multi-digit addition via rules")
 # Rule-based multi-digit addition for arbitrarily large positive integers.
 #
 # Numbers are stored LSB-first as cons lists: <42> = 2 cons (4 cons nil).
-# node_to_wstring reverses the display order, so results appear in conventional
+# node_to_string reverses the display order, so results appear in conventional
 # MSB-first notation.
 
 # ---------------------------------------------------------------------------
@@ -558,21 +558,21 @@ TEST_CASE("multi-digit addition via rules")
 
         SUBCASE("98 + 13 = 111")
         {
-            interactive.process(zelph::string::unicode::from_utf8("<98> + <13>"));
+            interactive.process("<98> + <13>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, L"((<98> + <13>) = <111>)"));
+            CHECK(any_output_starts_with(collector, "((<98> + <13>) = <111>)"));
         }
         SUBCASE("8 + 23 = 31")
         {
-            interactive.process(zelph::string::unicode::from_utf8("<8> + <23>"));
+            interactive.process("<8> + <23>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, L"((<8> + <23>) = <31>)"));
+            CHECK(any_output_starts_with(collector, "((<8> + <23>) = <31>)"));
         }
         SUBCASE("67 + 45 = 112")
         {
-            interactive.process(zelph::string::unicode::from_utf8("<67> + <45>"));
+            interactive.process("<67> + <45>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, L"((<67> + <45>) = <112>)"));
+            CHECK(any_output_starts_with(collector, "((<67> + <45>) = <112>)"));
         } });
 }
 
@@ -590,5 +590,5 @@ TEST_CASE("transitive relation deduction")
 5 > 4
 > is transitive
 )");
-        CHECK(any_output_starts_with(collector, L"( 6 > 4 )")); });
+        CHECK(any_output_starts_with(collector, "( 6 > 4 )")); });
 }

@@ -43,7 +43,7 @@ static std::string u_node_str(const Zelph* z, Node n)
 {
     if (n == 0) return "0";
     if (Zelph::Impl::is_var(n)) return "VAR(" + z->format(n) + ")";
-    std::string name = zelph::string::unicode::to_utf8(z->get_name(n, "zelph", true));
+    std::string name = z->get_name(n, "zelph", true);
     if (name.empty()) name = z->format(n);
     if (name.empty())
         return std::to_string(n);

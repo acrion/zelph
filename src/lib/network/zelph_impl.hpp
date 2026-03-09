@@ -261,9 +261,9 @@ namespace zelph::network
             // Chunk _name_of_node
             for (const auto& langMap : _name_of_node)
             {
-                std::string                                lang = langMap.first;
-                const auto&                                map  = langMap.second;
-                std::vector<std::pair<Node, std::wstring>> sorted(map.begin(), map.end());
+                std::string                               lang = langMap.first;
+                const auto&                               map  = langMap.second;
+                std::vector<std::pair<Node, std::string>> sorted(map.begin(), map.end());
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -281,7 +281,7 @@ namespace zelph::network
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         pairs[i].setKey(it->first);
-                        pairs[i].setValue(zelph::string::unicode::to_utf8(it->second));
+                        pairs[i].setValue(it->second);
                     }
                     ::capnp::writePackedMessage(output, chunkMessage);
                 }
@@ -290,9 +290,9 @@ namespace zelph::network
             // Chunk _node_of_name
             for (const auto& langMap : _node_of_name)
             {
-                std::string                                lang = langMap.first;
-                const auto&                                map  = langMap.second;
-                std::vector<std::pair<std::wstring, Node>> sorted(map.begin(), map.end());
+                std::string                               lang = langMap.first;
+                const auto&                               map  = langMap.second;
+                std::vector<std::pair<std::string, Node>> sorted(map.begin(), map.end());
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -309,7 +309,7 @@ namespace zelph::network
                     auto   pairs    = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
-                        pairs[i].setKey(zelph::string::unicode::to_utf8(it->first));
+                        pairs[i].setKey(it->first);
                         pairs[i].setValue(it->second);
                     }
                     ::capnp::writePackedMessage(output, chunkMessage);
@@ -370,12 +370,12 @@ namespace zelph::network
                     {
                         try
                         {
-                            map[pair.getKey()] = zelph::string::unicode::from_utf8(pair.getValue());
+                            map[pair.getKey()] = pair.getValue();
                         }
                         catch (...)
                         {
-                            map[pair.getKey()] = L"?";
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey();
+                            map[pair.getKey()] = "?";
+                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
                         }
                     }
 #ifndef NDEBUG
@@ -402,12 +402,12 @@ namespace zelph::network
                     {
                         try
                         {
-                            map[zelph::string::unicode::from_utf8(pair.getKey())] = pair.getValue();
+                            map[pair.getKey()] = pair.getValue();
                         }
                         catch (...)
                         {
-                            map[L"?"] = pair.getValue();
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue();
+                            map["?"] = pair.getValue();
+                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for node_of_name value " << pair.getValue();
                         }
                     }
 #ifndef NDEBUG
@@ -452,12 +452,12 @@ namespace zelph::network
                     {
                         try
                         {
-                            inner[pair.getKey()] = zelph::string::unicode::from_utf8(pair.getValue());
+                            inner[pair.getKey()] = pair.getValue();
                         }
                         catch (...)
                         {
-                            inner[pair.getKey()] = L"?";
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to wstring for name_of_node key " << pair.getKey();
+                            inner[pair.getKey()] = "?";
+                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
                         }
                     }
                     _name_of_node[langMap.getLang()] = std::move(inner);
@@ -474,12 +474,12 @@ namespace zelph::network
                     {
                         try
                         {
-                            inner[zelph::string::unicode::from_utf8(pair.getKey())] = pair.getValue();
+                            inner[pair.getKey()] = pair.getValue();
                         }
                         catch (...)
                         {
-                            inner[L"?"] = pair.getValue();
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to wstring for node_of_name value " << pair.getValue();
+                            inner["?"] = pair.getValue();
+                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for node_of_name value " << pair.getValue();
                         }
                     }
                     _node_of_name[langMap.getLang()] = std::move(inner);
@@ -514,7 +514,7 @@ namespace zelph::network
                 auto        it   = map.find(from);
                 if (it != map.end())
                 {
-                    std::wstring name = it->second;
+                    std::string name = it->second;
                     map.erase(it);
 
                     auto it2 = map.find(into);
@@ -524,8 +524,8 @@ namespace zelph::network
                         {
                             io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
                                 << "Warning: Name conflict in language '" << lang << "': '"
-                                << string::unicode::to_utf8(name) << "' (from merged node) vs '" << string::unicode::to_utf8(it2->second)
-                                << "'. Keeping existing name '" << string::unicode::to_utf8(it2->second) << "'.";
+                                << name << "' (from merged node) vs '" << it2->second
+                                << "'. Keeping existing name '" << it2->second << "'.";
                         }
                         // No need to set, keep existing
                     }
@@ -545,8 +545,8 @@ namespace zelph::network
                 {
                     if (it->second == from)
                     {
-                        std::wstring name = it->first;
-                        it                = map.erase(it);
+                        std::string name = it->first;
+                        it               = map.erase(it);
 
                         // Check if name already maps to something else
                         auto it_existing = map.find(name);
@@ -560,7 +560,7 @@ namespace zelph::network
                             // Conflict, already maps to another node (likely into or other)
                             if (it_existing->second != into)
                             {
-                                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Warning: Skipping reverse mapping update for name '" << string::unicode::to_utf8(name) << "' in language '" << lang
+                                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Warning: Skipping reverse mapping update for name '" << name << "' in language '" << lang
                                                                                                << "' due to existing conflicting mapping.";
                             }
                             // Else already points to into, ok
@@ -660,14 +660,14 @@ namespace zelph::network
             }
         }
 
-        void emit(io::OutputChannel channel, const std::wstring& text, bool newline = true) const
+        void emit(io::OutputChannel channel, const std::string& text, bool newline = true) const
         {
             if (_output)
                 _output(io::OutputEvent{channel, text, newline});
         }
 
-        using name_of_node_map = ankerl::unordered_dense::map<Node, std::wstring>;
-        using node_of_name_map = ankerl::unordered_dense::map<std::wstring, Node>;
+        using name_of_node_map = ankerl::unordered_dense::map<Node, std::string>;
+        using node_of_name_map = ankerl::unordered_dense::map<std::string, Node>;
 
         ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node; // key is language identifier
         ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
@@ -680,9 +680,9 @@ namespace zelph::network
         mutable ankerl::unordered_dense::map<Node, std::vector<FactStructure>> _fs_cache;
         mutable std::atomic<bool>                                              _fs_cache_has_entries{false};
 
-        std::function<void(std::wstring, bool)> _print;
-        int                                     _max_log_depth{0};
-        bool                                    _logging{false};
-        io::OutputHandler                       _output;
+        std::function<void(std::string, bool)> _print;
+        int                                    _max_log_depth{0};
+        bool                                   _logging{false};
+        io::OutputHandler                      _output;
     };
 }

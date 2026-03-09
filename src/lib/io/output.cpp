@@ -33,7 +33,7 @@ namespace zelph::io
     void default_output_handler(const OutputEvent& event)
     {
 #ifdef _WIN32
-        auto write = [&](std::wostream& os)
+        auto write = [&](std::ostream& os)
         {
             os.clear();
             os << event.text;
@@ -57,7 +57,7 @@ namespace zelph::io
             break;
         }
 #else
-        const std::string utf8 = zelph::string::unicode::to_utf8(event.text);
+        const std::string utf8 = event.text;
 
         auto write = [&](std::ostream& os)
         {

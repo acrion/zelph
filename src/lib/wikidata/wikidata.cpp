@@ -28,7 +28,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "io/read_async.hpp"
 #include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
-#include "string/string_utils.hpp"
 
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -48,6 +47,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <vector>
 
 using namespace zelph::wikidata;
+using namespace std::string_literals;
 using boost::escaped_list_separator;
 using boost::tokenizer;
 using std::chrono::duration_cast;
@@ -121,14 +121,14 @@ void Wikidata::import_all(const std::string& constraints_dir)
         {
             try
             {
-                _pImpl->_n->diagnostic(L"Loading network from cache " + cache_file.wstring() + L"...", true);
+                _pImpl->_n->diagnostic("Loading network from cache " + cache_file.string() + "...", true);
                 _pImpl->_n->load_from_file(_pImpl->_bin_path.string());
-                _pImpl->_n->diagnostic(L"Cache loaded successfully.", true);
+                _pImpl->_n->diagnostic("Cache loaded successfully.", true);
                 cache_loaded = true;
             }
             catch (std::exception& ex)
             {
-                _pImpl->_n->diagnostic(L"Failed to load cache: " + string::unicode::from_utf8(ex.what()), true);
+                _pImpl->_n->diagnostic("Failed to load cache: "s + ex.what(), true);
             }
         }
     }
@@ -147,11 +147,11 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
         if (export_constraints)
         {
-            _pImpl->_n->diagnostic(L"Exporting constraints from file " + _pImpl->_original_source_path.wstring(), true);
+            _pImpl->_n->diagnostic("Exporting constraints from file " + _pImpl->_original_source_path.string(), true);
         }
         else
         {
-            _pImpl->_n->diagnostic(L"Importing file " + _pImpl->_original_source_path.wstring(), true);
+            _pImpl->_n->diagnostic("Importing file " + _pImpl->_original_source_path.string(), true);
         }
 
         io::ReadAsync read_async(_pImpl->_original_source_path, 1000); // 1000 lines buffer
@@ -182,7 +182,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
         {
             for (;;)
             {
-                std::wstring   line;
+                std::string    line;
                 std::streamoff streampos;
 
                 {
@@ -292,13 +292,13 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
                 try
                 {
-                    _pImpl->_n->diagnostic(L"Saving network to cache " + cache_file.wstring() + L"...", true);
+                    _pImpl->_n->diagnostic("Saving network to cache " + cache_file.string() + "...", true);
                     _pImpl->_n->save_to_file(_pImpl->_bin_path.string());
-                    _pImpl->_n->diagnostic(L"Cache saved.", true);
+                    _pImpl->_n->diagnostic("Cache saved.", true);
                 }
                 catch (std::exception& ex)
                 {
-                    _pImpl->_n->error(L"Failed to save cache: " + string::unicode::from_utf8(ex.what()), true);
+                    _pImpl->_n->error("Failed to save cache: "s + ex.what(), true);
                 }
             }
         }
@@ -311,31 +311,31 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
 struct ConstraintInfo
 {
-    std::wstring                                                                              short_desc;
-    std::wstring                                                                              long_desc;
-    std::function<std::wstring(const std::wstring& /*json*/, const std::wstring& /*id_str*/)> generator;
+    std::string                                                                            short_desc;
+    std::string                                                                            long_desc;
+    std::function<std::string(const std::string& /*json*/, const std::string& /*id_str*/)> generator;
 
     ConstraintInfo() = default; // Default constructor
 
-    ConstraintInfo(std::wstring sd, std::wstring ld, std::function<std::wstring(const std::wstring& /*json*/, const std::wstring& /*id_str*/)> gen)
+    ConstraintInfo(std::string sd, std::string ld, std::function<std::string(const std::string& /*json*/, const std::string& /*id_str*/)> gen)
         : short_desc(sd), long_desc(ld), generator(gen) {}
 };
 
 // Helper to extract ids from qualifier arrays (searches for "id":"Pxx" or "id":"Qxx")
-std::vector<std::wstring> extract_ids(const std::wstring& str, const std::wstring& qualifier_key)
+std::vector<std::string> extract_ids(const std::string& str, const std::string& qualifier_key)
 {
-    std::vector<std::wstring> ids;
-    size_t                    pos    = 0;
-    std::wstring              id_tag = L"\"id\":\"";
-    while ((pos = str.find(qualifier_key, pos)) != std::wstring::npos)
+    std::vector<std::string> ids;
+    size_t                   pos    = 0;
+    std::string              id_tag = "\"id\":\"";
+    while ((pos = str.find(qualifier_key, pos)) != std::string::npos)
     {
         size_t start = str.find(id_tag, pos);
-        if (start == std::wstring::npos) break;
+        if (start == std::string::npos) break;
         start += id_tag.size();
         size_t end = str.find(L'\"', start);
-        if (end == std::wstring::npos) break;
-        std::wstring id = str.substr(start, end - start);
-        if (id.find(L'$') == std::wstring::npos)
+        if (end == std::string::npos) break;
+        std::string id = str.substr(start, end - start);
+        if (id.find(L'$') == std::string::npos)
         {
             ids.push_back(id);
         }
@@ -344,161 +344,161 @@ std::vector<std::wstring> extract_ids(const std::wstring& str, const std::wstrin
     return ids;
 }
 
-std::map<std::wstring, ConstraintInfo> get_supported_constraints()
+std::map<std::string, ConstraintInfo> get_supported_constraints()
 {
-    std::map<std::wstring, ConstraintInfo> constraints;
+    std::map<std::string, ConstraintInfo> constraints;
 
     // current constraints: https://query.wikidata.org/?#SELECT%20%3Fconstraint%20%3FconstraintLabel%20%0AWHERE%20%7B%0A%20%20%3Fconstraint%20wdt%3AP279%2a%20wd%3AQ21502402%20.%0A%20%20SERVICE%20wikibase%3Alabel%20%7B%20bd%3AserviceParam%20wikibase%3Alanguage%20%22%5BAUTO_LANGUAGE%5D%2Cen%22.%20%7D%0A%7D
 
-    constraints[L"Q19474404"] = ConstraintInfo(L"single-value constraint (single value | single value constraint)", L"type of constraint for Wikidata properties: used to specify that this property generally contains a single value per item", nullptr);
-    constraints[L"Q21502404"] = ConstraintInfo(L"format constraint (regex constraint | format)", L"type of constraint for Wikidata properties: used to specify that the value for this property has to correspond to a given pattern", nullptr);
-    constraints[L"Q21502410"] = ConstraintInfo(L"distinct-values constraint (unique value | distinct values | distinct values constraint for Wikidata properties | unique value constraint | unique values constraint | unique-value constraint | unique-values constraint | distinct-value constraint | distinct value constraint | distinct values constraint)", L"type of constraint for Wikidata properties: used to specify that the value for this property is likely to be different from all other items", nullptr);
-    constraints[L"Q21502838"] = ConstraintInfo(
-        L"conflicts-with constraint (incompatible-with constraint | item requires none of this statement | item must not contain statement | inconsistent-with constraint)",
-        L"type of constraint for Wikidata properties: used to specify that an item must not have a given statement",
-        [](const std::wstring& json, const std::wstring& id_str) -> std::wstring
+    constraints["Q19474404"] = ConstraintInfo("single-value constraint (single value | single value constraint)", "type of constraint for Wikidata properties: used to specify that this property generally contains a single value per item", nullptr);
+    constraints["Q21502404"] = ConstraintInfo("format constraint (regex constraint | format)", "type of constraint for Wikidata properties: used to specify that the value for this property has to correspond to a given pattern", nullptr);
+    constraints["Q21502410"] = ConstraintInfo("distinct-values constraint (unique value | distinct values | distinct values constraint for Wikidata properties | unique value constraint | unique values constraint | unique-value constraint | unique-values constraint | distinct-value constraint | distinct value constraint | distinct values constraint)", "type of constraint for Wikidata properties: used to specify that the value for this property is likely to be different from all other items", nullptr);
+    constraints["Q21502838"] = ConstraintInfo(
+        "conflicts-with constraint (incompatible-with constraint | item requires none of this statement | item must not contain statement | inconsistent-with constraint)",
+        "type of constraint for Wikidata properties: used to specify that an item must not have a given statement",
+        [](const std::string& json, const std::string& id_str) -> std::string
         {
-            std::wstringstream result;
-            result << L"# Constraint: Q21502838" << std::endl;
+            std::stringstream result;
+            result << "# Constraint: Q21502838" << std::endl;
 
             // Extract conflict property from P2306 (assume first/only one)
-            auto conflict_props = extract_ids(json, L"\"P2306\"");
+            auto conflict_props = extract_ids(json, "\"P2306\"");
             if (conflict_props.empty())
             {
-                return L"# No P2306 (conflict property) found";
+                return "# No P2306 (conflict property) found";
             }
-            const std::wstring& conflict_p = conflict_props[0]; // e.g. "P31"
+            const std::string& conflict_p = conflict_props[0]; // e.g. "P31"
 
             // Extract conflict values from P2305 (can be multiple or none)
-            auto conflict_qs = extract_ids(json, L"\"P2305\"");
+            auto conflict_qs = extract_ids(json, "\"P2305\"");
 
             if (conflict_qs.empty())
             {
                 // No specific value: conflict with presence of conflict_p
-                result << L"I " << id_str << L" Y, I " << conflict_p << L" Z => !" << std::endl;
+                result << "I " << id_str << " Y, I " << conflict_p << " Z => !" << std::endl;
             }
             else
             {
                 // One rule per forbidden value
                 for (const auto& q : conflict_qs)
                 {
-                    result << L"I " << id_str << L" Y, I " << conflict_p << L" " << q << L" => !" << std::endl;
+                    result << "I " << id_str << " Y, I " << conflict_p << " " << q << " => !" << std::endl;
                 }
             }
 
             return result.str();
         });
 
-    constraints[L"Q21503247"] = ConstraintInfo(L"item-requires-statement constraint (item constraint | requires claim constraint | item requires claim constraint | required statement constraint | statement required constraint | requires statement constraint | required claim constraint | subject requires statement constraint | item-has-statement constraint | item has statement constraint | item-has-claim constraint | item has claim constraint | item-requires-claim constraint | requires-claim constraint | has claim constraint | has-claim constraint | has statement constraint | has-statement constraint | claim required constraint | subject-requires-statement constraint | subject has statement constraint | subject requires claim constraint | subject has claim constraint | subject-has-statement constraint | subject-requires-claim constraint | subject-has-claim constraint | required-statement constraint | statement-required constraint)", L"type of constraint for Wikidata properties: used to specify that an item with this property should also have another given property", nullptr);
-    constraints[L"Q21503250"] = ConstraintInfo(L"subject type constraint (domain constraint | subject class constraint | type constraint | subject-type constraint | subject-class constraint)", L"type of constraint for Wikidata properties: used to specify that the item described by such properties should be a subclass or instance of a given type", nullptr);
-    constraints[L"Q21510851"] = ConstraintInfo(L"allowed qualifiers constraint (use qualifiers constraint | qualifiers constraint | optional qualifiers constraint)", L"type of constraint for Wikidata properties: used to specify that only the listed qualifiers should be used. \" Novalue\" disallows any qualifier", nullptr);
-    constraints[L"Q21510852"] = ConstraintInfo(L"Commons link constraint (Wikimedia Commons link constraint)", L"type of constraint for Wikidata properties: used to specify that the value must link to an existing Wikimedia Commons page", nullptr);
-    constraints[L"Q21510854"] = ConstraintInfo(L"difference-within-range constraint (difference within range constraint)", L"type of constraint for Wikidata properties: used to specify that the value of a given statement should only differ in the given way. Use with qualifiers minimum quantity/maximum quantity", nullptr);
-    constraints[L"Q21510856"] = ConstraintInfo(L"required qualifier constraint (mandatory qualifier)", L"type of constraint for Wikidata properties: used to specify that the listed qualifier has to be used", nullptr);
-    constraints[L"Q21510857"] = ConstraintInfo(L"multi-value constraint (multiple value constraint | multiple-value constraint | multi value constraint | multiple values constraint | multiple-values constraint)", L"type of constraint for Wikidata properties: used to specify that a property generally contains more than one value per item", nullptr);
-    constraints[L"Q21510859"] = ConstraintInfo(L"one-of constraint (one of constraint)", L"type of constraint for Wikidata properties: used to specify that the value for this property has to be one of a given set of items", nullptr);
-    constraints[L"Q21510860"] = ConstraintInfo(L"range constraint (value range constraint | value-within-range constraint | value-within-bounds constraint | value within range constraint | value within bounds constraint)", L"type of constraint for Wikidata properties: used to specify that the value must be between two given values", nullptr);
-    constraints[L"Q21510862"] = ConstraintInfo(L"symmetric constraint (Wikidata symmetric constraint | symmetry constraint)", L"type of constraint for Wikidata properties: used to specify that the referenced entity should also link back to this entity", nullptr);
-    constraints[L"Q21510863"] = ConstraintInfo(L"used as qualifier constraint (use as qualifier constraint | use as a qualifier)", L"type of constraint for Wikidata properties: used to specify that a property must only be used as a qualifier", nullptr);
-    constraints[L"Q21510864"] = ConstraintInfo(L"value-requires-statement constraint (value requires statement constraint | target required claim constraint)", L"type of constraint for Wikidata properties: used to specify that the referenced item should have a statement with a given property", nullptr);
-    constraints[L"Q21510865"] = ConstraintInfo(L"value-type constraint (allowed values | codomain constraint | value class constraint | value type constraint | value-class constraint | object type constraint | range constraint)", L"type of constraint for Wikidata properties: used to specify that the value item should be a subclass or instance of a given type", nullptr);
-    constraints[L"Q21514353"] = ConstraintInfo(L"allowed units constraint", L"type of constraint for Wikidata properties: used to specify that only listed units may be used", nullptr);
-    constraints[L"Q21528958"] = ConstraintInfo(L"used for values only constraint (value-only constraint | used as claims only | used as base properties in statement only)", L"type of constraint for Wikidata properties: used to specify that a property can only be used as a property for values, not as a qualifier or reference", nullptr);
-    constraints[L"Q21528959"] = ConstraintInfo(L"used as reference constraint (source-only constraint | reference-only constraint)", L"type of constraint for Wikidata properties: used to specify that a property must only be used in references or instances of citation", nullptr);
-    constraints[L"Q25796498"] = ConstraintInfo(L"contemporary constraint (coincide or coexist at some point of history)", L"type of constraint for Wikidata properties: used to specify that the subject and the object have to coincide or coexist at some point of history", nullptr);
-    constraints[L"Q42750658"] = ConstraintInfo(L"value constraint", L"class of constraints on the value of a statement with a given property. For constraint: use specific items (e.g. \"value type constraint\", \"value requires statement constraint\", \"format constraint\", etc.)", nullptr);
-    constraints[L"Q51723761"] = ConstraintInfo(L"no-bounds constraint (no bounds constraint)", L"type of constraint for Wikidata properties: specifies that a property must only have values without validity bounds", nullptr);
-    constraints[L"Q52004125"] = ConstraintInfo(L"allowed-entity-types constraint (entity types constraint | allowed entity types constraint)", L"type of constraint for Wikidata properties: used to specify that a property may only be used on a certain listed entity type: Wikibase item, Wikibase property, lexeme, form, sense, Wikibase MediaInfo", nullptr);
-    constraints[L"Q52060874"] = ConstraintInfo(L"single-best-value constraint (single best value | single best value constraint | single-preferred-value constraint | single preferred value | single preferred value constraint)", L"type of constraint for Wikidata properties: used to specify that this property generally contains a single “best” value per item, though other values may be included as long as the “best” value is marked with preferred rank", nullptr);
+    constraints["Q21503247"] = ConstraintInfo("item-requires-statement constraint (item constraint | requires claim constraint | item requires claim constraint | required statement constraint | statement required constraint | requires statement constraint | required claim constraint | subject requires statement constraint | item-has-statement constraint | item has statement constraint | item-has-claim constraint | item has claim constraint | item-requires-claim constraint | requires-claim constraint | has claim constraint | has-claim constraint | has statement constraint | has-statement constraint | claim required constraint | subject-requires-statement constraint | subject has statement constraint | subject requires claim constraint | subject has claim constraint | subject-has-statement constraint | subject-requires-claim constraint | subject-has-claim constraint | required-statement constraint | statement-required constraint)", "type of constraint for Wikidata properties: used to specify that an item with this property should also have another given property", nullptr);
+    constraints["Q21503250"] = ConstraintInfo("subject type constraint (domain constraint | subject class constraint | type constraint | subject-type constraint | subject-class constraint)", "type of constraint for Wikidata properties: used to specify that the item described by such properties should be a subclass or instance of a given type", nullptr);
+    constraints["Q21510851"] = ConstraintInfo("allowed qualifiers constraint (use qualifiers constraint | qualifiers constraint | optional qualifiers constraint)", "type of constraint for Wikidata properties: used to specify that only the listed qualifiers should be used. \" Novalue\" disallows any qualifier", nullptr);
+    constraints["Q21510852"] = ConstraintInfo("Commons link constraint (Wikimedia Commons link constraint)", "type of constraint for Wikidata properties: used to specify that the value must link to an existing Wikimedia Commons page", nullptr);
+    constraints["Q21510854"] = ConstraintInfo("difference-within-range constraint (difference within range constraint)", "type of constraint for Wikidata properties: used to specify that the value of a given statement should only differ in the given way. Use with qualifiers minimum quantity/maximum quantity", nullptr);
+    constraints["Q21510856"] = ConstraintInfo("required qualifier constraint (mandatory qualifier)", "type of constraint for Wikidata properties: used to specify that the listed qualifier has to be used", nullptr);
+    constraints["Q21510857"] = ConstraintInfo("multi-value constraint (multiple value constraint | multiple-value constraint | multi value constraint | multiple values constraint | multiple-values constraint)", "type of constraint for Wikidata properties: used to specify that a property generally contains more than one value per item", nullptr);
+    constraints["Q21510859"] = ConstraintInfo("one-of constraint (one of constraint)", "type of constraint for Wikidata properties: used to specify that the value for this property has to be one of a given set of items", nullptr);
+    constraints["Q21510860"] = ConstraintInfo("range constraint (value range constraint | value-within-range constraint | value-within-bounds constraint | value within range constraint | value within bounds constraint)", "type of constraint for Wikidata properties: used to specify that the value must be between two given values", nullptr);
+    constraints["Q21510862"] = ConstraintInfo("symmetric constraint (Wikidata symmetric constraint | symmetry constraint)", "type of constraint for Wikidata properties: used to specify that the referenced entity should also link back to this entity", nullptr);
+    constraints["Q21510863"] = ConstraintInfo("used as qualifier constraint (use as qualifier constraint | use as a qualifier)", "type of constraint for Wikidata properties: used to specify that a property must only be used as a qualifier", nullptr);
+    constraints["Q21510864"] = ConstraintInfo("value-requires-statement constraint (value requires statement constraint | target required claim constraint)", "type of constraint for Wikidata properties: used to specify that the referenced item should have a statement with a given property", nullptr);
+    constraints["Q21510865"] = ConstraintInfo("value-type constraint (allowed values | codomain constraint | value class constraint | value type constraint | value-class constraint | object type constraint | range constraint)", "type of constraint for Wikidata properties: used to specify that the value item should be a subclass or instance of a given type", nullptr);
+    constraints["Q21514353"] = ConstraintInfo("allowed units constraint", "type of constraint for Wikidata properties: used to specify that only listed units may be used", nullptr);
+    constraints["Q21528958"] = ConstraintInfo("used for values only constraint (value-only constraint | used as claims only | used as base properties in statement only)", "type of constraint for Wikidata properties: used to specify that a property can only be used as a property for values, not as a qualifier or reference", nullptr);
+    constraints["Q21528959"] = ConstraintInfo("used as reference constraint (source-only constraint | reference-only constraint)", "type of constraint for Wikidata properties: used to specify that a property must only be used in references or instances of citation", nullptr);
+    constraints["Q25796498"] = ConstraintInfo("contemporary constraint (coincide or coexist at some point of history)", "type of constraint for Wikidata properties: used to specify that the subject and the object have to coincide or coexist at some point of history", nullptr);
+    constraints["Q42750658"] = ConstraintInfo("value constraint", "class of constraints on the value of a statement with a given property. For constraint: use specific items (e.g. \"value type constraint\", \"value requires statement constraint\", \"format constraint\", etc.)", nullptr);
+    constraints["Q51723761"] = ConstraintInfo("no-bounds constraint (no bounds constraint)", "type of constraint for Wikidata properties: specifies that a property must only have values without validity bounds", nullptr);
+    constraints["Q52004125"] = ConstraintInfo("allowed-entity-types constraint (entity types constraint | allowed entity types constraint)", "type of constraint for Wikidata properties: used to specify that a property may only be used on a certain listed entity type: Wikibase item, Wikibase property, lexeme, form, sense, Wikibase MediaInfo", nullptr);
+    constraints["Q52060874"] = ConstraintInfo("single-best-value constraint (single best value | single best value constraint | single-preferred-value constraint | single preferred value | single preferred value constraint)", "type of constraint for Wikidata properties: used to specify that this property generally contains a single “best” value per item, though other values may be included as long as the “best” value is marked with preferred rank", nullptr);
 
-    constraints[L"Q52558054"] = ConstraintInfo(
-        L"none-of constraint (none of constraint)",
-        L"constraint specifying values that should not be used for the given property",
-        [](const std::wstring& json, const std::wstring& id_str) -> std::wstring
+    constraints["Q52558054"] = ConstraintInfo(
+        "none-of constraint (none of constraint)",
+        "constraint specifying values that should not be used for the given property",
+        [](const std::string& json, const std::string& id_str) -> std::string
         {
-            std::wstringstream result;
-            result << L"# Constraint: Q52558054" << std::endl;
+            std::stringstream result;
+            result << "# Constraint: Q52558054" << std::endl;
 
             // Extract forbidden values from P2305
-            auto forbidden_qs = extract_ids(json, L"\"P2305\"");
+            auto forbidden_qs = extract_ids(json, "\"P2305\"");
             if (forbidden_qs.empty())
             {
-                return L"# No forbidden values (P2305) found";
+                return "# No forbidden values (P2305) found";
             }
 
             // One rule per forbidden value
             for (const auto& q : forbidden_qs)
             {
-                result << L"I " << id_str << L" " << q << L" => !" << std::endl;
+                result << "I " << id_str << " " << q << " => !" << std::endl;
             }
 
             return result.str();
         });
-    constraints[L"Q52712340"] = ConstraintInfo(L"one-of qualifier value property constraint", L"constraint that specifies which values can be used for a given qualifier when used on a specific property of an Item Declaration", nullptr);
-    constraints[L"Q52848401"] = ConstraintInfo(L"integer constraint", L"constraint type used when values have to be integer only", nullptr);
-    constraints[L"Q53869507"] = ConstraintInfo(
-        L"property scope constraint (scope constraint | scope of property)",
-        L"constraint to define the scope of the property (as main property, as qualifier, as reference, or combination). Qualify with \"property scope\" (P5314)",
-        [](const std::wstring& json, const std::wstring& id_str) -> std::wstring
+    constraints["Q52712340"] = ConstraintInfo("one-of qualifier value property constraint", "constraint that specifies which values can be used for a given qualifier when used on a specific property of an Item Declaration", nullptr);
+    constraints["Q52848401"] = ConstraintInfo("integer constraint", "constraint type used when values have to be integer only", nullptr);
+    constraints["Q53869507"] = ConstraintInfo(
+        "property scope constraint (scope constraint | scope of property)",
+        "constraint to define the scope of the property (as main property, as qualifier, as reference, or combination). Qualify with \"property scope\" (P5314)",
+        [](const std::string& json, const std::string& id_str) -> std::string
         {
             // Find the second numeric-id (the one in P5314)
-            static const std::wstring numeric_id_tag(L"\"numeric-id\":");
+            static const std::string numeric_id_tag("\"numeric-id\":");
             size_t                    first_numeric = json.find(numeric_id_tag);
-            if (first_numeric == std::wstring::npos) return L"# No numeric-id found";
+            if (first_numeric == std::string::npos) return "# No numeric-id found";
 
             size_t numeric_start = json.find(numeric_id_tag, first_numeric + 1);
-            if (numeric_start == std::wstring::npos) return L"# No second numeric-id found for qualifier";
+            if (numeric_start == std::string::npos) return "# No second numeric-id found for qualifier";
 
             numeric_start += numeric_id_tag.size();
             size_t numeric_end = json.find(L',', numeric_start);
-            if (numeric_end == std::wstring::npos) numeric_end = json.find(L'}', numeric_start);
+            if (numeric_end == std::string::npos) numeric_end = json.find(L'}', numeric_start);
 
-            if (numeric_end == std::wstring::npos) return L"# Invalid numeric-id end";
+            if (numeric_end == std::string::npos) return "# Invalid numeric-id end";
 
-            std::wstring numeric_id = json.substr(numeric_start, numeric_end - numeric_start);
-            std::wstring scope_qid  = L"Q" + numeric_id;
+            std::string numeric_id = json.substr(numeric_start, numeric_end - numeric_start);
+            std::string scope_qid  = "Q" + numeric_id;
 
             // Generate symbolic rule based on scope
             // For Q54828448 ("as main value"), symbolic rule: disallow as qualifier (since zelph has no qualifiers, symbolic)
-            if (scope_qid == L"Q54828448")
+            if (scope_qid == "Q54828448")
             {
-                return L"# " + id_str + L" as main value => !";
+                return "# " + id_str + " as main value => !";
             }
-            else if (scope_qid == L"Q54828449")
+            else if (scope_qid == "Q54828449")
             {
-                return L"# " + id_str + L" as qualifier => !";
+                return "# " + id_str + " as qualifier => !";
             }
-            else if (scope_qid == L"Q54828450")
+            else if (scope_qid == "Q54828450")
             {
-                return L"# " + id_str + L" as reference => !";
+                return "# " + id_str + " as reference => !";
             }
 
-            return L""; });
-    constraints[L"Q54554025"]  = ConstraintInfo(L"citation-needed constraint (citation needed constraint | reference-needed constraint | reference needed constraint | source-needed constraint | source needed constraint | citation-required constraint | citation required constraint | reference-required constraint | reference required constraint | source-required constraint | source required constraint)", L"type of constraint for Wikidata properties: specifies that a property must have at least one reference", nullptr);
-    constraints[L"Q54718960"]  = ConstraintInfo(L"Wikidata constraint scope", L"", nullptr);
-    constraints[L"Q55819078"]  = ConstraintInfo(L"lexeme requires lexical category constraint (lexical category constraint)", L"type of constraint for Wikidata properties: used to specify that the referenced lexeme should have a given lexical category", nullptr);
-    constraints[L"Q55819106"]  = ConstraintInfo(L"lexeme requires language constraint (language required by this lexeme | language required constraint)", L"property constraint for restricting the use of a property to lexemes in a particular language", nullptr);
-    constraints[L"Q64006792"]  = ConstraintInfo(L"lexeme-value-requires-lexical-category constraint (target required lexical category)", L"type of constraint for Wikidata properties: used to specify that the referenced lexeme should have a given lexical category", nullptr);
-    constraints[L"Q102745616"] = ConstraintInfo(L"complex constraint", L"constraint with two or more elements", nullptr);
-    constraints[L"Q108139345"] = ConstraintInfo(L"label in language constraint (requires label constraint)", L"constraint to ensure items using a property have label in the language (Use qualifier \"Wikimedia language code\" (P424) to define language)", nullptr);
-    constraints[L"Q111204896"] = ConstraintInfo(L"description in language constraint", L"constraint to ensure items using a property have description in the language. Use qualifier \" WMF language code \" (P424) to define language.", nullptr);
-    constraints[L"Q21510855"]  = ConstraintInfo(L"inverse constraint", L"type of constraint for Wikidata properties: used to specify that the referenced item has to refer back to this item with the given inverse property", nullptr);
-    constraints[L"Q110262746"] = ConstraintInfo(L"string value length constraint", L"the constraint on Wikidata String value length of 1,500 characters", nullptr);
-    constraints[L"Q100883797"] = ConstraintInfo(L"complex constraint value label template", L"qualify with regex to match by label of property label. $1 to be replaced by subject label", nullptr);
-    constraints[L"Q100884525"] = ConstraintInfo(L"complex constraint value label (value label constraint)", L"qualify with regex to match by label", nullptr);
-    constraints[L"Q102173107"] = ConstraintInfo(L"complex constraint recency (recency)", L"qualify with duration for maximum age", nullptr);
-    constraints[L"Q102746314"] = ConstraintInfo(L"complex constraint label language", L"qualify with language in which the entity would generally have a label. Requires {{subst:Define label language constraint}} on property talk pages to work", nullptr);
+            return ""; });
+    constraints["Q54554025"]  = ConstraintInfo("citation-needed constraint (citation needed constraint | reference-needed constraint | reference needed constraint | source-needed constraint | source needed constraint | citation-required constraint | citation required constraint | reference-required constraint | reference required constraint | source-required constraint | source required constraint)", "type of constraint for Wikidata properties: specifies that a property must have at least one reference", nullptr);
+    constraints["Q54718960"]  = ConstraintInfo("Wikidata constraint scope", "", nullptr);
+    constraints["Q55819078"]  = ConstraintInfo("lexeme requires lexical category constraint (lexical category constraint)", "type of constraint for Wikidata properties: used to specify that the referenced lexeme should have a given lexical category", nullptr);
+    constraints["Q55819106"]  = ConstraintInfo("lexeme requires language constraint (language required by this lexeme | language required constraint)", "property constraint for restricting the use of a property to lexemes in a particular language", nullptr);
+    constraints["Q64006792"]  = ConstraintInfo("lexeme-value-requires-lexical-category constraint (target required lexical category)", "type of constraint for Wikidata properties: used to specify that the referenced lexeme should have a given lexical category", nullptr);
+    constraints["Q102745616"] = ConstraintInfo("complex constraint", "constraint with two or more elements", nullptr);
+    constraints["Q108139345"] = ConstraintInfo("label in language constraint (requires label constraint)", "constraint to ensure items using a property have label in the language (Use qualifier \"Wikimedia language code\" (P424) to define language)", nullptr);
+    constraints["Q111204896"] = ConstraintInfo("description in language constraint", "constraint to ensure items using a property have description in the language. Use qualifier \" WMF language code \" (P424) to define language.", nullptr);
+    constraints["Q21510855"]  = ConstraintInfo("inverse constraint", "type of constraint for Wikidata properties: used to specify that the referenced item has to refer back to this item with the given inverse property", nullptr);
+    constraints["Q110262746"] = ConstraintInfo("string value length constraint", "the constraint on Wikidata String value length of 1,500 characters", nullptr);
+    constraints["Q100883797"] = ConstraintInfo("complex constraint value label template", "qualify with regex to match by label of property label. $1 to be replaced by subject label", nullptr);
+    constraints["Q100884525"] = ConstraintInfo("complex constraint value label (value label constraint)", "qualify with regex to match by label", nullptr);
+    constraints["Q102173107"] = ConstraintInfo("complex constraint recency (recency)", "qualify with duration for maximum age", nullptr);
+    constraints["Q102746314"] = ConstraintInfo("complex constraint label language", "qualify with language in which the entity would generally have a label. Requires {{subst:Define label language constraint}} on property talk pages to work", nullptr);
 
     return constraints;
 }
 
-void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir)
+void Wikidata::process_constraints(const std::string& line, std::string id_str, const std::string& dir)
 {
     // Create directory if not exists
     std::filesystem::create_directory(dir);
 
     // Output file path
-    std::string   filename = dir + "/" + string::unicode::to_utf8(id_str) + ".zph";
+    std::string   filename = dir + "/" + id_str + ".zph";
     std::ofstream out(filename);
 
     if (out)
@@ -510,9 +510,9 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
         auto constraints_map = get_supported_constraints();
 
         // Parse each constraint statement using the fixed string
-        static const std::wstring constraint_start_tag(L"{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P2302\",\"datavalue\":");
-        size_t                    pos = 0;
-        while ((pos = line.find(constraint_start_tag, pos)) != std::wstring::npos)
+        static const std::string constraint_start_tag("{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P2302\",\"datavalue\":");
+        size_t                   pos = 0;
+        while ((pos = line.find(constraint_start_tag, pos)) != std::string::npos)
         {
             // Find matching end of the constraint object using bracket counting
             size_t stmt_start    = pos;
@@ -521,7 +521,7 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
             bool   in_string     = false;
             while (stmt_end < line.size() && bracket_count > 0)
             {
-                wchar_t c = line[stmt_end];
+                char c = line[stmt_end];
                 if (c == L'"')
                 {
                     in_string = !in_string;
@@ -540,47 +540,47 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
             --stmt_end; // Point to closing }
 
             // Extract the full statement JSON substring
-            std::wstring stmt_json = line.substr(stmt_start, stmt_end - stmt_start + 1);
+            std::string stmt_json = line.substr(stmt_start, stmt_end - stmt_start + 1);
 
             // Extract the constraint type (Q-ID) from mainsnak
-            static const std::wstring mainsnak_type_tag(L"\"datavalue\":{\"value\":{\"entity-type\":\"item\",\"numeric-id\":");
-            size_t                    type_start = stmt_json.find(mainsnak_type_tag);
-            if (type_start != std::wstring::npos)
+            static const std::string mainsnak_type_tag("\"datavalue\":{\"value\":{\"entity-type\":\"item\",\"numeric-id\":");
+            size_t                   type_start = stmt_json.find(mainsnak_type_tag);
+            if (type_start != std::string::npos)
             {
                 type_start += mainsnak_type_tag.size();
                 size_t type_end = stmt_json.find(L',', type_start);
-                if (type_end != std::wstring::npos)
+                if (type_end != std::string::npos)
                 {
-                    std::wstring numeric_id     = stmt_json.substr(type_start, type_end - type_start);
-                    std::wstring constraint_qid = L"Q" + numeric_id;
+                    std::string numeric_id     = stmt_json.substr(type_start, type_end - type_start);
+                    std::string constraint_qid = "Q" + numeric_id;
 
-                    out << "# Constraint: " << string::unicode::to_utf8(constraint_qid) << std::endl;
+                    out << "# Constraint: " << constraint_qid << std::endl;
 
                     auto it = constraints_map.find(constraint_qid);
                     if (it != constraints_map.end())
                     {
-                        out << "# Short description: " << string::unicode::to_utf8(it->second.short_desc) << std::endl;
-                        out << "# Long description: " << string::unicode::to_utf8(it->second.long_desc) << std::endl;
+                        out << "# Short description: " << it->second.short_desc << std::endl;
+                        out << "# Long description: " << it->second.long_desc << std::endl;
                     }
                     else
                     {
-                        out << "# Unsupported constraint: " << string::unicode::to_utf8(constraint_qid) << std::endl;
+                        out << "# Unsupported constraint: " << constraint_qid << std::endl;
                         out << "# This constraint is not in the supported list but is included as a comment block." << std::endl;
                     }
 
                     out << "# Raw JSON block:" << std::endl;
-                    out << "# " << string::unicode::to_utf8(stmt_json) << std::endl;
+                    out << "# " << stmt_json << std::endl;
 
                     if (it != constraints_map.end() && it->second.generator)
                     {
-                        std::wstring rules = it->second.generator(stmt_json, id_str);
+                        std::string rules = it->second.generator(stmt_json, id_str);
                         if (rules.empty())
                         {
                             out << "# (Generator delivered empty rule set)" << std::endl;
                         }
                         else
                         {
-                            out << string::unicode::to_utf8(rules) << std::endl;
+                            out << rules << std::endl;
                         }
                     }
                     else
@@ -598,30 +598,30 @@ void Wikidata::process_constraints(const std::wstring& line, std::wstring id_str
     else
     {
         // Error handling if file can't be opened
-        _pImpl->_n->error(L"Failed to open file: " + string::unicode::from_utf8(filename), true);
+        _pImpl->_n->error("Failed to open file: " + filename, true);
     }
 }
 
-void Wikidata::process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1)
+void Wikidata::process_import(const std::string& line, const std::string& id_str, const std::string& additional_language_to_import, const bool log, size_t id1)
 {
     network::Node subject = 0;
-    std::wstring  name_in_additional_language;
+    std::string   name_in_additional_language;
 
     if (!additional_language_to_import.empty())
     {
-        static const std::wstring language_tag(L"{\"language\":\"" + string::unicode::from_utf8(additional_language_to_import) + L"\",\"value\":\"");
-        const size_t              language0 = line.find(language_tag, id1 + 7);
-        if (language0 != std::wstring::npos)
+        static const std::string language_tag("{\"language\":\"" + additional_language_to_import + "\",\"value\":\"");
+        const size_t             language0 = line.find(language_tag, id1 + 7);
+        if (language0 != std::string::npos)
         {
-            if (language0 > line.find(L"\"labels\":{"))
+            if (language0 > line.find("\"labels\":{"))
             {
-                const size_t aliases = line.find(L"\"aliases\":{", id1 + 7);
+                const size_t aliases = line.find("\"aliases\":{", id1 + 7);
 
-                if (aliases == std::wstring::npos || language0 < aliases)
+                if (aliases == std::string::npos || language0 < aliases)
                 {
-                    const size_t descriptions = line.find(L"\"descriptions\":{", id1 + 7);
+                    const size_t descriptions = line.find("\"descriptions\":{", id1 + 7);
 
-                    if (descriptions == std::wstring::npos || language0 < descriptions)
+                    if (descriptions == std::string::npos || language0 < descriptions)
                     {
                         id1                         = line.find(L'\"', language0 + language_tag.size() + 1);
                         name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
@@ -631,39 +631,39 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
         }
     }
 
-    size_t                    property0;
-    static const std::wstring property_tag(LR"(":[{"mainsnak":{"snaktype":"value","property":")");
-    static const std::wstring numeric_id_tag(LR"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
-    static const std::wstring object_tag(LR"("id":")");
+    size_t                   property0;
+    static const std::string property_tag(R"(":[{"mainsnak":{"snaktype":"value","property":")");
+    static const std::string numeric_id_tag(R"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
+    static const std::string object_tag(R"("id":")");
     // Prefix shared by all claims in a property array
-    static const std::wstring mainsnak_value_prefix(LR"("mainsnak":{"snaktype":"value","property":")");
+    static const std::string mainsnak_value_prefix(R"("mainsnak":{"snaktype":"value","property":")");
 
 #ifdef SINGLE_THREADED_IMPORT
     std::unique_lock lock(_pImpl->_mtx_network, std::defer_lock);
 #endif
 
-    while ((property0 = line.find(property_tag, id1 + 1)) != std::wstring::npos)
+    while ((property0 = line.find(property_tag, id1 + 1)) != std::string::npos)
     {
-        size_t       property1    = line.find(L'\"', property0 + property_tag.size());
-        std::wstring property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
+        size_t      property1    = line.find(L'\"', property0 + property_tag.size());
+        std::string property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
 
         if (property_str.empty() || property_str[0] != L'P')
         {
-            throw std::runtime_error("Invalid property '" + string::unicode::to_utf8(property_str) + "' in " + string::unicode::to_utf8(line));
+            throw std::runtime_error("Invalid property '" + property_str + "' in " + line);
         }
 
         // Pattern to match each claim's mainsnak item value for this property.
         // This matches: "mainsnak":{"snaktype":"value","property":"Pxxx","datavalue":{"value":{"entity-type":"item","numeric-id":
         // It does not match qualifier or reference snaks (they lack the "mainsnak":{} wrapper).
-        std::wstring claim_value_tag = mainsnak_value_prefix + property_str + numeric_id_tag;
+        std::string claim_value_tag = mainsnak_value_prefix + property_str + numeric_id_tag;
 
         // Boundary: start of the next property's array (next property_tag occurrence)
         size_t next_property0 = line.find(property_tag, property0 + property_tag.size());
-        size_t boundary       = (next_property0 != std::wstring::npos) ? next_property0 : line.size();
+        size_t boundary       = (next_property0 != std::string::npos) ? next_property0 : line.size();
 
         size_t search_pos = property0;
 
-        while ((search_pos = line.find(claim_value_tag, search_pos)) != std::wstring::npos && search_pos < boundary)
+        while ((search_pos = line.find(claim_value_tag, search_pos)) != std::string::npos && search_pos < boundary)
         {
             size_t id0 = search_pos + claim_value_tag.size();
 
@@ -682,8 +682,8 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
                 if (line.substr(id0 + 1, object_tag.size()) == object_tag)
                 {
                     id0 += object_tag.size() + 1;
-                    id1                     = line.find(L'\"', id0);
-                    std::wstring object_str = line.substr(id0, id1 - id0);
+                    id1                    = line.find(L'\"', id0);
+                    std::string object_str = line.substr(id0, id1 - id0);
 
                     try
                     {
@@ -710,16 +710,16 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
 
                         if (log)
                         {
-                            std::wstring output;
-                            string::node_to_wstring(_pImpl->_n, output, "en", fact, 3);
-                            _pImpl->_n->diagnostic(id_str + L":       en> " + output, true);
-                            string::node_to_wstring(_pImpl->_n, output, "wikidata", fact, 3);
-                            _pImpl->_n->diagnostic(id_str + L": wikidata> " + output, true);
+                            std::string output;
+                            string::node_to_string(_pImpl->_n, output, "en", fact, 3);
+                            _pImpl->_n->diagnostic(id_str + ":       en> " + output, true);
+                            string::node_to_string(_pImpl->_n, output, "wikidata", fact, 3);
+                            _pImpl->_n->diagnostic(id_str + ": wikidata> " + output, true);
                         }
                     }
                     catch (std::exception& ex)
                     {
-                        _pImpl->_n->error(string::unicode::from_utf8(ex.what()), true);
+                        _pImpl->_n->error(ex.what(), true);
                     }
 
                     search_pos = id1;
@@ -735,7 +735,7 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
             }
         }
 
-        id1 = (next_property0 != std::wstring::npos) ? next_property0 - 1 : line.size() - 1;
+        id1 = (next_property0 != std::string::npos) ? next_property0 - 1 : line.size() - 1;
     }
 
     if (subject == 0)
@@ -760,17 +760,17 @@ void Wikidata::process_import(const std::wstring& line, const std::wstring& id_s
     }
 }
 
-void Wikidata::process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir)
+void Wikidata::process_entry(const std::string& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir)
 {
     const bool export_constraints = !constraints_dir.empty();
 
-    static const std::wstring id_tag(L"\"id\":\"");
-    size_t                    id0 = line.find(id_tag);
+    static const std::string id_tag("\"id\":\"");
+    size_t                   id0 = line.find(id_tag);
 
-    if (id0 != std::wstring::npos)
+    if (id0 != std::string::npos)
     {
-        size_t       id1 = line.find(L'\"', id0 + id_tag.size() + 1);
-        std::wstring id_str(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
+        size_t      id1 = line.find(L'\"', id0 + id_tag.size() + 1);
+        std::string id_str(line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size()));
 
         if (export_constraints)
         {
@@ -791,13 +791,13 @@ void Wikidata::set_logging(bool do_log)
     _pImpl->_logging = do_log;
 }
 
-void Wikidata::export_entities(const std::vector<std::wstring>& entity_ids)
+void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
 {
     if (entity_ids.empty()) return;
 
     std::unordered_set<std::string> remaining;
     for (const auto& wid : entity_ids)
-        remaining.insert(string::unicode::to_utf8(wid));
+        remaining.insert(wid);
     const size_t total_requested = remaining.size();
 
     const auto& source = _pImpl->_original_source_path;

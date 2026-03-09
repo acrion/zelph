@@ -132,7 +132,7 @@ void GenericDataManager::load()
         throw std::runtime_error("Generic data manager currently only supports loading .bin files directly.");
     }
 
-    _n->diagnostic(L"Loading network from generic file " + _input_path.wstring() + L"...", true);
+    _n->diagnostic("Loading network from generic file " + _input_path.string() + "...", true);
     _n->load_from_file(_input_path.string());
-    _n->diagnostic(L"Network loaded.", true);
+    _n->diagnostic("Network loaded.", true);
 }

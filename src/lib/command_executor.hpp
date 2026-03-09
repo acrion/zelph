@@ -57,7 +57,7 @@ namespace zelph::console
     class CommandExecutor
     {
     public:
-        using LineProcessor = std::function<void(const std::wstring&)>;
+        using LineProcessor = std::function<void(const std::string&)>;
 
         /**
          * @brief Constructs the executor with references to the system components.
@@ -79,7 +79,7 @@ namespace zelph::console
          * @brief Executes a command.
          * @param cmd The tokenized command arguments (e.g., {".help", "load"}).
          */
-        void execute(const std::vector<std::wstring>& cmd);
+        void execute(const std::vector<std::string>& cmd);
 
         /**
          * @brief Imports a zelph script file, processing it line by line.
@@ -91,7 +91,7 @@ namespace zelph::console
          * @param file UTF-16 path to the .zph file.
          * @param args Optional script arguments (accessible as :args in Janet).
          */
-        void import_file(const std::wstring& file, const std::vector<std::string>& args = {}) const;
+        void import_file(const std::string& file, const std::vector<std::string>& args = {}) const;
 
         // Non-copyable due to internal state references
         CommandExecutor(const CommandExecutor&)            = delete;

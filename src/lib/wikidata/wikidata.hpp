@@ -49,12 +49,12 @@ namespace zelph::wikidata
          *        into the current working directory.
          *        No import, no cache, no network activity.
          */
-        void export_entities(const std::vector<std::wstring>& entity_ids);
+        void export_entities(const std::vector<std::string>& entity_ids);
 
     private:
-        void process_constraints(const std::wstring& line, std::wstring id_str, const std::string& dir);
-        void process_entry(const std::wstring& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
-        void process_import(const std::wstring& line, const std::wstring& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
+        void process_constraints(const std::string& line, std::string id_str, const std::string& dir);
+        void process_entry(const std::string& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
+        void process_import(const std::string& line, const std::string& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
 
         class Impl;
         Impl* const _pImpl; // must stay at top of members list because of initialization order

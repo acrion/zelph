@@ -75,7 +75,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     }
 
     if (!silent)
-        diagnostic(L"Starting reasoning with " + std::to_wstring(_pool->count()) + L" worker threads.");
+        diagnostic("Starting reasoning with " + std::to_string(_pool->count()) + " worker threads.");
 
     int iteration = 0;
     do
@@ -96,16 +96,16 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         diagnostic_stream() << "Reasoning complete. Total unification matches processed: " << _total_matches
                             << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
 
-    if (_skipped > 0) diagnostic(L" (skipped " + std::to_wstring(_skipped) + L" deductions)", true);
+    if (_skipped > 0) diagnostic(" (skipped " + std::to_string(_skipped) + " deductions)", true);
 
     if (_contradiction)
     {
-        diagnostic(L"Found one or more contradictions!", true);
+        diagnostic("Found one or more contradictions!", true);
     }
 
     if (_done && suppress_repetition)
     {
-        out(L"Warning: Additional reasoning iterations are required, but have been suppressed.", true);
+        out("Warning: Additional reasoning iterations are required, but have been suppressed.", true);
     }
 
     if (!silent)
@@ -135,9 +135,9 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
     if (should_log(1))
     {
-        std::wstring formatted_rule;
-        string::node_to_wstring(this, formatted_rule, _lang, rule, 3);
-        log(0, "rule", "=== Applying rule " + string::unicode::to_utf8(formatted_rule) + " ===");
+        std::string formatted_rule;
+        string::node_to_string(this, formatted_rule, _lang, rule, 3);
+        log(0, "rule", "=== Applying rule " + formatted_rule + " ===");
     }
     ReasoningContext ctx;
 
@@ -171,9 +171,9 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
             if (_print_deductions || _generate_markdown)
             {
-                std::wstring output;
-                string::node_to_wstring(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                std::wstring message = L"«" + get_formatted_name(core.Contradiction, _lang) + L"» ⇐ " + output;
+                std::string output;
+                string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
 
                 if (_print_deductions)
                 {
@@ -182,7 +182,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 
                 if (_generate_markdown)
                 {
-                    _markdown->add(L"Contradictions", message);
+                    _markdown->add("Contradictions", message);
                 }
             }
         }
@@ -276,7 +276,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             {
                 adjacency_set rels     = filter(best_cond, core.IsA, core.RelationTypeCategory);
                 std::string   rel_name = "?";
-                if (rels.size() == 1) rel_name = string::unicode::to_utf8(get_name(*rels.begin(), _lang, true));
+                if (rels.size() == 1) rel_name = get_name(*rels.begin(), _lang, true);
                 log(depth + 1, "optorder", "Selected condition=" + format(best_cond) + " rel=" + rel_name + " score=" + std::to_string(static_cast<int>(max_score)));
             }
 
@@ -307,7 +307,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
         {
             adjacency_set rels     = filter((*sorted)[i], core.IsA, core.RelationTypeCategory);
             std::string   rel_name = "?";
-            if (rels.size() == 1) rel_name = string::unicode::to_utf8(get_name(*rels.begin(), _lang, true));
+            if (rels.size() == 1) rel_name = get_name(*rels.begin(), _lang, true);
             order_str += " [" + std::to_string(i) + "]=" + rel_name;
         }
         log(depth, "optorder", "Final order:" + order_str);

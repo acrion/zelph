@@ -282,13 +282,13 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             if (do_print || _generate_markdown)
             {
                 size_t skipped_val = _skipped.exchange(0);
-                if (skipped_val > 0) diagnostic(L" (skipped " + std::to_wstring(skipped_val) + L" deductions)", true);
+                if (skipped_val > 0) diagnostic(" (skipped " + std::to_string(skipped_val) + " deductions)", true);
 
-                std::wstring input, output;
-                string::node_to_wstring(this, input, _lang, ctx.current_condition, 3, augmented, parent);
-                string::node_to_wstring(this, output, _lang, d, 3, {}, parent);
+                std::string input, output;
+                string::node_to_string(this, input, _lang, ctx.current_condition, 3, augmented, parent);
+                string::node_to_string(this, output, _lang, d, 3, {}, parent);
 
-                std::wstring message = output + L" ⇐ " + input;
+                std::string message = output + " ⇐ " + input;
 
                 if (do_print)
                 {
@@ -297,7 +297,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
                 if (_generate_markdown)
                 {
-                    _markdown->add(L"Deductions", message);
+                    _markdown->add("Deductions", message);
                 }
             }
 

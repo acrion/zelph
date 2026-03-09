@@ -3,7 +3,7 @@
 # Rule-based multi-digit addition for arbitrarily large positive integers.
 #
 # Numbers are stored LSB-first as cons lists: <42> = 2 cons (4 cons nil).
-# node_to_wstring reverses the display order, so results appear in conventional
+# node_to_string reverses the display order, so results appear in conventional
 # MSB-first notation.
 #
 # Usage after loading this script:
