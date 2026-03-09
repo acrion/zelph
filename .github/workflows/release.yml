@@ -89,7 +89,7 @@ jobs:
       - name: Run tests
         if: matrix.name != 'linux-arm64'
         working-directory: build
-        run: ctest --output-on-failure ${{ runner.os == 'Windows' && '--config Release' || '' }}
+        run: ctest --output-on-failure ${{ runner.os == 'Windows' && '-C Release' || '' }}
 
       - name: Package build artifacts (Zip)
         shell: python
