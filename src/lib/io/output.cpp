@@ -47,13 +47,13 @@ namespace zelph::io
         {
         case OutputChannel::Out:
         case OutputChannel::Prompt:
-            write(std::wcout);
+            write(std::cout);
             break;
         case OutputChannel::Error:
-            write(std::wcerr);
+            write(std::cerr);
             break;
         case OutputChannel::Diagnostic:
-            write(std::wclog);
+            write(std::clog);
             break;
         }
 #else

@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <fcntl.h> // for _O_U16TEXT
     #include <io.h>    // for _setmode
     #include <stdio.h> // for _fileno
+    #include <Windows.h> // for SetConsoleOutputCP
 #else
     #include <sys/types.h> // for fork
     #include <sys/wait.h>  // for waitpid
