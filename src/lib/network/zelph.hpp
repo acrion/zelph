@@ -91,7 +91,6 @@ namespace zelph::network
         void                 set_lang(const std::string& lang);
         std::string          get_lang() const { return _lang; }
         std::string          lang() const { return _lang; }
-        void                 set_print(std::function<void(std::string, bool)> print) const;
         Node                 node(const std::string& name, std::string lang = "");
         bool                 exists(uint64_t nd) const;
         adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
@@ -120,6 +119,7 @@ namespace zelph::network
         void                 invalidate_fact_structures_cache() const noexcept;
         FactComponents       extract_fact_components(Node relation) const;
         void                 set_output_handler(io::OutputHandler output) const;
+        io::OutputHandler    get_output_handler() const;
         void                 emit(io::OutputChannel channel, const std::string& text, bool newline = true) const;
         void                 out(const std::string&, bool newline = true) const;
         void                 error(const std::string&, bool newline = true) const;

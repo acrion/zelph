@@ -1141,79 +1141,74 @@ private:
     {
         if (cmd.size() != 2)
             throw std::runtime_error("Command .run-file requires exactly one argument: the output file path");
-
         const std::string& outfile = cmd[1];
         std::ofstream      out(outfile);
         if (!out.is_open())
             throw std::runtime_error("Command .run-file: Cannot open output file '" + outfile + "'");
+        out << std::unitbuf;
 
         zelph::wikidata::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
+        bool                                    is_wikidata = (_n->get_lang() == "wikidata");
 
-        bool is_wikidata = (_n->get_lang() == "wikidata");
+        auto original_handler = _n->get_output_handler();
 
-        auto normal_print = [&](const std::string& str, bool)
-        {
-            _n->out_stream() << str << std::endl;
-        };
+        std::mutex file_mtx;
 
-        std::function<void(const std::string&, bool)> encode_print =
-            [&compressor, &out, normal_print, is_wikidata](const std::string& str, bool important)
-        {
-            normal_print(str, important);
-
-            size_t pos = str.find(" ⇐ ");
-            if (pos == std::string::npos)
-                return;
-
-            std::string deduction = str.substr(0, pos);
-            string::trim_in_place(deduction);
-
-            std::string reasons = str.substr(pos + 3);
-            string::trim_in_place(reasons);
-
-            if (!reasons.empty() && reasons.front() == '(')
-                reasons.erase(0, 1);
-            if (!reasons.empty() && reasons.back() == ')')
-                reasons.erase(reasons.size() - 1);
-            string::trim_in_place(reasons);
-
-            string::replace_all(reasons, "(", "");
-            string::replace_all(reasons, ")", "");
-
-            string::replace_all(deduction, "«", "");
-            string::replace_all(deduction, "»", "");
-            string::replace_all(reasons, "«", "");
-            string::replace_all(reasons, "»", "");
-
-            std::string line_for_file;
-            if (!reasons.empty())
-                line_for_file = reasons + " ⇒ " + deduction;
-            else
-                line_for_file = deduction; // Fallback (sehr selten)
-
-            string::trim_in_place(line_for_file);
-
-            std::string utf8_line = line_for_file;
-
-            if (is_wikidata)
+        _n->set_output_handler(
+            [&](const zelph::io::OutputEvent& event)
             {
-                std::string encoded = compressor.encode(utf8_line);
-                out << encoded << '\n';
-            }
-            else
-            {
-                out << utf8_line << '\n';
-            }
-        };
+                // Always forward to original handler (console output)
+                original_handler(event);
 
-        _n->diagnostic("Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to " + cmd[1] + (is_wikidata ? " (with Wikidata token encoding)." : " (plain text)."), true);
+                // Additionally intercept Out channel for file writing
+                if (event.channel != zelph::io::OutputChannel::Out)
+                    return;
 
-        _n->set_print(encode_print);
+                const std::string& str = event.text;
+                size_t             pos = str.find(" ⇐ ");
+                if (pos == std::string::npos)
+                    return;
+
+                std::string deduction = str.substr(0, pos);
+                string::trim_in_place(deduction);
+
+                std::string reasons = str.substr(pos + std::string(" ⇐ ").size());
+                string::trim_in_place(reasons);
+                if (!reasons.empty() && reasons.front() == '(')
+                    reasons.erase(0, 1);
+                if (!reasons.empty() && reasons.back() == ')')
+                    reasons.erase(reasons.size() - 1);
+                string::trim_in_place(reasons);
+
+                string::replace_all(reasons, "(", "");
+                string::replace_all(reasons, ")", "");
+                string::replace_all(deduction, "«", "");
+                string::replace_all(deduction, "»", "");
+                string::replace_all(reasons, "«", "");
+                string::replace_all(reasons, "»", "");
+
+                std::string line_for_file;
+                if (!reasons.empty())
+                    line_for_file = reasons + " ⇒ " + deduction;
+                else
+                    line_for_file = deduction;
+                string::trim_in_place(line_for_file);
+
+                std::lock_guard lock(file_mtx);
+                if (is_wikidata)
+                    out << compressor.encode(line_for_file) << '\n';
+                else
+                    out << line_for_file << '\n';
+            });
+
+        _n->diagnostic(
+            "Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to "
+                + outfile + (is_wikidata ? " (with Wikidata token encoding)." : " (plain text)."),
+            true);
 
         _n->run(true, false, false);
 
-        _n->set_print(normal_print);
-
+        _n->set_output_handler(std::move(original_handler));
         _n->diagnostic("Ready.", true);
     }
 
@@ -1251,14 +1246,6 @@ private:
         }
 
         std::ofstream log("load.log");
-        _n->set_print([&](const std::string& str, bool o)
-                      {
-          log << str << std::endl;
-
-          if (o)
-          {
-            _n->out_stream() << str << std::endl;
-          } });
 
         if (cmd.size() == 2)
         {

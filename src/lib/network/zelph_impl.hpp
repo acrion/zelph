@@ -680,9 +680,8 @@ namespace zelph::network
         mutable ankerl::unordered_dense::map<Node, std::vector<FactStructure>> _fs_cache;
         mutable std::atomic<bool>                                              _fs_cache_has_entries{false};
 
-        std::function<void(std::string, bool)> _print;
-        int                                    _max_log_depth{0};
-        bool                                   _logging{false};
-        io::OutputHandler                      _output;
+        int               _max_log_depth{0};
+        bool              _logging{false};
+        io::OutputHandler _output;
     };
 }

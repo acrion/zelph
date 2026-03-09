@@ -71,11 +71,6 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
-void Zelph::set_print(std::function<void(std::string, bool)> print) const
-{
-    _pImpl->_print = print;
-}
-
 Node Zelph::node(const std::string& name, std::string lang)
 {
     if (lang.empty()) lang = _lang;
@@ -797,6 +792,12 @@ void Zelph::set_output_handler(io::OutputHandler output) const
 {
     std::lock_guard lock(_pImpl->_mtx_print);
     _pImpl->_output = std::move(output);
+}
+
+zelph::io::OutputHandler Zelph::get_output_handler() const
+{
+    std::lock_guard lock(_pImpl->_mtx_print);
+    return _pImpl->_output;
 }
 
 void Zelph::emit(io::OutputChannel channel, const std::string& text, bool newline) const
