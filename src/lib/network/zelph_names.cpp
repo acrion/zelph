@@ -60,14 +60,57 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
         auto existing = _pImpl->_node_of_name[lang].find(name);
         if (existing == _pImpl->_node_of_name[lang].end())
         {
-            // Name is new in this language → create clean bidirectional mapping
-            _pImpl->_node_of_name[lang][name] = node;
+            // Name is not in the regular name map — but it might belong to a core node
+            // (core nodes store their names in _core_names_by_name, not in _node_of_name).
+            Node core_node = get_core_node(name);
+            if (core_node && core_node != node)
+            {
+                // Core nodes must never be merged away (they are referenced by the const core struct).
+                // Merge the incoming node into the core node.
+                if (Impl::is_var(node) != Impl::is_var(core_node))
+                {
+                    std::stringstream s;
+                    s << "Requested name '" << name << "' is already used by core node " << core_node
+                      << ". Merging is impossible because one node is a variable, the other not.";
+                    throw std::runtime_error(s.str());
+                }
+
+                if (!Impl::is_var(node))
+                {
+                    out_stream() << "Warning: Merging Node \"" << format(node)
+                                 << "\" into core Node \"" << format(core_node)
+                                 << "\" due to name conflict '" << name
+                                 << "' in language '" << lang << "'." << std::endl;
+                }
+
+                invalidate_fact_structures_cache();
+
+                _pImpl->merge(node, core_node);
+                _pImpl->transfer_names(node, core_node);
+
+                // Fix the forward mapping we set at the top of this function:
+                // it pointed node → name, but node no longer exists after the merge.
+                _pImpl->_name_of_node[lang].erase(node);
+                _pImpl->_name_of_node[lang][core_node] = name;
+                _pImpl->_node_of_name[lang][name]      = core_node;
+            }
+            else
+            {
+                // Name is new in this language → create clean bidirectional mapping
+                _pImpl->_node_of_name[lang][name] = node;
+            }
         }
         else if (existing->second != node)
         {
             // Conflict: the same name is already used by another node
             Node from = existing->second;
             Node into = node;
+
+            // Core nodes must never be merged away (they are referenced by the const core struct).
+            if (!get_core_name(from).empty())
+            {
+                std::swap(from, into);
+            }
 
             if (Impl::is_var(from) != Impl::is_var(into))
             {
@@ -91,6 +134,10 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
 
             // Transfer names from the merged-away node to the surviving node
             _pImpl->transfer_names(from, into);
+
+            // Fix forward mapping if we swapped the merge direction
+            _pImpl->_name_of_node[lang].erase(from);
+            _pImpl->_name_of_node[lang][into] = name;
 
             // Update reverse mapping to point to the surviving node
             _pImpl->_node_of_name[lang][name] = into;
@@ -179,6 +226,12 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
                 Node from = result_node;
                 Node into = conflicting_node;
 
+                // Core nodes must never be merged away (they are referenced by the const core struct).
+                if (!get_core_name(from).empty())
+                {
+                    std::swap(from, into);
+                }
+
                 if (Impl::is_var(from) != Impl::is_var(into))
                 {
                     std::stringstream s;
@@ -204,6 +257,37 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
 
                 // Update result_node to the surviving node
                 result_node = into;
+            }
+            else if (it_conflict == node_of_name_cur.end())
+            {
+                // Name is not in the regular name map — but it might belong to a core node.
+                Node core_node = get_core_node(name_in_current_lang);
+                if (core_node && core_node != result_node)
+                {
+                    // Core nodes must never be merged away. Merge result_node into core_node.
+                    if (Impl::is_var(result_node) != Impl::is_var(core_node))
+                    {
+                        std::stringstream s;
+                        s << "Requested name '" << name_in_current_lang << "' is already used by core node " << core_node
+                          << ". Merging is impossible because one node is a variable, the other not.";
+                        throw std::runtime_error(s.str());
+                    }
+
+                    if (!Impl::is_var(result_node))
+                    {
+                        out_stream() << "Warning: Merging Node \"" << format(result_node)
+                                     << "\" into core Node \"" << format(core_node)
+                                     << "\" due to name conflict '" << name_in_current_lang
+                                     << "' in language '" << _lang << "'." << std::endl;
+                    }
+
+                    invalidate_fact_structures_cache();
+
+                    _pImpl->merge(result_node, core_node);
+                    _pImpl->transfer_names(result_node, core_node);
+
+                    result_node = core_node;
+                }
             }
 
             // Apply the new current-language mappings
