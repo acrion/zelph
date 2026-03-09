@@ -24,9 +24,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "script_engine.hpp"
-#include "node_to_string.hpp"
-#include "reasoning.hpp"
-#include "string_utils.hpp"
+#include "network/reasoning.hpp"
+#include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 
 #include <janet.h>
 
@@ -1247,7 +1247,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             if (n)
             {
                 std::wstring output;
-                console::node_to_wstring(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
+                string::node_to_wstring(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
                 if (!output.empty() && output != L"??") _pImpl->_n->out(string::unmark_identifiers(output), true);
 
                 if (!_pImpl->_scoped_variables.empty())

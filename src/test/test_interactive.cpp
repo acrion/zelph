@@ -26,9 +26,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h> // provides main()
 
 #include "interactive.hpp"
-#include "output.hpp"
-#include "string_utils.hpp"
+#include "io/output.hpp"
+#include "string/string_utils.hpp"
 
+#include <ranges>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -62,20 +63,20 @@ namespace
     }
 
     // Return the text of the last non-empty Out-channel event.
-    std::wstring last_out_text(const zelph::OutputCollector& collector)
+    std::wstring last_out_text(const zelph::io::OutputCollector& collector)
     {
         const auto& events = collector.events();
-        for (auto it = events.rbegin(); it != events.rend(); ++it)
+        for (const auto& event : std::ranges::reverse_view(events))
         {
-            if (it->channel == zelph::OutputChannel::Out && !it->text.empty())
-                return it->text;
+            if (event.channel == zelph::io::OutputChannel::Out && !event.text.empty())
+                return event.text;
         }
         return {};
     }
 
     // Check whether the last Out line starts with the expected pattern
     // after whitespace normalization on both sides.
-    bool last_output_starts_with(const zelph::OutputCollector& collector, const std::wstring& expected)
+    [[maybe_unused]] bool last_output_starts_with(const zelph::io::OutputCollector& collector, const std::wstring& expected)
     {
         std::wstring last = normalize(last_out_text(collector));
         std::wstring exp  = normalize(expected);
@@ -84,13 +85,13 @@ namespace
     }
 
     // Check whether ANY Out-channel event starts with the expected pattern (normalized).
-    bool any_output_starts_with(const zelph::OutputCollector& collector, const std::wstring& expected)
+    bool any_output_starts_with(const zelph::io::OutputCollector& collector, const std::wstring& expected)
     {
         std::wstring exp = normalize(expected);
         if (exp.empty()) return false;
         for (const auto& e : collector.events())
         {
-            if (e.channel != zelph::OutputChannel::Out) continue;
+            if (e.channel != zelph::io::OutputChannel::Out) continue;
             std::wstring n = normalize(e.text);
             if (n.size() >= exp.size() && n.compare(0, exp.size(), exp) == 0)
                 return true;
@@ -99,13 +100,13 @@ namespace
     }
 
     // Check whether ANY Out-channel event contains the substring (normalized).
-    bool any_output_contains(const zelph::OutputCollector& collector, const std::wstring& sub)
+    bool any_output_contains(const zelph::io::OutputCollector& collector, const std::wstring& sub)
     {
         std::wstring exp = normalize(sub);
         if (exp.empty()) return false;
         for (const auto& e : collector.events())
         {
-            if (e.channel != zelph::OutputChannel::Out) continue;
+            if (e.channel != zelph::io::OutputChannel::Out) continue;
             if (normalize(e.text).find(exp) != std::wstring::npos)
                 return true;
         }
@@ -113,13 +114,13 @@ namespace
     }
 
     // Collect all "Answer:" lines as normalized answer text (prefix stripped).
-    std::vector<std::wstring> collect_answers(const zelph::OutputCollector& collector)
+    std::vector<std::wstring> collect_answers(const zelph::io::OutputCollector& collector)
     {
         std::vector<std::wstring> answers;
         const std::wstring        prefix = L"Answer:";
         for (const auto& e : collector.events())
         {
-            if (e.channel != zelph::OutputChannel::Out) continue;
+            if (e.channel != zelph::io::OutputChannel::Out) continue;
             std::wstring n = normalize(e.text);
             if (n.size() > prefix.size() && n.compare(0, prefix.size(), prefix) == 0)
             {
@@ -134,7 +135,7 @@ namespace
     }
 
     // Check that a specific answer is present (order-independent, normalized).
-    bool answers_contain(const zelph::OutputCollector& collector, const std::wstring& expected)
+    bool answers_contain(const zelph::io::OutputCollector& collector, const std::wstring& expected)
     {
         std::wstring              exp = normalize(expected);
         std::vector<std::wstring> all = collect_answers(collector);
@@ -146,7 +147,7 @@ namespace
     }
 
     // Check that "Found one or more contradictions!" appears in any output channel.
-    bool has_contradiction(const zelph::OutputCollector& collector)
+    bool has_contradiction(const zelph::io::OutputCollector& collector)
     {
         for (const auto& e : collector.events())
         {
@@ -174,13 +175,13 @@ namespace
     {
         SUBCASE("parallel")
         {
-            zelph::OutputCollector      collector;
+            zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
             test_fn(collector, interactive);
         }
         SUBCASE("single-core")
         {
-            zelph::OutputCollector      collector;
+            zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
             interactive.process(zelph::string::unicode::from_utf8(".parallel"));
             collector.clear();

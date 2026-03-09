@@ -25,7 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "network_types.hpp" // For network::Node
+#include "network/network_types.hpp" // For network::Node
 
 #include <string>
 #include <vector>

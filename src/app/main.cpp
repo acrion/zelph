@@ -24,7 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
-#include "string_utils.hpp"
+#include "string/string_utils.hpp"
 
 #ifdef _WIN32
     #include <fcntl.h> // for _O_U16TEXT

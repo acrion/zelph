@@ -25,16 +25,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "command_executor.hpp"
 
-#include "mermaid.hpp"
-#include "network.hpp"
-#include "node_to_string.hpp"
-#include "platform_utils.hpp"
-#include "reasoning.hpp"
+#include "chrono/stopwatch.hpp"
+#include "io/data_manager.hpp"
+#include "io/mermaid.hpp"
+#include "network/network.hpp"
+#include "network/reasoning.hpp"
+#include "platform/platform_utils.hpp"
 #include "script_engine.hpp"
-#include "stopwatch.hpp"
-#include "string_utils.hpp"
-#include "wikidata.hpp"
-#include "wikidata_text_compressor.hpp"
+#include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
+#include "wikidata/wikidata.hpp"
+#include "wikidata/wikidata_text_compressor.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <fstream>
@@ -46,11 +47,11 @@ using namespace zelph;
 class console::CommandExecutor::Impl
 {
 public:
-    Impl(network::Reasoning*            n,
-         ScriptEngine*                  se,
-         std::shared_ptr<DataManager>&  dm,
-         std::shared_ptr<ReplState>     rs,
-         CommandExecutor::LineProcessor lp)
+    Impl(network::Reasoning*               n,
+         ScriptEngine*                     se,
+         std::shared_ptr<io::DataManager>& dm,
+         std::shared_ptr<ReplState>        rs,
+         CommandExecutor::LineProcessor    lp)
         : _n(n)
         , _script_engine(se)
         , _data_manager(dm)
@@ -78,11 +79,11 @@ public:
 
 private:
     // --- Context References ---
-    network::Reasoning*            _n;
-    ScriptEngine*                  _script_engine;
-    std::shared_ptr<DataManager>&  _data_manager;
-    std::shared_ptr<ReplState>     _repl_state;
-    CommandExecutor::LineProcessor _process_line_callback;
+    network::Reasoning*               _n;
+    ScriptEngine*                     _script_engine;
+    std::shared_ptr<io::DataManager>& _data_manager;
+    std::shared_ptr<ReplState>        _repl_state;
+    CommandExecutor::LineProcessor    _process_line_callback;
 
     // --- Dispatch Map ---
     using Handler = std::function<void(const std::vector<std::wstring>&)>;
@@ -164,7 +165,7 @@ private:
 
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
 
-    void display_node_details(network::Node nd, bool resolved_from_name, int depth = 1, int max_neighbors = console::default_display_max_neighbors) const
+    void display_node_details(network::Node nd, bool resolved_from_name, int depth = 1, int max_neighbors = string::default_display_max_neighbors) const
     {
         if (resolved_from_name)
         {
@@ -232,7 +233,7 @@ private:
             if (node_str == node_name || node_name.empty())
             {
                 std::wstring fact_repr;
-                console::node_to_wstring(_n, fact_repr, _n->lang(), node, max_neighbors);
+                string::node_to_wstring(_n, fact_repr, _n->lang(), node, max_neighbors);
                 if (!fact_repr.empty() && fact_repr != L"??")
                 {
                     return string::unicode::to_utf8(fact_repr) + " (ID " + std::to_string(node) + ")";
@@ -273,7 +274,7 @@ private:
         display_connections(_n->get_right(nd), "Outgoing connections to");
 
         std::wstring fact_repr;
-        console::node_to_wstring(_n, fact_repr, _n->lang(), nd, max_neighbors);
+        string::node_to_wstring(_n, fact_repr, _n->lang(), nd, max_neighbors);
         if (!fact_repr.empty() && fact_repr != L"??")
         {
             _n->out_stream() << "  Representation: " << string::unicode::to_utf8(fact_repr) << std::endl;
@@ -295,15 +296,15 @@ private:
         std::wstring          safe_name = string::sanitize_filename(hex_name);
         std::filesystem::path html_path = temp_dir / (safe_name + L".html");
 
-        console::gen_mermaid_html(_n,
-                                  nd,
-                                  html_path.string(),
-                                  depth,
-                                  max_neighbors,
-                                  exclude_nodes,
-                                  dark_theme,
-                                  horizontal_layout,
-                                  use_subgraphs);
+        io::gen_mermaid_html(_n,
+                             nd,
+                             html_path.string(),
+                             depth,
+                             max_neighbors,
+                             exclude_nodes,
+                             dark_theme,
+                             horizontal_layout,
+                             use_subgraphs);
 
         std::string abs_path = html_path.string();
         std::string file_url = "file://" + abs_path;
@@ -1099,7 +1100,7 @@ private:
         network::Node       nd  = resolve_single_node(arg, true);
         if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + string::unicode::to_utf8(arg) + "'");
         int max_depth     = 1;
-        int max_neighbors = default_display_max_neighbors;
+        int max_neighbors = string::default_display_max_neighbors;
         if (cmd.size() >= 3)
         {
             max_depth = std::stoi(string::unicode::to_utf8(cmd[2]));
@@ -1147,7 +1148,7 @@ private:
         if (!out.is_open())
             throw std::runtime_error("Command .run-file: Cannot open output file '" + outfile + "'");
 
-        zelph::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
+        zelph::wikidata::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
 
         bool is_wikidata = (_n->get_lang() == "wikidata");
 
@@ -1227,7 +1228,7 @@ private:
         if (!in.is_open())
             throw std::runtime_error("Command .decode: Cannot open input file '" + infile + "'");
 
-        zelph::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
+        zelph::wikidata::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
 
         std::string line;
         while (std::getline(in, line))
@@ -1262,11 +1263,11 @@ private:
 
         if (cmd.size() == 2)
         {
-            network::StopWatch watch;
+            chrono::StopWatch watch;
             watch.start();
 
             // This detects if it's Wikidata (json/bz2 OR bin with source) or Generic (bin only)
-            _data_manager = DataManager::create(_n, cmd[1]);
+            _data_manager = io::DataManager::create(_n, cmd[1]);
             _data_manager->load();
 
             watch.stop();
@@ -1282,7 +1283,7 @@ private:
         if (cmd.size() < 3) throw std::runtime_error("Command .wikidata-constraints: Missing json file name or directory name");
         if (cmd.size() > 3) throw std::runtime_error("Command .wikidata-constraints: Unknown argument after directory name");
 
-        network::StopWatch watch;
+        chrono::StopWatch watch;
         watch.start();
 
         std::string           dir        = string::unicode::to_utf8(cmd[2]);
@@ -1290,10 +1291,10 @@ private:
 
         // Specific Logic: This command strictly requires Wikidata capability.
         // We update the global manager to reflect this load context.
-        _data_manager = DataManager::create(_n, input_path);
+        _data_manager = io::DataManager::create(_n, input_path);
 
         // Dynamic cast to check if the factory returned a Wikidata manager
-        auto wikidata_mgr = std::dynamic_pointer_cast<Wikidata>(_data_manager);
+        auto wikidata_mgr = std::dynamic_pointer_cast<wikidata::Wikidata>(_data_manager);
 
         if (wikidata_mgr)
         {
@@ -1319,8 +1320,8 @@ private:
         const std::wstring&       json_file = cmd[1];
         std::vector<std::wstring> ids(cmd.begin() + 2, cmd.end());
 
-        auto dm       = DataManager::create(_n, json_file);
-        auto wikidata = std::dynamic_pointer_cast<Wikidata>(dm);
+        auto dm       = io::DataManager::create(_n, json_file);
+        auto wikidata = std::dynamic_pointer_cast<wikidata::Wikidata>(dm);
 
         if (!wikidata)
             throw std::runtime_error("File is not recognized as Wikidata JSON (no matching .json/.json.bz2 found).");
@@ -1345,7 +1346,7 @@ private:
         {
             std::wstring output;
             // Format the rule for printing
-            console::node_to_wstring(_n, output, _n->lang(), rule, 3);
+            string::node_to_wstring(_n, output, _n->lang(), rule, 3);
             _n->out(output, true);
         }
         _n->out(L"------------------------", true);
@@ -1592,11 +1593,11 @@ private:
     }
 };
 
-console::CommandExecutor::CommandExecutor(network::Reasoning*           reasoning,
-                                          ScriptEngine*                 script_engine,
-                                          std::shared_ptr<DataManager>& data_manager,
-                                          std::shared_ptr<ReplState>    repl_state,
-                                          LineProcessor                 line_processor)
+console::CommandExecutor::CommandExecutor(network::Reasoning*               reasoning,
+                                          ScriptEngine*                     script_engine,
+                                          std::shared_ptr<io::DataManager>& data_manager,
+                                          std::shared_ptr<ReplState>        repl_state,
+                                          LineProcessor                     line_processor)
     : _pImpl(new Impl(reasoning, script_engine, data_manager, repl_state, std::move(line_processor)))
 {
 }

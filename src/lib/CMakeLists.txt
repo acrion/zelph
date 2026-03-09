@@ -193,61 +193,67 @@ if (NOT bzip2_POPULATED)
     set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif ()
 
-capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS zelph.capnp)
+capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS io/zelph.capnp)
 
 add_library(zelph_lib SHARED
-    # zelph::network
-    adjacency_set.hpp
-    answer.cpp
-    answer.hpp
-    contradiction_error.hpp
-    fact_structure.hpp
-    fact_structure_types.hpp
-    markdown.cpp
-    markdown.hpp
-    network.hpp
-    output.cpp
-    output.hpp
-    platform_utils.cpp
-    platform_utils.hpp
-    reasoning.cpp
-    reasoning_deduce.cpp
-    reasoning_evaluate.cpp
-    reasoning_pruning.cpp
-    reasoning.hpp
-    reasoning_profiler.hpp
-    stopwatch.cpp
-    stopwatch.hpp
-    script_engine.cpp
-    script_engine.hpp
-    string_utils.cpp
-    string_utils.hpp
-    thread_pool.hpp
-    unification.cpp
-    unification.hpp
-    wikidata_text_compressor.hpp
-    wikidata_token_encoder.hpp
-    zelph.cpp
-    zelph_names.cpp
-    zelph_maintenance.cpp
-    zelph.hpp
-    zelph_impl.hpp
-    # zelph::console
     command_executor.cpp
     command_executor.hpp
-    data_manager.hpp
-    data_manager.cpp
     interactive.cpp
     interactive.hpp
-    mermaid.cpp
-    mermaid.hpp
-    node_to_string.cpp
-    node_to_string.hpp
-    read_async.cpp
-    read_async.hpp
     repl_state.hpp
-    wikidata.cpp
-    wikidata.hpp
+    script_engine.cpp
+    script_engine.hpp
+
+    chrono/stopwatch.cpp
+    chrono/stopwatch.hpp
+
+    concurrency/thread_pool.hpp
+
+    io/data_manager.hpp
+    io/data_manager.cpp
+    io/mermaid.cpp
+    io/mermaid.hpp
+    io/output.cpp
+    io/output.hpp
+    io/read_async.cpp
+    io/read_async.hpp
+
+    network/adjacency_set.hpp
+    network/answer.cpp
+    network/answer.hpp
+    network/contradiction_error.hpp
+    network/fact_structure.hpp
+    network/fact_structure_types.hpp
+    network/network.hpp
+    network/reasoning.cpp
+    network/reasoning_deduce.cpp
+    network/reasoning_evaluate.cpp
+    network/reasoning_pruning.cpp
+    network/reasoning.hpp
+    network/reasoning_profiler.hpp
+    network/unification.cpp
+    network/unification.hpp
+    network/zelph.cpp
+    network/zelph_names.cpp
+    network/zelph_maintenance.cpp
+    network/zelph.hpp
+    network/zelph_impl.hpp
+
+    platform/platform_utils.cpp
+    platform/platform_utils.hpp
+
+    string/node_to_string.cpp
+    string/node_to_string.hpp
+    string/string_utils.cpp
+    string/string_utils.hpp
+
+    wikidata/markdown.cpp
+    wikidata/markdown.hpp
+    wikidata/wikidata_text_compressor.hpp
+    wikidata/wikidata_token_encoder.hpp
+    wikidata/wikidata.cpp
+    wikidata/wikidata.hpp
+
     ${CAPNP_SRCS}
 )
 

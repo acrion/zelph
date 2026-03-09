@@ -35,7 +35,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // Forward declarations to avoid heavy includes in the header
 namespace zelph
 {
-    namespace console
+    namespace io
     {
         class DataManager;
     }
@@ -67,11 +67,11 @@ namespace zelph::console
          * @param data_manager Reference to the shared_ptr holding the data manager (allows replacement).
          * @param line_processor Callback to process a raw line (used for .import recursion).
          */
-        CommandExecutor(zelph::network::Reasoning*    reasoning,
-                        zelph::ScriptEngine*          script_engine,
-                        std::shared_ptr<DataManager>& data_manager,
-                        std::shared_ptr<ReplState>    repl_state,
-                        LineProcessor                 line_processor);
+        CommandExecutor(zelph::network::Reasoning*        reasoning,
+                        zelph::ScriptEngine*              script_engine,
+                        std::shared_ptr<io::DataManager>& data_manager,
+                        std::shared_ptr<ReplState>        repl_state,
+                        LineProcessor                     line_processor);
 
         ~CommandExecutor();
 

@@ -26,10 +26,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 
 #include "command_executor.hpp"
-#include "reasoning.hpp"
+#include "network/reasoning.hpp"
 #include "repl_state.hpp"
 #include "script_engine.hpp"
-#include "string_utils.hpp"
+#include "string/string_utils.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/tokenizer.hpp>
@@ -43,7 +43,7 @@ using boost::tokenizer;
 class console::Interactive::Impl
 {
 public:
-    explicit Impl(Interactive* enclosing, OutputHandler output)
+    explicit Impl(Interactive* enclosing, io::OutputHandler output)
         : _n(new network::Reasoning(output))
         , _interactive(enclosing)
         , _script_engine(new ScriptEngine(_n))
@@ -82,7 +82,7 @@ public:
     // Member function to delegate to CommandExecutor
     void process_command(const std::vector<std::wstring>& cmd) const;
 
-    std::shared_ptr<DataManager>     _data_manager;
+    std::shared_ptr<io::DataManager> _data_manager;
     network::Reasoning* const        _n;
     std::unique_ptr<ScriptEngine>    _script_engine;
     std::unique_ptr<CommandExecutor> _command_executor;
@@ -95,7 +95,7 @@ private:
     const Interactive* _interactive;
 };
 
-console::Interactive::Interactive(OutputHandler output)
+console::Interactive::Interactive(io::OutputHandler output)
     : _pImpl(new Impl(this, std::move(output)))
 {
 }
@@ -308,29 +308,29 @@ std::string console::Interactive::get_lang() const
     return _pImpl->_n->get_lang();
 }
 
-void console::Interactive::set_output_handler(OutputHandler output) const
+void console::Interactive::set_output_handler(io::OutputHandler output) const
 {
     _pImpl->_n->set_output_handler(std::move(output));
 }
 
 void console::Interactive::out(const std::wstring& text, bool newline) const
 {
-    _pImpl->_n->emit(OutputChannel::Out, text, newline);
+    _pImpl->_n->emit(io::OutputChannel::Out, text, newline);
 }
 
 void console::Interactive::err(const std::wstring& text, bool newline) const
 {
-    _pImpl->_n->emit(OutputChannel::Error, text, newline);
+    _pImpl->_n->emit(io::OutputChannel::Error, text, newline);
 }
 
 void console::Interactive::log(const std::wstring& text, bool newline) const
 {
-    _pImpl->_n->emit(OutputChannel::Diagnostic, text, newline);
+    _pImpl->_n->emit(io::OutputChannel::Diagnostic, text, newline);
 }
 
 void console::Interactive::prompt(const std::wstring& text, bool newline) const
 {
-    _pImpl->_n->emit(OutputChannel::Prompt, text, newline);
+    _pImpl->_n->emit(io::OutputChannel::Prompt, text, newline);
 }
 
 #ifdef PROVIDE_C_INTERFACE
