@@ -36,12 +36,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <memory>
 
-#ifdef _WIN32
-    #include <fcntl.h> // for _O_U16TEXT
-    #include <io.h>    // for _setmode
-    #include <stdio.h> // for _fileno
-#endif
-
 using namespace zelph;
 using boost::escaped_list_separator;
 using boost::tokenizer;
@@ -55,10 +49,6 @@ public:
         , _script_engine(new ScriptEngine(_n))
         , _repl_state(std::make_shared<ReplState>())
     {
-#ifdef _WIN32
-        _setmode(_fileno(stdout), _O_U16TEXT);
-#endif
-
         _n->set_lang("zelph");
 
         _n->register_core_node(_n->core.RelationTypeCategory, L"->");

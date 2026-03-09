@@ -26,7 +26,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "string_utils.hpp"
 
-#ifndef _WIN32
+#ifdef _WIN32
+    #include <fcntl.h> // for _O_U16TEXT
+    #include <io.h>    // for _setmode
+    #include <stdio.h> // for _fileno
+#else
     #include <sys/types.h> // for fork
     #include <sys/wait.h>  // for waitpid
     #include <unistd.h>    // for execvp, getenv
@@ -40,7 +44,9 @@ Interactive interactive;
 
 int main(int argc, char** argv)
 {
-#if !defined(_WIN32) && defined(NDEBUG)
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_U16TEXT);
+#elif defined(NDEBUG)
     if (getenv("ZELPH_NO_RLWRAP") == nullptr)
     {
         FILE* pipe = popen("command -v rlwrap", "r");
