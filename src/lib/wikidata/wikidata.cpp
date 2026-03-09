@@ -33,8 +33,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <capnp/serialize-packed.h>
 #include <kj/io.h>
 
-#include <boost/tokenizer.hpp>
-
 #include <atomic>
 #include <cstdio>
 #include <fstream>
@@ -48,8 +46,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::wikidata;
 using namespace std::string_literals;
-using boost::escaped_list_separator;
-using boost::tokenizer;
 using std::chrono::duration_cast;
 
 // #define SINGLE_THREADED_IMPORT

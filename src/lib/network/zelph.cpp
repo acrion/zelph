@@ -29,9 +29,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
-#include <boost/algorithm/string.hpp>
-
 #include <bitset>
+#include <cassert>
 #include <ranges>
 
 using std::ranges::all_of;
@@ -98,8 +97,8 @@ Node Zelph::node(const std::string& name, std::string lang)
 
     // 2. Check core nodes
     {
-        auto it = _core_names.right.find(name);
-        if (it != _core_names.right.end())
+        auto it = _core_names_by_name.find(name);
+        if (it != _core_names_by_name.end())
         {
             return it->second;
         }

@@ -271,8 +271,8 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
 
     // Fallback to core node names
     {
-        auto it = _core_names.left.find(node);
-        if (it != _core_names.left.end())
+        auto it = _core_names_by_node.find(node);
+        if (it != _core_names_by_node.end())
         {
             return it->second;
         }
@@ -405,19 +405,20 @@ Node Zelph::get_node(const std::string& name, std::string lang) const
 
 void Zelph::register_core_node(Node n, const std::string& name)
 {
-    _core_names.insert({n, name});
+    _core_names_by_node[n]    = name;
+    _core_names_by_name[name] = n;
 }
 
 Node Zelph::get_core_node(const std::string& name) const
 {
-    auto it = _core_names.right.find(name);
-    return (it != _core_names.right.end()) ? it->second : 0;
+    auto it = _core_names_by_name.find(name);
+    return (it != _core_names_by_name.end()) ? it->second : 0;
 }
 
 std::string Zelph::get_core_name(Node n) const
 {
-    auto it = _core_names.left.find(n);
-    return (it != _core_names.left.end()) ? it->second : "";
+    auto it = _core_names_by_node.find(n);
+    return (it != _core_names_by_node.end()) ? it->second : "";
 }
 
 std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) const

@@ -31,14 +31,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script_engine.hpp"
 #include "string/string_utils.hpp"
 
-#include <boost/algorithm/string.hpp>
-#include <boost/tokenizer.hpp>
-
 #include <memory>
 
 using namespace zelph;
-using boost::escaped_list_separator;
-using boost::tokenizer;
 
 class console::Interactive::Impl
 {
@@ -133,29 +128,19 @@ void console::Interactive::process(std::string line) const
     try
     {
         // --- 1. Comments (work in all modes) ---
-        if (boost::starts_with(line, "#")) return;
+        if (!line.empty() && line[0] == '#') return;
 
         size_t first_char_pos = line.find_first_not_of(" \t");
 
         // --- 2. Commands starting with '.' (work in all modes) ---
         if (first_char_pos != std::string::npos && line[first_char_pos] == L'.')
         {
-            tokenizer<escaped_list_separator<char>, std::string::const_iterator, std::string> tok(line, escaped_list_separator<char>("\\", " \t", "\""));
-            auto                                                                              it = tok.begin();
-            while (it != tok.end() && it->empty())
-                ++it;
+            std::vector<std::string> parts = zelph::string::tokenize_quoted(line);
 
-            if (it != tok.end() && (*it)[0] == L'.')
+            if (!parts.empty() && !parts[0].empty() && parts[0][0] == L'.')
             {
-                std::vector<std::string> cmd;
-                while (it != tok.end())
-                {
-                    if (!it->empty()) cmd.push_back(*it);
-                    ++it;
-                }
-
                 _pImpl->_n->profiler_reset_epoch();
-                _pImpl->process_command(cmd);
+                _pImpl->process_command(parts);
                 return;
             }
         }
@@ -165,7 +150,7 @@ void console::Interactive::process(std::string line) const
 
         auto& state = _pImpl->_repl_state;
 
-        // --- 4. Accumulating an incomplete inline Janet expression (from a previous % line) ---
+        // --- 4. Accumulating an incomplete inline Janet expression ---
         if (state->accumulating_inline_janet)
         {
             std::string utf8_line = line;
@@ -183,8 +168,7 @@ void console::Interactive::process(std::string line) const
             return;
         }
 
-        std::string trimmed_utf8 = line;
-        boost::trim(trimmed_utf8);
+        std::string trimmed_utf8 = zelph::string::trim(line); // was: string::trim_in_place
 
         // --- 5. Mode toggle: bare '%' on a line ---
         if (trimmed_utf8 == "%")
@@ -214,7 +198,7 @@ void console::Interactive::process(std::string line) const
         if (trimmed_utf8[0] == '%')
         {
             std::string janet_code = trimmed_utf8.substr(1);
-            boost::trim_left(janet_code);
+            janet_code             = zelph::string::trim_left(janet_code);
 
             if (janet_code.empty()) return;
 

@@ -326,38 +326,6 @@ target_include_directories(zelph_lib PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/zelph>
 )
 
-target_compile_definitions(zelph_lib PRIVATE BOOST_ALL_NO_LIB)
-
-target_include_directories(zelph_lib PRIVATE
-    "../boost/algorithm/include"       # used in interactive.cpp and zelph.cpp
-    "../boost/bimap/include"           # used in interactive.cpp
-    "../boost/locale/include"          # used in string_utils.cpp
-    "../boost/tokenizer/include"       # used in wikidata.cpp and interactive.cpp
-
-    "../boost/range/include"           # required by e.g. boost/algorithm
-    "../boost/function/include"        # required by e.g. boost/algorithm
-    "../boost/mpl/include"             # required by e.g. boost/algorithm
-    "../boost/container_hash/include"  # required by e.g. boost/bimap
-    "../boost/multi_index/include"     # required by e.g. boost/bimap
-    "../boost/iterator/include"        # required by e.g. boost/tokenizer
-    "../boost/throw_exception/include" # required by e.g. boost/tokenizer
-
-    "../boost/assert/include"          # required by e.g. boost/range
-    "../boost/concept_check/include"   # required by e.g. boost/range
-    "../boost/preprocessor/include"    # required by e.g. boost/range
-    "../boost/type_traits/include"     # required by e.g. boost/range
-    "../boost/utility/include"         # required by e.g. boost/range
-    "../boost/bind/include"            # required by e.g. boost/function
-    "../boost/describe/include"        # required by e.g. boost/container_hash
-    "../boost/move/include"            # required by e.g. boost/multi_index
-    "../boost/tuple/include"           # required by e.g. boost/multi_index
-    "../boost/mp11/include"            # required by e.g. boost/iterator
-    "../boost/core/include"            # required by e.g. boost/iterator
-
-    "../boost/static_assert/include"   # required by e.g. boost/type_traits
-    "../boost/config_boost/include"    # required by all of boost
-)
-
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set_target_properties(zelph_lib PROPERTIES MACOSX_RPATH ON)
 endif ()

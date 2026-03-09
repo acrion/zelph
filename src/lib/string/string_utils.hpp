@@ -25,19 +25,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#if defined(__APPLE__) && defined(__clang__)
-// TODO Workaround to build boost 1.71 boost with AppleClang 15
-namespace std
-{
-    template <typename Arg, typename Result>
-    struct unary_function
-    {
-        typedef Arg    argument_type;
-        typedef Result result_type;
-    };
-}
-#endif
-
 #include <zelph_export.h>
 
 #include <cstdint>
@@ -232,4 +219,93 @@ namespace zelph::string
     std::string mark_identifier(const std::string& str);
     std::string unmark_identifiers(const std::string& str);
     std::string sanitize_filename(const std::string& name);
+
+    /// Trim ASCII whitespace (space, tab, \r, \n, \v, \f) from both ends.
+    inline std::string trim(const std::string& s)
+    {
+        const char* ws    = " \t\r\n\v\f";
+        size_t      start = s.find_first_not_of(ws);
+        if (start == std::string::npos) return {};
+        size_t end = s.find_last_not_of(ws);
+        return s.substr(start, end - start + 1);
+    }
+
+    inline void trim_in_place(std::string& s)
+    {
+        s = trim(s);
+    }
+
+    /// Trim ASCII whitespace from the left only.
+    inline std::string trim_left(const std::string& s)
+    {
+        const char* ws    = " \t\r\n\v\f";
+        size_t      start = s.find_first_not_of(ws);
+        if (start == std::string::npos) return {};
+        return s.substr(start);
+    }
+
+    /// Replace all occurrences of `from` with `to` in-place.
+    inline void replace_all(std::string& s, const std::string& from, const std::string& to)
+    {
+        if (from.empty()) return;
+        size_t pos = 0;
+        while ((pos = s.find(from, pos)) != std::string::npos)
+        {
+            s.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+    }
+
+    /// Replace all occurrences of `from` with `to`, returning a new string.
+    inline std::string replace_all_copy(const std::string& s, const std::string& from, const std::string& to)
+    {
+        std::string result = s;
+        replace_all(result, from, to);
+        return result;
+    }
+
+    /// Tokenize a string respecting quoted substrings and backslash escapes.
+    /// Replicates the semantics of boost::escaped_list_separator<char>("\\", " \t", "\""):
+    ///   - Backslash escapes the next character inside and outside quotes.
+    ///   - Quoted regions preserve whitespace; the quotes themselves are stripped.
+    ///   - Empty tokens between delimiters are discarded.
+    std::vector<std::string> tokenize_quoted(const std::string& input);
+
+    /// Remove all leading and trailing occurrences of any string in `chars` (UTF-8 safe).
+    inline std::string trim_any_of(const std::string& s, const std::vector<std::string>& chars)
+    {
+        std::string result = s;
+        // Trim left
+        bool found = true;
+        while (found && !result.empty())
+        {
+            found = false;
+            for (const auto& c : chars)
+            {
+                if (result.size() >= c.size() && result.compare(0, c.size(), c) == 0)
+                {
+                    result.erase(0, c.size());
+                    found = true;
+                    break;
+                }
+            }
+        }
+        // Trim right
+        found = true;
+        while (found && !result.empty())
+        {
+            found = false;
+            for (const auto& c : chars)
+            {
+                if (result.size() >= c.size()
+                    && result.compare(result.size() - c.size(), c.size(), c) == 0)
+                {
+                    result.erase(result.size() - c.size());
+                    found = true;
+                    break;
+                }
+            }
+        }
+        return result;
+    }
 }

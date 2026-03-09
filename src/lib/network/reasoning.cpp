@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph_impl.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <vector>
 
 using namespace zelph::network;

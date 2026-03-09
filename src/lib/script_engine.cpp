@@ -30,8 +30,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <janet.h>
 
-#include <boost/algorithm/string.hpp>
-
 #include <algorithm>
 #include <map>
 #include <unordered_set>
@@ -1036,7 +1034,7 @@ public:
             else
             {
                 // Wrap in quotes and escape
-                return "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+                return "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             }
         }
         else if (type == "list-compact")
@@ -1044,7 +1042,7 @@ public:
             // Convert <123> content to (zelph/list-chars "123").
             // janet_cfun_zelph_list_chars reverses the characters internally
             // so the LSB (rightmost char) becomes the outermost cons cell.
-            std::string content = "\"" + boost::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+            std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             return "(zelph/list-chars " + content + ")";
         }
 

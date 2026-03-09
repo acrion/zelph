@@ -25,10 +25,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string_utils.hpp"
 
-#include "boost/algorithm/string/replace.hpp"
-
-#include <boost/locale/encoding_utf.hpp>
-
 #include <sstream>
 
 namespace zelph::string
@@ -117,7 +113,7 @@ namespace zelph::string
     // Remove all guillemets (« and ») that were added by above function mark_identifier
     std::string unmark_identifiers(const std::string& str)
     {
-        return boost::replace_all_copy(boost::replace_all_copy(str, "«", " "), "»", " ");
+        return string::replace_all_copy(replace_all_copy(str, "«", " "), "»", " ");
     }
 
     std::string sanitize_filename(const std::string& name)
@@ -139,5 +135,52 @@ namespace zelph::string
             } });
 
         return result;
+    }
+
+    std::vector<std::string> tokenize_quoted(const std::string& input)
+    {
+        std::vector<std::string> tokens;
+        std::string              current;
+        bool                     in_quotes = false;
+        bool                     escape    = false;
+
+        for (char c : input)
+        {
+            if (escape)
+            {
+                current.push_back(c);
+                escape = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                escape = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                in_quotes = !in_quotes;
+                continue;
+            }
+
+            if (!in_quotes && (c == ' ' || c == '\t'))
+            {
+                if (!current.empty())
+                {
+                    tokens.push_back(std::move(current));
+                    current.clear();
+                }
+                continue;
+            }
+
+            current.push_back(c);
+        }
+
+        if (!current.empty())
+            tokens.push_back(std::move(current));
+
+        return tokens;
     }
 }

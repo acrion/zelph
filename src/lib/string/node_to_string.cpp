@@ -27,8 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/zelph.hpp"
 
-#include <boost/algorithm/string.hpp>
-
 #include <mutex>
 
 // #define DEBUG_FORMAT_FACT
@@ -198,7 +196,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
                     {
                         std::string elem_str;
                         string::node_to_string(z, elem_str, lang, resolve_var(e), max_objects, variables, resolved, child_history);
-                        result += boost::algorithm::trim_copy_if(elem_str, boost::algorithm::is_any_of("«»"));
+                        result += zelph::string::trim_any_of(elem_str, {"«", "»"});
                     }
                     result += ">";
                 }
@@ -531,9 +529,9 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
             result = "(" + result + ")";
     }
 
-    boost::replace_all(result, "\r\n", " --- ");
-    boost::replace_all(result, "\n", " --- ");
-    boost::trim(result);
+    string::replace_all(result, "\r\n", " --- ");
+    string::replace_all(result, "\n", " --- ");
+    string::trim_in_place(result);
 #ifdef DEBUG_FORMAT_FACT
     diagnostic_stream() << indent << "[DEBUG node_to_string] EXIT result='" << result << "'" << std::endl;
 #endif

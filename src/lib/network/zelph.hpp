@@ -32,10 +32,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
-#include <boost/bimap.hpp>
-
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -191,8 +190,9 @@ namespace zelph::network
         } core;
 
     protected:
-        std::string                              _lang{"en"};
-        boost::bimap<network::Node, std::string> _core_names;
-        bool                                     _use_parallel{true};
+        std::string                                    _lang{"en"};
+        std::unordered_map<network::Node, std::string> _core_names_by_node;
+        std::unordered_map<std::string, network::Node> _core_names_by_name;
+        bool                                           _use_parallel{true};
     };
 }

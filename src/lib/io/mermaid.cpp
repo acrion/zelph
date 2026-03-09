@@ -29,8 +29,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/zelph.hpp"
 #include "string/node_to_string.hpp"
 
-#include <boost/algorithm/string.hpp>
-
 #include <fstream>
 #include <set>
 
@@ -1030,7 +1028,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         node_ids[wn] = id;
 
         std::string label = raw_label;
-        boost::replace_all(label, "\"", "#quot;");
+        string::replace_all(label, "\"", "#quot;");
 
         node_defs[wn] = id + "(\"" + label + "\")";
 
@@ -1093,7 +1091,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     {
         network::Node nd    = key.first;
         std::string   label = z->get_name_hex(nd, true, max_neighbors);
-        boost::replace_all(label, "\"", "#quot;");
+        string::replace_all(label, "\"", "#quot;");
         clone_node_defs[cid] = cid + "(\"" + label + "\")";
 
         // Clone nodes get a distinctive style (same base color but clone stroke)
@@ -1141,7 +1139,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         std::string label_w;
         string::node_to_string(z, label_w, z->get_lang(), sg, max_neighbors);
         std::string label = label_w;
-        boost::replace_all(label, "\"", "#quot;");
+        string::replace_all(label, "\"", "#quot;");
 
         mermaid << indent << "subgraph " << sg_id << "[\"" << label << "\"]" << std::endl;
 
@@ -1217,7 +1215,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         std::string obj_id  = resolve_id_in_sg(info.object, r);
 
         std::string pred_label = z->get_name_hex(info.predicate, false, max_neighbors);
-        boost::replace_all(pred_label, "\"", "#quot;");
+        string::replace_all(pred_label, "\"", "#quot;");
 
         mermaid << "    " << subj_id << " -->|\"" << pred_label << "\"| " << obj_id << std::endl;
 

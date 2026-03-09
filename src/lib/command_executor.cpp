@@ -37,7 +37,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "wikidata/wikidata.hpp"
 #include "wikidata/wikidata_text_compressor.hpp"
 
-#include <boost/algorithm/string.hpp>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -1167,24 +1166,24 @@ private:
                 return;
 
             std::string deduction = str.substr(0, pos);
-            boost::trim(deduction);
+            string::trim_in_place(deduction);
 
             std::string reasons = str.substr(pos + 3);
-            boost::trim(reasons);
+            string::trim_in_place(reasons);
 
             if (!reasons.empty() && reasons.front() == L'(')
                 reasons.erase(0, 1);
             if (!reasons.empty() && reasons.back() == L')')
                 reasons.erase(reasons.size() - 1);
-            boost::trim(reasons);
+            string::trim_in_place(reasons);
 
-            boost::replace_all(reasons, "(", "");
-            boost::replace_all(reasons, ")", "");
+            string::replace_all(reasons, "(", "");
+            string::replace_all(reasons, ")", "");
 
-            boost::replace_all(deduction, "«", "");
-            boost::replace_all(deduction, "»", "");
-            boost::replace_all(reasons, "«", "");
-            boost::replace_all(reasons, "»", "");
+            string::replace_all(deduction, "«", "");
+            string::replace_all(deduction, "»", "");
+            string::replace_all(reasons, "«", "");
+            string::replace_all(reasons, "»", "");
 
             std::string line_for_file;
             if (!reasons.empty())
@@ -1192,7 +1191,7 @@ private:
             else
                 line_for_file = deduction; // Fallback (sehr selten)
 
-            boost::trim(line_for_file);
+            string::trim_in_place(line_for_file);
 
             std::string utf8_line = line_for_file;
 
@@ -1564,18 +1563,17 @@ private:
             throw std::runtime_error("Command .save requires exactly one argument: the output file (must end with .bin)");
 
         const std::string& file = cmd[1];
-        if (!boost::algorithm::ends_with(file, ".bin"))
+        if (!file.ends_with(".bin"))
             throw std::runtime_error("Command .save: filename must end with '.bin'");
 
-        std::string utf8_file = file;
-        _n->save_to_file(utf8_file);
+        _n->save_to_file(file);
         _n->diagnostic("Saved network to " + file, true);
     }
     void cmd_import(const std::vector<std::string>& cmd) const
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         const std::string& path = cmd[1];
-        if (!boost::algorithm::ends_with(path, ".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
+        if (!path.ends_with(".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
         import_file(path);
     }
     void cmd_auto_run(const std::vector<std::string>&)
