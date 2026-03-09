@@ -29,7 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph.hpp"
 
-#include "zelph.capnp.h"
+#include "io/zelph.capnp.h"
 
 #include <ankerl/unordered_dense.h>
 
