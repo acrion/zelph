@@ -24,7 +24,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "output.hpp"
-#include "string/string_utils.hpp"
 
 #include <iostream>
 

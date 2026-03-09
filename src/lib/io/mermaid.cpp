@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/adjacency_set.hpp"
 #include "network/zelph.hpp"
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 
 #include <fstream>
 #include <set>

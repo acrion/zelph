@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "contradiction_error.hpp"
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 

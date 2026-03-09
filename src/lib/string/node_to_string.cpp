@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "node_to_string.hpp"
 
 #include "network/zelph.hpp"
+#include "string/string_utils.hpp"
 
 #include <mutex>
 
