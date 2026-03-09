@@ -1878,7 +1878,7 @@ git clone --recurse-submodules https://github.com/acrion/zelph.git
 2. Configure the build (Release mode):
 
 ```bash
-cmake -D CMAKE_BUILD_TYPE=Release -B build src
+cmake -D CMAKE_BUILD_TYPE=Release -B build .
 ```
 
 3. Build the project (for MSVC, add `--config Release`):
