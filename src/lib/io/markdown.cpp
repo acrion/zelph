@@ -37,7 +37,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <sstream>
 #include <stdexcept>
 
-namespace zelph::wikidata
+namespace zelph::io
 {
     static std::string get_wikidata_url(const std::string& id)
     {

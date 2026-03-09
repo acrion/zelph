@@ -44,7 +44,7 @@ namespace zelph
         class Zelph;
     }
 
-    namespace wikidata
+    namespace io
     {
         class Markdown
         {

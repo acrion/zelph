@@ -27,10 +27,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "chrono/stopwatch.hpp"
 #include "concurrency/thread_pool.hpp"
+#include "io/markdown.hpp"
 #include "io/output.hpp"
 #include "network_types.hpp"
 #include "reasoning_profiler.hpp"
-#include "wikidata/markdown.hpp"
 #include "zelph.hpp"
 
 #include <zelph_export.h>
@@ -111,7 +111,7 @@ namespace zelph::network
         // --- Members ---
 
         std::atomic<bool>                        _done{false};
-        std::unique_ptr<wikidata::Markdown>      _markdown;
+        std::unique_ptr<io::Markdown>            _markdown;
         std::atomic<uint64_t>                    _running{0};
         bool                                     _print_deductions{true};
         bool                                     _generate_markdown{true};

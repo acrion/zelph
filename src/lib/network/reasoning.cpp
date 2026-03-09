@@ -71,7 +71,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         {
             throw std::runtime_error("Markdown subdirectory not set for .run-md command");
         }
-        _markdown = std::make_unique<wikidata::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
+        _markdown = std::make_unique<io::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
     }
 
     if (!silent)

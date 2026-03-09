@@ -211,6 +211,8 @@ add_library(zelph_lib SHARED
 
     io/data_manager.hpp
     io/data_manager.cpp
+    io/markdown.cpp
+    io/markdown.hpp
     io/mermaid.cpp
     io/mermaid.hpp
     io/output.cpp
@@ -247,8 +249,6 @@ add_library(zelph_lib SHARED
     string/string_utils.cpp
     string/string_utils.hpp
 
-    wikidata/markdown.cpp
-    wikidata/markdown.hpp
     wikidata/wikidata_text_compressor.hpp
     wikidata/wikidata_token_encoder.hpp
     wikidata/wikidata.cpp
