@@ -24,7 +24,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "read_async.hpp"
-#include "string/string_utils.hpp"
 
 #include <bzlib.h>
 
@@ -119,7 +118,7 @@ private:
     static std::string find_parallel_decompressor();
 
     // Parallel decompression via lbzip2/pbzip2. Returns true on success.
-    bool read_compressed_parallel(const std::string&           cmd,
+    bool read_compressed_parallel(const std::string&           decomp_cmd,
                                   std::vector<Entry>&          current_batch,
                                   const std::function<void()>& push_current_batch);
 #endif
@@ -282,6 +281,7 @@ bool ReadAsync::Impl::read_compressed_parallel(
             const char* p   = buf.data();
             ssize_t     rem = static_cast<ssize_t>(n);
 
+            // cppcheck-suppress knownConditionTrueFalse
             while (rem > 0 && !_stop_requested)
             {
                 ssize_t w = ::write(to_child[1], p, static_cast<size_t>(rem));
@@ -307,6 +307,7 @@ bool ReadAsync::Impl::read_compressed_parallel(
 
         while (!_stop_requested)
         {
+            // NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection)
             ssize_t n = ::read(fd, rbuf.data(), rbuf.size());
             if (n <= 0) break;
 
@@ -476,6 +477,7 @@ void ReadAsync::Impl::read_thread()
         std::streamoff streampos = 0;
         std::string    line;
 
+        // cppcheck-suppress accessMoved
         while (!_stop_requested && std::getline(stream, line))
         {
             if (!line.empty() && line.back() == '\r') line.pop_back();

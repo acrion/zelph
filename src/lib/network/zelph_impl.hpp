@@ -160,6 +160,7 @@ namespace zelph::network
             {
                 throw std::runtime_error("Failed to open file for writing: " + filename);
             }
+            auto               fileGuard = std::unique_ptr<FILE, decltype(&fclose)>(file, &fclose);
             kj::FdOutputStream output(fileno(file));
 
             // Main message (small data)

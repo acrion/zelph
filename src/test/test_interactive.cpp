@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "io/output.hpp"
 
+#include <algorithm>
 #include <ranges>
 #include <sstream>
 #include <string>
@@ -65,12 +66,10 @@ namespace
     std::string last_out_text(const zelph::io::OutputCollector& collector)
     {
         const auto& events = collector.events();
-        for (const auto& event : std::ranges::reverse_view(events))
-        {
-            if (event.channel == zelph::io::OutputChannel::Out && !event.text.empty())
-                return event.text;
-        }
-        return {};
+        auto        rev    = std::ranges::reverse_view(events);
+        auto        it     = std::ranges::find_if(rev, [](const auto& event)
+                                       { return event.channel == zelph::io::OutputChannel::Out && !event.text.empty(); });
+        return it != rev.end() ? it->text : std::string{};
     }
 
     // Check whether the last Out line starts with the expected pattern
@@ -88,14 +87,11 @@ namespace
     {
         std::string exp = normalize(expected);
         if (exp.empty()) return false;
-        for (const auto& e : collector.events())
-        {
-            if (e.channel != zelph::io::OutputChannel::Out) continue;
-            std::string n = normalize(e.text);
-            if (n.size() >= exp.size() && n.compare(0, exp.size(), exp) == 0)
-                return true;
-        }
-        return false;
+        return std::any_of(collector.events().begin(), collector.events().end(), [&](const auto& e)
+                           {
+                    if (e.channel != zelph::io::OutputChannel::Out) return false;
+                    std::string n = normalize(e.text);
+                    return n.size() >= exp.size() && n.compare(0, exp.size(), exp) == 0; });
     }
 
     // Check whether ANY Out-channel event contains the substring (normalized).
@@ -138,26 +134,19 @@ namespace
     {
         std::string              exp = normalize(expected);
         std::vector<std::string> all = collect_answers(collector);
-        for (const auto& a : all)
-        {
-            if (a == exp) return true;
-        }
-        return false;
+        return std::any_of(all.begin(), all.end(), [&](const auto& a)
+                           { return a == exp; });
     }
 
     // Check that "Found one or more contradictions!" appears in any output channel.
     bool has_contradiction(const zelph::io::OutputCollector& collector)
     {
-        for (const auto& e : collector.events())
-        {
-            if (normalize(e.text).find("Found one or more contradictions!") != std::string::npos)
-                return true;
-        }
-        return false;
+        return std::any_of(collector.events().begin(), collector.events().end(), [](const auto& e)
+                           { return normalize(e.text).find("Found one or more contradictions!") != std::string::npos; });
     }
 
     // Process a multiline string, feeding each line to interactive.process().
-    void process_lines(zelph::console::Interactive& interactive, const std::string& script)
+    void process_lines(const zelph::console::Interactive& interactive, const std::string& script)
     {
         std::istringstream iss(script);
         std::string        line;
@@ -196,7 +185,7 @@ namespace
 
 TEST_CASE("parsing: dot-dot predicate")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "g .. h\nh .. i");
         CHECK(any_output_starts_with(collector, "g .. h"));
@@ -205,7 +194,7 @@ TEST_CASE("parsing: dot-dot predicate")
 
 TEST_CASE("parsing: arrow predicates")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 atom_A => atom_B
@@ -218,7 +207,7 @@ atom_C <= atom_D
 // NOTE: <=> parsing is currently broken (displays as ??). Uncomment when fixed.
 // TEST_CASE("parsing: biconditional arrow")
 // {
-//     run_both_modes([](auto& collector, auto& interactive)
+//     run_both_modes([](const auto& collector, const auto& interactive)
 //     {
 //         process_lines(interactive, "(a <=> b) is_type equivalence");
 //         CHECK(any_output_contains(collector, "<=>"));
@@ -231,7 +220,7 @@ atom_C <= atom_D
 
 TEST_CASE("parsing: compact sequence")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "seq_compact is_defined_as <123>");
         CHECK(any_output_contains(collector, "<123>")); });
@@ -239,7 +228,7 @@ TEST_CASE("parsing: compact sequence")
 
 TEST_CASE("parsing: spaced sequence")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "seq_spaced is_defined_as < seqItem1 seqItem2 seqItem3 >");
         CHECK(any_output_contains(collector, "< seqItem1 seqItem2 seqItem3 >")); });
@@ -247,7 +236,7 @@ TEST_CASE("parsing: spaced sequence")
 
 TEST_CASE("parsing: quoted sequence is reversed")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(quoted_sequence ~ < "a" "b" "c" >)");
         CHECK(any_output_contains(collector, "<cba>")); });
@@ -259,7 +248,7 @@ TEST_CASE("parsing: quoted sequence is reversed")
 
 TEST_CASE("parsing: nested sequence in set")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "nested_seq_in_set holds { <setElem1 setElem2> <setElem3 setElem4> }");
         CHECK(any_output_contains(collector, "< setElem1 setElem2 >"));
@@ -268,7 +257,7 @@ TEST_CASE("parsing: nested sequence in set")
 
 TEST_CASE("parsing: mixed container")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(mixed_container content < (myCond => myDeduct) (myDeduct2 <= myCond2) { setElem5 setElem6 } "literal string" >)");
         CHECK(any_output_contains(collector, "myCond => myDeduct"));
@@ -279,7 +268,7 @@ TEST_CASE("parsing: mixed container")
 
 TEST_CASE("parsing: deep nesting")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
         // Display truncates inner levels to ??, but the parser must accept the input.
@@ -289,7 +278,7 @@ TEST_CASE("parsing: deep nesting")
 
 TEST_CASE("parsing: set with facts")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "set_logic ~ { (myItem1 IsA myItem2) (myItem2 IsA myItem3) }");
         CHECK(any_output_contains(collector, "myItem1 IsA myItem2"));
@@ -302,7 +291,7 @@ TEST_CASE("parsing: set with facts")
 
 TEST_CASE("focus operator and variable query")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (*tim ~ human) ~ male
@@ -319,7 +308,7 @@ tim _predicate _object
 
 TEST_CASE("nested unification: pattern matching in equations")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 ((A + B) = C) => (test A B)
@@ -330,7 +319,7 @@ TEST_CASE("nested unification: pattern matching in equations")
 
 TEST_CASE("nested unification: deep structure matching")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (subj pred (obj is (subj2 A (b test C)))) => (success A C)
@@ -345,7 +334,7 @@ subj pred (obj is (subj2 a_val (b test c_val)))
 
 TEST_CASE("complex conjunction rule with followed-by")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 ((A + B) = C) => (test A B)
@@ -363,7 +352,7 @@ TEST_CASE("complex conjunction rule with followed-by")
 
 TEST_CASE("peano-style successor rule")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (A followed-by B) => ((<1> + A) = B)
@@ -378,7 +367,7 @@ TEST_CASE("peano-style successor rule")
 
 TEST_CASE("negation: last element of list")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 elem1 --> elem2
@@ -397,7 +386,7 @@ elem5 partoflist mylist
 
 TEST_CASE("negation: syntax sugar with not-green rule")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (A is yellow, ¬(A is green)) => (A "is not" green)
@@ -416,7 +405,7 @@ plant2 is yellow
 
 TEST_CASE("contradiction detection")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (A instanceof B, A subclassof B) => !
@@ -433,7 +422,7 @@ gene subclassof geneclass
 
 TEST_CASE("janet: inline fact and multiline block with deduction")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 %(zelph/fact "Berlin" "is capital of" "Germany")
@@ -451,7 +440,7 @@ Germany "is located in" Europe
 
 TEST_CASE("janet: unquote referencing janet variable")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 %(def berlin (zelph/resolve "Berlin"))
@@ -466,7 +455,7 @@ TEST_CASE("janet: unquote referencing janet variable")
 
 TEST_CASE("multi-digit addition via rules")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         static const std::string script = R"zelph(
 # Rule-based multi-digit addition for arbitrarily large positive integers.
@@ -581,7 +570,7 @@ TEST_CASE("multi-digit addition via rules")
 
 TEST_CASE("transitive relation deduction")
 {
-    run_both_modes([](auto& collector, auto& interactive)
+    run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
 (R is transitive, A R B, B R C) => (A R C)

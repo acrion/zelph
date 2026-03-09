@@ -157,18 +157,6 @@ namespace zelph::string
         return it == container.end() ? key : it->second;
     }
 
-    template <typename T>
-    static std::basic_string<T> concatenate(std::vector<std::basic_string<T>> list, T separator)
-    {
-        std::basic_string<T> connected;
-        for (std::basic_string<T> t : list)
-        {
-            if (!connected.empty()) connected += separator;
-            connected += t;
-        }
-        return connected;
-    }
-
     inline size_t parse_count(const std::string& str)
     {
         try
@@ -279,32 +267,22 @@ namespace zelph::string
         bool found = true;
         while (found && !result.empty())
         {
-            found = false;
-            for (const auto& c : chars)
-            {
-                if (result.size() >= c.size() && result.compare(0, c.size(), c) == 0)
-                {
-                    result.erase(0, c.size());
-                    found = true;
-                    break;
-                }
-            }
+            auto it = std::ranges::find_if(chars.begin(), chars.end(), [&](const auto& c)
+                                           { return result.size() >= c.size() && result.compare(0, c.size(), c) == 0; });
+            found   = (it != chars.end());
+            if (found)
+                result.erase(0, it->size());
         }
         // Trim right
         found = true;
         while (found && !result.empty())
         {
-            found = false;
-            for (const auto& c : chars)
-            {
-                if (result.size() >= c.size()
-                    && result.compare(result.size() - c.size(), c.size(), c) == 0)
-                {
-                    result.erase(result.size() - c.size());
-                    found = true;
-                    break;
-                }
-            }
+            auto it = std::ranges::find_if(chars.begin(), chars.end(), [&](const auto& c)
+                                           { return result.size() >= c.size()
+                                                 && result.compare(result.size() - c.size(), c.size(), c) == 0; });
+            found   = (it != chars.end());
+            if (found)
+                result.erase(result.size() - it->size());
         }
         return result;
     }

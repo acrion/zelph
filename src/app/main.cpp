@@ -27,10 +27,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #ifdef _WIN32
-    #include <fcntl.h> // for _O_U16TEXT
-    #include <io.h>    // for _setmode
-    #include <stdio.h> // for _fileno
     #include <Windows.h> // for SetConsoleOutputCP
+    #include <fcntl.h>   // for _O_U16TEXT
+    #include <io.h>      // for _setmode
+    #include <stdio.h>   // for _fileno
 #else
     #include <sys/types.h> // for fork
     #include <sys/wait.h>  // for waitpid
@@ -81,7 +81,6 @@ int main(int argc, char** argv)
 #endif
     try
     {
-        std::string              exit_command = ".exit";
         std::vector<std::string> script_files;
         bool                     show_version = false;
 
@@ -118,6 +117,7 @@ int main(int argc, char** argv)
 
         if (script_files.empty())
         {
+            std::string exit_command = ".exit";
             interactive.out("zelph " + zelph::console::Interactive::get_version());
             interactive.out("-- REPL mode - type .help for commands, " + exit_command + " to exit --");
             interactive.out("");

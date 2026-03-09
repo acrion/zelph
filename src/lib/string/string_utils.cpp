@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string_utils.hpp"
 
+#include <algorithm>
 #include <sstream>
 
 namespace zelph::string
@@ -40,17 +41,10 @@ namespace zelph::string
             {
                 if (i + 5 < input.size() && input[i] == '\\' && input[i + 1] == 'u')
                 {
+                    // cppcheck-suppress stlcstrConstructor
                     std::string_view hexCode(input.data() + i + 2, 4);
-                    bool             isValidHex = true;
-
-                    for (char c : hexCode)
-                    {
-                        if (!std::isxdigit(static_cast<unsigned char>(c)))
-                        {
-                            isValidHex = false;
-                            break;
-                        }
-                    }
+                    bool             isValidHex = std::all_of(hexCode.begin(), hexCode.end(), [](unsigned char c)
+                                                  { return std::isxdigit(c); });
 
                     if (isValidHex)
                     {

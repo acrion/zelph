@@ -35,6 +35,10 @@ namespace zelph::io
     public:
         explicit ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 1000);
         ~ReadAsync();
+        ReadAsync(const ReadAsync&)            = delete;
+        ReadAsync& operator=(const ReadAsync&) = delete;
+        ReadAsync(ReadAsync&&)                 = delete;
+        ReadAsync& operator=(ReadAsync&&)      = delete;
 
         std::streamsize get_total_size() const;
 

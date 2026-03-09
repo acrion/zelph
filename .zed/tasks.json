@@ -20,4 +20,18 @@
     "allow_concurrent_runs": false,
     "reveal": "always",
   },
+  {
+    "label": "cppcheck (full)",
+    "command": "bash -c 'cppcheck --project=compile_commands.json --enable=all --suppress=unmatchedSuppression --check-level=exhaustive --inline-suppr --suppress=missingIncludeSystem --suppress=*:*/_deps/* --std=c++20 --inconclusive -i build-debug -i build-release -j$(nproc) 2>&1 | tee build-debug/cppcheck.log'",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
+  {
+    "label": "Clang Static Analyzer (HTML report)",
+    "command": "bash -c 'analyze-build --cdb compile_commands.json --output build-debug/csa-report --status-bugs --exclude build-debug --exclude build-release 2>&1; echo \"Report: build-debug/csa-report\"'",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+  },
 ]
