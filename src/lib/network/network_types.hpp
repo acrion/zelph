@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <stdexcept>
 
 namespace zelph::network
 {
