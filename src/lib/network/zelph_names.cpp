@@ -48,11 +48,12 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
     diagnostic_stream() << "Node " << node << " has name '" << name << "' (" << std::string(lang.begin(), lang.end()) << ")" << std::endl;
 #endif
 
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard  lock2(_pImpl->_mtx_name_of_node);
 
     // Store the forward mapping: node → name (in this language)
-    _pImpl->_name_of_node[lang][node] = name;
+    std::string_view sv               = _pImpl->_string_pool.intern(name);
+    _pImpl->_name_of_node[lang][node] = sv;
 
     if (merge_on_conflict)
     {
@@ -91,13 +92,13 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
                 // Fix the forward mapping we set at the top of this function:
                 // it pointed node → name, but node no longer exists after the merge.
                 _pImpl->_name_of_node[lang].erase(node);
-                _pImpl->_name_of_node[lang][core_node] = name;
-                _pImpl->_node_of_name[lang][name]      = core_node;
+                _pImpl->_name_of_node[lang][core_node] = sv;
+                _pImpl->_node_of_name[lang][sv]        = core_node;
             }
             else
             {
                 // Name is new in this language → create clean bidirectional mapping
-                _pImpl->_node_of_name[lang][name] = node;
+                _pImpl->_node_of_name[lang][sv] = node;
             }
         }
         else if (existing->second != node)
@@ -137,10 +138,10 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
 
             // Fix forward mapping if we swapped the merge direction
             _pImpl->_name_of_node[lang].erase(from);
-            _pImpl->_name_of_node[lang][into] = name;
+            _pImpl->_name_of_node[lang][into] = sv;
 
             // Update reverse mapping to point to the surviving node
-            _pImpl->_node_of_name[lang][name] = into;
+            _pImpl->_node_of_name[lang][sv] = into;
         }
     }
     else // !merge_on_conflict
@@ -153,7 +154,7 @@ void Zelph::set_name(const Node node, const std::string& name, std::string lang,
         //   See Wikidata::process_import()
         // - Variable nodes in rules (they only ever refer to the current rule)
         //   This keeps the graph cleaner. See console::Interactive::Impl::process_fact()
-        _pImpl->_node_of_name[lang][name] = node;
+        _pImpl->_node_of_name[lang][sv] = node;
     }
 }
 
@@ -170,8 +171,8 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
 
     Node result_node;
 
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    std::lock_guard  lock2(_pImpl->_mtx_name_of_node);
 
     // 1. Look for an existing node that already has this name in the foreign language
     auto existing = _pImpl->_node_of_name[lang].find(name_in_given_lang);
@@ -181,8 +182,9 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
         result_node = node(name_in_current_lang, _lang);
 
         // Establish bidirectional mappings for the foreign language
-        _pImpl->_node_of_name[lang][name_in_given_lang] = result_node;
-        _pImpl->_name_of_node[lang][result_node]        = name_in_given_lang;
+        std::string_view sv_foreign              = _pImpl->_string_pool.intern(name_in_given_lang);
+        _pImpl->_node_of_name[lang][sv_foreign]  = result_node;
+        _pImpl->_name_of_node[lang][result_node] = sv_foreign;
     }
     else
     {
@@ -201,8 +203,8 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
         auto& node_of_name_cur = _pImpl->_node_of_name[_lang];
 
         // Get the previously stored name in the current language (if any)
-        auto        it_current_name  = name_of_node_cur.find(result_node);
-        std::string old_current_name = (it_current_name != name_of_node_cur.end()) ? it_current_name->second : "";
+        auto             it_current_name  = name_of_node_cur.find(result_node);
+        std::string_view old_current_name = (it_current_name != name_of_node_cur.end()) ? it_current_name->second : std::string_view{};
 
         // If the stored current-language name differs from the desired one → update it
         if (old_current_name != name_in_current_lang)
@@ -291,8 +293,9 @@ Node Zelph::set_name(const std::string& name_in_current_lang, const std::string&
             }
 
             // Apply the new current-language mappings
-            node_of_name_cur[name_in_current_lang] = result_node;
-            name_of_node_cur[result_node]          = name_in_current_lang;
+            std::string_view sv_current   = _pImpl->_string_pool.intern(name_in_current_lang);
+            node_of_name_cur[sv_current]  = result_node;
+            name_of_node_cur[result_node] = sv_current;
         }
     }
 
@@ -303,20 +306,18 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
 {
     if (lang.empty()) lang = _lang;
 
-    // return `node` in the requested language (if available)
     {
         std::lock_guard lock(_pImpl->_mtx_name_of_node);
         auto&           name_of_node = _pImpl->_name_of_node[lang];
         auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
-            return it->second;
+            return std::string(it->second);
         }
     }
 
     if (!fallback)
     {
-        // return empty string if this node has no name
         return "";
     }
 
@@ -327,7 +328,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
         auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
-            return it->second;
+            return std::string(it->second);
         }
     }
 
@@ -338,7 +339,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
         auto            it           = name_of_node.find(node);
         if (it != name_of_node.end())
         {
-            return it->second;
+            return std::string(it->second);
         }
     }
 
@@ -349,7 +350,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
         {
             auto it2 = l.second.find(node);
             if (it2 != l.second.end())
-                return it2->second;
+                return std::string(it2->second);
         }
     }
 
@@ -438,14 +439,14 @@ void Zelph::remove_name(Node node, std::string lang)
         return; // nothing to remove
     }
 
-    std::string old_name = name_it->second;
+    std::string_view old_name = name_it->second;
     name_map.erase(name_it);
 
     auto& rev_map = _pImpl->_node_of_name[lang];
     rev_map.erase(old_name);
 }
 
-void Zelph::unset_name(Node node, std::string lang /*= ""*/)
+void Zelph::unset_name(Node node, std::string lang)
 {
     if (lang.empty()) lang = _lang;
 
@@ -456,7 +457,7 @@ void Zelph::unset_name(Node node, std::string lang /*= ""*/)
     auto  it       = name_map.find(node);
     if (it != name_map.end())
     {
-        std::string old_name = it->second;
+        std::string_view old_name = it->second;
         name_map.erase(it);
 
         auto& reverse_map = _pImpl->_node_of_name[lang];
@@ -467,23 +468,16 @@ void Zelph::unset_name(Node node, std::string lang /*= ""*/)
 Node Zelph::get_node(const std::string& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    auto            node_of_name = _pImpl->_node_of_name.find(lang);
-    if (node_of_name == _pImpl->_node_of_name.end())
+    std::shared_lock lock(_pImpl->_mtx_node_of_name);
+    auto             lang_it = _pImpl->_node_of_name.find(lang);
+    if (lang_it == _pImpl->_node_of_name.end())
     {
         return 0;
     }
     else
     {
-        auto it = node_of_name->second.find(name);
-        if (it == node_of_name->second.end())
-        {
-            return 0;
-        }
-        else
-        {
-            return it->second;
-        }
+        auto it = lang_it->second.find(name);
+        return (it == lang_it->second.end()) ? 0 : it->second;
     }
 }
 
@@ -573,8 +567,8 @@ std::vector<Node> Zelph::resolve_nodes_by_name(const std::string& name) const
 {
     std::vector<network::Node> results;
 
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    auto            lang_it = _pImpl->_node_of_name.find(lang());
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    auto             lang_it = _pImpl->_node_of_name.find(lang());
     if (lang_it != _pImpl->_node_of_name.end())
     {
         const auto& rev_map = lang_it->second;
@@ -597,8 +591,8 @@ size_t Zelph::get_name_of_node_size(const std::string& lang) const
 
 size_t Zelph::get_node_of_name_size(const std::string& lang) const
 {
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    auto            it = _pImpl->_node_of_name.find(lang);
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    auto             it = _pImpl->_node_of_name.find(lang);
     return (it != _pImpl->_node_of_name.end()) ? it->second.size() : 0;
 }
 

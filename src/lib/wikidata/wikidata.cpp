@@ -150,7 +150,11 @@ void Wikidata::import_all(const std::string& constraints_dir)
             _pImpl->_n->diagnostic("Importing file " + _pImpl->_original_source_path.string(), true);
         }
 
-        io::ReadAsync read_async(_pImpl->_original_source_path, 1000); // 1000 lines buffer
+        const unsigned int num_threads = 2;
+
+        io::ReadAsync read_async(_pImpl->_original_source_path, 2, [this](const std::string& msg)
+                                 { _pImpl->_n->diagnostic(msg, true); });
+
         if (!read_async.error_text().empty())
         {
             throw std::runtime_error(read_async.error_text());
@@ -162,7 +166,6 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
         // Atomic counters for thread coordination and progress tracking
         std::atomic<std::streamoff> bytes_read{0};
-        const unsigned int          num_threads = std::thread::hardware_concurrency();
         std::atomic<unsigned int>   active_threads{num_threads};
         std::vector<std::thread>    workers;
 #ifndef NDEBUG
@@ -176,20 +179,17 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
         auto worker_func = [&]()
         {
-            for (;;)
+            std::vector<std::pair<std::string, std::streamoff>> batch;
+            while (read_async.get_batch(batch))
             {
-                std::string    line;
-                std::streamoff streampos;
-
+                for (auto& [line, streampos] : batch)
                 {
-                    std::lock_guard<std::mutex> lk(read_mtx);
-
-                    if (!read_async.get_line(line, streampos))
-                        break;
+                    auto old = bytes_read.load(std::memory_order_relaxed);
+                    while (streampos > old
+                           && !bytes_read.compare_exchange_weak(old, streampos, std::memory_order_relaxed))
+                        ;
+                    process_entry(line, additional_language_to_import, log, constraints_dir);
                 }
-
-                bytes_read.store(streampos, std::memory_order_relaxed);
-                process_entry(line, additional_language_to_import, log, constraints_dir);
             }
 
             active_threads.fetch_sub(1, std::memory_order_relaxed);

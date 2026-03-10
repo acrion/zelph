@@ -3,26 +3,6 @@
 using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("zelph::network");
 
-struct NodeValuePair {  # For _name_of_node: key=Node (UInt64), value=Text (UTF-8 string)
-  key @0 :UInt64;
-  value @1 :Text;
-}
-
-struct ValueNodePair {  # For _node_of_name: key=Text (UTF-8 string), value=Node (UInt64)
-  key @0 :Text;
-  value @1 :UInt64;
-}
-
-struct NameLangMap {  # For _name_of_node
-  lang @0 :Text;  # std::string (language)
-  pairs @1 :List(NodeValuePair);
-}
-
-struct NodeLangMap {  # For _node_of_name
-  lang @0 :Text;  # std::string (language)
-  pairs @1 :List(ValueNodePair);
-}
-
 struct ProbPair {
   hash @0 :UInt64;
   prob @1 :Float64;  # long double approx as double
@@ -33,36 +13,24 @@ struct AdjPair {
   adj @1 :List(UInt64);  # sorted adjacency_set
 }
 
-struct AdjChunk {  # New: For chunked _left/_right
+struct AdjChunk {
   which @0 :Text;  # "left" or "right"
   chunkIndex @1 :UInt32;
   pairs @2 :List(AdjPair);
-}
-
-struct ZelphImplOld {
-  probabilities @0 :List(ProbPair);
-  last @1 :UInt64;
-  lastVar @2 :UInt64;
-  nodeCount @3 :UInt64;
-  nameOfNode @4 :List(NameLangMap);
-  nodeOfName @5 :List(NodeLangMap);
-  formatFactLevel @6 :Int32; # Deprecated
-  leftChunkCount @7 :UInt32;  # Number of chunks for left
-  rightChunkCount @8 :UInt32;  # Number of chunks for right
 }
 
 struct ZelphImpl {
   probabilities @0 :List(ProbPair);
   last @1 :UInt64;
   lastVar @2 :UInt64;
-  nodeCount @3 :UInt64; # TODO Deprecated
-  nameOfNode @4 :List(NameLangMap);
-  nodeOfName @5 :List(NodeLangMap);
-  formatFactLevel @6 :Int32; # Deprecated
-  leftChunkCount @7 :UInt32;  # Number of chunks for left
-  rightChunkCount @8 :UInt32;  # Number of chunks for right
-  nameOfNodeChunkCount @9 :UInt32;  # Number of chunks for name_of_node (over all languages)
-  nodeOfNameChunkCount @10 :UInt32;  # Number of chunks for node_of_name (over all languages)
+  deprecated0 @3 :Void;  # was: nodeCount
+  deprecated1 @4 :Void;  # was: nameOfNode (non-chunked, v1 only)
+  deprecated2 @5 :Void;  # was: nodeOfName (non-chunked, v1 only)
+  deprecated3 @6 :Void;  # was: formatFactLevel
+  leftChunkCount @7 :UInt32;
+  rightChunkCount @8 :UInt32;
+  nameOfNodeChunkCount @9 :UInt32;
+  nodeOfNameChunkCount @10 :UInt32;
 }
 
 struct NamePair {

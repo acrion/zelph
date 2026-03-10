@@ -40,12 +40,44 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <vector>
-
-// #define CLEAR_ON_LOAD
 
 namespace zelph::network
 {
+    // Append-only string pool providing pointer-stable storage.
+    // All name strings are interned here exactly once; both name maps
+    // store std::string_view pointing into this pool.
+    //
+    // Thread safety: callers must hold at least one of the name mutexes
+    // (_mtx_name_of_node or _mtx_node_of_name) before calling intern().
+    // In practice every code path that interns already holds both.
+    class StringPool
+    {
+        // std::unordered_set is node-based => pointers/references to
+        // elements are never invalidated by insert or rehash.
+        std::unordered_set<std::string> _pool;
+
+    public:
+        // Returns a view whose lifetime equals the pool's lifetime
+        // (or until clear() is called).
+        std::string_view intern(const std::string& s)
+        {
+            auto [it, _] = _pool.insert(s);
+            return std::string_view(*it);
+        }
+
+        std::string_view intern(std::string&& s)
+        {
+            auto [it, _] = _pool.insert(std::move(s));
+            return std::string_view(*it);
+        }
+
+        void   clear() { _pool.clear(); }
+        size_t size() const { return _pool.size(); }
+    };
+
     class ZELPH_EXPORT Zelph::Impl : public Network
     {
         friend class Zelph;
@@ -65,19 +97,6 @@ namespace zelph::network
             }
             _last     = impl.getLast();
             _last_var = impl.getLastVar();
-        }
-
-        void loadSmallData(const ZelphImplOld::Reader& impl_old)
-        {
-#ifdef CLEAR_ON_LOAD
-            _probabilities.clear();
-#endif
-            for (auto p : impl_old.getProbabilities())
-            {
-                _probabilities[p.getHash()] = static_cast<long double>(p.getProb());
-            }
-            _last     = impl_old.getLast();
-            _last_var = impl_old.getLastVar();
         }
 
         void loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount)
@@ -145,13 +164,12 @@ namespace zelph::network
 
         void saveToFile(const std::string& filename) const
         {
-            const size_t chunkSize = 1000000; // 1M entries per chunk; adjust based on RAM/testing
+            const size_t chunkSize = 1000000; // 1M entries per chunk
 
-            // Debug: Log sizes before serializing large structures
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _probabilities.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: string pool size=" << _string_pool.size();
 
-// Open file
 #ifdef _WIN32
     #define fileno _fileno
 #endif
@@ -164,7 +182,7 @@ namespace zelph::network
             kj::FdOutputStream output(fileno(file));
 
             // Main message (small data)
-            ::capnp::MallocMessageBuilder mainMessage(1u << 26); // Large initial for safety
+            ::capnp::MallocMessageBuilder mainMessage(1u << 26);
             auto                          impl = mainMessage.initRoot<ZelphImpl>();
 
             // Serialize probabilities
@@ -195,13 +213,11 @@ namespace zelph::network
             }
             impl.setNodeOfNameChunkCount(static_cast<uint32_t>(nodeOfNameChunkTotal));
 
-            // Calculate and set chunk counts for left/right
             size_t leftChunkCount  = (_left.size() + chunkSize - 1) / chunkSize;
             size_t rightChunkCount = (_right.size() + chunkSize - 1) / chunkSize;
             impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
             impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
 
-            // Write main message
             ::capnp::writePackedMessage(output, mainMessage);
 
             // Chunk _left
@@ -231,7 +247,7 @@ namespace zelph::network
                 ::capnp::writePackedMessage(output, chunkMessage);
             }
 
-            // Chunk _right similarly
+            // Chunk _right
             auto rightIt = _right.begin();
             for (size_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
             {
@@ -259,11 +275,13 @@ namespace zelph::network
             }
 
             // Chunk _name_of_node
+            // Note: string_view::data() is null-terminated here because the pool
+            // stores std::string objects and string_view points into them.
             for (const auto& langMap : _name_of_node)
             {
-                std::string                               lang = langMap.first;
-                const auto&                               map  = langMap.second;
-                std::vector<std::pair<Node, std::string>> sorted(map.begin(), map.end());
+                std::string                                    lang = langMap.first;
+                const auto&                                    map  = langMap.second;
+                std::vector<std::pair<Node, std::string_view>> sorted(map.begin(), map.end());
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -281,7 +299,8 @@ namespace zelph::network
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         pairs[i].setKey(it->first);
-                        pairs[i].setValue(it->second);
+                        // Pool-backed string_view: data() is null-terminated
+                        pairs[i].setValue(it->second.data());
                     }
                     ::capnp::writePackedMessage(output, chunkMessage);
                 }
@@ -290,9 +309,9 @@ namespace zelph::network
             // Chunk _node_of_name
             for (const auto& langMap : _node_of_name)
             {
-                std::string                               lang = langMap.first;
-                const auto&                               map  = langMap.second;
-                std::vector<std::pair<std::string, Node>> sorted(map.begin(), map.end());
+                std::string                                    lang = langMap.first;
+                const auto&                                    map  = langMap.second;
+                std::vector<std::pair<std::string_view, Node>> sorted(map.begin(), map.end());
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -309,7 +328,8 @@ namespace zelph::network
                     auto   pairs    = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
-                        pairs[i].setKey(it->first);
+                        // Pool-backed string_view: data() is null-terminated
+                        pairs[i].setKey(it->first.data());
                         pairs[i].setValue(it->second);
                     }
                     ::capnp::writePackedMessage(output, chunkMessage);
@@ -319,7 +339,6 @@ namespace zelph::network
 
         void loadFromFile(const std::string& filename)
         {
-// Open file
 #ifdef _WIN32
     #define fileno _fileno
 #endif
@@ -329,172 +348,98 @@ namespace zelph::network
                 throw std::runtime_error("Failed to open file for reading: " + filename);
             }
 
-            // Set ReaderOptions for large data
             ::capnp::ReaderOptions options;
-            options.traversalLimitInWords = 1ULL << 32; // 32 GB - TODO after stopping support for old format this can be reduced
+            options.traversalLimitInWords = 1ULL << 32;
             options.nestingLimit          = 128;
 
-            // Neuen Format-Instanz
             kj::FdInputStream              rawInput(fileno(file));
             kj::BufferedInputStreamWrapper bufferedInput(rawInput);
 
-            bool is_old_format = false;
-            try
+            ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
+            auto                         impl = mainMessage.getRoot<ZelphImpl>();
+
+            loadSmallData(impl);
+
+            uint32_t leftChunkCount       = impl.getLeftChunkCount();
+            uint32_t rightChunkCount      = impl.getRightChunkCount();
+            uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
+            uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                                                                           << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
+
+            loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
+
+            // Load _name_of_node (chunked, interning into string pool)
+#ifdef CLEAR_ON_LOAD
+            _name_of_node.clear();
+            _string_pool.clear();
+#endif
+            for (uint32_t i = 0; i < nameOfNodeChunkCount; ++i)
             {
-                ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-                auto                         impl = mainMessage.getRoot<ZelphImpl>();
-
-                loadSmallData(impl);
-
-                // Debug: Log chunk counts
-                uint32_t leftChunkCount       = impl.getLeftChunkCount();
-                uint32_t rightChunkCount      = impl.getRightChunkCount();
-                uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
-                uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading new format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                                                                               << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
-
-                loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
-
-// Load _name_of_node (chunked)
-#ifdef CLEAR_ON_LOAD
-                _name_of_node.clear();
-#endif
-                for (uint32_t i = 0; i < nameOfNodeChunkCount; ++i)
+                ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
+                auto                         chunk = chunkMessage.getRoot<NameChunk>();
+                std::string                  lang  = chunk.getLang();
+                auto&                        map   = _name_of_node[lang];
+                for (auto pair : chunk.getPairs())
                 {
-                    ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
-                    auto                         chunk = chunkMessage.getRoot<NameChunk>();
-                    std::string                  lang  = chunk.getLang();
-                    auto&                        map   = _name_of_node[lang];
-                    for (auto pair : chunk.getPairs())
+                    try
                     {
-                        try
-                        {
-                            map[pair.getKey()] = pair.getValue();
-                        }
-                        catch (...)
-                        {
-                            map[pair.getKey()] = "?";
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
-                        }
+                        std::string_view sv = _string_pool.intern(pair.getValue());
+                        map[pair.getKey()]  = sv;
                     }
-#ifndef NDEBUG
-                    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount;
-#else
-                    io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
-                }
-#ifdef NDEBUG
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
-#endif
-
-// Load _node_of_name (chunked)
-#ifdef CLEAR_ON_LOAD
-                _node_of_name.clear();
-#endif
-                for (uint32_t i = 0; i < nodeOfNameChunkCount; ++i)
-                {
-                    ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
-                    auto                         chunk = chunkMessage.getRoot<NodeNameChunk>();
-                    std::string                  lang  = chunk.getLang();
-                    auto&                        map   = _node_of_name[lang];
-                    for (auto pair : chunk.getPairs())
+                    catch (...)
                     {
-                        try
-                        {
-                            map[pair.getKey()] = pair.getValue();
-                        }
-                        catch (...)
-                        {
-                            map["?"] = pair.getValue();
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for node_of_name value " << pair.getValue();
-                        }
+                        std::string_view sv = _string_pool.intern("?");
+                        map[pair.getKey()]  = sv;
+                        io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
                     }
-#ifndef NDEBUG
-                    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount;
-#else
-                    io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
                 }
-#ifdef NDEBUG
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
+#ifndef NDEBUG
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount;
+#else
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
 #endif
             }
-            catch (std::exception& ex)
+#ifdef NDEBUG
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
+#endif
+
+            // Load _node_of_name (chunked, interning into string pool)
+#ifdef CLEAR_ON_LOAD
+            _node_of_name.clear();
+            // _string_pool already cleared above
+#endif
+            for (uint32_t i = 0; i < nodeOfNameChunkCount; ++i)
             {
-                is_old_format = true;
-                // Schliesse das File und öffne neu für separate Instanzen
-                fclose(file);
-                file = fopen(filename.c_str(), "rb");
-                if (!file)
+                ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
+                auto                         chunk = chunkMessage.getRoot<NodeNameChunk>();
+                std::string                  lang  = chunk.getLang();
+                auto&                        map   = _node_of_name[lang];
+                for (auto pair : chunk.getPairs())
                 {
-                    throw std::runtime_error("Failed to reopen file for old format: " + filename);
-                }
-
-                // Alte Format-Instanz (getrennt)
-                kj::FdInputStream              oldRawInput(fileno(file));
-                kj::BufferedInputStreamWrapper oldBufferedInput(oldRawInput);
-
-                // Load as old schema
-                ::capnp::PackedMessageReader mainMessage(oldBufferedInput, options);
-                auto                         impl_old = mainMessage.getRoot<ZelphImplOld>();
-
-                loadSmallData(impl_old);
-
-// Load _name_of_node from old
-#ifdef CLEAR_ON_LOAD
-                _name_of_node.clear();
-#endif
-                for (auto langMap : impl_old.getNameOfNode())
-                {
-                    name_of_node_map inner;
-                    for (auto pair : langMap.getPairs())
+                    try
                     {
-                        try
-                        {
-                            inner[pair.getKey()] = pair.getValue();
-                        }
-                        catch (...)
-                        {
-                            inner[pair.getKey()] = "?";
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
-                        }
+                        std::string_view sv = _string_pool.intern(pair.getKey());
+                        map[sv]             = pair.getValue();
                     }
-                    _name_of_node[langMap.getLang()] = std::move(inner);
-                }
-
-// Load _node_of_name from old
-#ifdef CLEAR_ON_LOAD
-                _node_of_name.clear();
-#endif
-                for (auto langMap : impl_old.getNodeOfName())
-                {
-                    node_of_name_map inner;
-                    for (auto pair : langMap.getPairs())
+                    catch (...)
                     {
-                        try
-                        {
-                            inner[pair.getKey()] = pair.getValue();
-                        }
-                        catch (...)
-                        {
-                            inner["?"] = pair.getValue();
-                            io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for node_of_name value " << pair.getValue();
-                        }
+                        std::string_view sv = _string_pool.intern("?");
+                        map[sv]             = pair.getValue();
+                        io::OutputStream(_output, io::OutputChannel::Error, true) << "Error converting UTF-8 to string for node_of_name value " << pair.getValue();
                     }
-                    _node_of_name[langMap.getLang()] = std::move(inner);
                 }
-
-                // Debug: Log chunk counts (für old: Chunk-Counts für Names = 0)
-                uint32_t leftChunkCount       = impl_old.getLeftChunkCount();
-                uint32_t rightChunkCount      = impl_old.getRightChunkCount();
-                uint32_t nameOfNodeChunkCount = 0;
-                uint32_t nodeOfNameChunkCount = 0;
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading old format: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                                                                               << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
-
-                loadLeftRightChunks(oldBufferedInput, options, leftChunkCount, rightChunkCount);
+#ifndef NDEBUG
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount;
+#else
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
+#endif
             }
+#ifdef NDEBUG
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
+#endif
+
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
 
             fclose(file);
         }
@@ -514,7 +459,7 @@ namespace zelph::network
                 auto        it   = map.find(from);
                 if (it != map.end())
                 {
-                    std::string name = it->second;
+                    std::string_view name = it->second;
                     map.erase(it);
 
                     auto it2 = map.find(into);
@@ -527,7 +472,6 @@ namespace zelph::network
                                 << name << "' (from merged node) vs '" << it2->second
                                 << "'. Keeping existing name '" << it2->second << "'.";
                         }
-                        // No need to set, keep existing
                     }
                     else
                     {
@@ -545,25 +489,21 @@ namespace zelph::network
                 {
                     if (it->second == from)
                     {
-                        std::string name = it->first;
-                        it               = map.erase(it);
+                        std::string_view name = it->first;
+                        it                    = map.erase(it);
 
-                        // Check if name already maps to something else
                         auto it_existing = map.find(name);
                         if (it_existing == map.end())
                         {
-                            // Safe to set to into
                             map[name] = into;
                         }
                         else
                         {
-                            // Conflict, already maps to another node (likely into or other)
                             if (it_existing->second != into)
                             {
                                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Warning: Skipping reverse mapping update for name '" << name << "' in language '" << lang
                                                                                                << "' due to existing conflicting mapping.";
                             }
-                            // Else already points to into, ok
                         }
                     }
                     else
@@ -628,6 +568,8 @@ namespace zelph::network
                 }
             }
 
+            // Note: removed strings remain in _string_pool (append-only).
+
             return removed_count;
         }
 
@@ -666,13 +608,15 @@ namespace zelph::network
                 _output(io::OutputEvent{channel, text, newline});
         }
 
-        using name_of_node_map = ankerl::unordered_dense::map<Node, std::string>;
-        using node_of_name_map = ankerl::unordered_dense::map<std::string, Node>;
+        using name_of_node_map = ankerl::unordered_dense::map<Node, std::string_view>;
+        using node_of_name_map = ankerl::unordered_dense::map<std::string_view, Node>;
+
+        StringPool _string_pool;
 
         ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node; // key is language identifier
         ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
 
-        mutable std::recursive_mutex _mtx_node_of_name;
+        mutable std::shared_mutex    _mtx_node_of_name;
         mutable std::recursive_mutex _mtx_name_of_node;
         mutable std::recursive_mutex _mtx_print;
 

@@ -79,19 +79,22 @@ Node Zelph::node(const std::string& name, std::string lang)
         throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
-    // 1. Check existing regular nodes
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
+    // 1. Fast path: shared lock for lookup
     {
-        auto& node_of_name = _pImpl->_node_of_name[lang];
-        auto  it           = node_of_name.find(name);
-        if (it != node_of_name.end())
-        {
-            return it->second;
-        }
-    }
+        std::shared_lock lock(_pImpl->_mtx_node_of_name);
 
-    // 2. Check core nodes
-    {
+        // Check existing regular nodes
+        auto lang_it = _pImpl->_node_of_name.find(lang);
+        if (lang_it != _pImpl->_node_of_name.end())
+        {
+            auto it = lang_it->second.find(name);
+            if (it != lang_it->second.end())
+            {
+                return it->second;
+            }
+        }
+
+        // Check core nodes
         auto it = _core_names_by_name.find(name);
         if (it != _core_names_by_name.end())
         {
@@ -99,14 +102,29 @@ Node Zelph::node(const std::string& name, std::string lang)
         }
     }
 
-    // we do not call invalidate_fact_structures_cache() here, because creating a node is isolated from the network
+    // 2. Slow path: exclusive lock for creation (double-checked locking)
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+
+    // Re-check: another thread may have created it while we re-acquired the lock
+    {
+        auto lang_it = _pImpl->_node_of_name.find(lang);
+        if (lang_it != _pImpl->_node_of_name.end())
+        {
+            auto it = lang_it->second.find(name);
+            if (it != lang_it->second.end())
+            {
+                return it->second;
+            }
+        }
+    }
 
     // 3. Create new node
-    Node            new_node = _pImpl->create();
-    std::lock_guard lock2(_pImpl->_mtx_name_of_node);
-
-    _pImpl->_node_of_name[lang][name]     = new_node;
-    _pImpl->_name_of_node[lang][new_node] = name;
+    // we do not call invalidate_fact_structures_cache() here, because creating a node is isolated from the network
+    Node             new_node = _pImpl->create();
+    std::lock_guard  lock2(_pImpl->_mtx_name_of_node);
+    std::string_view sv                   = _pImpl->_string_pool.intern(name);
+    _pImpl->_node_of_name[lang][sv]       = new_node;
+    _pImpl->_name_of_node[lang][new_node] = sv;
 
     return new_node;
 }
@@ -700,8 +718,8 @@ Zelph::AllNodeView Zelph::get_all_nodes_view() const
 
 Zelph::LangNodeView Zelph::get_lang_nodes_view(const std::string& lang) const
 {
-    std::lock_guard lock(_pImpl->_mtx_node_of_name);
-    auto            it = _pImpl->_node_of_name.find(lang);
+    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    auto             it = _pImpl->_node_of_name.find(lang);
     if (it == _pImpl->_node_of_name.end())
     {
         static const Impl::node_of_name_map empty;

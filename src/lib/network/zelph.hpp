@@ -40,8 +40,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
-    using name_of_node_map = ankerl::unordered_dense::map<Node, std::string>;
-    using node_of_name_map = ankerl::unordered_dense::map<std::string, Node>;
+    using name_of_node_map = ankerl::unordered_dense::map<Node, std::string_view>;
+    using node_of_name_map = ankerl::unordered_dense::map<std::string_view, Node>;
 
     // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
     // provides low-level API for graph manipulation, and handles raw binary serialization (I/O)

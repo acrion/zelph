@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <atomic>
@@ -57,9 +58,10 @@ static constexpr size_t BATCH_SIZE = 4096;
 class ReadAsync::Impl
 {
 public:
-    Impl(std::filesystem::path file_name, size_t sufficient_size)
-        : _sufficient_size(std::max<size_t>(2, sufficient_size / BATCH_SIZE))
+    Impl(std::filesystem::path file_name, size_t sufficient_batch_count, DiagnosticCallback diagnostic_callback)
+        : _sufficient_size(std::max<size_t>(2, sufficient_batch_count))
         , _file_name(std::move(file_name))
+        , _diag(std::move(diagnostic_callback))
         , _compressed(_file_name.extension() == ".bz2")
     {
         std::ifstream file(_file_name, std::ifstream::ate | std::ifstream::binary);
@@ -67,6 +69,12 @@ public:
         {
             _total_size = file.tellg();
             file.close();
+            if (_diag)
+            {
+                _diag("[ReadAsync] File: " + _file_name.string()
+                      + ", compressed: " + (_compressed ? "yes" : "no")
+                      + ", queue capacity: " + std::to_string(_sufficient_size) + " batches of " + std::to_string(BATCH_SIZE));
+            }
             _t = std::thread(&Impl::read_thread, this);
         }
         else
@@ -95,6 +103,7 @@ public:
     size_t                _sufficient_size;
     std::filesystem::path _file_name;
     bool                  _compressed;
+    DiagnosticCallback    _diag;
     std::thread           _t;
 
     // Queue now stores batches (vectors) of entries
@@ -133,9 +142,33 @@ std::streamsize ReadAsync::get_total_size() const
     return _pImpl->_total_size;
 }
 
-ReadAsync::ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size)
-    : _pImpl(new Impl(file_name, sufficient_size))
+ReadAsync::ReadAsync(const std::filesystem::path& file_name, size_t sufficient_batch_count, DiagnosticCallback diagnostic_callback)
+    : _pImpl(new Impl(file_name, sufficient_batch_count, std::move(diagnostic_callback)))
 {
+}
+
+bool ReadAsync::get_batch(std::vector<std::pair<std::string, std::streamoff>>& lines) const
+{
+    std::unique_lock<std::mutex> lock(_pImpl->_mtx);
+    _pImpl->_cv_not_empty.wait(lock, [&]
+                               { return !_pImpl->_queue.empty() || _pImpl->_eof; });
+
+    if (_pImpl->_queue.empty())
+        return false;
+
+    auto batch = std::move(_pImpl->_queue.front());
+    _pImpl->_queue.pop();
+
+    lock.unlock();
+    _pImpl->_cv_not_full.notify_one();
+
+    lines.clear();
+    lines.reserve(batch.size());
+    for (auto& e : batch)
+    {
+        lines.emplace_back(std::move(e._line), e._streampos);
+    }
+    return true;
 }
 
 ReadAsync::~ReadAsync()
@@ -456,6 +489,10 @@ void ReadAsync::Impl::read_thread()
 #ifndef _WIN32
         // Try parallel decompression first (lbzip2 or pbzip2)
         std::string parallel_cmd = find_parallel_decompressor();
+        if (_diag)
+        {
+            _diag("[ReadAsync] Parallel decompressor: " + (parallel_cmd.empty() ? std::string("(none, using libbzip2 fallback)") : parallel_cmd));
+        }
 
         if (!parallel_cmd.empty())
         {
@@ -463,14 +500,25 @@ void ReadAsync::Impl::read_thread()
         }
 #endif
 
-        // Fall back to single-threaded libbzip2
         if (!used_parallel)
         {
+            if (_diag)
+            {
+                _diag("[ReadAsync] Using single-threaded libbzip2 fallback");
+            }
             read_compressed_fallback(current_batch, push_current_batch);
+        }
+        else if (_diag)
+        {
+            _diag("[ReadAsync] Parallel decompression completed");
         }
     }
     else
     {
+        if (_diag)
+        {
+            _diag("[ReadAsync] Reading uncompressed file");
+        }
         // Uncompressed path
         std::ifstream stream(_file_name, std::ios::binary);
         stream.rdbuf()->pubsetbuf(nullptr, 1024 * 1024);

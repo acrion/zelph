@@ -26,14 +26,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace zelph::io
 {
+    using DiagnosticCallback = std::function<void(const std::string&)>;
+
     class ReadAsync
     {
     public:
-        explicit ReadAsync(const std::filesystem::path& file_name, size_t sufficient_size = 1000);
+        explicit ReadAsync(const std::filesystem::path& file_name, size_t sufficient_batch_count = 2, DiagnosticCallback diagnostic_callback = {});
         ~ReadAsync();
         ReadAsync(const ReadAsync&)            = delete;
         ReadAsync& operator=(const ReadAsync&) = delete;
@@ -47,6 +50,10 @@ namespace zelph::io
 
         // Returns raw UTF-8 string (no conversion)
         bool get_line_utf8(std::string& line, std::streamoff& streampos) const;
+
+        // Thread-safe batch retrieval: each caller gets a full batch without external locking.
+        // Returns false when EOF is reached and no more batches are available.
+        bool get_batch(std::vector<std::pair<std::string, std::streamoff>>& lines) const;
 
         std::string error_text() const;
 
