@@ -25,10 +25,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include <ankerl/unordered_dense.h>
-
 #include <cstdint>
 #include <map>
+#include <memory>
 
 namespace zelph::network
 {

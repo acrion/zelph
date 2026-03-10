@@ -23,15 +23,17 @@
 
 add_executable(zelph main.cpp)
 
-target_link_libraries(zelph PRIVATE project_options)
+set(ZELPH_APP_LIBS project_options)
 
-install(TARGETS zelph RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(TARGET zelph_mimalloc_override)
+    list(APPEND ZELPH_APP_LIBS zelph_mimalloc_override)
+endif()
 
 message(STATUS "CMAKE_CXX_COMPILER_ID = ${CMAKE_CXX_COMPILER_ID}")
 
 if (MSVC)
     target_compile_definitions(zelph PRIVATE BOOST_LIB_DIAGNOSTIC)
-    target_link_libraries(zelph PRIVATE zelph_lib)
+    list(APPEND ZELPH_APP_LIBS zelph_lib)
 
     add_custom_command(TARGET zelph POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -42,7 +44,11 @@ if (MSVC)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
-    target_link_libraries(zelph PRIVATE Threads::Threads zelph_lib)
+    list(APPEND ZELPH_APP_LIBS Threads::Threads zelph_lib)
 else ()
-    target_link_libraries(zelph PRIVATE zelph_lib)
+    list(APPEND ZELPH_APP_LIBS zelph_lib)
 endif ()
+
+target_link_libraries(zelph PRIVATE ${ZELPH_APP_LIBS})
+
+install(TARGETS zelph RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -35,6 +35,8 @@ endif()
 
 project(zelph VERSION 0.9.4 LANGUAGES C CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -44,6 +46,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 add_library(project_options INTERFACE)
+
+option(ZELPH_BUILD_APP   "Build the zelph REPL executable" ${PROJECT_IS_TOP_LEVEL})
+option(ZELPH_BUILD_TESTS "Build zelph tests"               ${PROJECT_IS_TOP_LEVEL})
 
 if(MSVC)
     target_compile_options(project_options INTERFACE
@@ -55,16 +60,23 @@ else()
         -fexceptions -Wall -pedantic
     )
 
-    # Debug Info
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_compile_options(project_options INTERFACE -g)
     endif()
 endif()
 
 add_subdirectory(src/lib)
-add_subdirectory(src/app)
 
-install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})
+if(ZELPH_BUILD_APP)
+    add_subdirectory(src/app)
+endif()
 
-enable_testing()
-add_subdirectory(src/test)
+if(ZELPH_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(src/test)
+endif()
+
+if(PROJECT_IS_TOP_LEVEL)
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})
+endif()

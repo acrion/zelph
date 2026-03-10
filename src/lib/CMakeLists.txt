@@ -26,6 +26,36 @@ include(CheckCXXCompilerFlag)
 include(FetchContent)
 include(CheckIPOSupported)
 
+set(_ZELPH_USE_MIMALLOC_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PROJECT_IS_TOP_LEVEL)
+    set(_ZELPH_USE_MIMALLOC_DEFAULT ON)
+endif()
+
+option(ZELPH_USE_MIMALLOC
+       "Enable mimalloc for standalone Linux builds of zelph"
+       ${_ZELPH_USE_MIMALLOC_DEFAULT})
+
+if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+    set(MI_BUILD_OBJECT ON CACHE BOOL "" FORCE)
+    set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(MI_OVERRIDE ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        mimalloc
+        GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+        GIT_TAG v3.2.8
+    )
+    FetchContent_MakeAvailable(mimalloc)
+
+    add_library(zelph_mimalloc_override INTERFACE)
+    target_link_libraries(zelph_mimalloc_override INTERFACE
+        mimalloc-obj
+        "$<TARGET_OBJECTS:mimalloc-obj>"
+    )
+endif()
+
 FetchContent_Declare(
     janet
     GIT_REPOSITORY https://github.com/janet-lang/janet.git
@@ -256,7 +286,6 @@ add_library(zelph_lib SHARED
 
     ${CAPNP_SRCS}
 )
-
 
 target_link_libraries(zelph_lib PUBLIC project_options)
 
