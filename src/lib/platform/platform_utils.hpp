@@ -26,8 +26,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace zelph::platform
 {
-    size_t get_process_memory_usage();
+    size_t   get_process_memory_usage();
+    uint64_t get_process_cpu_time_ns();
 }

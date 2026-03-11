@@ -81,7 +81,7 @@ Node Zelph::node(const std::string& name, std::string lang)
 
     // 1. Fast path: shared lock for lookup
     {
-        std::shared_lock lock(_pImpl->_mtx_node_of_name);
+        std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
 
         // Check existing regular nodes
         auto lang_it = _pImpl->_node_of_name.find(lang);
@@ -95,15 +95,15 @@ Node Zelph::node(const std::string& name, std::string lang)
         }
 
         // Check core nodes
-        auto it = _core_names_by_name.find(name);
-        if (it != _core_names_by_name.end())
+        auto it_core = _core_names_by_name.find(name);
+        if (it_core != _core_names_by_name.end())
         {
-            return it->second;
+            return it_core->second;
         }
     }
 
-    // 2. Slow path: exclusive lock for creation (double-checked locking)
-    std::unique_lock lock(_pImpl->_mtx_node_of_name);
+    // 2. Slow path: exclusive lock for creation (double-checked)
+    std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
 
     // Re-check: another thread may have created it while we re-acquired the lock
     {
@@ -116,15 +116,29 @@ Node Zelph::node(const std::string& name, std::string lang)
                 return it->second;
             }
         }
+
+        auto it_core = _core_names_by_name.find(name);
+        if (it_core != _core_names_by_name.end())
+        {
+            return it_core->second;
+        }
     }
 
     // 3. Create new node
-    // we do not call invalidate_fact_structures_cache() here, because creating a node is isolated from the network
-    Node             new_node = _pImpl->create();
-    std::lock_guard  lock2(_pImpl->_mtx_name_of_node);
-    std::string_view sv                   = _pImpl->_string_pool.intern(name);
-    _pImpl->_node_of_name[lang][sv]       = new_node;
-    _pImpl->_name_of_node[lang][new_node] = sv;
+    // We do not call invalidate_fact_structures_cache() here, because creating a node is isolated from the network
+    Node new_node = _pImpl->create();
+
+    std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    auto [reverse_outer_it, inserted_reverse_outer] = _pImpl->_node_of_name.try_emplace(lang);
+    auto [forward_outer_it, inserted_forward_outer] = _pImpl->_name_of_node.try_emplace(lang);
+    (void)inserted_reverse_outer;
+    (void)inserted_forward_outer;
+
+    std::string_view sv = _pImpl->_string_pool.intern(name);
+
+    reverse_outer_it->second.emplace(sv, new_node);
+    forward_outer_it->second.emplace(new_node, sv);
 
     return new_node;
 }
@@ -390,6 +404,12 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     }
 
     return answer.relation();
+}
+
+Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node object) const
+{
+    invalidate_fact_structures_cache();
+    return _pImpl->insert_fact_single_object_trusted(subject, predicate, object);
 }
 
 /**

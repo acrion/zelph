@@ -32,6 +32,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::wikidata
 {
+    class ImportThreadStats;
+
     class Wikidata : public io::DataManager
     {
     public:
@@ -53,8 +55,17 @@ namespace zelph::wikidata
 
     private:
         void process_constraints(const std::string& line, std::string id_str, const std::string& dir);
-        void process_entry(const std::string& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir);
-        void process_import(const std::string& line, const std::string& id_str, const std::string& additional_language_to_import, const bool log, size_t id1);
+        void process_entry(const std::string& line,
+                           const std::string& additional_language_to_import,
+                           bool               log,
+                           const std::string& constraints_dir,
+                           ImportThreadStats* diag = nullptr);
+        void process_import(const std::string& line,
+                            const std::string& id_str,
+                            const std::string& additional_language_to_import,
+                            bool               log,
+                            size_t             id1,
+                            ImportThreadStats* diag = nullptr);
 
         class Impl;
         Impl* const _pImpl; // must stay at top of members list because of initialization order

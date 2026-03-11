@@ -69,9 +69,9 @@ namespace zelph::network
                     throw std::runtime_error("Network::connect: setting probabilities for connection that include variables");
                 }
 
-                Node                        hash;
-                std::lock_guard<std::mutex> lock3(_mtx_prob);
-                auto                        it = find_probability(a, b, hash);
+                Node             hash;
+                std::unique_lock lock3(_mtx_prob);
+                auto             it = find_probability(a, b, hash);
 
                 if (it == _probabilities.end())
                 {
@@ -95,6 +95,65 @@ namespace zelph::network
             rightIt->second.insert(a);
         }
 
+        Node insert_fact_single_object_trusted(Node subject, Node predicate, Node object)
+        {
+            if (subject == 0 || predicate == 0 || object == 0)
+            {
+                throw std::invalid_argument("Network::insert_fact_single_object_trusted: subject/predicate/object must be non-zero");
+            }
+
+            const Node relation = create_hash(predicate, subject, object);
+
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            if (_left.find(subject) == _left.end())
+                throw std::runtime_error("Network::insert_fact_single_object_trusted: subject does not exist");
+            if (_left.find(object) == _left.end())
+                throw std::runtime_error("Network::insert_fact_single_object_trusted: object does not exist");
+            if (_right.find(subject) == _right.end())
+                throw std::runtime_error("Network::insert_fact_single_object_trusted: subject right-side entry does not exist");
+            if (_right.find(predicate) == _right.end())
+                throw std::runtime_error("Network::insert_fact_single_object_trusted: predicate right-side entry does not exist");
+
+            auto [rel_left_it, inserted_left] =
+                (subject == object)
+                    ? _left.try_emplace(relation, adjacency_set{subject, predicate})
+                    : _left.try_emplace(relation, adjacency_set{subject, object, predicate});
+
+            if (!inserted_left)
+            {
+                return relation;
+            }
+
+            auto [rel_right_it, inserted_right] =
+                (subject == object)
+                    ? _right.try_emplace(relation, adjacency_set{subject})
+                    : _right.try_emplace(relation, adjacency_set{subject, object});
+
+            if (!inserted_right)
+            {
+                throw std::runtime_error("Network::insert_fact_single_object_trusted: inconsistent state, relation exists only on right side");
+            }
+
+            // Re-fetch after insertion
+            auto subj_left  = _left.find(subject);
+            auto subj_right = _right.find(subject);
+            auto pred_right = _right.find(predicate);
+
+            subj_left->second.insert(relation);
+            subj_right->second.insert(relation);
+            pred_right->second.insert(relation);
+
+            if (subject != object)
+            {
+                auto obj_left = _left.find(object);
+                obj_left->second.insert(relation);
+            }
+
+            return relation;
+        }
+
         void disconnect(Node a, Node b)
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -114,9 +173,9 @@ namespace zelph::network
 
             // Remove probability if exists
             {
-                std::lock_guard<std::mutex> lock_prob(_mtx_prob);
-                Node                        hash;
-                auto                        it = find_probability(a, b, hash);
+                std::unique_lock lock_prob(_mtx_prob);
+                Node             hash;
+                auto             it = find_probability(a, b, hash);
                 if (it != _probabilities.end())
                 {
                     _probabilities.erase(it);
@@ -284,9 +343,9 @@ namespace zelph::network
             auto                                itLeft = _left.find(a);
             if (itLeft != _left.end() && itLeft->second.count(b) == 1)
             {
-                Node                        hash;
-                std::lock_guard<std::mutex> lock3(_mtx_prob);
-                auto                        it = find_probability(a, b, hash);
+                Node             hash;
+                std::shared_lock lock3(_mtx_prob);
+                auto             it = find_probability(a, b, hash);
                 return it == _probabilities.end() ? 1 : it->second;
             }
             else
@@ -489,7 +548,7 @@ namespace zelph::network
         std::map<Node, long double> _probabilities;
         Node                        _last{Node()};
         Node                        _last_var{Node()};
-        mutable std::mutex          _mtx_prob;
+        mutable std::shared_mutex   _mtx_prob;
         mutable std::shared_mutex   _smtx_left;
         mutable std::shared_mutex   _smtx_right;
 

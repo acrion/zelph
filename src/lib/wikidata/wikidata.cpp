@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "wikidata.hpp"
 
+#include "import_diagnostics.hpp"
 #include "io/read_async.hpp"
 #include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
@@ -150,9 +151,9 @@ void Wikidata::import_all(const std::string& constraints_dir)
             _pImpl->_n->diagnostic("Importing file " + _pImpl->_original_source_path.string(), true);
         }
 
-        const unsigned int num_threads = 2;
+        const unsigned int num_threads = 4; // std::thread::hardware_concurrency();
 
-        io::ReadAsync read_async(_pImpl->_original_source_path, 2, [this](const std::string& msg)
+        io::ReadAsync read_async(_pImpl->_original_source_path, num_threads * 2, [this](const std::string& msg)
                                  { _pImpl->_n->diagnostic(msg, true); });
 
         if (!read_async.error_text().empty())
@@ -168,11 +169,10 @@ void Wikidata::import_all(const std::string& constraints_dir)
         std::atomic<std::streamoff> bytes_read{0};
         std::atomic<unsigned int>   active_threads{num_threads};
         std::vector<std::thread>    workers;
-#ifndef NDEBUG
-        const bool log = true;
-#else
-        const bool log = false;
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        ImportDiagnostics import_diag;
 #endif
+        const bool log = false;
 
         // Worker function: each thread processes lines from ReadAsync
         std::mutex read_mtx;
@@ -180,18 +180,39 @@ void Wikidata::import_all(const std::string& constraints_dir)
         auto worker_func = [&]()
         {
             std::vector<std::pair<std::string, std::streamoff>> batch;
-            while (read_async.get_batch(batch))
+            ImportThreadStats                                   local_diag;
+
+            while (true)
             {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                const auto wait_begin = SteadyClock::now();
+#endif
+                if (!read_async.get_batch(batch))
+                    break;
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                local_diag.wait_batch_ns += to_ns(SteadyClock::now() - wait_begin);
+                local_diag.batches += 1;
+#endif
+
                 for (auto& [line, streampos] : batch)
                 {
                     auto old = bytes_read.load(std::memory_order_relaxed);
                     while (streampos > old
                            && !bytes_read.compare_exchange_weak(old, streampos, std::memory_order_relaxed))
                         ;
-                    process_entry(line, additional_language_to_import, log, constraints_dir);
+
+                    process_entry(line, additional_language_to_import, log, constraints_dir, &local_diag);
                 }
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                import_diag.merge(local_diag, batch.size());
+                local_diag.reset();
+#endif
             }
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            import_diag.merge(local_diag, 0);
+#endif
             active_threads.fetch_sub(1, std::memory_order_relaxed);
         };
 
@@ -206,6 +227,13 @@ void Wikidata::import_all(const std::string& constraints_dir)
         std::chrono::steady_clock::time_point start_time       = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point last_update_time = start_time;
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        std::chrono::steady_clock::time_point last_diag_time     = start_time;
+        ImportDiagSnapshot                    last_diag_snapshot = import_diag.snapshot();
+        io::ReadAsync::StatsSnapshot          last_read_snapshot = read_async.get_stats_snapshot();
+        uint64_t                              last_cpu_ns        = zelph::platform::get_process_cpu_time_ns();
+#endif
+
         while (active_threads.load(std::memory_order_relaxed) > 0)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -213,7 +241,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
             auto current_time           = std::chrono::steady_clock::now();
             auto time_since_last_update = std::chrono::duration<double>(current_time - last_update_time).count();
 
-            if (time_since_last_update >= 1.0)
+            if (time_since_last_update >= 60.0)
             {
                 std::streamoff current_bytes      = bytes_read.load(std::memory_order_relaxed);
                 double         current_percentage = (static_cast<double>(current_bytes) / static_cast<double>(total_size)) * 100.0;
@@ -265,6 +293,37 @@ void Wikidata::import_all(const std::string& constraints_dir)
 
                 last_update_time = current_time;
             }
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            const auto diag_seconds = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_diag_time).count();
+            if (diag_seconds >= ZELPH_WIKIDATA_IMPORT_DIAGNOSTIC_INTERVAL_SEC)
+            {
+                const auto diag_snapshot = import_diag.snapshot();
+                const auto read_snapshot = read_async.get_stats_snapshot();
+                const auto cpu_ns        = zelph::platform::get_process_cpu_time_ns();
+
+                log_import_window(
+                    _pImpl->_n,
+                    diag_snapshot,
+                    last_diag_snapshot,
+                    read_snapshot,
+                    last_read_snapshot,
+                    current_time,
+                    last_diag_time,
+                    cpu_ns,
+                    last_cpu_ns,
+                    bytes_read.load(std::memory_order_relaxed),
+                    total_size,
+                    export_constraints,
+                    export_constraints ? 0ull : static_cast<uint64_t>(_pImpl->_n->count()),
+                    num_threads);
+
+                last_diag_snapshot = diag_snapshot;
+                last_read_snapshot = read_snapshot;
+                last_cpu_ns        = cpu_ns;
+                last_diag_time     = current_time;
+            }
+#endif
         }
 
         // Wait for all workers to complete
@@ -598,13 +657,23 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
     }
 }
 
-void Wikidata::process_import(const std::string& line, const std::string& id_str, const std::string& additional_language_to_import, const bool log, size_t id1)
+void Wikidata::process_import(const std::string& line,
+                              const std::string& id_str,
+                              const std::string& additional_language_to_import,
+                              const bool         log,
+                              size_t             id1,
+                              ImportThreadStats* diag)
 {
-    network::Node subject = 0;
-    std::string   name_in_additional_language;
+    thread_local std::unordered_map<std::string, network::Node> property_cache;
+    thread_local std::unordered_set<network::Node>              typed_properties;
+    network::Node                                               subject = 0;
+    std::string                                                 name_in_additional_language;
 
     if (!additional_language_to_import.empty())
     {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        const auto label_begin = SteadyClock::now();
+#endif
         static const std::string language_tag("{\"language\":\"" + additional_language_to_import + "\",\"value\":\"");
         const size_t             language0 = line.find(language_tag, id1 + 7);
         if (language0 != std::string::npos)
@@ -625,6 +694,9 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
                 }
             }
         }
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        if (diag) diag->parse_label_ns += to_ns(SteadyClock::now() - label_begin);
+#endif
     }
 
     size_t                   property0;
@@ -640,6 +712,9 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
     while ((property0 = line.find(property_tag, id1 + 1)) != std::string::npos)
     {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        const auto scan_begin = SteadyClock::now();
+#endif
         size_t      property1    = line.find('\"', property0 + property_tag.size());
         std::string property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
 
@@ -659,8 +734,15 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
         size_t search_pos = property0;
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        if (diag) diag->claim_scan_ns += to_ns(SteadyClock::now() - scan_begin);
+#endif
+
         while ((search_pos = line.find(claim_value_tag, search_pos)) != std::string::npos && search_pos < boundary)
         {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            const auto inner_scan_begin = SteadyClock::now();
+#endif
             size_t id0 = search_pos + claim_value_tag.size();
 
             bool success = true;
@@ -681,6 +763,10 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
                     id1                    = line.find('\"', id0);
                     std::string object_str = line.substr(id0, id1 - id0);
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                    if (diag) diag->claim_scan_ns += to_ns(SteadyClock::now() - inner_scan_begin);
+#endif
+
                     try
                     {
 #ifdef SINGLE_THREADED_IMPORT
@@ -689,20 +775,63 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
                         if (subject == 0)
                         {
-                            subject = _pImpl->_n->get_node(id_str, "wikidata");
-
-                            if (subject == 0)
-                            {
-                                subject = _pImpl->_n->node(id_str, "wikidata");
-                            }
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                            const auto t = SteadyClock::now();
+#endif
+                            subject = _pImpl->_n->node(id_str, "wikidata");
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                            if (diag) diag->subject_ns += to_ns(SteadyClock::now() - t);
+#endif
                         }
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                        const auto obj_begin = SteadyClock::now();
+#endif
                         network::Node object_node_handle = _pImpl->_n->node(object_str, "wikidata");
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                        if (diag) diag->object_node_ns += to_ns(SteadyClock::now() - obj_begin);
+                        const auto prop_begin = SteadyClock::now();
+#endif
+                        network::Node property_node_handle;
+                        auto          pit = property_cache.find(property_str);
+                        if (pit != property_cache.end())
+                        {
+                            property_node_handle = pit->second;
+                        }
+                        else
+                        {
+                            property_node_handle = _pImpl->_n->node(property_str, "wikidata");
+                            property_cache.emplace(property_str, property_node_handle);
+                        }
 
-                        auto fact = _pImpl->_n->fact(
+                        // Typing only once per thread/property. Even if two threads want to type the same
+                        // property twice,this is harmless in the trusted import path and very rare.
+                        if (typed_properties.insert(property_node_handle).second)
+                        {
+                            _pImpl->_n->fact_import_trusted_single_object(
+                                property_node_handle,
+                                _pImpl->_n->core.IsA,
+                                _pImpl->_n->core.RelationTypeCategory);
+                        }
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                        if (diag) diag->property_node_ns += to_ns(SteadyClock::now() - prop_begin);
+#endif
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                        const auto fact_begin = SteadyClock::now();
+#endif
+                        auto fact = _pImpl->_n->fact_import_trusted_single_object(
                             subject,
-                            _pImpl->_n->node(property_str, "wikidata"),
-                            {object_node_handle});
+                            property_node_handle,
+                            object_node_handle);
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                        if (diag)
+                        {
+                            diag->fact_ns += to_ns(SteadyClock::now() - fact_begin);
+                            diag->claims += 1;
+                            diag->facts += 1;
+                        }
+#endif
 
                         if (log)
                         {
@@ -736,32 +865,56 @@ void Wikidata::process_import(const std::string& line, const std::string& id_str
 
     if (subject == 0)
     {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        const auto t = SteadyClock::now();
+#endif
 #ifdef SINGLE_THREADED_IMPORT
         if (!lock.owns_lock()) lock.lock();
 #endif
-        subject = _pImpl->_n->get_node(id_str, "wikidata");
-
-        if (subject == 0)
-        {
-            subject = _pImpl->_n->node(id_str, "wikidata");
-        }
+        subject = _pImpl->_n->node(id_str, "wikidata");
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        if (diag) diag->subject_ns += to_ns(SteadyClock::now() - t);
+#endif
     }
 
     if (!name_in_additional_language.empty())
     {
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        const auto t = SteadyClock::now();
+#endif
 #ifdef SINGLE_THREADED_IMPORT
         assert(lock.owns_lock());
 #endif
         _pImpl->_n->set_name(subject, name_in_additional_language, additional_language_to_import, false);
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+        if (diag)
+        {
+            diag->set_name_ns += to_ns(SteadyClock::now() - t);
+            diag->named_nodes += 1;
+        }
+#endif
     }
 }
 
-void Wikidata::process_entry(const std::string& line, const std::string& additional_language_to_import, const bool log, const std::string& constraints_dir)
+void Wikidata::process_entry(const std::string& line,
+                             const std::string& additional_language_to_import,
+                             const bool         log,
+                             const std::string& constraints_dir,
+                             ImportThreadStats* diag)
 {
     const bool export_constraints = !constraints_dir.empty();
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+    const auto entry_begin = SteadyClock::now();
+    const auto id_begin    = SteadyClock::now();
+#endif
+
     static const std::string id_tag("\"id\":\"");
     size_t                   id0 = line.find(id_tag);
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+    if (diag) diag->parse_id_ns += to_ns(SteadyClock::now() - id_begin);
+#endif
 
     if (id0 != std::string::npos)
     {
@@ -777,9 +930,17 @@ void Wikidata::process_entry(const std::string& line, const std::string& additio
         }
         else
         {
-            process_import(line, id_str, additional_language_to_import, log, id1);
+            process_import(line, id_str, additional_language_to_import, log, id1, diag);
         }
     }
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+    if (diag)
+    {
+        diag->lines += 1;
+        diag->process_entry_ns += to_ns(SteadyClock::now() - entry_begin);
+    }
+#endif
 }
 
 void Wikidata::set_logging(bool do_log)

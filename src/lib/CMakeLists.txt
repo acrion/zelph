@@ -279,6 +279,7 @@ add_library(zelph_lib SHARED
     string/string_utils.cpp
     string/string_utils.hpp
 
+    wikidata/import_diagnostics.hpp
     wikidata/wikidata_text_compressor.hpp
     wikidata/wikidata_token_encoder.hpp
     wikidata/wikidata.cpp

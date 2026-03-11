@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <bzlib.h>
 
+#include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <fstream>
 #include <functional>
@@ -120,6 +122,23 @@ public:
     mutable std::condition_variable _cv_not_empty;
     mutable std::condition_variable _cv_not_full;
     std::streamsize                 _total_size{0};
+
+    enum class DecompressorKind : int
+    {
+        Unknown = 0,
+        Uncompressed,
+        LibBzip2,
+        Lbzip2,
+        Pbzip2
+    };
+
+    std::atomic<uint64_t>         _stats_batches_enqueued{0};
+    std::atomic<uint64_t>         _stats_entries_enqueued{0};
+    mutable std::atomic<uint64_t> _stats_source_bytes_read{0};
+    mutable std::atomic<uint64_t> _stats_output_bytes_emitted{0};
+    std::atomic<uint64_t>         _stats_queue_wait_not_full_ns{0};
+    std::atomic<uint64_t>         _stats_max_queue_size{0};
+    std::atomic<int>              _stats_decompressor_kind{static_cast<int>(DecompressorKind::Unknown)};
 
 private:
 #ifndef _WIN32
@@ -232,12 +251,31 @@ bool ReadAsync::get_line_utf8(std::string& line, std::streamoff& streampos) cons
 void ReadAsync::Impl::put_batch(std::vector<Entry>&& batch)
 {
     std::unique_lock<std::mutex> lock(_mtx);
+
+    const auto wait_begin = std::chrono::steady_clock::now();
     _cv_not_full.wait(lock, [&]
                       { return _queue.size() < _sufficient_size || _eof || _stop_requested; });
+    _stats_queue_wait_not_full_ns.fetch_add(
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  std::chrono::steady_clock::now() - wait_begin)
+                                  .count()),
+        std::memory_order_relaxed);
 
     if (_stop_requested) return;
 
+    const size_t batch_size = batch.size();
     _queue.push(std::move(batch));
+
+    _stats_batches_enqueued.fetch_add(1, std::memory_order_relaxed);
+    _stats_entries_enqueued.fetch_add(batch_size, std::memory_order_relaxed);
+
+    uint64_t qsize   = static_cast<uint64_t>(_queue.size());
+    uint64_t current = _stats_max_queue_size.load(std::memory_order_relaxed);
+    while (qsize > current
+           && !_stats_max_queue_size.compare_exchange_weak(current, qsize, std::memory_order_relaxed))
+    {
+    }
+
     lock.unlock();
     _cv_not_empty.notify_one();
 }
@@ -310,7 +348,9 @@ bool ReadAsync::Impl::read_compressed_parallel(
             in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
             auto n = in.gcount();
             if (n <= 0) break;
-
+            
+            _stats_source_bytes_read.fetch_add(static_cast<uint64_t>(n), std::memory_order_relaxed);
+               
             const char* p   = buf.data();
             ssize_t     rem = static_cast<ssize_t>(n);
 
@@ -343,6 +383,8 @@ bool ReadAsync::Impl::read_compressed_parallel(
             // NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection)
             ssize_t n = ::read(fd, rbuf.data(), rbuf.size());
             if (n <= 0) break;
+
+            _stats_output_bytes_emitted.fetch_add(static_cast<uint64_t>(n), std::memory_order_relaxed);
 
             const char* ptr  = rbuf.data();
             const char* end  = ptr + n;
@@ -423,6 +465,8 @@ void ReadAsync::Impl::read_compressed_fallback(
             strm.avail_in = stream.gcount();
             strm.next_in  = inbuf.data();
             streampos     = stream.tellg();
+
+            _stats_source_bytes_read.fetch_add(static_cast<uint64_t>(strm.avail_in), std::memory_order_relaxed);
             if (strm.avail_in == 0 && utf8_line.empty()) break;
         }
 
@@ -433,7 +477,8 @@ void ReadAsync::Impl::read_compressed_fallback(
 
         if (ret != BZ_OK && ret != BZ_STREAM_END) break;
 
-        size_t      have     = buf_size - strm.avail_out;
+        size_t have = buf_size - strm.avail_out;
+        _stats_output_bytes_emitted.fetch_add(static_cast<uint64_t>(have), std::memory_order_relaxed);
         const char* ptr      = outbuf.data();
         const char* end      = ptr + have;
         const char* last_ptr = ptr;
@@ -496,12 +541,19 @@ void ReadAsync::Impl::read_thread()
 
         if (!parallel_cmd.empty())
         {
+            if (parallel_cmd == "lbzip2")
+                _stats_decompressor_kind.store(static_cast<int>(DecompressorKind::Lbzip2), std::memory_order_relaxed);
+            else if (parallel_cmd == "pbzip2")
+                _stats_decompressor_kind.store(static_cast<int>(DecompressorKind::Pbzip2), std::memory_order_relaxed);
+
             used_parallel = read_compressed_parallel(parallel_cmd, current_batch, push_current_batch);
         }
 #endif
 
         if (!used_parallel)
         {
+            _stats_decompressor_kind.store(static_cast<int>(DecompressorKind::LibBzip2), std::memory_order_relaxed);
+
             if (_diag)
             {
                 _diag("[ReadAsync] Using single-threaded libbzip2 fallback");
@@ -515,6 +567,8 @@ void ReadAsync::Impl::read_thread()
     }
     else
     {
+        _stats_decompressor_kind.store(static_cast<int>(DecompressorKind::Uncompressed), std::memory_order_relaxed);
+
         if (_diag)
         {
             _diag("[ReadAsync] Reading uncompressed file");
@@ -544,4 +598,43 @@ void ReadAsync::Impl::read_thread()
     }
     _cv_not_empty.notify_all();
     _cv_not_full.notify_all();
+}
+
+ReadAsync::StatsSnapshot ReadAsync::get_stats_snapshot() const
+{
+    StatsSnapshot s;
+    s.batches_enqueued       = _pImpl->_stats_batches_enqueued.load(std::memory_order_relaxed);
+    s.entries_enqueued       = _pImpl->_stats_entries_enqueued.load(std::memory_order_relaxed);
+    s.source_bytes_read      = _pImpl->_stats_source_bytes_read.load(std::memory_order_relaxed);
+    s.output_bytes_emitted   = _pImpl->_stats_output_bytes_emitted.load(std::memory_order_relaxed);
+    s.queue_wait_not_full_ns = _pImpl->_stats_queue_wait_not_full_ns.load(std::memory_order_relaxed);
+    s.max_queue_size         = _pImpl->_stats_max_queue_size.load(std::memory_order_relaxed);
+    s.queue_capacity         = _pImpl->_sufficient_size;
+    s.compressed             = _pImpl->_compressed;
+
+    switch (static_cast<ReadAsync::Impl::DecompressorKind>(_pImpl->_stats_decompressor_kind.load(std::memory_order_relaxed)))
+    {
+    case ReadAsync::Impl::DecompressorKind::Uncompressed:
+        s.decompressor_name           = "none";
+        s.using_external_decompressor = false;
+        break;
+    case ReadAsync::Impl::DecompressorKind::LibBzip2:
+        s.decompressor_name           = "libbzip2";
+        s.using_external_decompressor = false;
+        break;
+    case ReadAsync::Impl::DecompressorKind::Lbzip2:
+        s.decompressor_name           = "lbzip2";
+        s.using_external_decompressor = true;
+        break;
+    case ReadAsync::Impl::DecompressorKind::Pbzip2:
+        s.decompressor_name           = "pbzip2";
+        s.using_external_decompressor = true;
+        break;
+    default:
+        s.decompressor_name           = "unknown";
+        s.using_external_decompressor = false;
+        break;
+    }
+
+    return s;
 }

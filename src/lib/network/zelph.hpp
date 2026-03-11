@@ -106,6 +106,7 @@ namespace zelph::network
         static bool          is_var(Node a);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
         Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
+        Node                 fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
         Node                 list(const std::vector<Node>& elements);
         Node                 list(const std::vector<std::string>& elements);
         Node                 set(const std::unordered_set<Node>& elements);

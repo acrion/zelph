@@ -444,73 +444,194 @@ namespace zelph::network
             fclose(file);
         }
 
+        void transfer_names_locked(const Node from, const Node into)
+        {
+            if (from == into) return;
+
+            // PRECONDITION:
+            // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively,
+            // always in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+            for (auto& [lang, forward] : _name_of_node)
+            {
+                auto it_from = forward.find(from);
+                if (it_from == forward.end())
+                {
+                    continue;
+                }
+
+                const std::string_view from_name = it_from->second;
+
+                auto [reverse_outer_it, inserted_reverse_outer] = _node_of_name.try_emplace(lang);
+                (void)inserted_reverse_outer;
+                auto& reverse = reverse_outer_it->second;
+
+                // Remove reverse entry for the disappearing pair (from_name -> from), if it exists.
+                auto rev_from_it = reverse.find(from_name);
+                if (rev_from_it != reverse.end() && rev_from_it->second == from)
+                {
+                    reverse.erase(rev_from_it);
+                }
+
+                auto it_into = forward.find(into);
+                if (it_into != forward.end())
+                {
+                    const std::string_view into_name = it_into->second;
+
+                    if (into_name != from_name)
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                            << "Warning: Name conflict in language '" << lang << "': '"
+                            << from_name << "' (from merged node) vs '" << into_name
+                            << "'. Keeping existing name '" << into_name << "'.";
+                    }
+
+                    // Drop the old forward mapping for "from".
+                    forward.erase(it_from);
+
+                    // Repair reverse mapping for the kept name.
+                    auto rev_into_it = reverse.find(into_name);
+                    if (rev_into_it == reverse.end())
+                    {
+                        reverse.emplace(into_name, into);
+                    }
+                    else if (rev_into_it->second == from)
+                    {
+                        rev_into_it->second = into;
+                    }
+                }
+                else
+                {
+                    // Move forward mapping from -> into
+                    forward.erase(it_from);
+                    auto [new_into_it, inserted_into] = forward.emplace(into, from_name);
+                    if (!inserted_into)
+                    {
+                        new_into_it->second = from_name;
+                    }
+
+                    // Move reverse mapping from_name -> into
+                    auto rev_it = reverse.find(from_name);
+                    if (rev_it == reverse.end())
+                    {
+                        reverse.emplace(from_name, into);
+                    }
+                    else if (rev_it->second == from)
+                    {
+                        rev_it->second = into;
+                    }
+                    else if (rev_it->second != into)
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                            << "Warning: Skipping reverse mapping update for name '" << from_name
+                            << "' in language '" << lang
+                            << "' due to existing conflicting mapping.";
+                    }
+                }
+            }
+        }
+
         void transfer_names(const Node from, const Node into)
         {
             if (from == into) return;
 
-            std::lock_guard lock1(_mtx_name_of_node);
-            std::lock_guard lock2(_mtx_node_of_name);
+            // Global lock order must be consistent everywhere:
+            // _mtx_node_of_name -> _mtx_name_of_node
+            std::unique_lock lock_node(_mtx_node_of_name);
+            std::unique_lock lock_name(_mtx_name_of_node);
 
-            // Transfer forward mappings: node -> name
-            for (auto& outer : _name_of_node)
+            transfer_names_locked(from, into);
+        }
+
+        void assign_name_locked(const Node node, const std::string& name, const std::string& lang)
+        {
+            // PRECONDITION:
+            // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively
+            // in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+            auto [rev_outer_it, rev_outer_inserted] = _node_of_name.try_emplace(lang);
+            auto [fwd_outer_it, fwd_outer_inserted] = _name_of_node.try_emplace(lang);
+            (void)rev_outer_inserted;
+            (void)fwd_outer_inserted;
+
+            auto& rev = rev_outer_it->second; // name -> node
+            auto& fwd = fwd_outer_it->second; // node -> name
+
+            // 1. Remove old name of this node, if different
+            auto fwd_it = fwd.find(node);
+            if (fwd_it != fwd.end() && fwd_it->second != name)
             {
-                std::string lang = outer.first;
-                auto&       map  = outer.second;
-                auto        it   = map.find(from);
-                if (it != map.end())
+                auto old_rev_it = rev.find(fwd_it->second);
+                if (old_rev_it != rev.end() && old_rev_it->second == node)
                 {
-                    std::string_view name = it->second;
-                    map.erase(it);
-
-                    auto it2 = map.find(into);
-                    if (it2 != map.end())
-                    {
-                        if (it2->second != name)
-                        {
-                            io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
-                                << "Warning: Name conflict in language '" << lang << "': '"
-                                << name << "' (from merged node) vs '" << it2->second
-                                << "'. Keeping existing name '" << it2->second << "'.";
-                        }
-                    }
-                    else
-                    {
-                        map[into] = name;
-                    }
+                    rev.erase(old_rev_it);
                 }
+                fwd.erase(fwd_it);
             }
 
-            // Update reverse mappings: name -> node
-            for (auto& outer : _node_of_name)
-            {
-                std::string lang = outer.first;
-                auto&       map  = outer.second;
-                for (auto it = map.begin(); it != map.end();)
-                {
-                    if (it->second == from)
-                    {
-                        std::string_view name = it->first;
-                        it                    = map.erase(it);
+            // 2. Intern new name
+            std::string_view sv = _string_pool.intern(name);
 
-                        auto it_existing = map.find(name);
-                        if (it_existing == map.end())
-                        {
-                            map[name] = into;
-                        }
-                        else
-                        {
-                            if (it_existing->second != into)
-                            {
-                                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Warning: Skipping reverse mapping update for name '" << name << "' in language '" << lang
-                                                                                               << "' due to existing conflicting mapping.";
-                            }
-                        }
-                    }
-                    else
-                    {
-                        ++it;
-                    }
+            // 3. If another node currently owns that name, detach its forward mapping
+            auto rev_it = rev.find(sv);
+            if (rev_it != rev.end() && rev_it->second != node)
+            {
+                const Node previous_owner = rev_it->second;
+
+                auto prev_fwd_it = fwd.find(previous_owner);
+                if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
+                {
+                    fwd.erase(prev_fwd_it);
                 }
+
+                rev_it->second = node;
+            }
+            else if (rev_it == rev.end())
+            {
+                rev.emplace(sv, node);
+            }
+
+            // 4. Write/repair forward mapping
+            auto [new_fwd_it, inserted] = fwd.emplace(node, sv);
+            if (!inserted)
+            {
+                new_fwd_it->second = sv;
+            }
+        }
+
+        void remove_name_locked(const Node node, const std::string& lang)
+        {
+            // PRECONDITION:
+            // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively
+            // in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+            auto fwd_outer_it = _name_of_node.find(lang);
+            if (fwd_outer_it == _name_of_node.end())
+            {
+                return;
+            }
+
+            auto& fwd    = fwd_outer_it->second;
+            auto  fwd_it = fwd.find(node);
+            if (fwd_it == fwd.end())
+            {
+                return;
+            }
+
+            const std::string_view old_name = fwd_it->second;
+            fwd.erase(fwd_it);
+
+            auto rev_outer_it = _node_of_name.find(lang);
+            if (rev_outer_it == _node_of_name.end())
+            {
+                return;
+            }
+
+            auto& rev    = rev_outer_it->second;
+            auto  rev_it = rev.find(old_name);
+            if (rev_it != rev.end() && rev_it->second == node)
+            {
+                rev.erase(rev_it);
             }
         }
 
@@ -529,7 +650,7 @@ namespace zelph::network
             }
 
             {
-                std::lock_guard lock(_mtx_name_of_node);
+                std::unique_lock lock(_mtx_name_of_node);
                 for (auto& lang_pair : _name_of_node)
                 {
                     auto& map = lang_pair.second;
@@ -549,7 +670,7 @@ namespace zelph::network
             }
 
             {
-                std::lock_guard lock(_mtx_node_of_name);
+                std::unique_lock lock(_mtx_node_of_name);
                 for (auto& lang_pair : _node_of_name)
                 {
                     auto& map = lang_pair.second;
@@ -575,8 +696,8 @@ namespace zelph::network
 
         void remove_node_names(Node nd)
         {
-            std::lock_guard lock1(_mtx_name_of_node);
-            std::lock_guard lock2(_mtx_node_of_name);
+            std::unique_lock lock1(_mtx_name_of_node);
+            std::unique_lock lock2(_mtx_node_of_name);
 
             // Remove forward mappings (node → name) in all languages
             for (auto& lang_map : _name_of_node)
@@ -617,7 +738,7 @@ namespace zelph::network
         ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
 
         mutable std::shared_mutex    _mtx_node_of_name;
-        mutable std::recursive_mutex _mtx_name_of_node;
+        mutable std::shared_mutex    _mtx_name_of_node;
         mutable std::recursive_mutex _mtx_print;
 
         mutable std::shared_mutex                                              _fs_cache_mtx;

@@ -61,4 +61,17 @@ namespace zelph::platform
 #endif
         return 0; // Non-Linux
     }
+
+    uint64_t get_process_cpu_time_ns()
+    {
+#ifdef __linux__
+        timespec ts{};
+        if (::clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) == 0)
+        {
+            return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull
+                 + static_cast<uint64_t>(ts.tv_nsec);
+        }
+#endif
+        return 0;
+    }
 }

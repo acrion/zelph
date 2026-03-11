@@ -57,6 +57,22 @@ namespace zelph::io
 
         std::string error_text() const;
 
+        struct StatsSnapshot
+        {
+            uint64_t    batches_enqueued{0};
+            uint64_t    entries_enqueued{0};
+            uint64_t    source_bytes_read{0};
+            uint64_t    output_bytes_emitted{0};
+            uint64_t    queue_wait_not_full_ns{0};
+            uint64_t    max_queue_size{0};
+            size_t      queue_capacity{0};
+            bool        compressed{false};
+            bool        using_external_decompressor{false};
+            std::string decompressor_name;
+        };
+
+        StatsSnapshot get_stats_snapshot() const;
+
         class Impl;
         Impl* const _pImpl; // must stay at top of members list because of initialization order
     };

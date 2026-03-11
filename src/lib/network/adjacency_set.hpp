@@ -27,52 +27,33 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network_types.hpp"
 
+#include <ankerl/unordered_dense.h>
+
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 #include <initializer_list>
+#include <vector>
 
 namespace zelph::network
 {
     class adjacency_set
     {
     private:
-        struct adj_vec_block
-        {
-            uint32_t size;
-            uint32_t cap;
-            Node     data[];
-
-            static adj_vec_block* create(uint32_t capacity)
-            {
-                auto* block =
-                    static_cast<adj_vec_block*>(std::malloc(sizeof(adj_vec_block) + capacity * sizeof(Node)));
-                block->size = 0;
-                block->cap  = capacity;
-                return block;
-            }
-
-            static adj_vec_block* create_with(const Node* src, uint32_t count, uint32_t capacity)
-            {
-                auto* block = create(capacity);
-                std::memcpy(block->data, src, count * sizeof(Node));
-                block->size = count;
-                return block;
-            }
-        };
+        static constexpr size_t VECTOR_TO_SET_THRESHOLD = 128;
 
         enum class Mode : uint8_t
         {
             Empty  = 0,
             Single = 1,
-            Vector = 2
+            Vector = 2,
+            Set    = 3
         };
 
         union Storage
         {
-            Node           single_node;
-            adj_vec_block* block_ptr;
+            Node                                single_node;
+            std::vector<Node>*                  vec_ptr;
+            ankerl::unordered_dense::set<Node>* set_ptr;
         };
 
         Storage _storage{};
@@ -82,7 +63,11 @@ namespace zelph::network
         {
             if (_mode == Mode::Vector)
             {
-                std::free(_storage.block_ptr);
+                delete _storage.vec_ptr;
+            }
+            else if (_mode == Mode::Set)
+            {
+                delete _storage.set_ptr;
             }
             _mode                = Mode::Empty;
             _storage.single_node = 0;
@@ -100,11 +85,11 @@ namespace zelph::network
                 _storage.single_node = other._storage.single_node;
                 break;
             case Mode::Vector:
-            {
-                auto* src          = other._storage.block_ptr;
-                _storage.block_ptr = adj_vec_block::create_with(src->data, src->size, src->cap);
+                _storage.vec_ptr = new std::vector<Node>(*other._storage.vec_ptr);
                 break;
-            }
+            case Mode::Set:
+                _storage.set_ptr = new ankerl::unordered_dense::set<Node>(*other._storage.set_ptr);
+                break;
             }
         }
 
@@ -125,31 +110,22 @@ namespace zelph::network
                 return;
             }
 
-            auto* block = adj_vec_block::create(static_cast<uint32_t>(init.size()));
-            for (Node n : init)
-                block->data[block->size++] = n;
-            std::sort(block->data, block->data + block->size);
-
-            // Deduplicate
-            uint32_t write = 0;
-            for (uint32_t read = 0; read < block->size; ++read)
+            if (init.size() <= VECTOR_TO_SET_THRESHOLD)
             {
-                if (read == 0 || block->data[read] != block->data[read - 1])
-                    block->data[write++] = block->data[read];
-            }
-            block->size = write;
+                _storage.vec_ptr = new std::vector<Node>();
+                _storage.vec_ptr->reserve(init.size());
+                _mode = Mode::Vector;
+                for (Node n : init)
+                    _storage.vec_ptr->push_back(n);
+                std::sort(_storage.vec_ptr->begin(), _storage.vec_ptr->end());
 
-            if (block->size == 1)
-            {
-                Node survivor = block->data[0];
-                std::free(block);
-                _storage.single_node = survivor;
-                _mode                = Mode::Single;
+                auto last = std::unique(_storage.vec_ptr->begin(), _storage.vec_ptr->end());
+                _storage.vec_ptr->erase(last, _storage.vec_ptr->end());
             }
             else
             {
-                _storage.block_ptr = block;
-                _mode              = Mode::Vector;
+                for (Node n : init)
+                    insert(n);
             }
         }
 
@@ -202,7 +178,9 @@ namespace zelph::network
             case Mode::Single:
                 return 1;
             case Mode::Vector:
-                return _storage.block_ptr->size;
+                return _storage.vec_ptr->size();
+            case Mode::Set:
+                return _storage.set_ptr->size();
             }
             return 0;
         }
@@ -216,10 +194,9 @@ namespace zelph::network
             case Mode::Single:
                 return (_storage.single_node == n) ? 1 : 0;
             case Mode::Vector:
-            {
-                auto* b = _storage.block_ptr;
-                return std::binary_search(b->data, b->data + b->size, n) ? 1 : 0;
-            }
+                return std::binary_search(_storage.vec_ptr->begin(), _storage.vec_ptr->end(), n) ? 1 : 0;
+            case Mode::Set:
+                return _storage.set_ptr->count(n);
             }
             return 0;
         }
@@ -238,50 +215,44 @@ namespace zelph::network
             case Mode::Single:
                 if (_storage.single_node == n) return;
                 {
-                    auto* block = adj_vec_block::create(2);
+                    auto new_vec = new std::vector<Node>();
+                    new_vec->reserve(2);
                     if (_storage.single_node < n)
                     {
-                        block->data[0] = _storage.single_node;
-                        block->data[1] = n;
+                        new_vec->push_back(_storage.single_node);
+                        new_vec->push_back(n);
                     }
                     else
                     {
-                        block->data[0] = n;
-                        block->data[1] = _storage.single_node;
+                        new_vec->push_back(n);
+                        new_vec->push_back(_storage.single_node);
                     }
-                    block->size        = 2;
-                    _storage.block_ptr = block;
-                    _mode              = Mode::Vector;
+                    _storage.vec_ptr = new_vec;
+                    _mode            = Mode::Vector;
                 }
                 break;
 
             case Mode::Vector:
             {
-                auto* b   = _storage.block_ptr;
-                Node* pos = std::lower_bound(b->data, b->data + b->size, n);
-                if (pos != b->data + b->size && *pos == n) return;
-
-                uint32_t idx = static_cast<uint32_t>(pos - b->data);
-
-                if (b->size == b->cap)
+                auto& vec = *_storage.vec_ptr;
+                auto  it  = std::lower_bound(vec.begin(), vec.end(), n);
+                if (it == vec.end() || *it != n)
                 {
-                    uint32_t new_cap   = b->cap * 2;
-                    auto*    new_block = adj_vec_block::create(new_cap);
-                    std::memcpy(new_block->data, b->data, idx * sizeof(Node));
-                    new_block->data[idx] = n;
-                    std::memcpy(new_block->data + idx + 1, b->data + idx, (b->size - idx) * sizeof(Node));
-                    new_block->size = b->size + 1;
-                    std::free(b);
-                    _storage.block_ptr = new_block;
-                }
-                else
-                {
-                    std::memmove(b->data + idx + 1, b->data + idx, (b->size - idx) * sizeof(Node));
-                    b->data[idx] = n;
-                    b->size++;
+                    vec.insert(it, n);
+                    if (vec.size() > VECTOR_TO_SET_THRESHOLD)
+                    {
+                        auto new_set = new ankerl::unordered_dense::set<Node>(vec.begin(), vec.end());
+                        delete _storage.vec_ptr;
+                        _storage.set_ptr = new_set;
+                        _mode            = Mode::Set;
+                    }
                 }
                 break;
             }
+
+            case Mode::Set:
+                _storage.set_ptr->insert(n);
+                break;
             }
         }
 
@@ -300,30 +271,37 @@ namespace zelph::network
                 break;
             case Mode::Vector:
             {
-                auto* b   = _storage.block_ptr;
-                Node* pos = std::lower_bound(b->data, b->data + b->size, n);
-                if (pos != b->data + b->size && *pos == n)
+                auto& vec = *_storage.vec_ptr;
+                auto  it  = std::lower_bound(vec.begin(), vec.end(), n);
+                if (it != vec.end() && *it == n)
                 {
-                    uint32_t idx = static_cast<uint32_t>(pos - b->data);
-                    b->size--;
-                    std::memmove(b->data + idx, b->data + idx + 1, (b->size - idx) * sizeof(Node));
-
-                    if (b->size == 1)
+                    vec.erase(it);
+                    if (vec.size() == 1)
                     {
-                        Node survivor = b->data[0];
-                        std::free(b);
+                        Node survivor = vec[0];
+                        delete _storage.vec_ptr;
                         _storage.single_node = survivor;
                         _mode                = Mode::Single;
                     }
-                    else if (b->size == 0)
+                    else if (vec.empty())
                     {
-                        std::free(b);
-                        _storage.single_node = 0;
-                        _mode                = Mode::Empty;
+                        delete _storage.vec_ptr;
+                        _mode = Mode::Empty;
                     }
                 }
                 break;
             }
+            case Mode::Set:
+                _storage.set_ptr->erase(n);
+                if (_storage.set_ptr->size() < (VECTOR_TO_SET_THRESHOLD / 2))
+                {
+                    auto new_vec = new std::vector<Node>(_storage.set_ptr->begin(), _storage.set_ptr->end());
+                    std::sort(new_vec->begin(), new_vec->end());
+                    delete _storage.set_ptr;
+                    _storage.vec_ptr = new_vec;
+                    _mode            = Mode::Vector;
+                }
+                break;
             }
         }
 
@@ -332,21 +310,199 @@ namespace zelph::network
             destroy();
         }
 
-        using const_iterator = const Node*;
-        using iterator       = const Node*;
+        class const_iterator
+        {
+        public:
+            using iterator_category = std::forward_iterator_tag;
+            using value_type        = Node;
+            using difference_type   = std::ptrdiff_t;
+            using pointer           = const Node*;
+            using reference         = const Node&;
+
+            using VecIter = typename std::vector<Node>::const_iterator;
+
+        private:
+            Mode _mode;
+            union
+            {
+                const Node* ptr_single{};
+                VecIter     it_generic;
+            };
+
+            bool _single_is_end = false;
+
+        public:
+            const_iterator()
+                : _mode(Mode::Empty), ptr_single(nullptr) {}
+
+            explicit const_iterator(std::nullptr_t)
+                : _mode(Mode::Empty), ptr_single(nullptr) {}
+
+            const_iterator(const Node* ptr, bool is_end)
+                : _mode(Mode::Single), ptr_single(ptr), _single_is_end(is_end) {}
+
+            const_iterator(VecIter it, Mode m)
+                : _mode(m)
+            {
+                // Konstruiert den Iterator im Speicher der Union
+                new (&it_generic) VecIter(it);
+            }
+
+            // 1. Destruktor
+            ~const_iterator()
+            {
+                if (_mode == Mode::Vector || _mode == Mode::Set)
+                {
+                    it_generic.~VecIter(); // Korrekter Aufruf �ber den Alias
+                }
+            }
+
+            // 2. Copy Constructor
+            const_iterator(const const_iterator& other)
+                : _mode(other._mode), _single_is_end(other._single_is_end)
+            {
+                if (_mode == Mode::Single || _mode == Mode::Empty)
+                {
+                    ptr_single = other.ptr_single;
+                }
+                else
+                {
+                    new (&it_generic) VecIter(other.it_generic);
+                }
+            }
+
+            // 3. Move Constructor
+            const_iterator(const_iterator&& other) noexcept
+                : _mode(other._mode), _single_is_end(other._single_is_end)
+            {
+                if (_mode == Mode::Single || _mode == Mode::Empty)
+                {
+                    ptr_single = other.ptr_single;
+                }
+                else
+                {
+                    new (&it_generic) VecIter(other.it_generic);
+                }
+            }
+
+            // 4. Copy Assignment
+            const_iterator& operator=(const const_iterator& other)
+            {
+                if (this != &other)
+                {
+                    // Alten Iterator zerst�ren, falls aktiv
+                    if (_mode == Mode::Vector || _mode == Mode::Set)
+                    {
+                        it_generic.~VecIter();
+                    }
+
+                    _mode          = other._mode;
+                    _single_is_end = other._single_is_end;
+
+                    if (_mode == Mode::Single || _mode == Mode::Empty)
+                    {
+                        ptr_single = other.ptr_single;
+                    }
+                    else
+                    {
+                        new (&it_generic) VecIter(other.it_generic);
+                    }
+                }
+                return *this;
+            }
+
+            // 5. Move Assignment
+            const_iterator& operator=(const_iterator&& other) noexcept
+            {
+                if (this != &other)
+                {
+                    if (_mode == Mode::Vector || _mode == Mode::Set)
+                    {
+                        it_generic.~VecIter();
+                    }
+
+                    _mode          = other._mode;
+                    _single_is_end = other._single_is_end;
+
+                    if (_mode == Mode::Single || _mode == Mode::Empty)
+                    {
+                        ptr_single = other.ptr_single;
+                    }
+                    else
+                    {
+                        new (&it_generic) VecIter(other.it_generic);
+                    }
+                }
+                return *this;
+            }
+
+            reference operator*() const
+            {
+                if (_mode == Mode::Single) return *ptr_single;
+                return *it_generic;
+            }
+
+            pointer operator->() const
+            {
+                if (_mode == Mode::Single) return ptr_single;
+                return &(*it_generic);
+            }
+
+            const_iterator& operator++()
+            {
+                switch (_mode)
+                {
+                case Mode::Empty:
+                    break;
+                case Mode::Single:
+                    _single_is_end = true;
+                    break;
+                case Mode::Vector:
+                case Mode::Set:
+                    ++it_generic;
+                    break;
+                }
+                return *this;
+            }
+
+            bool operator!=(const const_iterator& other) const
+            {
+                if (_mode != other._mode) return true;
+                switch (_mode)
+                {
+                case Mode::Empty:
+                    return false;
+                case Mode::Single:
+                    return _single_is_end != other._single_is_end;
+                case Mode::Vector:
+                case Mode::Set:
+                    return it_generic != other.it_generic;
+                }
+                return false;
+            }
+
+            bool operator==(const const_iterator& other) const
+            {
+                return !(*this != other);
+            }
+        };
+
+        using iterator = const_iterator;
 
         const_iterator begin() const
         {
             switch (_mode)
             {
             case Mode::Empty:
-                return nullptr;
+                return const_iterator(nullptr);
             case Mode::Single:
-                return &_storage.single_node;
+                return {&_storage.single_node, false};
             case Mode::Vector:
-                return _storage.block_ptr->data;
+                return {_storage.vec_ptr->begin(), Mode::Vector};
+            case Mode::Set:
+                return {_storage.set_ptr->begin(), Mode::Set};
             }
-            return nullptr;
+            return const_iterator(nullptr);
         }
 
         const_iterator end() const
@@ -354,13 +510,15 @@ namespace zelph::network
             switch (_mode)
             {
             case Mode::Empty:
-                return nullptr;
+                return const_iterator(nullptr);
             case Mode::Single:
-                return &_storage.single_node + 1;
+                return {&_storage.single_node, true};
             case Mode::Vector:
-                return _storage.block_ptr->data + _storage.block_ptr->size;
+                return {_storage.vec_ptr->end(), Mode::Vector};
+            case Mode::Set:
+                return {_storage.set_ptr->end(), Mode::Set};
             }
-            return nullptr;
+            return const_iterator(nullptr);
         }
 
         iterator begin() { return static_cast<const adjacency_set*>(this)->begin(); }
