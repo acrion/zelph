@@ -81,6 +81,27 @@ namespace zelph::network
     class ZELPH_EXPORT Zelph::Impl : public Network
     {
         friend class Zelph;
+
+        struct ExclusiveNameAccessScope
+        {
+            explicit ExclusiveNameAccessScope(unsigned& depth)
+                : _depth(depth)
+            {
+                ++_depth;
+            }
+
+            ~ExclusiveNameAccessScope()
+            {
+                --_depth;
+            }
+
+        private:
+            unsigned& _depth;
+        };
+
+        inline static thread_local unsigned _tls_node_of_name_exclusive_depth = 0;
+        inline static thread_local unsigned _tls_name_of_node_exclusive_depth = 0;
+
         explicit Impl(const io::OutputHandler& output)
             : _output(output)
         {
@@ -696,8 +717,8 @@ namespace zelph::network
 
         void remove_node_names(Node nd)
         {
-            std::unique_lock lock1(_mtx_name_of_node);
-            std::unique_lock lock2(_mtx_node_of_name);
+            std::unique_lock lock1(_mtx_node_of_name);
+            std::unique_lock lock2(_mtx_name_of_node);
 
             // Remove forward mappings (node → name) in all languages
             for (auto& lang_map : _name_of_node)

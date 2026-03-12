@@ -56,6 +56,9 @@ void Zelph::set_name(const Node         node,
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
+    Impl::ExclusiveNameAccessScope scope_node(Impl::_tls_node_of_name_exclusive_depth);
+    Impl::ExclusiveNameAccessScope scope_name(Impl::_tls_name_of_node_exclusive_depth);
+
     Node target_node = node;
 
     if (merge_on_conflict)
@@ -224,6 +227,9 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
     // -------------------------------------------------------------------------
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    Impl::ExclusiveNameAccessScope scope_node(Impl::_tls_node_of_name_exclusive_depth);
+    Impl::ExclusiveNameAccessScope scope_name(Impl::_tls_name_of_node_exclusive_depth);
 
     // Helper: assign/replace one name for one node in one language, while keeping
     // both maps consistent. Caller must have both exclusive locks.
@@ -457,8 +463,6 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
 {
     if (lang.empty()) lang = _lang;
 
-    std::shared_lock lock(_pImpl->_mtx_name_of_node);
-
     auto lookup = [&](const std::string& language) -> std::string_view
     {
         auto outer_it = _pImpl->_name_of_node.find(language);
@@ -471,47 +475,57 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
         return (it != outer_it->second.end()) ? it->second : std::string_view{};
     };
 
-    if (std::string_view sv = lookup(lang); !sv.empty())
+    auto impl = [&]() -> std::string
     {
-        return std::string(sv);
+        if (std::string_view sv = lookup(lang); !sv.empty())
+        {
+            return std::string(sv);
+        }
+
+        if (fallback)
+        {
+            if (lang != "en")
+            {
+                if (std::string_view sv = lookup("en"); !sv.empty())
+                {
+                    return std::string(sv);
+                }
+            }
+
+            if (lang != "zelph")
+            {
+                if (std::string_view sv = lookup("zelph"); !sv.empty())
+                {
+                    return std::string(sv);
+                }
+            }
+
+            for (const auto& [language, map] : _pImpl->_name_of_node)
+            {
+                if (language == lang || language == "en" || language == "zelph")
+                {
+                    continue;
+                }
+
+                auto it = map.find(node);
+                if (it != map.end())
+                {
+                    return std::string(it->second);
+                }
+            }
+        }
+
+        auto it = _core_names_by_node.find(node);
+        return (it != _core_names_by_node.end()) ? it->second : "";
+    };
+
+    if (Impl::_tls_name_of_node_exclusive_depth > 0)
+    {
+        return impl();
     }
 
-    if (fallback)
-    {
-        if (lang != "en")
-        {
-            if (std::string_view sv = lookup("en"); !sv.empty())
-            {
-                return std::string(sv);
-            }
-        }
-
-        if (lang != "zelph")
-        {
-            if (std::string_view sv = lookup("zelph"); !sv.empty())
-            {
-                return std::string(sv);
-            }
-        }
-
-        for (const auto& [language, map] : _pImpl->_name_of_node)
-        {
-            if (language == lang || language == "en" || language == "zelph")
-            {
-                continue;
-            }
-
-            auto it = map.find(node);
-            if (it != map.end())
-            {
-                return std::string(it->second);
-            }
-        }
-    }
-
-    // Core names are immutable after initialisation
-    auto it = _core_names_by_node.find(node);
-    return (it != _core_names_by_node.end()) ? it->second : "";
+    std::shared_lock lock(_pImpl->_mtx_name_of_node);
+    return impl();
 }
 
 // If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
@@ -566,15 +580,24 @@ std::string Zelph::get_formatted_name(const Node node, const std::string& lang) 
 
 bool Zelph::has_name(const Node node, const std::string& lang) const
 {
-    std::shared_lock lock(_pImpl->_mtx_name_of_node);
-
-    auto outer_it = _pImpl->_name_of_node.find(lang);
-    if (outer_it == _pImpl->_name_of_node.end())
+    auto impl = [&]() -> bool
     {
-        return false;
+        auto outer_it = _pImpl->_name_of_node.find(lang);
+        if (outer_it == _pImpl->_name_of_node.end())
+        {
+            return false;
+        }
+
+        return outer_it->second.find(node) != outer_it->second.end();
+    };
+
+    if (Impl::_tls_name_of_node_exclusive_depth > 0)
+    {
+        return impl();
     }
 
-    return outer_it->second.find(node) != outer_it->second.end();
+    std::shared_lock lock(_pImpl->_mtx_name_of_node);
+    return impl();
 }
 
 void Zelph::remove_name(Node node, std::string lang)
@@ -679,6 +702,11 @@ std::vector<std::string> Zelph::get_languages() const
 
 bool Zelph::has_language(const std::string& language) const
 {
+    if (Impl::_tls_node_of_name_exclusive_depth > 0)
+    {
+        return _pImpl->_node_of_name.find(language) != _pImpl->_node_of_name.end();
+    }
+
     std::shared_lock lock(_pImpl->_mtx_node_of_name);
     return _pImpl->_node_of_name.find(language) != _pImpl->_node_of_name.end();
 }

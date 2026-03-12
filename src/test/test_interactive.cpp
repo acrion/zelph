@@ -108,6 +108,19 @@ namespace
         return false;
     }
 
+    // Check whether ANY event in ANY channel contains the substring (normalized).
+    bool any_event_contains(const zelph::io::OutputCollector& collector, const std::string& sub)
+    {
+        std::string exp = normalize(sub);
+        if (exp.empty()) return false;
+        for (const auto& e : collector.events())
+        {
+            if (normalize(e.text).find(exp) != std::string::npos)
+                return true;
+        }
+        return false;
+    }
+
     // Collect all "Answer:" lines as normalized answer text (prefix stripped).
     std::vector<std::string> collect_answers(const zelph::io::OutputCollector& collector)
     {
@@ -414,6 +427,39 @@ gene subclassof geneclass
 )");
         CHECK(any_output_starts_with(collector, "!"));
         CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("naming: core-name merge via .name does not deadlock")
+{
+    run_both_modes([](const auto& collector, const auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.lang en
+contradiction is unsatisfiable
+.lang zelph
+.name ! en contradiction
+! P O
+)");
+
+        CHECK(answers_contain(collector, "! is unsatisfiable"));
+        CHECK_FALSE(any_event_contains(collector, "Resource deadlock avoided")); });
+}
+
+TEST_CASE("naming: repeated .name assignment stays stable")
+{
+    run_both_modes([](const auto& collector, const auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.lang en
+contradiction is unsatisfiable
+.lang zelph
+.name ! en contradiction
+.name ! en contradiction
+! P O
+)");
+
+        CHECK(answers_contain(collector, "! is unsatisfiable"));
+        CHECK_FALSE(any_event_contains(collector, "Resource deadlock avoided")); });
 }
 
 // ---------------------------------------------------------------------------
