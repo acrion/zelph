@@ -28,6 +28,29 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "zelph_impl.hpp"
 
+namespace
+{
+    thread_local unsigned node_of_name_exclusive_depth = 0;
+    thread_local unsigned name_of_node_exclusive_depth = 0;
+
+    struct ExclusiveNameAccessScope
+    {
+        explicit ExclusiveNameAccessScope(unsigned& depth)
+            : _depth(depth)
+        {
+            ++_depth;
+        }
+
+        ~ExclusiveNameAccessScope()
+        {
+            --_depth;
+        }
+
+    private:
+        unsigned& _depth;
+    };
+}
+
 using namespace zelph::network;
 
 // Assigns or updates the name of an existing node for a specific language.
@@ -56,8 +79,8 @@ void Zelph::set_name(const Node         node,
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
-    Impl::ExclusiveNameAccessScope scope_node(Impl::_tls_node_of_name_exclusive_depth);
-    Impl::ExclusiveNameAccessScope scope_name(Impl::_tls_name_of_node_exclusive_depth);
+    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
 
     Node target_node = node;
 
@@ -228,8 +251,8 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
-    Impl::ExclusiveNameAccessScope scope_node(Impl::_tls_node_of_name_exclusive_depth);
-    Impl::ExclusiveNameAccessScope scope_name(Impl::_tls_name_of_node_exclusive_depth);
+    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
 
     // Helper: assign/replace one name for one node in one language, while keeping
     // both maps consistent. Caller must have both exclusive locks.
@@ -519,7 +542,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
         return (it != _core_names_by_node.end()) ? it->second : "";
     };
 
-    if (Impl::_tls_name_of_node_exclusive_depth > 0)
+    if (name_of_node_exclusive_depth > 0)
     {
         return impl();
     }
@@ -591,7 +614,7 @@ bool Zelph::has_name(const Node node, const std::string& lang) const
         return outer_it->second.find(node) != outer_it->second.end();
     };
 
-    if (Impl::_tls_name_of_node_exclusive_depth > 0)
+    if (name_of_node_exclusive_depth > 0)
     {
         return impl();
     }
@@ -702,7 +725,7 @@ std::vector<std::string> Zelph::get_languages() const
 
 bool Zelph::has_language(const std::string& language) const
 {
-    if (Impl::_tls_node_of_name_exclusive_depth > 0)
+    if (node_of_name_exclusive_depth > 0)
     {
         return _pImpl->_node_of_name.find(language) != _pImpl->_node_of_name.end();
     }

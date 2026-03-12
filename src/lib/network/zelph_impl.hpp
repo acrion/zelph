@@ -82,26 +82,6 @@ namespace zelph::network
     {
         friend class Zelph;
 
-        struct ExclusiveNameAccessScope
-        {
-            explicit ExclusiveNameAccessScope(unsigned& depth)
-                : _depth(depth)
-            {
-                ++_depth;
-            }
-
-            ~ExclusiveNameAccessScope()
-            {
-                --_depth;
-            }
-
-        private:
-            unsigned& _depth;
-        };
-
-        inline static thread_local unsigned _tls_node_of_name_exclusive_depth = 0;
-        inline static thread_local unsigned _tls_name_of_node_exclusive_depth = 0;
-
         explicit Impl(const io::OutputHandler& output)
             : _output(output)
         {
