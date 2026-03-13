@@ -190,6 +190,30 @@ namespace
         }
     }
 
+    // Helper: run test with logging enabled at depth 1 for diagnostics.
+    // Usage:  run_both_modes_logged([](auto& collector, auto& interactive) { ... });
+    template <typename F>
+    void run_both_modes_logged(F&& test_fn)
+    {
+        SUBCASE("parallel (logged)")
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".log 1");
+            collector.clear();
+            test_fn(collector, interactive);
+        }
+        SUBCASE("single-core (logged)")
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".parallel");
+            interactive.process(".log 1");
+            collector.clear();
+            test_fn(collector, interactive);
+        }
+    }
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -625,4 +649,222 @@ TEST_CASE("transitive relation deduction")
 > is transitive
 )");
         CHECK(any_output_starts_with(collector, "( 6 > 4 )")); });
+}
+
+// ---------------------------------------------------------------------------
+// Inequality (!=) semantics
+//
+// Core design decision: different variable names do NOT imply inequality.
+// Variables X and Y may bind to the same node unless an explicit X != Y
+// constraint is present.  != is a built-in guard (not a fact lookup) that
+// filters bindings after the involved variables are bound.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("inequality: different variable names may bind to the same value")
+{
+    // Without !=, two distinct variables can unify with the same node.
+    // Rule: if A has property X and property Y, derive has_pair.
+    // With only one value "v", X and Y should both bind to "v".
+    // Note: objects are stored as adjacency_set, so {v, v} collapses to {v}.
+    // The key assertion is that the rule fires at all with only one value.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A prop X, A prop Y) => (A has_pair X Y)
+a prop v
+)");
+        CHECK(any_output_starts_with(collector, "( a has_pair v )")); });
+}
+
+TEST_CASE("inequality: != prevents same-value binding")
+{
+    // Same setup, but X != Y blocks the (v, v) binding.
+    // With only one value, the rule must NOT fire at all.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A prop X, A prop Y, X != Y) => (A has_pair X Y)
+a prop v
+)");
+        CHECK_FALSE(any_output_starts_with(collector, "( a has_pair")); });
+}
+
+TEST_CASE("inequality: != allows binding when values differ")
+{
+    // Two different values exist. != should allow the pairs where X != Y.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A prop X, A prop Y, X != Y) => (A has_pair X Y)
+a prop v1
+a prop v2
+)");
+        CHECK(any_output_starts_with(collector, "( a has_pair"));
+        // Both orderings may appear (objects are a set, so {v1,v2} = {v2,v1}):
+        bool has_v1_v2 = any_output_starts_with(collector, "( a has_pair v1 v2 )") ||
+                         any_output_starts_with(collector, "( a has_pair v2 v1 )");
+        CHECK(has_v1_v2); });
+}
+
+TEST_CASE("inequality: contradiction with != (opposite scenario from log)")
+{
+    // The exact scenario from the bug report: != should not break
+    // contradiction detection.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X opposite Y, A ~ X, A ~ Y, X != Y) => !
+bright opposite dark
+yellow ~ bright
+yellow ~ dark
+)");
+        CHECK(any_output_starts_with(collector, "!"));
+        CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("inequality: contradiction without != when data forces distinct bindings")
+{
+    // Without !=, X and Y CAN bind to the same value in principle.
+    // However, here the only existing "opposite" fact is (bright opposite dark),
+    // so the unification forces X=bright, Y=dark — they happen to be distinct
+    // because of the data, not because of an implicit inequality constraint.
+    // This test verifies that the engine still finds the contradiction in
+    // this data-driven scenario.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X opposite Y, A ~ X, A ~ Y) => !
+bright opposite dark
+yellow ~ bright
+yellow ~ dark
+)");
+        CHECK(any_output_starts_with(collector, "!"));
+        CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("inequality: != with ground constants is trivially true")
+{
+    // When both sides are ground and unequal, != succeeds immediately.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A likes B, a != b) => (A taste diverse)
+joe likes pizza
+)");
+        CHECK(any_output_starts_with(collector, "( joe taste diverse )")); });
+}
+
+TEST_CASE("inequality: != with identical ground constants blocks rule")
+{
+    // When both sides are ground and equal, != must block the rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A likes B, a != a) => (A taste diverse)
+joe likes pizza
+)");
+        CHECK_FALSE(any_output_starts_with(collector, "( joe taste diverse )")); });
+}
+
+TEST_CASE("inequality: reflexive opposite without != causes false positive")
+{
+    // KEY MOTIVATION for !=:
+    // If "opposite" includes a reflexive fact (bright opposite bright),
+    // then without != the rule fires with X=Y=bright, A=yellow,
+    // which is a spurious contradiction (yellow is bright AND bright,
+    // but those are the same thing — not a real conflict).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X opposite Y, A ~ X, A ~ Y) => !
+bright opposite bright
+yellow ~ bright
+)");
+        // Without !=, this DOES fire — it's a false positive.
+        CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("inequality: reflexive opposite with != prevents false positive")
+{
+    // Same scenario, but with != the X=Y=bright binding is blocked.
+    // No contradiction should be found.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X opposite Y, A ~ X, A ~ Y, X != Y) => !
+bright opposite bright
+yellow ~ bright
+)");
+        CHECK_FALSE(has_contradiction(collector)); });
+}
+
+TEST_CASE("inequality: transitive rule with != prevents trivial self-deduction")
+{
+    // Without !=, (a > b, b > a) would derive a > a.  With != this is blocked.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(R is transitive_strict, A R B, B R C, A != C) => (A R C)
+a > b
+b > a
+> is transitive_strict
+)");
+        // a > b > a should NOT produce a > a
+        CHECK_FALSE(any_output_starts_with(collector, "( a > a )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( b > b )")); });
+}
+
+TEST_CASE("inequality: multiple != constraints in one rule")
+{
+    // All three variables must be pairwise distinct.
+    // Use logged mode to help debug if this fails.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X member group, Y member group, Z member group, X != Y, Y != Z, X != Z) => (triple X Y Z)
+a member group
+b member group
+c member group
+)");
+        // Should produce triples of distinct elements.
+        bool found = any_output_starts_with(collector, "( triple a b c )") ||
+                     any_output_starts_with(collector, "( triple a c b )") ||
+                     any_output_starts_with(collector, "( triple b a c )") ||
+                     any_output_starts_with(collector, "( triple b c a )") ||
+                     any_output_starts_with(collector, "( triple c a b )") ||
+                     any_output_starts_with(collector, "( triple c b a )");
+        CHECK(found);
+        // Must NOT produce any triple with repeated elements.
+        CHECK_FALSE(any_output_contains(collector, "( triple a a"));
+        CHECK_FALSE(any_output_contains(collector, "( triple b b"));
+        CHECK_FALSE(any_output_contains(collector, "( triple c c")); });
+}
+
+TEST_CASE("inequality: functional property conflict detection (Wikidata pattern)")
+{
+    // Wikidata use case: a property is declared functional (single-valued),
+    // but an item has two different values => contradiction.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(P is functional, A P X, A P Y, X != Y) => !
+date_of_birth is functional
+alice date_of_birth 1990
+alice date_of_birth 1991
+)");
+        CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("inequality: functional property with same value is not a conflict")
+{
+    // Same property value entered twice (redundant, not contradictory).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(P is functional, A P X, A P Y, X != Y) => !
+date_of_birth is functional
+alice date_of_birth 1990
+alice date_of_birth 1990
+)");
+        CHECK_FALSE(has_contradiction(collector)); });
 }

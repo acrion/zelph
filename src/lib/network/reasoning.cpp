@@ -241,8 +241,15 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             if (is_negated_condition(cond, depth))
                 score -= 1000;
 
-            // Prefer conditions whose predicate has fewer matching facts
             adjacency_set rels_for_score = filter(cond, core.IsA, core.RelationTypeCategory);
+
+            // Inequality guards must be evaluated after the involved
+            // variables are bound — similar to negation, but higher priority
+            // (negation at -1000 is always last, != at -500 is second-to-last).
+            if (rels_for_score.size() == 1 && *rels_for_score.begin() == core.Unequal)
+                score -= 500;
+
+            // Prefer conditions whose predicate has fewer matching facts
             if (rels_for_score.size() == 1)
             {
                 Node rel = *rels_for_score.begin();

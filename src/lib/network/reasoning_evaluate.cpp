@@ -138,6 +138,167 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     }
     else
     {
+        // --- Inequality Guard Handling ---
+        // != is a built-in constraint (guard), not a fact to look up.
+        // It filters bindings where both sides resolve to the same node.
+        {
+            adjacency_set guard_rels = filter(condition, core.IsA, core.RelationTypeCategory);
+            if (guard_rels.size() == 1 && *guard_rels.begin() == core.Unequal)
+            {
+                if (should_log(depth))
+                    log(depth, "evaluate", "Processing inequality guard: " + format(condition));
+
+                // Extract the two sides of X != Y
+                adjacency_set guard_objects;
+                Node          guard_subject = parse_fact(condition, guard_objects, rule.node);
+                Node          guard_object  = guard_objects.empty() ? 0 : *guard_objects.begin();
+
+                if (guard_subject == 0 || guard_object == 0)
+                {
+                    if (should_log(depth))
+                        log(depth, "evaluate", "!= guard: could not parse subject/object, skipping");
+                    return;
+                }
+
+                // Resolve variables from current bindings
+                Node lhs = Zelph::Impl::is_var(guard_subject)
+                             ? string::get(*rule.variables, guard_subject, guard_subject)
+                             : guard_subject;
+                Node rhs = Zelph::Impl::is_var(guard_object)
+                             ? string::get(*rule.variables, guard_object, guard_object)
+                             : guard_object;
+
+                bool lhs_bound = !Zelph::Impl::is_var(lhs);
+                bool rhs_bound = !Zelph::Impl::is_var(rhs);
+
+                if (lhs_bound && rhs_bound)
+                {
+                    if (lhs == rhs)
+                    {
+                        if (should_log(depth))
+                            log(depth, "evaluate", "!= guard FAILED: " + format(lhs) + " == " + format(rhs));
+                        return;
+                    }
+                    if (should_log(depth))
+                        log(depth, "evaluate", "!= guard PASSED: " + format(lhs) + " != " + format(rhs));
+                }
+                else
+                {
+                    // One or both sides still unbound — store as deferred
+                    // constraint; contradicts() will check after later bindings.
+                    if (should_log(depth))
+                        log(depth, "evaluate", "!= guard DEFERRED: lhs_bound=" + std::to_string(lhs_bound) + " rhs_bound=" + std::to_string(rhs_bound));
+                }
+
+                // Store the inequality constraint for later contradicts() checks
+                auto new_unequals              = std::make_shared<Variables>(*rule.unequals);
+                (*new_unequals)[guard_subject] = guard_object;
+
+                // Advance to the next condition (same pattern as normal match/negation)
+                size_t next_index = rule.index + 1;
+
+                auto advance_or_terminal = [&](std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs)
+                {
+                    if (next_index < rule.conditions->size())
+                    {
+                        RulePos next              = rule;
+                        next.variables            = vars;
+                        next.unequals             = uneqs;
+                        next.index                = next_index;
+                        ReasoningContext ctx_copy = ctx;
+                        evaluate(next, ctx_copy, depth + 1);
+                    }
+                    else if (!ctx.next.empty())
+                    {
+                        RulePos next   = ctx.next.back();
+                        next.variables = vars;
+                        next.unequals  = uneqs;
+                        ctx.next.pop_back();
+                        ReasoningContext ctx_copy = ctx;
+                        evaluate(next, ctx_copy, depth + 1);
+                    }
+                    else
+                    {
+                        // Terminal: all conditions satisfied
+                        ReasoningContext ctx_copy = ctx;
+
+                        if (!ctx_copy.rule_deductions.empty())
+                        {
+                            if (should_log(depth))
+                                log(depth, "evaluate", "TERMINAL (after != guard): Calling deduce");
+
+                            try
+                            {
+                                deduce(*vars, rule.node, depth, ctx_copy);
+                            }
+                            catch (const contradiction_error& error)
+                            {
+                                std::lock_guard<std::mutex> lock(_mtx_output);
+                                _contradiction = true;
+                                ++_total_contradictions;
+
+                                std::string output;
+                                string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+                                std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
+
+                                if (_print_deductions) out(string::unmark_identifiers(message), true);
+                                if (_generate_markdown) _markdown->add("Contradictions", message);
+                            }
+                        }
+                        else if (_prune_mode)
+                        {
+                            adjacency_set objects;
+                            Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
+                            subject               = string::get(*vars, subject, subject);
+                            Node relation         = parse_relation(ctx_copy.current_condition);
+                            relation              = string::get(*vars, relation, relation);
+
+                            adjacency_set targets;
+                            for (Node obj : objects)
+                            {
+                                Node iobj = string::get(*vars, obj, obj);
+                                if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
+                            }
+
+                            if (subject && relation && !targets.empty()
+                                && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
+                            {
+                                Answer ans = check_fact(subject, relation, targets);
+                                if (ans.is_known() && ans.relation())
+                                {
+                                    _facts_to_prune.insert(ans.relation());
+                                    if (_prune_nodes_mode)
+                                    {
+                                        if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
+                                            _nodes_to_prune.insert(subject);
+                                        else if (objects.size() == 1)
+                                            _nodes_to_prune.insert(*targets.begin());
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            std::lock_guard<std::mutex> lock(_mtx_output);
+                            if (_query_results)
+                            {
+                                _query_results->push_back(vars);
+                            }
+                            else
+                            {
+                                std::string output;
+                                string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
+                                out("Answer: " + string::unmark_identifiers(output), true);
+                            }
+                        }
+                    }
+                };
+
+                advance_or_terminal(rule.variables, new_unequals);
+                return; // Do NOT fall through to normal Unification
+            }
+        }
+
         // Leaf Condition (Atomic Fact)
         if (logging_active())
             _prof.leaf_conditions.fetch_add(1, std::memory_order_relaxed);
