@@ -387,6 +387,18 @@ Unification::Unification(
             }
         }
 
+        if (_n->should_log(1))
+        {
+            bool s_bound = false;
+            if (_subject != 0)
+            {
+                Node s = _subject;
+                if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
+                if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, false, log_depth).empty()) s_bound = true;
+            }
+            u_log(_n, _log_depth, "DIAG: subject_is_bound=" + std::to_string(s_bound) + " object_is_bound=" + std::to_string(object_is_bound) + " relation_list_size=" + std::to_string(_relation_list.size()) + " subject=" + U_NODE(_subject) + " objects_size=" + std::to_string(_objects.size()));
+        }
+
         if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound && !concurrency::tl_is_pool_worker)
         {
             Node fixed_rel = *_relation_list.begin();
@@ -656,8 +668,16 @@ bool Unification::increment_fact_index()
                 }
             }
 
-            if (!optimized_snapshot)
+            if (optimized_snapshot)
             {
+                if (_n->should_log(1))
+                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=YES, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
+            }
+            else
+            {
+                if (_n->should_log(1))
+                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=NO, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
+
                 // Fallback: Snapshot entire relation extent (slow for huge relations)
                 if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
                 {

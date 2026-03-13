@@ -389,7 +389,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         // Define the processing logic for a single match (extracted to be usable in both serial and parallel loops)
         auto process_match = [&](std::shared_ptr<Variables> match)
         {
-            if (should_log(depth))
+            if (should_log(depth + 1))
             {
                 std::string bindings_str;
                 for (const auto& [k, v] : *match)
@@ -443,7 +443,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 return;
             }
 
-            if (should_log(depth))
+            if (should_log(depth + 1))
             {
                 std::string joined_str;
                 for (const auto& [k, v] : *joined)
@@ -479,7 +479,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             }
             else
             {
-                if (should_log(depth))
+                if (should_log(depth + 1))
                     log(depth, "match", "All conditions satisfied -> TERMINAL");
 
                 // Leaf: query or prune

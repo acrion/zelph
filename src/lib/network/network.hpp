@@ -117,9 +117,7 @@ namespace zelph::network
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: predicate right-side entry does not exist");
 
             auto [rel_left_it, inserted_left] =
-                (subject == object)
-                    ? _left.try_emplace(relation, adjacency_set{subject, predicate})
-                    : _left.try_emplace(relation, adjacency_set{subject, object, predicate});
+                _left.try_emplace(relation, adjacency_set{subject, predicate});
 
             if (!inserted_left)
             {
@@ -452,12 +450,14 @@ namespace zelph::network
             return (h & mask_node) | mark_hash;
         }
 
-        static Node create_hash(const Node a, const Node b, const Node c)
+        static Node create_hash(const Node predicate, const Node subject, const Node object)
         {
             uint64_t h = 0;
-            h          = mix_bits(h, mod(a));
-            h          = mix_bits(h, mod(b));
-            h          = mix_bits(h, mod(c));
+            h          = mix_bits(h, 1);              // size of object set
+            h          = mix_bits(h, mod(object));    // only object
+            h          = (h & mask_node) | mark_hash; // match create_hash(adjacency_set) return value
+            h          = mix_bits(h, mod(predicate)); // head1
+            h          = mix_bits(h, mod(subject));   // head2
             return (h & mask_node) | mark_hash;
         }
 

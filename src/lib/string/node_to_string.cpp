@@ -62,7 +62,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     IncDec incDec(format_fact_level);
 #ifdef DEBUG_FORMAT_FACT
     std::string indent(format_fact_level * 2, ' ');
-    diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY fact=" << fact << " parent=" << parent << std::endl;
+    z->diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY fact=" << fact << " parent=" << parent << std::endl;
 #endif
 
     if (!history) history = std::make_shared<std::unordered_set<network::Node>>();
@@ -87,7 +87,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     if (history->find(resolved) != history->end())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_string] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
+        z->diagnostic_stream() << indent << "[DEBUG node_to_string] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
 #endif
         result = "?";
         return;
@@ -130,7 +130,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     if (!name.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_string] Found name '" << name << "' for node " << resolved << std::endl;
+        z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found name '" << name << "' for node " << resolved << std::endl;
 #endif
         result = string::mark_identifier(name);
         return;
@@ -145,7 +145,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         if (rel_type == z->core.Cons)
         {
 #ifdef DEBUG_FORMAT_FACT
-            diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED CONS LIST starting at " << resolved << std::endl;
+            z->diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED CONS LIST starting at " << resolved << std::endl;
 #endif
             auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
             child_history->insert(resolved);
@@ -261,7 +261,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     if (!elements.empty())
     {
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED SET with " << elements.size() << " elements." << std::endl;
+        z->diagnostic_stream() << indent << "[DEBUG node_to_string] DETECTED SET with " << elements.size() << " elements." << std::endl;
 #endif
         auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
         child_history->insert(resolved);
@@ -326,14 +326,14 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
                         }
 
 #ifdef DEBUG_FORMAT_FACT
-                        diagnostic_stream() << indent << "[DEBUG node_to_string] Found IsA proxy to concept=" << concept_node << std::endl;
+                        z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
                         string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history);
 
                         if (!result.empty() && result != "?")
                         {
 #ifdef DEBUG_FORMAT_FACT
-                            diagnostic_stream() << indent << "[DEBUG node_to_string] Proxy resolved to: " << result << std::endl;
+                            z->diagnostic_stream() << indent << "[DEBUG node_to_string] Proxy resolved to: " << result << std::endl;
 #endif
                             return;
                         }
@@ -347,7 +347,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     // Only if it wasn't a container or a simple proxy do we treat it as a structural fact.
 
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_string] Standard path (Statement/Fact)." << std::endl;
+    z->diagnostic_stream() << indent << "[DEBUG node_to_string] Standard path (Statement/Fact)." << std::endl;
 #endif
 
     network::adjacency_set objects;
@@ -356,7 +356,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     bool is_condition = false;
 
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_string] z->parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
+    z->diagnostic_stream() << indent << "[DEBUG node_to_string] z->parse_fact result: subject=" << subject << ", objects_count=" << objects.size() << ", is_condition=" << is_condition << std::endl;
 #endif
 
     if (subject == 0 && !is_condition)
@@ -387,14 +387,14 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         if (fallback_subj == 0)
         {
 #ifdef DEBUG_FORMAT_FACT
-            diagnostic_stream() << indent << "[DEBUG node_to_string] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
+            z->diagnostic_stream() << indent << "[DEBUG node_to_string] INVALID: Subject is 0 after fallback. Returning '??'" << std::endl;
 #endif
             result = string::mark_identifier("??");
             return;
         }
 
 #ifdef DEBUG_FORMAT_FACT
-        diagnostic_stream() << indent << "[DEBUG node_to_string] Fallback subject found: " << fallback_subj << std::endl;
+        z->diagnostic_stream() << indent << "[DEBUG node_to_string] Fallback subject found: " << fallback_subj << std::endl;
 #endif
 
         // Reconstruct objects: nodes in get_left(resolved) that are neither the subject
@@ -534,6 +534,6 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     string::replace_all(result, "\n", " --- ");
     string::trim_in_place(result);
 #ifdef DEBUG_FORMAT_FACT
-    diagnostic_stream() << indent << "[DEBUG node_to_string] EXIT result='" << result << "'" << std::endl;
+    z->diagnostic_stream() << indent << "[DEBUG node_to_string] EXIT result='" << result << "'" << std::endl;
 #endif
 }

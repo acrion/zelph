@@ -602,7 +602,7 @@ Similarly, when stating:
 bright "is opposite of" dark
 ```
 
-zelph creates a special relation node that connects the subject "white" bidirectionally, the object "black" in reverse direction, and the relation type "is opposite of" in the forward direction.
+zelph creates a special relation node that connects the subject "bright" bidirectionally, the object "dark" in reverse direction, and the relation type "is opposite of" in the forward direction.
 
 ```mermaid
 graph TD
