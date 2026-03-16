@@ -39,7 +39,6 @@ unsuccessfulbuild
 **/.nuget/*
 **/Release*
 **/Debug*
-**/packages/*
 **/build/*
 **/build-*
 download

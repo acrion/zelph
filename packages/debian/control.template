@@ -1,0 +1,14 @@
+Package: zelph
+Version: ${VERSION}
+Section: science
+Priority: optional
+Architecture: ${ARCHITECTURE}
+Depends: libc6, libgcc-s1, libstdc++6
+Suggests: lbzip2 | pbzip2
+Maintainer: Stefan Zipproth <s.zipproth@acrion.ch>
+Homepage: https://zelph.org
+Description: A sophisticated semantic network system for logical reasoning
+ zelph is a semantic network system capable of encoding inference rules
+ within the network itself. Built for powerful logical reasoning, it can
+ process the entire Wikidata knowledge graph to detect contradictions
+ and make logical deductions.
