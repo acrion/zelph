@@ -37,6 +37,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "wikidata/wikidata.hpp"
 #include "wikidata/wikidata_text_compressor.hpp"
 
+// for 3rd party versions
+#if __has_include(<mimalloc.h>)
+    #include "mimalloc.h"
+#endif
+#include <ankerl/unordered_dense.h>
+#include <bzlib.h>
+#include <capnp/common.h>
+
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -144,6 +152,8 @@ private:
         { cmd_cleanup(c); };
         _command_map[".stat"] = [this](auto& c)
         { cmd_stat(c); };
+        _command_map[".licenses"] = [this](auto& c)
+        { cmd_licenses(c); };
         _command_map[".log"] = [this](auto& c)
         { cmd_log(c); };
         _command_map[".log-janet"] = [this](auto& c)
@@ -605,6 +615,7 @@ private:
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             ".cleanup                    – Remove isolated nodes and clean name mappings",
             ".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            ".licenses                   – Show third-party libraries and licenses",
             ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
             ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
             ".auto-run                   – Toggle automatic execution of .run after each input",
@@ -803,6 +814,9 @@ private:
                       "- Total entries in node-of-name mappings\n"
                       "- Number of languages\n"
                       "- Number of rules"},
+
+            {".licenses", ".licenses\n"
+                          "Lists all third-party software embedded in zelph, including their versions and licenses."},
 
             {".log", ".log <max-depth>\n"
                      "Enables detailed reasoning logging up to the given recursion depth.\n"
@@ -1518,6 +1532,39 @@ private:
         _n->out_stream() << "Rules: " << _n->rule_count() << std::endl;
 
         _n->out_stream() << "------------------------" << std::endl;
+    }
+    void cmd_licenses(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 1) throw std::runtime_error("Command .licenses takes no arguments");
+
+        _n->out("zelph incorporates the following third-party software:", true);
+        _n->out("------------------------------------------------------", true);
+
+        _n->out("Janet (v" + ScriptEngine::get_janet_version() + ") - MIT License", true);
+
+        std::string ud_version = std::to_string(ANKERL_UNORDERED_DENSE_VERSION_MAJOR) + "." + std::to_string(ANKERL_UNORDERED_DENSE_VERSION_MINOR) + "." + std::to_string(ANKERL_UNORDERED_DENSE_VERSION_PATCH);
+        _n->out("unordered_dense (v" + ud_version + ") - MIT License", true);
+
+        std::string capnp_version = std::to_string(CAPNP_VERSION_MAJOR) + "." + std::to_string(CAPNP_VERSION_MINOR) + "." + std::to_string(CAPNP_VERSION_MICRO);
+        _n->out("Cap'n Proto (v" + capnp_version + ") - MIT License", true);
+
+        std::string bz2_full      = BZ2_bzlibVersion();
+        size_t      bz2_comma_pos = bz2_full.find(',');
+        std::string bz2_version   = (bz2_comma_pos != std::string::npos) ? bz2_full.substr(0, bz2_comma_pos) : bz2_full;
+        _n->out("bzip2 (v" + bz2_version + ") - bzip2 License (BSD-style)", true);
+
+        // 5. mimalloc (nur einkompiliert, wenn das Makro existiert)
+#if defined(MI_MALLOC_VERSION)
+        int         mi_major   = MI_MALLOC_VERSION / 1000;
+        int         mi_minor   = (MI_MALLOC_VERSION / 100) % 10;
+        int         mi_patch   = MI_MALLOC_VERSION % 100;
+        std::string mi_version = std::to_string(mi_major) + "." + std::to_string(mi_minor) + "." + std::to_string(mi_patch);
+        _n->out("mimalloc (v" + mi_version + ") - MIT License", true);
+#endif
+
+        _n->out("------------------------------------------------------", true);
+        _n->out("For full license texts and copyright notices, please refer to the", true);
+        _n->out("documentation or the source code repositories.", true);
     }
     void cmd_log(const std::vector<std::string>& cmd)
     {

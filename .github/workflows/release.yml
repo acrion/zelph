@@ -111,9 +111,58 @@ jobs:
               print(f"Error: Directory {source_dir} not found!")
               exit(1)
 
-      - name: Upload Release Asset
+      - name: Upload Release Asset (Zip)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           gh release upload ${{ github.event.release.tag_name }} "zelph-${{ matrix.name }}.zip" --clobber
+
+      - name: Build Debian package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            DEB_ARCH="amd64"
+          else
+            DEB_ARCH="arm64"
+          fi
+
+          PKG_DIR="zelph_${VERSION}_${DEB_ARCH}"
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/usr/lib"
+
+          sed -e "s/\${VERSION}/${VERSION}/" \
+              -e "s/\${ARCHITECTURE}/${DEB_ARCH}/" \
+              packages/debian/control.template > "${PKG_DIR}/DEBIAN/control"
+
+          echo "activate-noawait ldconfig" > "${PKG_DIR}/DEBIAN/triggers"
+
+          cp build/bin/zelph "${PKG_DIR}/usr/bin/"
+          chmod 755 "${PKG_DIR}/usr/bin/zelph"
+
+          cp build/bin/libzelph.so "${PKG_DIR}/usr/lib/"
+          chmod 644 "${PKG_DIR}/usr/lib/libzelph.so"
+
+          dpkg-deb --build --root-owner-group "${PKG_DIR}"
+
+      - name: Upload Release Asset (Debian)
+        if: runner.os == 'Linux'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            DEB_ARCH="amd64"
+          else
+            DEB_ARCH="arm64"
+          fi
+
+          gh release upload ${{ github.event.release.tag_name }} "zelph_${VERSION}_${DEB_ARCH}.deb" --clobber

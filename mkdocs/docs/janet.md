@@ -4,6 +4,62 @@ zelph embeds [Janet](https://janet-lang.org), a lightweight functional programmi
 
 Importantly, Janet operates exclusively at _input time_ — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside.
 
+### Installing External Packages
+
+zelph ships with an **embedded Janet runtime** — you do not need a separate Janet installation to use Janet scripting in zelph. All built-in Janet functions (including `slurp`, `spit`, `string/split`, and the full standard library) work out of the box.
+
+External Janet packages are only needed for specific functionality such as JSON parsing (`spork/json`) or advanced CSV handling (`spork/csv`). These packages are installed via `jpm` (Janet's package manager), which _does_ require a Janet installation on the host system.
+
+#### Checking the embedded Janet version
+
+Use the `.licenses` command to see which Janet version is embedded in your zelph build:
+
+```
+zelph> .licenses
+zelph incorporates the following third-party software:
+------------------------------------------------------
+Janet (v1.41.2) - MIT License
+...
+```
+
+Packages installed via `jpm` should match this major version. In practice, Janet packages remain compatible across minor version differences, but if you encounter unexpected errors, check for a version mismatch first.
+
+#### Installing jpm
+
+`jpm` is typically bundled with the Janet distribution:
+
+- **Arch Linux**: `jpm` is part of the `janet-lang` package (`pacman -S janet-lang`).
+- **macOS (Homebrew)**: `brew install janet` includes `jpm`.
+- **Windows (Chocolatey / Scoop)**: `jpm` is included with the Janet installation.
+- **Other Linux distributions**: If your package does not include `jpm`, see the [Janet documentation](https://janet-lang.org/docs/index.html) for manual installation.
+
+#### Setting up the module path
+
+Janet needs to know where to find installed packages. Set the following environment variables (example for Linux/macOS — adapt paths for your system):
+
+```bash
+export JANET_TREE="$HOME/.local/jpm_tree"
+export JANET_PATH="$JANET_TREE/lib:/usr/lib/janet"
+```
+
+Add these to your shell profile (e.g. `~/.bashrc`, `~/.zshrc`) so they persist across sessions. On Windows, set the corresponding environment variables via the system settings.
+
+#### Installing packages
+
+To install the `spork` library (which provides JSON, CSV, and other utilities):
+
+```bash
+jpm install spork
+```
+
+Once installed, you can use its modules in zelph scripts:
+
+```
+%(use spork/json)
+%(pp (decode "{\"name\": \"Alice\", \"age\": 30}"))
+@{"age" 30 "name" "Alice"}
+```
+
 ### Entering Janet Code
 
 There are three ways to write Janet code in zelph:

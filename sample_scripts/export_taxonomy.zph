@@ -1,0 +1,18 @@
+%(use spork/json)
+
+%
+# Find all species that are (directly or transitively) members of Mammalia
+(def results (zelph/query (zelph/fact 'X "member of" "Mammalia")))
+
+# Build an array of result objects
+(def output @[])
+(each r results
+  (def name (zelph/name (get r 'X)))
+  (when name
+    (array/push output {"entity" name "relation" "member of" "target" "Mammalia"})))
+
+# Write to file
+(def json-str (encode output))
+(spit "mammals.json" json-str)
+(printf "Exported %d results to mammals.json" (length output))
+%

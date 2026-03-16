@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  BUILD_DEB: true
+
 jobs:
   build:
     name: Build on ${{ matrix.name }}
@@ -121,6 +124,44 @@ jobs:
         with:
           name: zelph-${{ matrix.name }}
           path: zelph-${{ matrix.name }}.zip
+
+      - name: Build Debian package
+        if: runner.os == 'Linux' && env.BUILD_DEB == 'true'
+        shell: bash
+        run: |
+          VERSION="0.0.0-ci"
+
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            DEB_ARCH="amd64"
+          else
+            DEB_ARCH="arm64"
+          fi
+
+          PKG_DIR="zelph_${VERSION}_${DEB_ARCH}"
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/usr/lib"
+
+          sed -e "s/\${VERSION}/${VERSION}/" \
+              -e "s/\${ARCHITECTURE}/${DEB_ARCH}/" \
+              packages/debian/control.template > "${PKG_DIR}/DEBIAN/control"
+
+          echo "activate-noawait ldconfig" > "${PKG_DIR}/DEBIAN/triggers"
+
+          cp build/bin/zelph "${PKG_DIR}/usr/bin/"
+          chmod 755 "${PKG_DIR}/usr/bin/zelph"
+
+          cp build/bin/libzelph.so "${PKG_DIR}/usr/lib/"
+          chmod 644 "${PKG_DIR}/usr/lib/libzelph.so"
+
+          dpkg-deb --build --root-owner-group "${PKG_DIR}"
+
+      - name: Upload Debian package artifact
+        if: runner.os == 'Linux' && env.BUILD_DEB == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zelph-deb-${{ matrix.name }}
+          path: zelph_*.deb
 
   docs:
     name: Build MkDocs site

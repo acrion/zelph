@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 
 #include <algorithm>
+#include <janetconf.h>
 #include <map>
 #include <unordered_set>
 #include <vector>
@@ -73,6 +74,7 @@ public:
         janet_init();
         _janet_env = janet_core_env(nullptr);
         register_zelph_functions();
+        setup_module_paths();
         setup_peg();
     }
 
@@ -116,6 +118,21 @@ public:
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
+    }
+
+    void setup_module_paths() const
+    {
+        const char* code = R"janet(
+            (when-let [jp (os/getenv "JANET_PATH")]
+              (each p (string/split (if (= :windows (os/which)) ";" ":") jp)
+                (when (and p (not= p ""))
+                  (array/push module/paths [(string p "/:all:.jimage") :image])
+                  (array/push module/paths [(string p "/:all:.janet") :source])
+                  (array/push module/paths [(string p "/:all:/init.janet") :source])
+                  (array/push module/paths [(string p "/:all:.so") :native]))))
+        )janet";
+        Janet       out;
+        janet_dostring(_janet_env, code, "module-paths", &out);
     }
 
     void setup_peg()
@@ -1127,6 +1144,11 @@ ScriptEngine::~ScriptEngine()
 void ScriptEngine::initialize()
 {
     _pImpl->init();
+}
+
+std::string ScriptEngine::get_janet_version()
+{
+    return JANET_VERSION;
 }
 
 void ScriptEngine::toggle_janet_logging()

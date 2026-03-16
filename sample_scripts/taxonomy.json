@@ -1,0 +1,38 @@
+[
+  {
+    "species": "Wolf",
+    "family": "Canidae",
+    "order": "Carnivora",
+    "class": "Mammalia"
+  },
+  {
+    "species": "Red Fox",
+    "family": "Canidae",
+    "order": "Carnivora",
+    "class": "Mammalia"
+  },
+  {
+    "species": "Brown Bear",
+    "family": "Ursidae",
+    "order": "Carnivora",
+    "class": "Mammalia"
+  },
+  {
+    "species": "House Cat",
+    "family": "Felidae",
+    "order": "Carnivora",
+    "class": "Mammalia"
+  },
+  {
+    "species": "Cobra",
+    "family": "Elapidae",
+    "order": "Squamata",
+    "class": "Reptilia"
+  },
+  {
+    "species": "Iguana",
+    "family": "Iguanidae",
+    "order": "Squamata",
+    "class": "Reptilia"
+  }
+]

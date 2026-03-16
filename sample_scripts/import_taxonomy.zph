@@ -1,0 +1,19 @@
+%(use spork/json)
+
+%
+(def raw (slurp "taxonomy.json"))
+(def records (decode raw))
+
+(each record records
+  (def species (get record "species"))
+  (def family  (get record "family"))
+  (def order   (get record "order"))
+  (def class   (get record "class"))
+
+  # Create taxonomic relationships
+  (zelph/fact species  "member of" family)
+  (zelph/fact family   "member of" order)
+  (zelph/fact order    "member of" class))
+
+(printf "Imported %d species." (length records))
+%

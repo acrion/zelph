@@ -1,0 +1,14 @@
+%(use spork/json)
+
+%
+(def results (zelph/query (zelph/fact 'X "member of" "Mammalia")))
+
+(def species-only
+  (filter (fn [r] (zelph/exists (get r 'X) "~" "species")) results))
+
+(def output
+  (map (fn [r] {"species" (zelph/name (get r 'X))}) species-only))
+
+(spit "mammal_species.json" (encode output))
+(printf "Exported %d species." (length output))
+%

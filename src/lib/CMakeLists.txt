@@ -59,7 +59,7 @@ endif()
 FetchContent_Declare(
     janet
     GIT_REPOSITORY https://github.com/janet-lang/janet.git
-    GIT_TAG v1.40.1
+    GIT_TAG v1.41.2
     SOURCE_SUBDIR ""
 )
 
@@ -116,7 +116,7 @@ else()
 endif()
 
 execute_process(
-    COMMAND meson setup build --buildtype=release -Ddynamic_modules=false ${MESON_OPTIONS} ${MESON_CROSS_ARGS}
+    COMMAND meson setup build --buildtype=release ${MESON_OPTIONS} ${MESON_CROSS_ARGS}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
@@ -327,7 +327,10 @@ target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnPro
 if (WIN32)
     # ws2_32 and Mswsock are required by Janet
     target_link_libraries(zelph_lib PRIVATE ws2_32 Mswsock)
-endif ()
+elseif(NOT APPLE)
+    # dl is required by Janet for loading native modules via dlopen
+    target_link_libraries(zelph_lib PRIVATE dl)
+endif()
 
 # Suppress warnings from Cap'n Proto includes in zelph_lib
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

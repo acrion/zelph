@@ -1,5 +1,3 @@
-## Quick Start Guide
-
 ### Installation
 
 Choose the method that matches your operating system:
@@ -10,6 +8,14 @@ zelph is available in the [AUR](https://aur.archlinux.org/packages/zelph):
 
 ```bash
 pikaur -S zelph
+```
+
+#### 🐧 Linux (Debian / Ubuntu)
+
+Download the latest `.deb` package for your architecture from [Releases](https://github.com/acrion/zelph/releases) and install it:
+
+```bash
+sudo apt install ./zelph_*_amd64.deb
 ```
 
 #### 🐧 Linux (Other Distributions)
@@ -35,7 +41,7 @@ choco install zelph
 Once installed, you can run zelph in interactive mode simply by typing `zelph` in your terminal.
 (If you downloaded a binary manually without installing, run `./zelph` from the extraction directory).
 
-Let’s try a basic example:
+Let's try a basic example:
 
 ```
 Berlin "is capital of" Germany
@@ -50,7 +56,7 @@ After entering these statements, zelph will automatically infer that Berlin is l
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
-In section [Semantic Network Structure](index.md#semantic-network-structure) you’ll find details about the core concepts, including syntactic details.
+In section [Semantic Network Structure](index.md#semantic-network-structure) you'll find details about the core concepts, including syntactic details.
 
 ### Using Sample Scripts
 
@@ -142,14 +148,14 @@ Key commands include:
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
 - `.cleanup` – Remove isolated nodes
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.licenses` – Show third-party libraries and licenses
 - `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)
 - `.auto-run` – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 - `.export-wikidata <json> <id1> [id2 ...]` – Extracts exact JSON lines for Q-IDs (no import)
 
-### What’s Next?
+### What's Next?
 
 - Explore the [Core Concepts](index.md#core-concepts) to understand how zelph represents knowledge
-- Learn about [Rules and Inference](index.md#rules-and-inference) to leverage zelph’s reasoning capabilities
+- Learn about [Rules and Inference](index.md#rules-and-inference) to leverage zelph's reasoning capabilities
 - Check out the [Example Script](index.md#example-script) for a comprehensive demonstration
-

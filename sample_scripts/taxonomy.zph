@@ -1,0 +1,31 @@
+%(use spork/json)
+
+# --- Import ---
+%
+(def raw (slurp "taxonomy.json"))
+(def records (decode raw))
+
+(each record records
+  (def species (get record "species"))
+  (def family  (get record "family"))
+  (def order   (get record "order"))
+  (def class   (get record "class"))
+
+  (zelph/fact species "member of" family)
+  (zelph/fact family  "member of" order)
+  (zelph/fact order   "member of" class)
+
+  # Tag each rank for use in validation rules
+  (zelph/fact species "~" "species")
+  (zelph/fact family  "~" "family")
+  (zelph/fact order   "~" "order"))
+
+(printf "Imported %d species." (length records))
+%
+
+# --- Rules ---
+(R is transitive, A R B, B R C) => (A R C)
+"member of" is transitive
+
+# --- Query: all mammals ---
+X "member of" Mammalia

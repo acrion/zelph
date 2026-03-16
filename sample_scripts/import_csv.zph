@@ -1,0 +1,11 @@
+%
+(def lines (string/split "\n" (slurp "data.csv")))
+
+(each line (slice lines 1)  # skip header row
+  (def fields (string/split "," line))
+  (when (>= (length fields) 3)
+    (def subj (string/trim (get fields 0)))
+    (def pred (string/trim (get fields 1)))
+    (def obj  (string/trim (get fields 2)))
+    (zelph/fact subj pred obj)))
+%

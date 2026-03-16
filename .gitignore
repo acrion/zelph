@@ -64,3 +64,6 @@ constraints*/
 load.log
 /*.json
 /*.bin
+sample_scripts/all_membership.json
+sample_scripts/mammal_species.json
+sample_scripts/mammals.json

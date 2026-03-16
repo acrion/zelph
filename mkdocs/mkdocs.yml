@@ -11,6 +11,7 @@ nav:
   - Quick Start Guide: quickstart.md
   - Performing Queries: queries.md
   - Scripting with Janet: janet.md
+  - Importing and Exporting Data: import-export.md
   - Binary Data Files: binaries.md
   - Use Case - Wikidata: wikidata.md
 markdown_extensions:

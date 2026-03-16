@@ -57,6 +57,8 @@ namespace zelph
         // Setup the Janet environment and PEG grammar
         void initialize();
 
+        static std::string get_janet_version();
+
         // Parse Zelph syntax to Janet AST
         std::string parse_zelph_to_janet(const std::string& input) const;
 

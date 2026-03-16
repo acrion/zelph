@@ -1,0 +1,15 @@
+%(use spork/json)
+
+%
+(def all-members (zelph/query (zelph/fact 'X "member of" 'Y)))
+
+(def output
+  (map (fn [r]
+    {"subject"   (zelph/name (get r 'X))
+     "predicate" "member of"
+     "object"    (zelph/name (get r 'Y))})
+  all-members))
+
+(spit "all_membership.json" (encode output))
+(printf "Exported %d membership facts." (length output))
+%
