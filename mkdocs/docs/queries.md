@@ -57,7 +57,7 @@ Combine for intersections.
   Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
   ```
 
-  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](#syntax-sugar-for-conditions). The fully explicit form is `(*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction)`.
+  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](index.md#syntax-sugar-for-conditions). The fully explicit form is `(*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction)`.
 
 ## Wikidata-Specific Queries
 

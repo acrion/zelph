@@ -41,7 +41,7 @@ A bare `%` on its own line toggles between zelph mode and Janet mode. In Janet m
 %
 ```
 
-This is convenient for longer scripts with multiple definitions and function calls. When closing a Janet block, zelph automatically triggers the reasoning engine (if [auto-run](#full-command-reference) is enabled), so any rules created in the block take effect immediately.
+This is convenient for longer scripts with multiple definitions and function calls. When closing a Janet block, zelph automatically triggers the reasoning engine (if [auto-run](quickstart.md#full-command-reference) is enabled), so any rules created in the block take effect immediately.
 
 #### Comments and Commands
 
@@ -164,7 +164,7 @@ Query results can feed back into graph construction:
 
 #### Rules in Janet: The `let` Pattern
 
-In zelph syntax, the [focus operator `*`](#the-focus-operator-) controls what a parenthesized expression returns. For example, `(*{...} ~ conjunction)` creates the conjunction fact but returns the **set node** itself, which is then used as the subject of `=>`. In Janet, this is achieved naturally using `let` bindings:
+In zelph syntax, the [focus operator `*`](index.md#the-focus-operator) controls what a parenthesized expression returns. For example, `(*{...} ~ conjunction)` creates the conjunction fact but returns the **set node** itself, which is then used as the subject of `=>`. In Janet, this is achieved naturally using `let` bindings:
 
 ```
 # zelph syntax:
@@ -181,7 +181,7 @@ In zelph syntax, the [focus operator `*`](#the-focus-operator-) controls what a 
 %
 ```
 
-The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](#full-command-reference)).
+The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](quickstart.md#full-command-reference)).
 
 #### Lists: `zelph/list` and `zelph/list-chars`
 
@@ -211,7 +211,7 @@ Equivalent to:
 <42>
 ```
 
-This is the foundation of zelph's [Semantic Math](#semantic-math) system, where numbers are topological structures within the graph.
+This is the foundation of zelph's [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting) system, where numbers are topological structures within the graph.
 
 #### Sets: `zelph/set`
 

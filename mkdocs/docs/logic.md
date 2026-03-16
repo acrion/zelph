@@ -215,7 +215,7 @@ zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
 
 The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->` link — identifying the last element purely declaratively.
 
-The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator-).
+The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
 
 ### Inequality Constraints
 
