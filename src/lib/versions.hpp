@@ -27,7 +27,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <string>
 
+#include "zelph_export.h"
+
 namespace zelph
 {
-    std::string get_version_description();
+    ZELPH_EXPORT std::string get_version_description();
 }
