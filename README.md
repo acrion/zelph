@@ -16,7 +16,7 @@ The complete documentation, including tutorials, language references, and the ar
 
 ### Quick Links
 
-- 🚀 **[Installation & Quick Start Guide](https://acrion.github.io/zelph/quickstart.html)** – Get started immediately with pre-compiled binaries for all major platforms (no build required).
+- 🚀 **[Installation & Quick Start Guide](https://acrion.github.io/zelph/quickstart)** – Get started immediately with pre-compiled binaries for all major platforms (no build required).
 - 🧠 [Core Concepts & Homoiconicity](https://acrion.github.io/zelph/#homoiconicity-the-executable-graph)
-- 🧮 [Semantic Math & Rule-based Addition](https://acrion.github.io/zelph/#semantic-math)
-- 📜 [Scripting with Janet](https://acrion.github.io/zelph/janet.html)
+- 🧮 [Semantic Math & Rule-based Addition](https://acrion.github.io/zelph/logic/#semantic-math-computation-as-graph-rewriting)
+- 📜 [Scripting with Janet](https://acrion.github.io/zelph/janet)
