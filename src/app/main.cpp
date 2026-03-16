@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
+#include "versions.hpp"
 
 #ifdef _WIN32
     #include <Windows.h> // for SetConsoleOutputCP
@@ -104,8 +105,7 @@ int main(int argc, char** argv)
 
         if (show_version)
         {
-            interactive.out("zelph " + zelph::console::Interactive::get_version());
-
+            std::cout << zelph::get_version_description() << std::endl;
             return 0;
         }
 

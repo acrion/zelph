@@ -34,16 +34,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script_engine.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
+#include "versions.hpp"
 #include "wikidata/wikidata.hpp"
 #include "wikidata/wikidata_text_compressor.hpp"
-
-// for 3rd party versions
-#if __has_include(<mimalloc.h>)
-    #include "mimalloc.h"
-#endif
-#include <ankerl/unordered_dense.h>
-#include <bzlib.h>
-#include <capnp/common.h>
 
 #include <fstream>
 #include <iomanip>
@@ -1537,34 +1530,15 @@ private:
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .licenses takes no arguments");
 
-        _n->out("zelph incorporates the following third-party software:", true);
-        _n->out("------------------------------------------------------", true);
+        std::istringstream stream(zelph::get_version_description());
+        std::string        line;
 
-        _n->out("Janet (v" + ScriptEngine::get_janet_version() + ") - MIT License", true);
-
-        std::string ud_version = std::to_string(ANKERL_UNORDERED_DENSE_VERSION_MAJOR) + "." + std::to_string(ANKERL_UNORDERED_DENSE_VERSION_MINOR) + "." + std::to_string(ANKERL_UNORDERED_DENSE_VERSION_PATCH);
-        _n->out("unordered_dense (v" + ud_version + ") - MIT License", true);
-
-        std::string capnp_version = std::to_string(CAPNP_VERSION_MAJOR) + "." + std::to_string(CAPNP_VERSION_MINOR) + "." + std::to_string(CAPNP_VERSION_MICRO);
-        _n->out("Cap'n Proto (v" + capnp_version + ") - MIT License", true);
-
-        std::string bz2_full      = BZ2_bzlibVersion();
-        size_t      bz2_comma_pos = bz2_full.find(',');
-        std::string bz2_version   = (bz2_comma_pos != std::string::npos) ? bz2_full.substr(0, bz2_comma_pos) : bz2_full;
-        _n->out("bzip2 (v" + bz2_version + ") - bzip2 License (BSD-style)", true);
-
-        // 5. mimalloc (nur einkompiliert, wenn das Makro existiert)
-#if defined(MI_MALLOC_VERSION)
-        int         mi_major   = MI_MALLOC_VERSION / 1000;
-        int         mi_minor   = (MI_MALLOC_VERSION / 100) % 10;
-        int         mi_patch   = MI_MALLOC_VERSION % 100;
-        std::string mi_version = std::to_string(mi_major) + "." + std::to_string(mi_minor) + "." + std::to_string(mi_patch);
-        _n->out("mimalloc (v" + mi_version + ") - MIT License", true);
-#endif
-
-        _n->out("------------------------------------------------------", true);
-        _n->out("For full license texts and copyright notices, please refer to the", true);
-        _n->out("documentation or the source code repositories.", true);
+        while (std::getline(stream, line))
+        {
+            // Wir überspringen leere Zeilen am Ende nicht,
+            // aber std::getline verwirft das '\n'.
+            _n->out(line, true);
+        }
     }
     void cmd_log(const std::vector<std::string>& cmd)
     {

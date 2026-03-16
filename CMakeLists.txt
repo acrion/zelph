@@ -33,7 +33,7 @@ if(NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
     endif()
 endif()
 
-project(zelph VERSION 0.9.4 LANGUAGES C CXX)
+project(zelph VERSION 0.9.5 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 

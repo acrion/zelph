@@ -233,6 +233,8 @@ add_library(zelph_lib SHARED
     repl_state.hpp
     script_engine.cpp
     script_engine.hpp
+    versions.cpp
+    versions.hpp
 
     chrono/stopwatch.cpp
     chrono/stopwatch.hpp

@@ -39,7 +39,7 @@ using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.9.4";
+    return "0.9.5";
 }
 
 Zelph::Zelph(const io::OutputHandler& output)
