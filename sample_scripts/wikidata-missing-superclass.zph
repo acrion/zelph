@@ -1,0 +1,3 @@
+.lang wikidata
+
+(A P31 B, ¬(B P279 C)) => !

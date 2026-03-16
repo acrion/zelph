@@ -868,3 +868,96 @@ alice date_of_birth 1990
 )");
         CHECK_FALSE(has_contradiction(collector)); });
 }
+
+// ---------------------------------------------------------------------------
+// Meta-rules: predicates as first-class nodes
+// ---------------------------------------------------------------------------
+
+TEST_CASE("meta-rule: symmetric relation")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(R is symmetric, X R Y) => (Y R X)
+friend is symmetric
+alice friend bob
+)");
+        CHECK(any_output_starts_with(collector, "( bob friend alice )")); });
+}
+
+TEST_CASE("meta-rule: opposite relation generates inverse")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(R "is opposite of" S, X R Y) => (Y S X)
+"has part" "is opposite of" "is part of"
+chimpanzee "has part" hand
+)");
+        CHECK(any_output_starts_with(collector, "( hand is part of chimpanzee )")); });
+}
+
+// ---------------------------------------------------------------------------
+// Multiple objects: unordered object set
+// ---------------------------------------------------------------------------
+
+TEST_CASE("multiple objects: unordered set with rule matching")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+alice parent_of bob charlie
+(A parent_of B) => (B child_of A)
+)");
+        CHECK(any_output_starts_with(collector, "( bob child_of alice )"));
+        CHECK(any_output_starts_with(collector, "( charlie child_of alice )")); });
+}
+
+// ---------------------------------------------------------------------------
+// Deep unification: function composition (using lists for ordering)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("deep unification: function composition as graph transformation")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(F maps <A B>, G maps <B C>) => ((G compose F) maps <A C>)
+f maps <item1 item2>
+g maps <item2 item3>
+)");
+        CHECK(any_output_starts_with(collector, "(( g compose f ) maps < item1 item3 >)")); });
+}
+
+// ---------------------------------------------------------------------------
+// Constraint checking: graph coloring
+// ---------------------------------------------------------------------------
+
+TEST_CASE("constraint checking: valid graph coloring produces no contradiction")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A adjacent B, A color X, B color X) => !
+r1 adjacent r2
+r2 adjacent r3
+r1 color red
+r2 color blue
+r3 color red
+)");
+        CHECK_FALSE(has_contradiction(collector)); });
+}
+
+TEST_CASE("constraint checking: invalid graph coloring produces contradiction")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A adjacent B, A color X, B color X) => !
+r1 adjacent r2
+r2 adjacent r3
+r1 color red
+r2 color red
+)");
+        CHECK(has_contradiction(collector)); });
+}

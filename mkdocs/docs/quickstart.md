@@ -40,13 +40,13 @@ Let’s try a basic example:
 ```
 Berlin "is capital of" Germany
 Germany "is located in" Europe
-X is capital of Y, Y is located in Z => X is located in Z
+(X "is capital of" Y, Y "is located in" Z) => (X "is located in" Z)
 ```
 
 After entering these statements, zelph will automatically infer that Berlin is located in Europe:
 
 ```
-«Berlin» «is located in» «Europe» ⇐ («Germany» «is located in» «Europe»), («Berlin» «is capital of» «Germany»)
+( Berlin   is located in   Europe ) ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
@@ -113,35 +113,39 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 Key commands include:
 
-- `.help [command]`          – Show help
-- `.exit`                    – Exit interactive mode
-- `.lang [code]`             – Show or set current language (e.g., `en`, `de`, `wikidata`)
+- `.help [command]` – Show help
+- `.exit` – Exit interactive mode
+- `.lang [code]` – Show or set current language (e.g., `en`, `de`, `wikidata`)
 - `.name <node|id> <new_name>` – Set node name in current language
 - `.name <node|id> <lang> <new_name>` – Set node name in specific language
 - `.delname <node|id> [lang]` – Delete node name in current (or specified) language
-- `.node <name|id>`          – Show detailed node information (names, connections, representation, Wikidata URL)
-- `.list <count>`            – List first N existing nodes (internal order, with details)
-- `.clist <count>`           – List first N nodes named in current language (sorted by ID if feasible)
-- `.out <name|id> [count]`   – List outgoing connected nodes (default 20)
-- `.in <name|id> [count]`    – List incoming connected nodes (default 20)
-- `.mermaid <name> [depth]`  – Generate Mermaid HTML file for a node (default depth 3)
-- `.run`                     – Full inference
-- `.run-once`                – Single inference pass
-- `.run-md <subdir>`         – Inference + Markdown export
-- `.run-file <file>`         – Inference + write deduced facts to file (compressed if wikidata)
-- `.decode <file>`           – Decode a file produced by `.run-file`
-- `.list-rules`              – List all defined rules
+- `.node <name|id>` – Show detailed node information (names, connections, representation, Wikidata URL)
+- `.list <count>` – List first N existing nodes (internal order, with details)
+- `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
+- `.out <name|id> [count]` – List outgoing connected nodes (default: 20)
+- `.in <name|id> [count]` – List incoming connected nodes (default: 20)
+- `.mermaid <name> [depth]` – Generate Mermaid HTML file for a node (default depth 3)
+- `.run` – Full inference
+- `.run-once` – Single inference pass
+- `.run-md <subdir>` – Inference + Markdown export
+- `.run-file <file>` – Inference + write deduced facts to file (compressed if wikidata)
+- `.decode <file>` – Decode a file produced by `.run-file`
+- `.list-rules` – List all defined rules
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent)
 - `.list-predicate-value-usage <pred> [max]` – Show object/value usage statistics (top N most frequent values)
-- `.remove-rules`            – Remove all inference rules
-- `.remove <name|id>`        – Remove a node (destructive: disconnects all edges and cleans names)
-- `.import <file.zph>`       – Load and execute a zelph script
-- `.load <file>`             – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
-- `.save <file.bin>`         – Save current network to binary file
-- `.prune-facts <pattern>`   – Remove all facts matching the query pattern (only statements)
-- `.prune-nodes <pattern>`   – Remove matching facts AND all involved subject/object nodes
-- `.cleanup`                 – Remove isolated nodes
+- `.remove-rules` – Remove all inference rules
+- `.remove <name|id>` – Remove a node (destructive: disconnects all edges and cleans names)
+- `.import <file.zph>` – Load and execute a zelph script
+- `.load <file>` – Load saved network (.bin) or import Wikidata JSON (creates .bin cache)
+- `.save <file.bin>` – Save current network to binary file
+- `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
+- `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
+- `.cleanup` – Remove isolated nodes
+- `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)
+- `.auto-run` – Toggle automatic execution of `.run` after each input (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
+- `.export-wikidata <json> <id1> [id2 ...]` – Extracts exact JSON lines for Q-IDs (no import)
 
 ### What’s Next?
 

@@ -6,21 +6,13 @@ theme:
     - content.code.annotate
 nav:
   - Home: index.md
+  - Logic and Computation: logic.md
   - Presentation: presentation.md
   - Quick Start Guide: quickstart.md
   - Performing Queries: queries.md
+  - Scripting with Janet: janet.md
   - Binary Data Files: binaries.md
-  - Use Case - Wikidata:
-      - Overview: wikidata.md
-      - Wikimedia Rapid Fund Report: grant-report.md
-      - Disjointness Violations: disjointness-violations.md
-      - Mereology Violations: mereology-violations.md
-      - Detected Split Order Violations:
-          - Gene: split-order-classes/gene.md
-          - Protein: split-order-classes/protein.md
-          - All Other: split-order-classes/other.md
-      - Constraint-based zelph rules: constraint-list.md
-      - Detected constraint violations: constraints/!.md
+  - Use Case - Wikidata: wikidata.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
@@ -33,3 +25,5 @@ extra_javascript:
 extra:
   mermaid:
     version: 11.4.1
+exclude_docs: |
+  missing-superclass/

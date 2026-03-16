@@ -1453,12 +1453,3 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     }
     return true;
 }
-
-bool ScriptEngine::is_var(std::string token)
-{
-    // Legacy helper, might still be useful outside of PEG context
-    static const std::string variable_names("ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
-    if (token.empty()) return false;
-    if (token.size() == 1) return variable_names.find(*token.begin()) != std::string::npos;
-    return *token.begin() == '_';
-}

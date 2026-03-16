@@ -3,7 +3,7 @@
 This page provides an introduction to zelph through a video presentation held by Stefan Zipproth as part of his involvement with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force). The talk covers the core concepts of zelph, its inference engine, and its application to Wikidata, including results from the Wikimedia Rapid Fund project. The video is published with the consent of all participants.
 
 <video id="zelph-video" controls width="100%" preload="metadata">
-  <source src="/assets/2026-01-13-zelph.mp4" type="video/mp4">
+    <source src="https://zelph.org/assets/2026-01-13-zelph.mp4" type="video/mp4">
   Your browser does not support the video tag.
 </video>
 

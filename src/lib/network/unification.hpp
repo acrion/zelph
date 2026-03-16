@@ -63,8 +63,8 @@ namespace zelph::network
         }
 
     private:
-        bool                       increment_fact_index();
-        std::shared_ptr<Variables> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const;
+        bool                                    increment_fact_index();
+        std::vector<std::shared_ptr<Variables>> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const;
 
         Zelph* const               _n;
         Node                       _parent;

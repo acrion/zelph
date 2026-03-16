@@ -1,0 +1,279 @@
+[⎇ main]─[●✔]─> cat sample_scripts/wikidata-prune.zph
+.lang wikidata
+.remove-rules
+.list-rules
+.prune-nodes A P31 Q8054
+.prune-nodes A P31 Q7187
+.prune-nodes A P31 Q11173
+.prune-nodes A P31 Q13442814
+.prune-nodes A P31 Q16521
+.prune-nodes A P31 Q5
+.prune-nodes A P131 B
+.prune-nodes A P31 Q4167836
+.prune-nodes A P31 Q523
+.prune-nodes A P31 Q318
+.prune-nodes A P31 Q4167410
+.prune-nodes A P31 Q113145171
+.prune-nodes A P31 Q11266439
+.prune-nodes A P31 Q79007
+.prune-nodes A P31 Q13433827
+.prune-nodes A P31 Q101352
+.prune-nodes A P31 Q13100073
+.prune-nodes A P31 Q277338
+.prune-nodes A P1433 B
+.prune-nodes A P31 Q3305213
+.prune-nodes A P31 Q4022
+.prune-nodes A P31 Q8502
+.prune-nodes A P31 Q486972
+.prune-nodes A P31 Q2668072
+.prune-nodes A P31 Q3331189
+.prune-nodes A P407 Q7850
+.prune-nodes A P407 Q7737
+.prune-nodes A P921 B
+.prune-nodes A P17 B
+.cleanup
+[⎇ main]─[●✔]─> cat (which perf-zelph)
+#!/usr/bin/env bash
+echo ".load /home/stefan/zelph/wikidata-20171227.bin" > /tmp/test.zph
+echo ".import /media/stefan/data/Documents/git/my-projects/acrion/zelph/sample_scripts/wikidata-prune.zph" >> /tmp/test.zph
+echo ".save /home/stefan/zelph/wikidata-20171227-pruned.bin" >> /tmp/test.zph
+echo ".exit" >> /tmp/test.zph
+ZELPH_NO_RLWRAP=1 MIMALLOC_SHOW_STATS=1 /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/zelph /tmp/test.zph
+[⎇ main]─[●]─> perf-zelph
+Importing file /tmp/test.zph...
+Number of nodes prior import: 15
+Loading network from cache /home/stefan/zelph/wikidata-20171227.bin...
+Loading: left chunks=204, right chunks=204, nameOfNode chunks=71, nodeOfName chunks=71
+............................................................................................................................................................................................................
+............................................................................................................................................................................................................
+.......................................................................
+.......................................................................
+String pool size after load: 70147775
+Cache loaded successfully.
+ Time needed for loading/importing: 0h3m17.281s
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/sample_scripts/wikidata-prune.zph...
+All rules removed.
+No rules found.
+Pruned 487773 matching facts and 487773 nodes.
+Consider running .cleanup.
+Pruned 677798 matching facts and 677798 nodes.
+Consider running .cleanup.
+Pruned 156929 matching facts and 156929 nodes.
+Consider running .cleanup.
+Pruned 12340707 matching facts and 12340707 nodes.
+Consider running .cleanup.
+Pruned 2317623 matching facts and 2317623 nodes.
+Consider running .cleanup.
+Pruned 4062593 matching facts and 4062593 nodes.
+Consider running .cleanup.
+Pruned 5193095 matching facts and 4903606 nodes.
+Consider running .cleanup.
+Pruned 4034312 matching facts and 4034312 nodes.
+Consider running .cleanup.
+Pruned 12886 matching facts and 12886 nodes.
+Consider running .cleanup.
+Pruned 10581 matching facts and 10581 nodes.
+Consider running .cleanup.
+Pruned 1235136 matching facts and 1235136 nodes.
+Consider running .cleanup.
+Pruned 0 matching facts and 0 nodes.
+Pruned 846534 matching facts and 846534 nodes.
+Consider running .cleanup.
+Pruned 7948 matching facts and 7948 nodes.
+Consider running .cleanup.
+Pruned 0 matching facts and 0 nodes.
+Pruned 222904 matching facts and 222904 nodes.
+Consider running .cleanup.
+Pruned 3 matching facts and 3 nodes.
+Consider running .cleanup.
+Pruned 0 matching facts and 0 nodes.
+Pruned 414754 matching facts and 410249 nodes.
+Consider running .cleanup.
+Pruned 232193 matching facts and 232193 nodes.
+Consider running .cleanup.
+Pruned 259628 matching facts and 259628 nodes.
+Consider running .cleanup.
+Pruned 403282 matching facts and 403282 nodes.
+Consider running .cleanup.
+Pruned 217456 matching facts and 217456 nodes.
+Consider running .cleanup.
+Pruned 129 matching facts and 129 nodes.
+Consider running .cleanup.
+Pruned 12533 matching facts and 12533 nodes.
+Consider running .cleanup.
+Pruned 3636 matching facts and 3636 nodes.
+Consider running .cleanup.
+Pruned 22347 matching facts and 22347 nodes.
+Consider running .cleanup.
+Pruned 51092 matching facts and 40446 nodes.
+Consider running .cleanup.
+Pruned 2408815 matching facts and 2394488 nodes.
+Consider running .cleanup.
+Scanning for unused predicates and zombie facts...
+Found 960 predicates. Starting deep scan...
+[5/960] Checking P688 (212861) with 520662 entries...
+   -> Purged 503793 broken facts.
+[49/960] Checking P20 (386) with 665626 entries...
+   -> Purged 665104 broken facts.
+[75/960] Checking P680 (110593) with 820888 entries...
+   -> Purged 776427 broken facts.
+[109/960] Checking P128 (229179) with 326670 entries...
+   -> Purged 6 broken facts.
+[125/960] Checking P1435 (2880) with 1440531 entries...
+   -> Purged 1438467 broken facts.
+[140/960] Checking P681 (110581) with 523838 entries...
+   -> Purged 495693 broken facts.
+[187/960] Checking P102 (465) with 256613 entries...
+   -> Purged 256506 broken facts.
+[212/960] Checking P421 (34) with 1735700 entries...
+   -> Purged 1734067 broken facts.
+[244/960] Checking P3373 (453) with 204418 entries...
+   -> Purged 201476 broken facts.
+[250/960] Checking P136 (513) with 621444 entries...
+   -> Purged 188536 broken facts.
+[287/960] Checking P50 (1213) with 1517590 entries...
+   -> Purged 1289747 broken facts.
+[292/960] Checking P301 (2468) with 490434 entries...
+   -> Purged 490268 broken facts.
+[293/960] Checking P2860 (199015) with 36646805 entries...
+   -> Purged 36634900 broken facts.
+[325/960] Checking P971 (2795) with 774952 entries...
+   -> Purged 774486 broken facts.
+[330/960] Checking P57 (1372) with 207834 entries...
+   -> Purged 12488 broken facts.
+[370/960] Checking P195 (2196) with 319685 entries...
+   -> Purged 254704 broken facts.
+[371/960] Checking P1412 (463) with 618062 entries...
+   -> Purged 616682 broken facts.
+[382/960] Checking P171 (1165) with 2365147 entries...
+   -> Purged 2299424 broken facts.
+[390/960] Checking P150 (57) with 1003343 entries...
+   -> Purged 1002355 broken facts.
+[396/960] Checking P105 (1161) with 2358494 entries...
+   -> Purged 2294041 broken facts.
+[427/960] Checking P1433 (11742) with 12355205 entries...
+   -> Purged 12328224 broken facts.
+[464/960] Checking P106 (398) with 3578115 entries...
+   -> Purged 3568868 broken facts.
+[481/960] Checking P39 (415) with 436808 entries...
+   -> Purged 435523 broken facts.
+[494/960] Checking P155 (158) with 350370 entries...
+   -> Purged 75208 broken facts.
+[500/960] Checking P413 (1634) with 256056 entries...
+   -> Purged 256033 broken facts.
+[515/960] Checking P279 (362) with 1831312 entries...
+   -> Purged 1378859 broken facts.
+[517/960] Checking P282 (1301) with 216278 entries...
+   -> Purged 181158 broken facts.
+[526/960] Checking P1344 (1607) with 304388 entries...
+   -> Purged 300668 broken facts.
+[531/960] Checking P54 (1628) with 1075316 entries...
+   -> Purged 1075261 broken facts.
+[538/960] Checking P47 (19) with 465926 entries...
+   -> Purged 464772 broken facts.
+[577/960] Checking P21 (390) with 3530970 entries...
+   -> Purged 3497446 broken facts.
+[587/960] Checking P19 (384) with 1775943 entries...
+   -> Purged 1774510 broken facts.
+[589/960] Checking P69 (500) with 636874 entries...
+   -> Purged 636234 broken facts.
+[606/960] Checking P702 (110513) with 523638 entries...
+   -> Purged 497397 broken facts.
+[617/960] Checking P682 (110566) with 817448 entries...
+   -> Purged 778297 broken facts.
+[618/960] Checking P108 (503) with 212121 entries...
+   -> Purged 211391 broken facts.
+[620/960] Checking P31 (42) with 11550620 entries...
+   -> Purged 7613617 broken facts.
+[635/960] Checking P1343 (70) with 216114 entries...
+   -> Purged 178914 broken facts.
+[636/960] Checking P156 (1065) with 341532 entries...
+   -> Purged 72792 broken facts.
+[644/960] Checking P175 (2026) with 275658 entries...
+   -> Purged 1597 broken facts.
+[646/960] Checking P703 (32815) with 1262873 entries...
+   -> Purged 1166558 broken facts.
+[709/960] Checking P527 (370) with 975051 entries...
+   -> Purged 785691 broken facts.
+[714/960] Checking P17 (17) with 5865277 entries...
+   -> Purged 5654784 broken facts.
+[748/960] Checking P684 (212856) with 282944 entries...
+   -> Purged 278011 broken facts.
+[757/960] Checking P2548 (212867) with 538453 entries...
+   -> Purged 516554 broken facts.
+[769/960] Checking P495 (1378) with 751955 entries...
+   -> Purged 309584 broken facts.
+[778/960] Checking P161 (1360) with 834810 entries...
+   -> Purged 89036 broken facts.
+[781/960] Checking P166 (410) with 686393 entries...
+   -> Purged 674449 broken facts.
+[790/960] Checking P734 (443) with 425310 entries...
+   -> Purged 422079 broken facts.
+[794/960] Checking P27 (395) with 2406447 entries...
+   -> Purged 2402066 broken facts.
+[806/960] Checking P407 (2098) with 1189696 entries...
+   -> Purged 845012 broken facts.
+[809/960] Checking P921 (2150) with 1078037 entries...
+   -> Purged 1058158 broken facts.
+[819/960] Checking P276 (2202) with 775466 entries...
+   -> Purged 691770 broken facts.
+[820/960] Checking P361 (45) with 1294265 entries...
+   -> Purged 955446 broken facts.
+[840/960] Checking P364 (1377) with 231267 entries...
+   -> Purged 16332 broken facts.
+[855/960] Checking P463 (128) with 227042 entries...
+   -> Purged 222636 broken facts.
+[857/960] Checking P641 (1605) with 806452 entries...
+   -> Purged 561657 broken facts.
+[866/960] Checking P186 (3378) with 422243 entries...
+   -> Purged 375140 broken facts.
+[880/960] Checking P910 (38) with 474235 entries...
+   -> Purged 292613 broken facts.
+[921/960] Checking P1889 (651) with 248209 entries...
+   -> Purged 215061 broken facts.
+[943/960] Checking P170 (1928) with 311922 entries...
+   -> Purged 241321 broken facts.
+[949/960] Checking P735 (420) with 2531702 entries...
+   -> Purged 2519154 broken facts.
+Purged 112267104 zombie facts.
+Removed 86 unused predicates.
+Cleaning up isolated nodes...
+Cleanup: removed 2569522 isolated nodes/names.
+Cleaning up name mappings...
+Removed 127030450 dangling name entries.
+Saving: probabilities size=0, left size=17407255, right size=17407255
+Saving: name_of_node outer size=2, node_of_name outer size=2
+Saving: string pool size=70147776
+Saved network to /home/stefan/zelph/wikidata-20171227-pruned.bin
+subproc 0
+ pages           peak       total     current       block      total#
+  touched   :     0           0           0                                ok
+  pages     :   540.0 Ki    743.5 Ki      3                                not all freed
+  abandoned :   534.8 Ki    678.4 Ki      1                                not all freed
+  reclaima  :   865
+  reclaimf  :   348.3 Ki
+  reabandon :   326.9 Ki
+  waits     :     0
+  extended  :     0
+  retire    :     0
+  searches  :     2.9 avg
+
+ arenas          peak       total     current       block      total#
+  reserved  :    52.0 GiB    52.0 GiB    52.0 GiB
+  committed :    41.0 GiB    50.7 GiB   -14.4 GiB
+  reset     :     0
+  purged    :    65.2 Gi
+  arenas    :    23
+  rollback  :     0
+  mmaps     :   124
+  commits   :     0
+  resets    :     0
+  purges    :    42.8 Ki
+  guarded   :     0
+  heaps     :     1           1           1
+
+ process         peak       total     current       block      total#
+  threads   :    25          25           1
+  numa nodes:     1
+  elapsed   :  1075.267 s
+  process   : user: 1152.569 s, system: 115.574 s, faults: 0, peak rss: 46.2 GiB, peak commit: 41.0 GiB

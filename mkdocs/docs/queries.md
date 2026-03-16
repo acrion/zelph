@@ -5,103 +5,89 @@ zelph provides powerful querying capabilities directly in its scripting language
 Queries are statements that contain variables (single uppercase letters) but no `=>` (which would make them rules). They are evaluated immediately without needing `.run`, though inference can expand the graph beforehand to reveal more matches.
 
 ## Key Features
-- **Variables**: Single uppercase letters (A-Z), scoped to the query. Limited to 26 per query.
-- **Multi-Conditions**: Separate conditions with commas (logical AND). zelph unifies across all, binding variables consistently.
-- **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
-- **Inference Integration**: Run `.run` first to derive new facts, then query the expanded graph.
-- **Output**: Matches are printed with bound values. No matches: Just the query echoed.
-- **Limitations**: No OR/NOT in syntax (use rules for complex logic). No multi-line queries.
 
-## General Queries 
+- **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query.
+- **Multi-Conditions (Conjunctions)**: Use comma conjunctions inside parentheses, e.g. `(cond1, cond2)`, or the explicit form `(*{(cond1) (cond2)} ~ conjunction)`.
+- **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
+- **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).
+- **Output**: Matches are printed with bound values. No matches: Just the query echoed.
+- **Limitations**: No multi-line queries.
+
+## General Queries
 
 These examples use a simple geography graph. Load them in zelph (`.lang zelph` mode) for testing:
 
 ```
-Berlin "is capital of" Germany
-Germany "is located in" Europe
-Europe "has part" Germany
-X is capital of Y, Y is located in Z => X is located in Z
-"is located in" ~ transitive relation
-R ~ transitive relation, X R Y, Y R Z => X R Z
-.run  # Infer: Berlin "is located in" Europe
+zelph> Berlin "is capital of" Germany
+zelph> Germany "is located in" Europe
+zelph> Europe "has part" Germany
+zelph> (X "is capital of" Y, Y "is located in" Z) => (X "is located in" Z)
+ Berlin   is located in   Europe  ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
+zelph>
 ```
 
 ### Single-Condition Queries
+
 Basic pattern matching.
 
 - Find capitals: `X "is capital of" Y`  
-  Output:  
+  Output:
+
   ```
-  X «is capital of» Y
-  Answer: «Berlin» «is capital of» «Germany»
+  X  is capital of  Y
+  Answer:  Berlin   is capital of   Germany
   ```
 
 - Find locations in Europe: `A "is located in" Europe`  
-  Output (post-inference):  
+  Output (post-inference):
   ```
-  A «is located in» «Europe»
-  Answer: «Berlin» «is located in» «Europe»
-  Answer: «Germany» «is located in» «Europe»
+  A  is located in   Europe
+  Answer:  Germany   is located in   Europe
+  Answer:  Berlin   is located in   Europe
   ```
 
 ### Multi-Condition Queries
+
 Combine for intersections.
 
-- Capitals in Europe: `X "is located in" Europe, X "is capital of" Germany`  
-  Output:  
+- Capitals in Europe: `X "is located in" Europe, X "is capital of" Y`  
+  Output:
+
   ```
-  (X «is capital of» «Germany»), (X «is located in» «Europe»)
-  Answer: («Berlin» «is capital of» «Germany»), («Berlin» «is located in» «Europe»)
+  Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
   ```
 
-- Parts with opposites: Add `Europe "is opposite of" Asia`, then: `A "is opposite of" B, A "has part" Germany`  
-  Output:  
-  ```
-  (A «is opposite of» B), (A «has part» «Germany»)
-  Answer: («Europe» «is opposite of» «Asia»), («Europe» «has part» «Germany»)
-  ```
-
-- No match example: `X "is located in" Europe, X "has part" Germany`  
-  Output: Just the query (no match, as nothing is both located in Europe and has Germany as part).
-
-- Multi-Variable: `X "is located in" Y, Y "has part" Germany, X "is capital of" Z`  
-  Output:  
-  ```
-  (X «is located in» Y), (X «is capital of» Z), (Y «has part» «Germany»)
-  Answer: («Berlin» «is located in» «Europe»), («Berlin» «is capital of» «Germany»), («Europe» «has part» «Germany»)
-  ```
-
-Add symmetry for more: `"is opposite of" ~ symmetric relation`, `R ~ symmetric relation, A R B => B R A`, `.run`. Then: `A "is opposite of" B` shows bidirectional matches.
+  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](#syntax-sugar-for-conditions). The fully explicit form is `(*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction)`.
 
 ## Wikidata-Specific Queries
 
-For Wikidata, switch to `.lang wikidata` after loading a dump (`.wikidata path/to/dump.json` or `.load cached.bin`). Queries use Q/P IDs or names (if set). Examples from paleontology (e.g., Brontosaurus Q3222766).
+For Wikidata, switch to `.lang wikidata` after loading a dump (`.load path/to/dump.json` or `.load cached.bin`). Queries use Q/P IDs or names (if set). Examples from paleontology (e.g., Brontosaurus Q3222766).
 
 ### Single-Condition Queries
+
 - Instances of fossil taxon: `X P31 Q23038290`  
-  Output: Many answers, e.g., `Answer: «Q3222766» «P31» «Q23038290»` (Brontosaurus).
+  Output: Many answers, e.g., `Answer: Q3222766 P31 Q23038290` (Brontosaurus).
 
 - Parent taxa: `X P171 Q3222766`  
   Output: Taxa with Brontosaurus as parent (if any).
 
 ### Multi-Condition Queries
+
 Combine for targeted searches.
 
-- Fossil taxa in genus rank: `X P31 Q23038290, X P105 Q34740`  
+- Fossil taxa in genus rank: `(*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)`  
   Output: Matches like Brontosaurus/Apatosaurus.
 
-- Synonyms with parent taxon: `X P460 Q14326, X P171 Q2544161` (Apatosaurus synonyms in Diplodocidae)  
-  Output:  
+- Synonyms with parent taxon: `(*{(X P460 Q14326) (X P171 Q2544161)} ~ conjunction)` (Apatosaurus synonyms in Diplodocidae)  
+  Output:
   ```
-  (X «P171» «Q2544161»), (X «P460» «Q14326»)
-  Answer: («Q3222766» «P171» «Q2544161»), («Q3222766» «P460» «Q14326»)
+  {(X  P171   Q2544161 ) (X  P460   Q14326 )}
+  Answer: {( Q3222766   P171   Q2544161 ) ( Q3222766   P460   Q14326 )}
   ```
-
-- No-match example: Musical works with taxon: `X P31 Q105543609, X P171 Q3222766`  
-  Output: Just the query (no overlap between music and taxonomy).
+  Since `Q3222766` is [Brontosaurus](https://www.wikidata.org/wiki/Q3222766), this answer means "The [parent taxon](https://www.wikidata.org/wiki/Property:P171) (P171) of [Brontosaurus](https://www.wikidata.org/wiki/Q3222766) is [Apatosaurinae](https://www.wikidata.org/wiki/Q2544161) (Q2544161), which is [said to be the same as](https://www.wikidata.org/wiki/Property:P460) [Apatosaurus](https://www.wikidata.org/wiki/Q14326) (Q14326).
 
 ## Tips and Advanced Usage
-- **Pre-Inference**: Always `.run` for derived facts (e.g., transitivity).
+
 - **Debugging**: Use `.node`, `.out`, `.in` to inspect before querying.
 - **Patterns**: Fixed parts in quotes if spaces; variables anywhere.
 - For complex logic, define rules first, then query the inferred graph.

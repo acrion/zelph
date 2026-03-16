@@ -118,7 +118,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
         {
             try
             {
-                _pImpl->_n->diagnostic("Loading network from cache " + cache_file.string() + "...", true);
+                _pImpl->_n->diagnostic("Loading network from " + cache_file.string() + "...", true);
                 _pImpl->_n->load_from_file(_pImpl->_bin_path.string());
                 _pImpl->_n->diagnostic("Cache loaded successfully.", true);
                 cache_loaded = true;

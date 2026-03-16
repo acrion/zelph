@@ -1415,7 +1415,7 @@ private:
             // If it's a variable, keep as is (A). If not, quote it ("is") so PEG treats it as value.
             // Note: Since cmd is already tokenized by escaped_list_separator, quotes were stripped.
             // We re-add them for non-vars to be safe for parse_zelph_to_janet.
-            if (ScriptEngine::is_var(token))
+            if (string::is_var(token))
                 pattern_str += token + " ";
             else
                 pattern_str += "\"" + token + "\" ";
@@ -1507,7 +1507,7 @@ private:
                 _n->out_stream() << "  " << lang << ": " << _n->get_name_of_node_size(lang) << std::endl;
             }
 
-            _n->out_stream() << "Name-of-Node Entries by language:" << std::endl;
+            _n->out_stream() << "Node-of-Name Entries by language:" << std::endl;
             for (const std::string& lang : _n->get_languages())
             {
                 _n->out_stream() << "  " << lang << ": " << _n->get_node_of_name_size(lang) << std::endl;

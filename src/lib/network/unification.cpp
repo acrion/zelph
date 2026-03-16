@@ -463,11 +463,10 @@ Unification::Unification(
                                        {
                                            if (fs.predicate != fixed_rel) continue;
 
-                                           auto result = extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth);
-                                           if (result)
+                                           for (auto& r : extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth))
                                            {
                                                std::lock_guard<std::mutex> l(_queue_mtx);
-                                               _match_queue.push(std::move(result));
+                                               _match_queue.push(std::move(r));
                                                _queue_cv.notify_one();
                                            }
                                        }
@@ -783,18 +782,15 @@ std::shared_ptr<Variables> Unification::Next()
                     // Filter: Ensure the interpretation matches the relation currently being scanned
                     if (fs.predicate != *_relation_index) continue;
 
-                    auto result = extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth);
-                    if (!result) continue;
-
-                    if (!first)
+                    for (auto& r : extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth))
                     {
-                        first = std::move(result);
-                    }
-                    else
-                    {
-                        // Buffer additional valid interpretations
-                        std::lock_guard<std::mutex> l(_queue_mtx);
-                        _match_queue.push(std::move(result));
+                        if (!first)
+                            first = std::move(r);
+                        else
+                        {
+                            std::lock_guard<std::mutex> l(_queue_mtx);
+                            _match_queue.push(std::move(r));
+                        }
                     }
                 }
 
@@ -814,8 +810,16 @@ std::shared_ptr<Variables> Unification::Next()
 // Both a rule and a fact can have only a single subject, but multiple objects.
 // In a rule, these objects are interpreted as alternatives.
 // In a fact, these objects are interpreted as if stating the fact n times, each with one of the listed objects.
-std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const
+// The function returns all valid injective matchings instead of
+// stopping at the first one. This is necessary because subsequent
+// conditions may only be satisfiable for one particular permutation;
+// the engine has no cross-fact backtracking, so every permutation
+// must be offered as a distinct candidate upfront.
+std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
+    const Node subject, const adjacency_set& objects, const Node relation, const int depth) const
 {
+    std::vector<std::shared_ptr<Variables>> results;
+
     if (_n->logging_active())
         _prof.extract_calls.fetch_add(1, std::memory_order_relaxed);
 
@@ -824,37 +828,35 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
         if (objects.empty() || subject == 0)
         {
             U_LOG(depth, "extract_bindings FAIL: objects=" + std::to_string(objects.empty()) + " subject=" + (subject == 0 ? "null" : (Zelph::Impl::is_var(subject) ? "var" : U_NODE(subject))));
-            return nullptr;
+            return results;
         }
     }
     else if (_subject_pred_hint && _n->get_right(subject).count(_subject_pred_hint) == 0)
     {
         if (_n->logging_active()) _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
-        return nullptr;
+        return results;
     }
-
-    auto result = std::make_shared<Variables>();
 
     U_LOG(depth, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
 
-    std::vector<std::pair<Node, Node>> history; // Cycle detection
-    if (!unify_nodes(_n, _subject, subject, *result, *_variables, history, _log_depth, _prof))
+    // --- Subject unification ---
+    Variables                          base_result;
+    std::vector<std::pair<Node, Node>> history;
+    if (!unify_nodes(_n, _subject, subject, base_result, *_variables, history, _log_depth, _prof))
     {
         if (_n->logging_active())
         {
             U_LOG(depth, "  -> Subject Failed");
             _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
         }
-        return nullptr;
+        return results;
     }
 
+    // --- Reject rule-template fact nodes ---
     for (auto o : objects)
     {
         if (Zelph::Impl::is_var(o))
-        {
-            // the given "fact" is not a fact, but a rule, because it contains a variable in at least one of its objects
-            return nullptr;
-        }
+            return results; // fact contains a variable => it is a rule template, not data
     }
 
     // Reject rule-template fact nodes. Rule consequences are stored as real
@@ -870,7 +872,7 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
             _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
             U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
         }
-        return nullptr;
+        return results;
     }
     for (Node o : objects)
     {
@@ -881,55 +883,82 @@ std::shared_ptr<Variables> Unification::extract_bindings(const Node subject, con
                 _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
                 U_LOG(depth, "extract_bindings REJECT: object " + U_NODE(o) + " contains variable (rule template)");
             }
-            return nullptr;
+            return results;
         }
     }
 
-    // Check if the object matches the bound rule variable (if-clause)
-    // or one of the objects matches the fixed object from the rule (else-clause).
-    bool object_matches   = false;
-    Node rule_object_node = *_objects.begin();
+    // --- Enumerate all valid injective matchings of rule objects to fact objects ---
+    //
+    // "Injective" means each fact object is used at most once per result, so that
+    // two distinct rule-object variables (e.g. A and B in "F maps A B") always bind
+    // to two DIFFERENT fact objects.
+    //
+    // ALL valid permutations are returned, not just the first one.  The caller
+    // (Next()) queues all of them so that the evaluation engine can explore every
+    // branch.  Without this, a permutation that fails at a later condition would
+    // cause the engine to miss the correct solution entirely.
+    //
+    // For single-object rules this degenerates to the original behaviour: the loop
+    // runs once and produces at most one result.
 
-    for (auto fact_obj : objects)
+    const std::vector<Node> rule_obj_vec(_objects.begin(), _objects.end());
+    const std::vector<Node> fact_obj_vec(objects.begin(), objects.end());
+    std::vector<bool>       used(fact_obj_vec.size(), false);
+
+    std::function<void(size_t, Variables)> enumerate = [&](size_t idx, Variables bindings)
     {
-        Variables temp_bindings = *result;
-        history.clear(); // Reset history for cycle detection
-        if (unify_nodes(_n, rule_object_node, fact_obj, temp_bindings, *_variables, history, _log_depth, _prof))
+        if (idx == rule_obj_vec.size())
         {
-            *result        = temp_bindings;
-            object_matches = true;
-            break;
-        }
-    }
+            auto result = std::make_shared<Variables>(std::move(bindings));
 
-    if (object_matches)
-    {
-        if (_relation_variable != 0 && _variables->count(_relation_variable) == 0 && result->count(_relation_variable) == 0)
-            (*result)[_relation_variable] = relation;
-
-        if (_n->logging_active())
-        {
-            _prof.extract_success.fetch_add(1, std::memory_order_relaxed);
-            if (_current_rel_ctx) _prof.note_relation_match(_current_rel_ctx);
-
-            U_LOG(depth, "extract_bindings SUCCESS");
-
-            if (_n->should_log(depth))
+            if (_relation_variable != 0
+                && _variables->count(_relation_variable) == 0
+                && result->count(_relation_variable) == 0)
             {
-                for (const auto& [k, v] : *result)
-                    u_log(_n, depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+                (*result)[_relation_variable] = relation;
+            }
+
+            if (_n->logging_active())
+            {
+                _prof.extract_success.fetch_add(1, std::memory_order_relaxed);
+                if (_current_rel_ctx) _prof.note_relation_match(_current_rel_ctx);
+
+                U_LOG(depth, "extract_bindings SUCCESS (permutation " + std::to_string(results.size()) + ")");
+                if (_n->should_log(depth))
+                {
+                    for (const auto& [k, v] : *result)
+                        u_log(_n, depth, "  binding: " + U_NODE(k) + " = " + U_NODE(v));
+                }
+            }
+
+            results.push_back(std::move(result));
+            return;
+        }
+
+        for (size_t fi = 0; fi < fact_obj_vec.size(); ++fi)
+        {
+            if (used[fi]) continue;
+
+            Variables try_b = bindings;
+            history.clear();
+            if (unify_nodes(_n, rule_obj_vec[idx], fact_obj_vec[fi], try_b, *_variables, history, _log_depth, _prof))
+            {
+                used[fi] = true;
+                enumerate(idx + 1, std::move(try_b));
+                used[fi] = false;
             }
         }
+    };
 
-        return result;
-    }
+    enumerate(0, base_result);
 
-    if (_n->logging_active())
+    if (results.empty() && _n->logging_active())
     {
         _prof.extract_fail_object.fetch_add(1, std::memory_order_relaxed);
-        U_LOG(depth, "extract_bindings FAIL: no object matched");
+        U_LOG(depth, "extract_bindings FAIL: no object permutation matched");
     }
-    return nullptr;
+
+    return results;
 }
 
 std::shared_ptr<Variables> Unification::Unequals()

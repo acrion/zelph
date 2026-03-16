@@ -40,6 +40,15 @@ namespace zelph::string
 
 using namespace zelph::string;
 
+bool zelph::string::is_var(std::string token)
+{
+    // Legacy helper, might still be useful outside of PEG context
+    static const std::string variable_names("ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
+    if (token.empty()) return false;
+    if (token.size() == 1) return variable_names.find(*token.begin()) != std::string::npos;
+    return *token.begin() == '_';
+}
+
 bool zelph::string::is_inside_node_to_wstring()
 {
     return format_fact_level > 0;
@@ -180,15 +189,26 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
             if (!list_elements.empty())
             {
                 // Check whether all elements are single-character named nodes (digit-like).
-                bool all_single_char = std::all_of(list_elements.begin(), list_elements.end(), [&](network::Node e) -> bool
-                                                   {
-                        network::Node         eff = resolve_var(e);
-                        std::string nm  = z->get_formatted_name(eff, lang);
-                        return nm.length() == 1; });
-
-                if (all_single_char)
+                // Ensure no variable is present, so we don't accidentally contract variable lists.
+                bool all_single_char = true;
+                bool has_var         = false;
+                for (network::Node e : list_elements)
                 {
-                    // Reverse for display: stored order is LSB-first (e.g. [3,2,1] for 123),
+                    network::Node eff = resolve_var(e);
+                    std::string   nm  = z->get_formatted_name(eff, lang);
+                    if (nm.length() != 1)
+                    {
+                        all_single_char = false;
+                    }
+                    if (network::Zelph::is_var(eff) || string::is_var(nm))
+                    {
+                        has_var = true;
+                    }
+                }
+
+                if (all_single_char && !has_var)
+                {
+                    // Reverse for display: stored order is LSB-first (e.g.[3,2,1] for 123),
                     // conventional display is MSB-first. Omit spaces to match input syntax.
                     std::vector<network::Node> display_elements(list_elements.rbegin(), list_elements.rend());
 
