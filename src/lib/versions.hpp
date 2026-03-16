@@ -27,7 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <string>
 
-#include "zelph_export.h"
+#include <zelph_export.h>
 
 namespace zelph
 {
