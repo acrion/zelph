@@ -38,12 +38,13 @@ namespace zelph::console
 
     struct ReplState
     {
-        bool        auto_run    = true;
-        ScriptMode  script_mode = ScriptMode::Zelph;
-        std::string janet_buffer;                      // Accumulates incomplete Janet expressions
-        bool        accumulating_inline_janet = false; // True while a % expression spans multiple lines
+        bool        auto_run{true};
+        ScriptMode  script_mode{ScriptMode::Zelph};
+        std::string janet_buffer;                     // Accumulates incomplete Janet expressions
+        bool        accumulating_inline_janet{false}; // True while a % expression spans multiple lines
         std::string zelph_buffer;
-        bool        accumulating_zelph = false;
+        bool        accumulating_zelph{false};
+        bool        reset_requested{false};
     };
 
     // Helper RAII struct to temporarily suspend auto-run

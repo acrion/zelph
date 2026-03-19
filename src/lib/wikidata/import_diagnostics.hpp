@@ -243,10 +243,9 @@ namespace zelph::wikidata
                                       ? 100.0 * static_cast<double>(current_bytes) / static_cast<double>(total_size)
                                       : 0.0;
 
-        const double cpu_cores_avg           = wall_ns > 0 ? static_cast<double>(cpu_cur_ns - cpu_prev_ns) / static_cast<double>(wall_ns) : 0.0;
-        const double worker_busy_cores       = wall_ns > 0 ? static_cast<double>(entry_delta) / static_cast<double>(wall_ns) : 0.0;
-        const double worker_wait_cores       = wall_ns > 0 ? static_cast<double>(wait_delta) / static_cast<double>(wall_ns) : 0.0;
-        const double reader_blocked_fraction = wall_ns > 0 ? static_cast<double>(read_wait_full_delta) / static_cast<double>(wall_ns) : 0.0;
+        const double cpu_cores_avg     = wall_ns > 0 ? static_cast<double>(cpu_cur_ns - cpu_prev_ns) / static_cast<double>(wall_ns) : 0.0;
+        const double worker_busy_cores = wall_ns > 0 ? static_cast<double>(entry_delta) / static_cast<double>(wall_ns) : 0.0;
+        const double worker_wait_cores = wall_ns > 0 ? static_cast<double>(wait_delta) / static_cast<double>(wall_ns) : 0.0;
 
         const uint64_t accounted   = id_delta + label_delta + scan_delta + subj_delta + prop_delta + obj_delta + fact_delta + name_delta;
         const uint64_t other_delta = entry_delta > accounted ? entry_delta - accounted : 0;

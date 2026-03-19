@@ -120,12 +120,12 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 Key commands include:
 
 - `.help [command]` – Show help
-- `.exit` – Exit interactive mode
+- `.quit` – Exit interactive mode
 - `.lang [code]` – Show or set current language (e.g., `en`, `de`, `wikidata`)
 - `.name <node|id> <new_name>` – Set node name in current language
 - `.name <node|id> <lang> <new_name>` – Set node name in specific language
 - `.delname <node|id> [lang]` – Delete node name in current (or specified) language
-- `.node <name|id>` – Show detailed node information (names, connections, representation, Wikidata URL)
+- `.node <name|id>` – Show detailed node information (names, connections, representation, Wikidata URL); defaults to last output node
 - `.list <count>` – List first N existing nodes (internal order, with details)
 - `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
 - `.out <name|id> [count]` – List outgoing connected nodes (default: 20)
@@ -147,6 +147,7 @@ Key commands include:
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
 - `.cleanup` – Remove isolated nodes
+- `.new` – Clear the complete network
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
 - `.licenses` – Show third-party libraries and licenses
 - `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)

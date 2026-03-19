@@ -39,11 +39,17 @@ class console::Interactive::Impl
 {
 public:
     explicit Impl(Interactive* enclosing, io::OutputHandler output)
-        : _n(new network::Reasoning(output))
+        : _repl_state(std::make_shared<ReplState>())
         , _interactive(enclosing)
-        , _script_engine(new ScriptEngine(_n))
-        , _repl_state(std::make_shared<ReplState>())
     {
+        init(output);
+    }
+
+    void init(io::OutputHandler output)
+    {
+        _n             = std::make_unique<network::Reasoning>(output);
+        _script_engine = std::make_unique<ScriptEngine>(_n.get());
+
         _n->set_lang("zelph");
 
         _n->register_core_node(_n->core.RelationTypeCategory, "->");
@@ -61,27 +67,31 @@ public:
 
         // Initialize CommandExecutor with references to our state
         _command_executor = std::make_unique<CommandExecutor>(
-            _n,
+            _n.get(),
             _script_engine.get(),
-            _data_manager,
             _repl_state,
             [this](const std::string& line)
             { _interactive->process(line); });
     }
 
-    ~Impl()
+    void reset_reasoning()
     {
-        delete _n;
+        _command_executor.reset();              // destroy first (depends on both)
+        _script_engine.reset();                 // destroy second (depends on _n)
+        auto output = _n->get_output_handler(); // save what's needed
+        _n.reset();                             // destroy last
+
+        init(output);
+        _n->out("Cleared network and re-initialized core nodes.");
     }
 
     // Member function to delegate to CommandExecutor
-    void process_command(const std::vector<std::string>& cmd) const;
+    void process_command(const std::vector<std::string>& cmd);
 
-    std::shared_ptr<io::DataManager> _data_manager;
-    network::Reasoning* const        _n;
-    std::unique_ptr<ScriptEngine>    _script_engine;
-    std::unique_ptr<CommandExecutor> _command_executor;
-    std::shared_ptr<ReplState>       _repl_state;
+    std::unique_ptr<network::Reasoning> _n;
+    std::unique_ptr<ScriptEngine>       _script_engine;
+    std::unique_ptr<CommandExecutor>    _command_executor;
+    std::shared_ptr<ReplState>          _repl_state;
 
     Impl(const Impl&)            = delete;
     Impl& operator=(const Impl&) = delete;
@@ -273,9 +283,15 @@ void console::Interactive::import_file(const std::string& file) const
 }
 
 // Delegation method
-void console::Interactive::Impl::process_command(const std::vector<std::string>& cmd) const
+void console::Interactive::Impl::process_command(const std::vector<std::string>& cmd)
 {
     _command_executor->execute(cmd);
+
+    if (_repl_state->reset_requested)
+    {
+        _repl_state->reset_requested = false;
+        reset_reasoning();
+    }
 }
 
 void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const

@@ -32,7 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::wikidata
 {
-    class ImportThreadStats;
+    struct ImportThreadStats;
 
     class Wikidata : public io::DataManager
     {

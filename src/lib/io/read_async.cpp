@@ -63,8 +63,8 @@ public:
     Impl(std::filesystem::path file_name, size_t sufficient_batch_count, DiagnosticCallback diagnostic_callback)
         : _sufficient_size(std::max<size_t>(2, sufficient_batch_count))
         , _file_name(std::move(file_name))
-        , _diag(std::move(diagnostic_callback))
         , _compressed(_file_name.extension() == ".bz2")
+        , _diag(std::move(diagnostic_callback))
     {
         std::ifstream file(_file_name, std::ifstream::ate | std::ifstream::binary);
         if (file.is_open())

@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/zelph.hpp"
 #include "string/string_utils.hpp"
 
+#include <atomic>
 #include <mutex>
 
 // #define DEBUG_FORMAT_FACT
@@ -54,9 +55,22 @@ bool zelph::string::is_inside_node_to_wstring()
     return format_fact_level > 0;
 }
 
-void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::string& result, const std::string& lang, network::Node fact, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
+namespace zelph::string
 {
-    // Formats a fact into a string representation.
+    namespace
+    {
+        std::atomic<network::Node> _last_node_to_string_node{};
+    }
+
+    network::Node last_node_to_string_node()
+    {
+        return _last_node_to_string_node.load(std::memory_order_relaxed);
+    }
+}
+
+void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
+{
+    // Formats a node into a string representation.
 
     struct IncDec
     {
@@ -66,12 +80,17 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         int& _n;
     };
 
+    if (!history)
+    {
+        _last_node_to_string_node.store(node, std::memory_order_relaxed);
+    }
+
     std::lock_guard lock(mtx);
 
     IncDec incDec(format_fact_level);
 #ifdef DEBUG_FORMAT_FACT
     std::string indent(format_fact_level * 2, ' ');
-    z->diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY fact=" << fact << " parent=" << parent << std::endl;
+    z->diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY node=" << node << " parent=" << parent << std::endl;
 #endif
 
     if (!history) history = std::make_shared<std::unordered_set<network::Node>>();
@@ -91,12 +110,12 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     };
 
     // 1. Variable Substitution
-    network::Node resolved = resolve_var(fact);
+    network::Node resolved = resolve_var(node);
 
     if (history->find(resolved) != history->end())
     {
 #ifdef DEBUG_FORMAT_FACT
-        z->diagnostic_stream() << indent << "[DEBUG node_to_string] HIT HISTORY for fact=" << resolved << " -> returning '?'" << std::endl;
+        z->diagnostic_stream() << indent << "[DEBUG node_to_string] HIT HISTORY for node=" << resolved << " -> returning '?'" << std::endl;
 #endif
         result = "?";
         return;

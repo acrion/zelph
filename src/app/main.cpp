@@ -116,7 +116,7 @@ int main(int argc, char** argv)
 
         if (script_files.empty())
         {
-            std::string exit_command = ".exit";
+            std::string exit_command = ".quit";
             interactive.out("zelph " + zelph::console::Interactive::get_version());
             interactive.out("-- REPL mode - type .help for commands, " + exit_command + " to exit --");
             interactive.out("");

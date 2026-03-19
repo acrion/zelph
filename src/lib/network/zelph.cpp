@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
+#include "zelph_version.hpp"
 
 #include <bitset>
 #include <cassert>
@@ -39,7 +40,7 @@ using namespace zelph::network;
 
 std::string Zelph::get_version()
 {
-    return "0.9.5";
+    return get_zelph_version();
 }
 
 Zelph::Zelph(const io::OutputHandler& output)
@@ -273,7 +274,7 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
             const bool relationConnectsToSubject         = connectedFromRelation.count(subject) == 1;
             const bool subjectConnectsToRelation         = connectedToRelation.count(subject) == 1;
             const bool allObjectsConnectToRelation       = std::all_of(objects.begin(), objects.end(), [&](Node t)
-                                                                 { return connectedToRelation.count(t) != 0; });
+                                                                       { return connectedToRelation.count(t) != 0; });
             const bool noObjectsAreConnectedFromRelation = std::all_of(objects.begin(), objects.end(), [&](Node t)
                                                                        { return connectedFromRelation.count(t) == 1; });
 

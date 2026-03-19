@@ -175,8 +175,6 @@ void Wikidata::import_all(const std::string& constraints_dir)
         const bool log = false;
 
         // Worker function: each thread processes lines from ReadAsync
-        std::mutex read_mtx;
-
         auto worker_func = [&]()
         {
             std::vector<std::pair<std::string, std::streamoff>> batch;
@@ -247,10 +245,10 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 double         current_percentage = (static_cast<double>(current_bytes) / static_cast<double>(total_size)) * 100.0;
                 double         progress_fraction  = static_cast<double>(current_bytes) / static_cast<double>(total_size);
                 auto           elapsed_seconds    = std::chrono::duration_cast<std::chrono::seconds>(
-                                           current_time - start_time)
-                                           .count();
-                double speed       = 0;
-                int    eta_seconds = 0;
+                                                        current_time - start_time)
+                                                        .count();
+                double         speed              = 0;
+                int            eta_seconds        = 0;
 
                 if (elapsed_seconds > 0 && current_bytes > 0)
                 {

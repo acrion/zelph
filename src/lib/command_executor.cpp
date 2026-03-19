@@ -47,14 +47,12 @@ using namespace zelph;
 class console::CommandExecutor::Impl
 {
 public:
-    Impl(network::Reasoning*               n,
-         ScriptEngine*                     se,
-         std::shared_ptr<io::DataManager>& dm,
-         std::shared_ptr<ReplState>        rs,
-         CommandExecutor::LineProcessor    lp)
+    Impl(network::Reasoning*            n,
+         ScriptEngine*                  se,
+         std::shared_ptr<ReplState>     rs,
+         CommandExecutor::LineProcessor lp)
         : _n(n)
         , _script_engine(se)
-        , _data_manager(dm)
         , _repl_state(std::move(rs))
         , _process_line_callback(std::move(lp))
     {
@@ -79,11 +77,11 @@ public:
 
 private:
     // --- Context References ---
-    network::Reasoning*               _n;
-    ScriptEngine*                     _script_engine;
-    std::shared_ptr<io::DataManager>& _data_manager;
-    std::shared_ptr<ReplState>        _repl_state;
-    CommandExecutor::LineProcessor    _process_line_callback;
+    network::Reasoning*              _n;
+    ScriptEngine*                    _script_engine;
+    std::shared_ptr<io::DataManager> _data_manager;
+    std::shared_ptr<ReplState>       _repl_state;
+    CommandExecutor::LineProcessor   _process_line_callback;
 
     // --- Dispatch Map ---
     using Handler = std::function<void(const std::vector<std::string>&)>;
@@ -94,7 +92,7 @@ private:
     {
         _command_map[".help"] = [this](auto& c)
         { cmd_help(c); };
-        _command_map[".exit"] = [this](auto& c) { /* Exit handled by caller loop, usually acts as no-op here or throws */ };
+        _command_map[".quit"] = [](auto& c) { /* Exit handled by caller loop, usually acts as no-op here or throws */ };
         _command_map[".lang"] = [this](auto& c)
         { cmd_lang(c); };
         _command_map[".name"] = [this](auto& c)
@@ -143,6 +141,8 @@ private:
         { cmd_prune(c, false); };
         _command_map[".cleanup"] = [this](auto& c)
         { cmd_cleanup(c); };
+        _command_map[".new"] = [this](auto& c)
+        { cmd_new(c); };
         _command_map[".stat"] = [this](auto& c)
         { cmd_stat(c); };
         _command_map[".licenses"] = [this](auto& c)
@@ -580,12 +580,12 @@ private:
             "Available Commands",
             "──────────────────",
             ".help [command]             – Show this help or detailed help for a specific command",
-            ".exit                       – Exit interactive mode",
+            ".quit                       – Exit REPL (quits zelph)",
             ".lang [code]                – Show or set current language",
             ".name <node|id> <new_name>         – Set name in current language",
             ".name <node|id> <lang> <new_name>  – Set name in specific language",
             ".delname <node|id> [lang]          – Delete name in current language (or specified language)",
-            ".node <name|id>                    – Show detailed node information (names, connections, representation, Wikidata URL)",
+            ".node [<name|id>]                  – Show detailed node information (names, connections, representation, Wikidata URL); defaults to last output node",
             ".list <count>                      – List first N existing nodes (internal map order, with details)",
             ".clist <count>                     – List first N nodes named in current language (sorted by ID if reasonable size, otherwise map order)",
             ".out <name|id> [count]             – List details of outgoing connected nodes (default 20)",
@@ -607,6 +607,7 @@ private:
             ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             ".cleanup                    – Remove isolated nodes and clean name mappings",
+            ".new                        – Clear the complete network and re-initialize the core nodes",
             ".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
             ".licenses                   – Show third-party libraries and licenses",
             ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
@@ -668,8 +669,8 @@ private:
                       "Without argument: shows this general help text with syntax and command overview.\n"
                       "With argument: shows detailed help for the specified command."},
 
-            {".exit", ".exit\n"
-                      "Exits the interactive REPL session."},
+            {".quit", ".quit\n"
+                      "Exits the interactive REPL session and quits zelph."},
 
             {".lang", ".lang [language_code]\n"
                       "Without argument: displays the current language used for node names.\n"
@@ -704,10 +705,11 @@ private:
                     "Lists detailed information for up to <count> nodes that have outgoing connections\n"
                     "to the given node (default 20, sorted by node ID)."},
 
-            {".node", ".node <name_or_id>\n"
+            {".node", ".node [<name_or_id>]\n"
                       "Displays details for a single node: its ID, non-empty names in all languages,\n"
                       "incoming/outgoing connection counts, and a clickable Wikidata URL if it has a Wikidata ID.\n"
-                      "The argument can be a name (in current language) or a numeric node ID."},
+                      "The argument can be a name (in current language) or a numeric node ID.\n"
+                      "If no argument is given, the node from the last output is used."},
 
             {".nodes", ".nodes <count>\n"
                        "Lists the first N named nodes (nodes that have at least one name in any language),\n"
@@ -798,6 +800,9 @@ private:
             {".cleanup", ".cleanup\n"
                          "Removes all nodes that have no connections (isolated nodes).\n"
                          "Also cleans up associated entries in name mappings."},
+
+            {".new", ".new\n"
+                     "Clears the complete network, including node names. Re-initializes core nodes."},
 
             {".stat", ".stat\n"
                       "Shows current network statistics:\n"
@@ -953,35 +958,46 @@ private:
     }
     void cmd_node(const std::vector<std::string>& cmd)
     {
-        if (cmd.size() != 2) throw std::runtime_error("Command .node: Exactly one argument required");
+        if (cmd.size() > 2) throw std::runtime_error("Command .node: At most one argument required");
 
-        std::string arg = cmd[1];
-
+        std::string                arg;
         std::vector<network::Node> nodes;
 
-        try
+        if (cmd.size() == 1)
         {
-            // Try single resolve (non-destructive: ID last)
-            network::Node single = resolve_single_node(arg, false);
-            nodes.push_back(single);
+            network::Node last = string::last_node_to_string_node();
+            if (last == network::Node{}) throw std::runtime_error("Command .node: No argument given and no previous output node available");
+            nodes.push_back(last);
         }
-        catch (...)
+        else
         {
-            // Not a single node/ID → try name search (multiple possible)
-            nodes = _n->resolve_nodes_by_name(arg);
-            if (nodes.empty())
+            arg = cmd[1];
+
+            try
             {
-                throw std::runtime_error("No node found with name '" + arg + "' in current language '" + _n->lang() + "'");
+                // Try single resolve (non-destructive: ID last)
+                network::Node single = resolve_single_node(arg, false);
+                nodes.push_back(single);
+            }
+            catch (...)
+            {
+                // Not a single node/ID → try name search (multiple possible)
+                nodes = _n->resolve_nodes_by_name(arg);
+                if (nodes.empty())
+                {
+                    throw std::runtime_error("No node found with name '" + arg + "' in current language '" + _n->lang() + "'");
+                }
             }
         }
 
         if (nodes.size() == 1)
         {
-            bool resolved_from_name = !_n->get_name(nodes[0], _n->lang(), false).empty() || std::all_of(arg.begin(), arg.end(), ::iswdigit);
+            bool resolved_from_name = !arg.empty() && (!_n->get_name(nodes[0], _n->lang(), false).empty() || std::all_of(arg.begin(), arg.end(), ::iswdigit));
             display_node_details(nodes[0], resolved_from_name && nodes.size() == 1);
         }
         else
         {
+            // nodes.size() > 1 only reachable via name search (arg non-empty)
             _n->out_stream() << "Found " << nodes.size() << " nodes with name '" << arg
                              << "' in current language '" << _n->lang() << "':" << std::endl;
             _n->out_stream() << "------------------------" << std::endl;
@@ -1324,7 +1340,7 @@ private:
     }
     void cmd_list_rules(const std::vector<std::string>&)
     {
-        // Get all nodes that are subjects of a core.Causes relation
+        // Get all nodes that are subjects of a core.Causes() relation
         network::adjacency_set rule_nodes = _n->get_rules();
         if (rule_nodes.empty())
         {
@@ -1490,6 +1506,11 @@ private:
         size_t names_removed = _n->cleanup_names();
         _n->out("Removed " + std::to_string(names_removed) + " dangling name entries.", true);
     }
+    void cmd_new(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 1) throw std::runtime_error("Command .new takes no arguments");
+        _repl_state->reset_requested = true;
+    }
     void cmd_stat(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .stat takes no arguments");
@@ -1599,12 +1620,11 @@ private:
     }
 };
 
-console::CommandExecutor::CommandExecutor(network::Reasoning*               reasoning,
-                                          ScriptEngine*                     script_engine,
-                                          std::shared_ptr<io::DataManager>& data_manager,
-                                          std::shared_ptr<ReplState>        repl_state,
-                                          LineProcessor                     line_processor)
-    : _pImpl(new Impl(reasoning, script_engine, data_manager, repl_state, std::move(line_processor)))
+console::CommandExecutor::CommandExecutor(network::Reasoning*        reasoning,
+                                          ScriptEngine*              script_engine,
+                                          std::shared_ptr<ReplState> repl_state,
+                                          LineProcessor              line_processor)
+    : _pImpl(new Impl(reasoning, script_engine, repl_state, std::move(line_processor)))
 {
 }
 

@@ -46,6 +46,7 @@ if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         mimalloc
         GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
         GIT_TAG v3.2.8
+        SYSTEM
     )
     FetchContent_MakeAvailable(mimalloc)
 
@@ -60,6 +61,7 @@ FetchContent_Declare(
     janet
     GIT_REPOSITORY https://github.com/janet-lang/janet.git
     GIT_TAG v1.41.2
+    SYSTEM
     SOURCE_SUBDIR ""
 )
 
@@ -171,12 +173,14 @@ FetchContent_Declare(
     unordered_dense
     GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
     GIT_TAG v4.8.1
+    SYSTEM
 )
 
 FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
     GIT_TAG v1.3.0
+    SYSTEM
 )
 
 set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
@@ -185,7 +189,20 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(unordered_dense CapnProto)
 
 # Suppress all warnings from Cap'n Proto targets (third-party), including LTO
-set(CAPNP_TARGETS kj kj-async capnp capnp-json capnpc capnp_tool capnpc_cpp)
+set(CAPNP_TARGETS
+    kj
+    kj-async
+    kj-http
+    kj-gzip
+    kj-test
+    capnp
+    capnp-json
+    capnp-rpc
+    capnpc
+    capnp_tool
+    capnpc_cpp
+    capnpc_capnp)
+
 foreach (target IN LISTS CAPNP_TARGETS)
     if (TARGET ${target})
         set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -202,6 +219,7 @@ FetchContent_Declare(
     bzip2
     GIT_REPOSITORY https://gitlab.com/bzip2/bzip2.git
     GIT_TAG bzip2-1.0.8
+    SYSTEM
 )
 
 FetchContent_GetProperties(bzip2)
@@ -334,12 +352,13 @@ elseif(NOT APPLE)
     target_link_libraries(zelph_lib PRIVATE dl)
 endif()
 
-# Suppress warnings from Cap'n Proto includes in zelph_lib
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(zelph_lib PRIVATE -w -fpermissive)
-elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(zelph_lib PRIVATE /w)
-endif ()
+# Promote Cap'n Proto includes to SYSTEM to suppress their warnings
+get_target_property(_capnp_includes CapnProto::capnp INTERFACE_INCLUDE_DIRECTORIES)
+if(_capnp_includes)
+    target_include_directories(zelph_lib SYSTEM PRIVATE ${_capnp_includes})
+endif()
+
+set_source_files_properties(${CAPNP_SRCS} PROPERTIES COMPILE_OPTIONS "-w")
 
 # Enable IPO/LTO if available
 check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_OUTPUT)
@@ -353,6 +372,12 @@ endif ()
 generate_export_header(zelph_lib
     BASE_NAME ZELPH
     EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/zelph_export.h
+)
+
+configure_file(
+    network/zelph_version.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/zelph_version.hpp
+    @ONLY
 )
 
 target_include_directories(zelph_lib PUBLIC

@@ -1,2 +1,2 @@
 #!/usr/bin/env elvish
-time { put '.wikidata download/wikidata-20250127-all.json' '.remove-rules' '.list-rules' '.load sample_scripts/wikidata-disjointness-violations.zph' '.list-rules' '.run-md disjointness-violations' '.exit' | each $echo~ | src/cmake-build-release/bin/zelph }
+time { put '.wikidata download/wikidata-20250127-all.json' '.remove-rules' '.list-rules' '.load sample_scripts/wikidata-disjointness-violations.zph' '.list-rules' '.run-md disjointness-violations' '.quit' | each $echo~ | src/cmake-build-release/bin/zelph }
