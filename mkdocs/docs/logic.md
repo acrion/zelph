@@ -31,7 +31,7 @@ For a hands-on quick start, see the [Quick Start Guide](quickstart.md).
 <a href="#" onclick="jumpTo(403); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/herbrand_fixpoint_overlay.svg" width="67%">
+  <img src="../assets/herbrand_fixpoint_overlay.svg" width="67%">
 </div>
 
 zelph's inference engine performs **forward chaining** (bottom-up evaluation), similar to Datalog or production rule systems.
@@ -77,7 +77,7 @@ In zelph, this problem does not exist. Every statement is already a node. The re
 zelph's design can be understood through comparisons with several established systems. These comparisons highlight both shared principles and fundamental differences.
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/zelph_summary_wrapup_v2.svg" width="67%">
+  <img src="../assets/zelph_summary_wrapup_v2.svg" width="67%">
 </div>
 
 ### Prolog and Datalog
@@ -91,7 +91,7 @@ But unlike standard Datalog, zelph's predicates are first-class nodes. This enab
 <a href="#" onclick="jumpTo(542); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/lean_vs_zelph_comparison.svg" width="67%">
+  <img src="../assets/lean_vs_zelph_comparison.svg" width="67%">
 </div>
 
 [Lean 4](https://lean-lang.org) is a powerful theorem prover based on dependent type theory. Through the [Curry-Howard correspondence](https://en.wikipedia.org/wiki/Curry%E2%80%93Howard_correspondence), proofs in Lean _are_ programs — propositions are types, and proofs are terms. This is a beautiful unification of logic and computation, but it is a different kind of unification than what zelph provides.
@@ -107,7 +107,7 @@ Lean unifies through **type theory**. zelph unifies through **graph topology**. 
 <a href="#" onclick="jumpTo(611); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/goedel_vs_zelph_comparison.svg" width="67%">
+  <img src="../assets/goedel_vs_zelph_comparison.svg" width="67%">
 </div>
 
 In 1931, [Gödel](https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems) showed that formal systems can reason about themselves by encoding formulas as numbers via prime factorization. Arithmetic statements about those numbers become, implicitly, statements about formulas.
@@ -119,7 +119,7 @@ zelph's [relation nodes](#relation-nodes-and-self-reference) serve the exact sam
 <a href="#" onclick="jumpTo(708); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/lisp_vs_zelph_comparison_v2.svg" width="67%">
+  <img src="../assets/lisp_vs_zelph_comparison_v2.svg" width="67%">
 </div>
 
 Lisp's famous "code is data" principle — [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity) via S-expressions — is a direct ancestor of what zelph does. But where Lisp applies this idea to _programs_ via cons-cell lists, zelph applies it to _knowledge_ via subject–predicate–object triples.
@@ -285,7 +285,7 @@ This is higher-order reasoning expressed as first-order graph topology — with 
 <a href="#" onclick="jumpTo(812.5); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/negation_as_failure_comparison.svg" width="67%">
+  <img src="../assets/negation_as_failure_comparison.svg" width="67%">
 </div>
 
 Negation in zelph follows **negation-as-failure** (NAF) semantics, familiar from Datalog with stratified negation and Prolog's `\+`.
@@ -329,7 +329,7 @@ The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`
 <a href="#" onclick="jumpTo(859); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/inequality_fol_vs_zelph.svg" width="67%">
+  <img src="../assets/inequality_fol_vs_zelph.svg" width="67%">
 </div>
 
 The `!=` operator is a **built-in guard constraint** — not a fact lookup.
@@ -478,7 +478,7 @@ If a knowledge base (e.g. Wikidata) records that 13 is a prime number, that sema
 ### Numbers as Cons-Lists
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/arithmetic_conventional_vs_zelph.svg" width="67%">
+  <img src="../assets/arithmetic_conventional_vs_zelph.svg" width="67%">
 </div>
 
 The list `<42>` is internally stored as `2 cons (4 cons nil)` — least significant digit first.
@@ -511,7 +511,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 <a href="#" onclick="jumpTo(1068); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/multidigit_addition_pipeline_v2.svg" width="67%">
+  <img src="../assets/multidigit_addition_pipeline_v2.svg" width="67%">
 </div>
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
@@ -630,7 +630,7 @@ This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), wher
 <a href="#" onclick="jumpTo(1143); return false;">🎬 Watch this section</a>
 
 <div class="svg-dark-container" style="text-align: center;">
-  <img src="/assets/wikidata_p361_p527_consistency_v2.svg" width="67%">
+  <img src="../assets/wikidata_p361_p527_consistency_v2.svg" width="67%">
 </div>
 
 zelph can load and reason over millions of Wikidata facts. A typical consistency check uses negation to detect missing inverse relations:
