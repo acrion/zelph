@@ -7,14 +7,16 @@ zelph offers powerful analysis capabilities for the complete Wikidata knowledge 
 
 For an in-depth exploration of zelph's reasoning capabilities, including deep unification, negation, inequality constraints, and semantic arithmetic, see [Logic and Computation](logic.md).
 
-### Video Presentation
+### Video: Logic and Computation
 
-Watch this video introduction to zelph, presented at the Wikidata Ontology Cleaning Task Force. For detailed section navigation and more context, visit the [full presentation page](presentation.md).
+Watch this video walkthrough of zelph's reasoning capabilities — including live demonstrations of rules, meta-reasoning, semantic arithmetic, and Wikidata analysis. For section navigation and the full technical reference, visit [Logic and Computation](logic.md).
 
 <video controls width="100%">
-    <source src="https://zelph.org/assets/2026-01-13-zelph.mp4" type="video/mp4">
+    <source src="https://zelph.org/assets/2026-03-21-zelph.mp4" type="video/mp4">
   Your browser does not support the video tag.
 </video>
+
+A separate [presentation video](presentation.md) covers zelph's application to Wikidata as part of the Ontology Cleaning Task Force.
 
 ### Quick Start Guide 🚀
 
