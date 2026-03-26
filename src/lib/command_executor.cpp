@@ -505,6 +505,56 @@ private:
         return indices;
     }
 
+    static std::vector<uint64_t> parse_node_id_list(const std::string& value, const std::string& label)
+    {
+        std::vector<uint64_t> ids;
+        if (value.empty() || value == "-" || value == "none")
+        {
+            return ids;
+        }
+
+        std::stringstream stream(value);
+        std::string       token;
+        while (std::getline(stream, token, ','))
+        {
+            if (token.empty())
+            {
+                continue;
+            }
+            const auto first_non_space = token.find_first_not_of(" \t");
+            if (first_non_space != std::string::npos)
+            {
+                const auto last_non_space = token.find_last_not_of(" \t");
+                token                     = token.substr(first_non_space, last_non_space - first_non_space + 1);
+            }
+            if (token.empty())
+            {
+                continue;
+            }
+            if (token == "-" || token == "none")
+            {
+                throw std::runtime_error("Invalid node-route selector '" + token + "' in " + label);
+            }
+
+            try
+            {
+                size_t   pos = 0;
+                uint64_t id  = std::stoull(token, &pos, 10);
+                if (pos != token.size())
+                {
+                    throw std::runtime_error("");
+                }
+                ids.push_back(id);
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid node ID '" + token + "' in " + label);
+            }
+        }
+
+        return ids;
+    }
+
     void require_full_graph_mode(const char* command_name) const
     {
         if (_repl_state && _repl_state->partial_load_mode)
@@ -954,7 +1004,7 @@ private:
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
             ".import <file.zph>          – Load and execute a zelph script file",
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
-            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
+            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
             ".save <file.bin>            – Save the current network to a binary file",
             ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
@@ -1131,13 +1181,16 @@ private:
                       "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
                       "  in the same directory for faster future loads."},
 
-            {".load-partial", ".load-partial <file.bin|manifest.json> [left=0,1,...|none] [right=0,1,...|none] [nameOfNode=0,1,...|none] [nodeOfName=0,1,...|none] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only]\n"
+            {".load-partial", ".load-partial <file.bin|manifest.json> [left=0,1,...|none] [right=0,1,...|none] [nameOfNode=0,1,...|none] [nodeOfName=0,1,...|none] [route-node=id,...|none] [route-name=<exact_name>] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only]\n"
                                "Loads the selected serialized chunks from a Zelph .bin file, or from a manifest that points to chunk-sharded storage.\n"
                                "This is an incomplete graph view intended for read-only inspection only.\n"
                                "Safe surfaces are metadata, node/name inspection, and direct adjacency lookups.\n"
                                "Inference, pruning, cleanup, and destructive edits are blocked while partial mode is active.\n"
                                "If no selectors are provided, all chunks are loaded (except when `meta-only` is used).\n"
                                "Use '<section>=none' (or '-') to explicitly skip that section.\n"
+                               "Route selectors require a manifest that advertises nodeRouteIndex support.\n"
+                               "Use 'route-node=' to resolve node IDs into left/right/nameOfNode chunks.\n"
+                               "Use 'route-name=' together with 'route-lang=' to resolve nodeOfName chunks by exact name.\n"
                                "For manifest mode, pass 'manifest=path', optional 'source-bin=<path>' and 'shard-root=<path>'.\n"
                                "Use 'meta-only' to load only the header/bookkeeping without any chunk payloads."},
 
@@ -1712,6 +1765,20 @@ private:
                 selection.nodeOfName = parse_chunk_index_list(value, "nodeOfName");
                 selection.node_of_name_explicit = true;
             }
+            else if (key == "route-node" || key == "route_node")
+            {
+                selection.route_nodes = parse_node_id_list(value, "route-node");
+                selection.route_nodes_explicit = true;
+            }
+            else if (key == "route-name" || key == "route_name")
+            {
+                selection.route_name = value;
+                selection.route_name_explicit = true;
+            }
+            else if (key == "route-lang" || key == "route_lang")
+            {
+                selection.route_lang = value;
+            }
             else if (key == "manifest")
             {
                 use_manifest = true;
@@ -1729,6 +1796,16 @@ private:
             {
                 throw std::runtime_error("Command .load-partial: Unknown selector '" + key + "'");
             }
+        }
+
+        if ((selection.route_nodes_explicit || selection.route_name_explicit) && !use_manifest)
+        {
+            throw std::runtime_error("Command .load-partial: route selectors require manifest mode");
+        }
+
+        if (selection.route_name_explicit && selection.route_lang.empty())
+        {
+            throw std::runtime_error("Command .load-partial: route-name requires route-lang=<lang>");
         }
 
         if (meta_only)
