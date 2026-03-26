@@ -53,7 +53,7 @@ log.txt
 xcode/*
 *.crdownload
 latest-all*.json
-mkdocs/docs/*/
+mkdocs/docs/missing-superclass/
 mkdocs/site
 /*.svg
 /*.dot

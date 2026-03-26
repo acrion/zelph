@@ -37,10 +37,18 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "versions.hpp"
 #include "wikidata/wikidata.hpp"
 #include "wikidata/wikidata_text_compressor.hpp"
+#include "zelph.capnp.h"
 
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
+#include <kj/io.h>
+
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <sstream>
 
 using namespace zelph;
 
@@ -125,6 +133,8 @@ private:
         { cmd_decode(c); };
         _command_map[".load"] = [this](auto& c)
         { cmd_load(c); };
+        _command_map[".load-partial"] = [this](auto& c)
+        { cmd_load_partial(c); };
         _command_map[".wikidata-constraints"] = [this](auto& c)
         { cmd_wikidata_constraints(c); };
         _command_map[".list-rules"] = [this](auto& c)
@@ -145,6 +155,10 @@ private:
         { cmd_new(c); };
         _command_map[".stat"] = [this](auto& c)
         { cmd_stat(c); };
+        _command_map[".stat-file"] = [this](auto& c)
+        { cmd_stat_file(c); };
+        _command_map[".index-file"] = [this](auto& c)
+        { cmd_index_file(c); };
         _command_map[".licenses"] = [this](auto& c)
         { cmd_licenses(c); };
         _command_map[".log"] = [this](auto& c)
@@ -164,6 +178,343 @@ private:
     }
 
     // --- Helpers ---
+
+    class CountingInputStream : public kj::InputStream
+    {
+    public:
+        explicit CountingInputStream(kj::InputStream& inner)
+            : _inner(inner)
+        {
+        }
+
+        size_t tryRead(void* buffer, size_t minBytes, size_t maxBytes) override
+        {
+            auto n = _inner.tryRead(buffer, minBytes, maxBytes);
+            _count += n;
+            return n;
+        }
+
+        void skip(size_t bytes) override
+        {
+            _inner.skip(bytes);
+            _count += bytes;
+        }
+
+        uint64_t bytes_read() const
+        {
+            return _count;
+        }
+
+    private:
+        kj::InputStream& _inner;
+        uint64_t         _count{0};
+    };
+
+    class CountingBufferedInputStream : public kj::BufferedInputStream
+    {
+    public:
+        explicit CountingBufferedInputStream(kj::InputStream& inner)
+            : _buffered(inner)
+        {
+        }
+
+        kj::ArrayPtr<const kj::byte> tryGetReadBuffer() override
+        {
+            return _buffered.tryGetReadBuffer();
+        }
+
+        size_t tryRead(void* buffer, size_t minBytes, size_t maxBytes) override
+        {
+            auto n = _buffered.tryRead(buffer, minBytes, maxBytes);
+            _count += n;
+            return n;
+        }
+
+        void skip(size_t bytes) override
+        {
+            _buffered.skip(bytes);
+            _count += bytes;
+        }
+
+        uint64_t bytes_read() const
+        {
+            return _count;
+        }
+
+    private:
+        kj::BufferedInputStreamWrapper _buffered;
+        uint64_t                       _count{0};
+    };
+
+    struct BinHeaderStats
+    {
+        uint32_t left_chunk_count    = 0;
+        uint32_t right_chunk_count   = 0;
+        uint32_t name_of_node_count  = 0;
+        uint32_t node_of_name_count  = 0;
+        uint64_t file_size_bytes     = 0;
+    };
+
+    struct BinChunkRef
+    {
+        uint32_t    chunk_index = 0;
+        uint64_t    offset      = 0;
+        uint64_t    length      = 0;
+        std::string which;
+        std::string lang;
+    };
+
+    struct BinIndexData
+    {
+        std::string              filename;
+        BinHeaderStats           stats;
+        uint64_t                 header_length_bytes = 0;
+        std::vector<BinChunkRef> left_chunks;
+        std::vector<BinChunkRef> right_chunks;
+        std::vector<BinChunkRef> name_of_node_chunks;
+        std::vector<BinChunkRef> node_of_name_chunks;
+    };
+
+    static ::capnp::ReaderOptions make_bin_reader_options()
+    {
+        ::capnp::ReaderOptions options;
+        options.traversalLimitInWords = 1ULL << 32;
+        options.nestingLimit          = 128;
+        return options;
+    }
+
+    static BinHeaderStats read_bin_header_stats(const std::string& filename)
+    {
+        FILE* file = fopen(filename.c_str(), "rb");
+        if (!file)
+        {
+            throw std::runtime_error("Command .stat-file: Failed to open file '" + filename + "'");
+        }
+
+        try
+        {
+            BinHeaderStats stats;
+            stats.file_size_bytes = std::filesystem::file_size(filename);
+
+            kj::FdInputStream              raw_input(fileno(file));
+            kj::BufferedInputStreamWrapper buffered_input(raw_input);
+
+            ::capnp::ReaderOptions options;
+            options.traversalLimitInWords = 1ULL << 32;
+            options.nestingLimit          = 128;
+
+            ::capnp::PackedMessageReader main_message(buffered_input, options);
+            auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
+
+            stats.left_chunk_count   = impl.getLeftChunkCount();
+            stats.right_chunk_count  = impl.getRightChunkCount();
+            stats.name_of_node_count = impl.getNameOfNodeChunkCount();
+            stats.node_of_name_count = impl.getNodeOfNameChunkCount();
+
+            fclose(file);
+            return stats;
+        }
+        catch (...)
+        {
+            fclose(file);
+            throw;
+        }
+    }
+
+    static BinIndexData read_bin_index_data(const std::string& filename)
+    {
+        FILE* file = fopen(filename.c_str(), "rb");
+        if (!file)
+        {
+            throw std::runtime_error("Command .index-file: Failed to open file '" + filename + "'");
+        }
+
+        try
+        {
+            BinIndexData data;
+            data.filename              = filename;
+            data.stats.file_size_bytes = std::filesystem::file_size(filename);
+
+            kj::FdInputStream           raw_input(fileno(file));
+            CountingBufferedInputStream counting_input(raw_input);
+            auto                        options = make_bin_reader_options();
+
+            uint64_t header_offset = counting_input.bytes_read();
+            ::capnp::PackedMessageReader main_message(counting_input, options);
+            auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
+            data.header_length_bytes = counting_input.bytes_read() - header_offset;
+
+            data.stats.left_chunk_count   = impl.getLeftChunkCount();
+            data.stats.right_chunk_count  = impl.getRightChunkCount();
+            data.stats.name_of_node_count = impl.getNameOfNodeChunkCount();
+            data.stats.node_of_name_count = impl.getNodeOfNameChunkCount();
+
+            auto read_adj_chunks = [&](uint32_t count, std::vector<BinChunkRef>& target)
+            {
+                target.reserve(count);
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    uint64_t before = counting_input.bytes_read();
+                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                    auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
+                    BinChunkRef                  ref;
+                    ref.chunk_index = chunk.getChunkIndex();
+                    ref.offset      = before;
+                    ref.length      = counting_input.bytes_read() - before;
+                    ref.which       = chunk.getWhich().cStr();
+                    target.push_back(std::move(ref));
+                }
+            };
+
+            read_adj_chunks(data.stats.left_chunk_count, data.left_chunks);
+            read_adj_chunks(data.stats.right_chunk_count, data.right_chunks);
+
+            data.name_of_node_chunks.reserve(data.stats.name_of_node_count);
+            for (uint32_t i = 0; i < data.stats.name_of_node_count; ++i)
+            {
+                uint64_t before = counting_input.bytes_read();
+                ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
+                BinChunkRef                  ref;
+                ref.chunk_index = chunk.getChunkIndex();
+                ref.offset      = before;
+                ref.length      = counting_input.bytes_read() - before;
+                ref.lang        = chunk.getLang().cStr();
+                data.name_of_node_chunks.push_back(std::move(ref));
+            }
+
+            data.node_of_name_chunks.reserve(data.stats.node_of_name_count);
+            for (uint32_t i = 0; i < data.stats.node_of_name_count; ++i)
+            {
+                uint64_t before = counting_input.bytes_read();
+                ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
+                BinChunkRef                  ref;
+                ref.chunk_index = chunk.getChunkIndex();
+                ref.offset      = before;
+                ref.length      = counting_input.bytes_read() - before;
+                ref.lang        = chunk.getLang().cStr();
+                data.node_of_name_chunks.push_back(std::move(ref));
+            }
+
+            fclose(file);
+            return data;
+        }
+        catch (...)
+        {
+            fclose(file);
+            throw;
+        }
+    }
+
+    static void write_bin_index_json(const BinIndexData& data, const std::string& output_filename)
+    {
+        std::ofstream out(output_filename);
+        if (!out.is_open())
+        {
+            throw std::runtime_error("Command .index-file: Failed to open output file '" + output_filename + "'");
+        }
+
+        auto write_chunk_array = [&](const char* key, const std::vector<BinChunkRef>& refs)
+        {
+            out << "  \"" << key << "\": [\n";
+            for (size_t i = 0; i < refs.size(); ++i)
+            {
+                const auto& ref = refs[i];
+                out << "    {\"chunkIndex\":" << ref.chunk_index
+                    << ",\"offset\":" << ref.offset
+                    << ",\"length\":" << ref.length;
+                if (!ref.which.empty())
+                {
+                    out << ",\"which\":\"" << ref.which << "\"";
+                }
+                if (!ref.lang.empty())
+                {
+                    out << ",\"lang\":\"" << ref.lang << "\"";
+                }
+                out << "}";
+                if (i + 1 < refs.size())
+                {
+                    out << ",";
+                }
+                out << "\n";
+            }
+            out << "  ]";
+        };
+
+        out << "{\n";
+        out << "  \"file\":\"" << data.filename << "\",\n";
+        out << "  \"header\":{\"offset\":0,\"length\":" << data.header_length_bytes << "},\n";
+        write_chunk_array("left", data.left_chunks);
+        out << ",\n";
+        write_chunk_array("right", data.right_chunks);
+        out << ",\n";
+        write_chunk_array("nameOfNode", data.name_of_node_chunks);
+        out << ",\n";
+        write_chunk_array("nodeOfName", data.node_of_name_chunks);
+        out << "\n}\n";
+    }
+
+    static std::vector<uint32_t> parse_chunk_index_list(const std::string& value, const std::string& label)
+    {
+        std::vector<uint32_t> indices;
+        if (value.empty() || value == "-" || value == "none")
+        {
+            return indices;
+        }
+
+        std::stringstream stream(value);
+        std::string       token;
+        while (std::getline(stream, token, ','))
+        {
+            if (token.empty())
+            {
+                continue;
+            }
+            const auto first_non_space = token.find_first_not_of(" \t");
+            if (first_non_space != std::string::npos)
+            {
+                const auto last_non_space = token.find_last_not_of(" \t");
+                token                   = token.substr(first_non_space, last_non_space - first_non_space + 1);
+            }
+            if (token.empty())
+            {
+                continue;
+            }
+            if (token == "-" || token == "none")
+            {
+                throw std::runtime_error("Invalid chunk selector '" + token + "' in " + label);
+            }
+
+            try
+            {
+                size_t   pos   = 0;
+                uint32_t index = static_cast<uint32_t>(std::stoul(token, &pos, 10));
+                if (pos != token.size())
+                {
+                    throw std::runtime_error("");
+                }
+                indices.push_back(index);
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid chunk index '" + token + "' in " + label);
+            }
+        }
+
+        return indices;
+    }
+
+    void require_full_graph_mode(const char* command_name) const
+    {
+        if (_repl_state && _repl_state->partial_load_mode)
+        {
+            throw std::runtime_error("Blocked in partial load mode; full graph required for "
+                                     + std::string(command_name)
+                                     + ". Loaded source: "
+                                     + (_repl_state->partial_load_source.empty() ? "<unknown>" : _repl_state->partial_load_source));
+        }
+    }
 
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
 
@@ -603,12 +954,15 @@ private:
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
             ".import <file.zph>          – Load and execute a zelph script file",
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
+            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
             ".save <file.bin>            – Save the current network to a binary file",
             ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             ".cleanup                    – Remove isolated nodes and clean name mappings",
             ".new                        – Clear the complete network and re-initialize the core nodes",
             ".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            ".stat-file <file.bin>       – Show serialized-file chunk statistics without loading the network",
+            ".index-file <file.bin> <json> – Emit a JSON byte-offset index for a serialized .bin file",
             ".licenses                   – Show third-party libraries and licenses",
             ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
             ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
@@ -779,6 +1133,16 @@ private:
                       "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
                       "  in the same directory for faster future loads."},
 
+            {".load-partial", ".load-partial <file.bin|manifest.json> [left=0,1,...|none] [right=0,1,...|none] [nameOfNode=0,1,...|none] [nodeOfName=0,1,...|none] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only]\n"
+                               "Loads the selected serialized chunks from a Zelph .bin file, or from a manifest that points to chunk-sharded storage.\n"
+                               "This is an incomplete graph view intended for read-only inspection only.\n"
+                               "Safe surfaces are metadata, node/name inspection, and direct adjacency lookups.\n"
+                               "Inference, pruning, cleanup, and destructive edits are blocked while partial mode is active.\n"
+                               "If no selectors are provided, all chunks are loaded (except when `meta-only` is used).\n"
+                               "Use '<section>=none' (or '-') to explicitly skip that section.\n"
+                               "For manifest mode, pass 'manifest=path', optional 'source-bin=<path>' and 'shard-root=<path>'.\n"
+                               "Use 'meta-only' to load only the header/bookkeeping without any chunk payloads."},
+
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
                       "The filename must end with '.bin'."},
@@ -812,6 +1176,16 @@ private:
                       "- Total entries in node-of-name mappings\n"
                       "- Number of languages\n"
                       "- Number of rules"},
+
+            {".stat-file", ".stat-file <file.bin>\n"
+                           "Reads only the serialized Zelph header from the given .bin file and prints\n"
+                           "file size and chunk counts for left/right adjacency and name maps.\n"
+                           "Does not load the network into memory."},
+
+            {".index-file", ".index-file <file.bin> <output.json>\n"
+                            "Scans a serialized Zelph .bin file sequentially and emits a JSON sidecar\n"
+                            "containing byte offsets and lengths for the header and each chunk section.\n"
+                            "Does not load the graph into the live network."},
 
             {".licenses", ".licenses\n"
                           "Lists all third-party software embedded in zelph, including their versions and licenses."},
@@ -882,6 +1256,7 @@ private:
 
     void cmd_name(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".name");
         if (cmd.size() < 3 || cmd.size() > 4)
             throw std::runtime_error("Command .name: Invalid arguments. Usage: .name <node> <new_name>  or  .name <node> <lang> <new_name>");
 
@@ -941,6 +1316,7 @@ private:
     }
     void cmd_delname(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".delname");
         if (cmd.size() < 2 || cmd.size() > 3)
             throw std::runtime_error("Command .delname: Invalid arguments. Usage: .delname <node|id> [lang]");
 
@@ -1084,6 +1460,8 @@ private:
     }
     void cmd_remove(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".remove");
+
         if (cmd.size() != 2) throw std::runtime_error("Command .remove requires exactly one argument: name or ID");
 
         const std::string& arg = cmd[1];
@@ -1140,16 +1518,19 @@ private:
     }
     void cmd_run(const std::vector<std::string>&)
     {
+        require_full_graph_mode(".run");
         _n->run(true, false, false);
         _n->diagnostic("Ready.", true);
     }
     void cmd_run_once(const std::vector<std::string>&)
     {
+        require_full_graph_mode(".run-once");
         _n->run(true, false, true);
         _n->diagnostic("Ready.", true);
     }
     void cmd_run_md(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".run-md");
         if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
         const std::string& subdir = cmd[1];
         _n->set_markdown_subdir(subdir);
@@ -1162,6 +1543,7 @@ private:
     }
     void cmd_run_file(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".run-file");
         if (cmd.size() != 2)
             throw std::runtime_error("Command .run-file requires exactly one argument: the output file path");
         const std::string& outfile = cmd[1];
@@ -1278,6 +1660,8 @@ private:
             // This detects if it's Wikidata (json/bz2 OR bin with source) or Generic (bin only)
             _data_manager = io::DataManager::create(_n, cmd[1]);
             _data_manager->load();
+            _repl_state->partial_load_mode   = false;
+            _repl_state->partial_load_source = "";
 
             watch.stop();
             _n->diagnostic(" Time needed for loading/importing: " + watch.format(), true);
@@ -1286,6 +1670,111 @@ private:
         {
             throw std::runtime_error("Command .load: You need to specify one argument: the *.bin or *.json file to import");
         }
+    }
+    void cmd_load_partial(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() < 2)
+            throw std::runtime_error("Command .load-partial: Missing .bin file name or manifest");
+
+        const std::string& first_arg = cmd[1];
+        bool               use_manifest = !first_arg.ends_with(".bin");
+        std::string        source_or_manifest = first_arg;
+        std::string        source_bin_override;
+        std::string        shard_root;
+
+        if (!use_manifest && !std::filesystem::exists(first_arg))
+        {
+            throw std::runtime_error("Command .load-partial: Cannot open input file '" + first_arg + "'");
+        }
+
+        network::Zelph::BinChunkSelection selection;
+        bool                             meta_only = false;
+
+        for (size_t i = 2; i < cmd.size(); ++i)
+        {
+            const std::string& arg = cmd[i];
+            if (arg == "meta-only")
+            {
+                meta_only = true;
+                continue;
+            }
+
+            auto eq = arg.find('=');
+            if (eq == std::string::npos)
+            {
+                throw std::runtime_error("Command .load-partial: Unknown argument '" + arg + "'");
+            }
+
+            std::string key   = arg.substr(0, eq);
+            std::string value = arg.substr(eq + 1);
+
+            if (key == "left")
+            {
+                selection.left = parse_chunk_index_list(value, "left");
+                selection.left_explicit = true;
+            }
+            else if (key == "right")
+            {
+                selection.right = parse_chunk_index_list(value, "right");
+                selection.right_explicit = true;
+            }
+            else if (key == "nameOfNode" || key == "name")
+            {
+                selection.nameOfNode = parse_chunk_index_list(value, "nameOfNode");
+                selection.name_of_node_explicit = true;
+            }
+            else if (key == "nodeOfName" || key == "node-name")
+            {
+                selection.nodeOfName = parse_chunk_index_list(value, "nodeOfName");
+                selection.node_of_name_explicit = true;
+            }
+            else if (key == "manifest")
+            {
+                use_manifest = true;
+                source_or_manifest = value;
+            }
+            else if (key == "source-bin" || key == "source_bin")
+            {
+                source_bin_override = value;
+            }
+            else if (key == "shard-root" || key == "shard_root")
+            {
+                shard_root = value;
+            }
+            else
+            {
+                throw std::runtime_error("Command .load-partial: Unknown selector '" + key + "'");
+            }
+        }
+
+        if (meta_only)
+        {
+            selection = {};
+        }
+
+        if (_repl_state->auto_run)
+        {
+            _repl_state->auto_run = false;
+            _n->out("Auto-run has been disabled due to partial loading.", true);
+        }
+
+        chrono::StopWatch watch;
+        watch.start();
+        if (use_manifest)
+        {
+            _n->load_from_manifest(source_or_manifest, selection, shard_root, source_bin_override, meta_only);
+        }
+        else
+        {
+            _n->load_from_file(source_or_manifest, selection, meta_only);
+        }
+        watch.stop();
+
+        _data_manager                  = nullptr;
+        _repl_state->partial_load_mode = true;
+        _repl_state->partial_load_source = source_or_manifest;
+        _n->out("WARNING: partial/incomplete graph loaded; reasoning, pruning, cleanup, and destructive edits are blocked.", true);
+        _n->diagnostic(" Time needed for partial loading: " + watch.format(), true);
     }
     void cmd_wikidata_constraints(const std::vector<std::string>& cmd)
     {
@@ -1422,11 +1911,13 @@ private:
 
     void cmd_remove_rules(const std::vector<std::string>&)
     {
+        require_full_graph_mode(".remove-rules");
         _n->remove_rules();
         _n->out("All rules removed.", true);
     }
     void cmd_prune(const std::vector<std::string>& cmd, bool facts_mode)
     {
+        require_full_graph_mode(facts_mode ? ".prune-facts" : ".prune-nodes");
         if (cmd.size() < 2)
             throw std::runtime_error("Command requires a pattern");
 
@@ -1483,6 +1974,7 @@ private:
     }
     void cmd_cleanup(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".cleanup");
         if (cmd.size() != 1)
             throw std::runtime_error("Command .cleanup takes no arguments");
 
@@ -1547,6 +2039,36 @@ private:
 
         _n->out_stream() << "------------------------" << std::endl;
     }
+    void cmd_stat_file(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 2) throw std::runtime_error("Command .stat-file requires exactly one argument: the input .bin file");
+
+        const std::string& filename = cmd[1];
+        BinHeaderStats     stats    = read_bin_header_stats(filename);
+        uint64_t           total_chunks = static_cast<uint64_t>(stats.left_chunk_count)
+                                        + static_cast<uint64_t>(stats.right_chunk_count)
+                                        + static_cast<uint64_t>(stats.name_of_node_count)
+                                        + static_cast<uint64_t>(stats.node_of_name_count);
+
+        _n->out_stream() << "Serialized File Statistics:" << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
+        _n->out_stream() << "File: " << filename << std::endl;
+        _n->out_stream() << "File Size: " << stats.file_size_bytes << " bytes" << std::endl;
+        _n->out_stream() << "Left Chunks: " << stats.left_chunk_count << std::endl;
+        _n->out_stream() << "Right Chunks: " << stats.right_chunk_count << std::endl;
+        _n->out_stream() << "Name-of-Node Chunks: " << stats.name_of_node_count << std::endl;
+        _n->out_stream() << "Node-of-Name Chunks: " << stats.node_of_name_count << std::endl;
+        _n->out_stream() << "Total Chunks: " << total_chunks << std::endl;
+        _n->out_stream() << "------------------------" << std::endl;
+    }
+    void cmd_index_file(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 3) throw std::runtime_error("Command .index-file requires exactly two arguments: the input .bin file and output .json file");
+
+        BinIndexData data = read_bin_index_data(cmd[1]);
+        write_bin_index_json(data, cmd[2]);
+        _n->out("Wrote byte-offset index to " + cmd[2], true);
+    }
     void cmd_licenses(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .licenses takes no arguments");
@@ -1588,6 +2110,7 @@ private:
     }
     void cmd_save(const std::vector<std::string>& cmd)
     {
+        require_full_graph_mode(".save");
         if (cmd.size() != 2)
             throw std::runtime_error("Command .save requires exactly one argument: the output file (must end with .bin)");
 
@@ -1600,6 +2123,7 @@ private:
     }
     void cmd_import(const std::vector<std::string>& cmd) const
     {
+        require_full_graph_mode(".import");
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         const std::string& path = cmd[1];
         if (!path.ends_with(".zph")) throw std::runtime_error("Command .import: Script must end with .zph");

@@ -1,9 +1,20 @@
 site_name: zelph - A Sophisticated Semantic Network System
 theme:
   name: material
+  palette:
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
   features:
     - navigation.expand
     - content.code.annotate
+extra_css:
+  - stylesheets/extra.css
 nav:
   - Home: index.md
   - Logic and Computation: logic.md

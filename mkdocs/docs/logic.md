@@ -1,3 +1,21 @@
+<video id="logic-video" controls width="100%" preload="metadata">
+    <source src="https://zelph.org/assets/2026-03-21-zelph.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
+<script>
+function jumpTo(time) {
+  const video = document.getElementById('logic-video');
+  video.currentTime = time;
+  video.play();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+</script>
+
+<small>This video walks through the concepts on this page with live terminal demonstrations and auto-generated graph diagrams. Section links (<a href="#" onclick="jumpTo(0); return false;">🎬</a>) throughout the page jump to the corresponding part of the video.</small>
+
+---
+
 ## Logic and Computation
 
 zelph is a logic programming system, but not in the traditional sense.
@@ -10,18 +28,27 @@ For a hands-on quick start, see the [Quick Start Guide](quickstart.md).
 
 ### Positioning: Forward Chaining over Graphs
 
+<a href="#" onclick="jumpTo(403); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/herbrand_fixpoint_overlay.svg" width="67%">
+</div>
+
 zelph's inference engine performs **forward chaining** (bottom-up evaluation), similar to Datalog or production rule systems.
 When a new fact is asserted or a rule is defined, the engine immediately checks whether any rule conditions are newly satisfied and derives all possible consequences.
 This process repeats until a fixed point is reached — no further facts can be derived.
 
 This is fundamentally different from Prolog's top-down, goal-driven search with backtracking.
 zelph does not search for proofs; it _materializes all derivable facts_ in the graph.
+In formal terms, this is a least-fixed-point computation over the graph's [Herbrand base](https://en.wikipedia.org/wiki/Herbrand_structure): start with the asserted facts, apply all rules to derive new facts, repeat until no iteration produces anything new.
 The trade-off is deliberate: forward chaining integrates naturally with knowledge graphs (where facts arrive incrementally, e.g. from Wikidata imports) and guarantees termination for Datalog-safe rules.
 
 What sets zelph apart from both Prolog and Datalog is the _representation_: rules, predicates, and even the concept of conjunction are themselves nodes in the graph.
 This [homoiconicity](#the-executable-graph) enables meta-reasoning, self-referential structures, and a seamless boundary between knowledge and computation.
 
 ## The Executable Graph
+
+<a href="#" onclick="jumpTo(56.5); return false;">🎬 Watch this section</a>
 
 A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
 
@@ -35,9 +62,75 @@ In zelph, **the logic is intrinsic to the data**.
 
 This means the graph doesn't just _describe_ knowledge; it _structures the execution_ of logic. The boundary between "data storage" and "processing engine" is effectively removed. Consequently, importing data (e.g., from Wikidata) can immediately alter the computational behavior of the system.
 
+### Relation Nodes and Self-Reference
+
+Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject or object of further facts, enabling statements about statements without any special mechanism.
+
+This is in contrast to [RDF](https://en.wikipedia.org/wiki/Resource_Description_Framework), where a triple is an edge with no inherent identity. To make a statement _about_ a triple in classic RDF, you need [reification](<https://en.wikipedia.org/wiki/Reification_(knowledge_representation)#RDF_reification>): four additional triples that decompose and name the original one. The [RDF-star](https://www.w3.org/2021/12/rdf-star.html) extension was introduced specifically to address this limitation.
+
+In zelph, this problem does not exist. Every statement is already a node. The relation node serves a purpose analogous to [Gödel numbering](https://en.wikipedia.org/wiki/G%C3%B6del_numbering) — it makes the system self-referential by giving every statement a first-class identity within the system. But where Gödel had to route through arithmetic encoding (prime factorization), zelph's reification is _structural_: the node _is_ the statement, with no encoding or decoding step.
+
+## Comparisons with Other Systems
+
+<a href="#" onclick="jumpTo(517); return false;">🎬 Watch this section</a>
+
+zelph's design can be understood through comparisons with several established systems. These comparisons highlight both shared principles and fundamental differences.
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/zelph_summary_wrapup_v2.svg" width="67%">
+</div>
+
+### Prolog and Datalog
+
+Prolog performs **top-down**, goal-driven search with backtracking. zelph performs **bottom-up** forward chaining, like Datalog: it materializes all derivable facts until a fixed point is reached.
+
+But unlike standard Datalog, zelph's predicates are first-class nodes. This enables **meta-rules** — rules that quantify over relations themselves — which are impossible to express in standard Datalog and require meta-interpreters in Prolog.
+
+### Lean and Curry-Howard
+
+<a href="#" onclick="jumpTo(542); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/lean_vs_zelph_comparison.svg" width="67%">
+</div>
+
+[Lean 4](https://lean-lang.org) is a powerful theorem prover based on dependent type theory. Through the [Curry-Howard correspondence](https://en.wikipedia.org/wiki/Curry%E2%80%93Howard_correspondence), proofs in Lean _are_ programs — propositions are types, and proofs are terms. This is a beautiful unification of logic and computation, but it is a different kind of unification than what zelph provides.
+
+In Lean, the inference machinery — tactics, the elaboration pipeline, the `MetaM` monad — lives in a **metaprogramming layer** that operates _on_ terms but is not itself expressed as terms in the same way. To reason about a proof as data, you step up to a meta-level (the `Expr` API).
+
+In zelph, there is **no meta-level**. Rules, facts, predicates, and numbers all live in the same graph. A rule about a predicate is written in the same syntax, stored in the same structure, and processed by the same engine as any ordinary fact. The boundary between "data" and "logic" is removed entirely.
+
+Lean unifies through **type theory**. zelph unifies through **graph topology**. These are philosophically very different approaches to the same goal: erasing the boundary between code and data.
+
+### Gödel Numbering
+
+<a href="#" onclick="jumpTo(611); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/goedel_vs_zelph_comparison.svg" width="67%">
+</div>
+
+In 1931, [Gödel](https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems) showed that formal systems can reason about themselves by encoding formulas as numbers via prime factorization. Arithmetic statements about those numbers become, implicitly, statements about formulas.
+
+zelph's [relation nodes](#relation-nodes-and-self-reference) serve the exact same purpose: they make the system self-referential. Every statement gets a node, and that node can immediately participate in further statements. But where Gödel's encoding is _arithmetic_ — requiring encoding and decoding via prime factorization — zelph's reification is _structural_. The node _is_ the statement. No encoding, no decoding. It is a more direct path to the same goal: self-reference within a formal system.
+
+### Lisp and S-Expressions
+
+<a href="#" onclick="jumpTo(708); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/lisp_vs_zelph_comparison_v2.svg" width="67%">
+</div>
+
+Lisp's famous "code is data" principle — [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity) via S-expressions — is a direct ancestor of what zelph does. But where Lisp applies this idea to _programs_ via cons-cell lists, zelph applies it to _knowledge_ via subject–predicate–object triples.
+
+The connection goes deeper than analogy: zelph's lists are actual Lisp-style cons-lists built from `cons` and `nil` nodes, and a cons cell _is_ a relation node (a triple with `cons` as the predicate). The S-P-O triple is zelph's equivalent of Lisp's S-expression — the universal data structure from which everything else is composed.
+
 ## Rules Over Graphs
 
 ### Basic Rules and Conjunction
+
+<a href="#" onclick="jumpTo(206); return false;">🎬 Watch this section</a>
 
 A rule in zelph connects a set of **conditions** to a **consequence** via the `=>` operator.
 The conditions form a conjunction: all must match simultaneously under a shared variable binding.
@@ -64,6 +157,8 @@ zelph> 5 > 4
 After entering `5 > 4`, the engine finds that the three conditions are jointly satisfiable with `R = >`, `A = 6`, `B = 5`, `C = 4`, and derives `6 > 4`.
 
 ### Meta-Rules: Predicates as First-Class Nodes
+
+<a href="#" onclick="jumpTo(446.5); return false;">🎬 Watch this section</a>
 
 Notice that `R` in the transitive rule is a **variable ranging over predicates**.
 This is possible because predicates in zelph are nodes, not edge labels.
@@ -96,6 +191,8 @@ Declaring that `"has part"` is opposite of `"is part of"` causes every `has part
 The rule is generic: it works for any pair of opposite relations without modification.
 
 ### Deep Unification
+
+<a href="#" onclick="jumpTo(663); return false;">🎬 Watch this section</a>
 
 zelph's unification engine matches patterns against **arbitrarily nested** structures.
 This is essential for reasoning about statements-about-statements — a natural consequence of zelph's graph topology where fact nodes can themselves appear as subjects or objects of other facts.
@@ -132,6 +229,8 @@ This rule decomposes the nested equation `(A + B) = C`, uses the bound values to
 
 ### Facts with Multiple Objects
 
+<a href="#" onclick="jumpTo(56.5); return false;">🎬 Watch this section</a>
+
 A fact in zelph connects a subject to an object via a predicate.
 When a fact has **multiple objects** (e.g. `f maps 1 2`), these objects form an **unordered set** — there is no defined ordering among them.
 The statement `f maps 1 2` means: `f` is related via `maps` to both `1` and `2`, but it does **not** encode which is "first" and which is "second".
@@ -164,6 +263,8 @@ This produces not only `(g compose f) maps 1 3` but also `(f compose g) maps 1 3
 
 **Example — Function composition with lists:**
 
+<a href="#" onclick="jumpTo(708); return false;">🎬 Watch this section</a>
+
 The correct approach uses **ordered lists** to encode the domain–codomain relationship:
 
 ```
@@ -180,6 +281,12 @@ The consequence `(G compose F)` creates a _new fact node_ representing the compo
 This is higher-order reasoning expressed as first-order graph topology — with the structural ordering provided by cons-lists rather than by positional assumptions about objects.
 
 ### Negation as Failure
+
+<a href="#" onclick="jumpTo(812.5); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/negation_as_failure_comparison.svg" width="67%">
+</div>
 
 Negation in zelph follows **negation-as-failure** (NAF) semantics, familiar from Datalog with stratified negation and Prolog's `\+`.
 A negated condition succeeds when **no** fact in the graph matches the pattern under the current variable bindings.
@@ -218,6 +325,12 @@ The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->`
 The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
 
 ### Inequality Constraints
+
+<a href="#" onclick="jumpTo(859); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/inequality_fol_vs_zelph.svg" width="67%">
+</div>
 
 The `!=` operator is a **built-in guard constraint** — not a fact lookup.
 It filters variable bindings after the involved variables are bound by positive conditions.
@@ -353,6 +466,8 @@ This is equivalent to `(bird(A) ∨ bat(A)) → can_fly(A)`.
 
 ## Semantic Math: Computation as Graph Rewriting
 
+<a href="#" onclick="jumpTo(984); return false;">🎬 Watch this section</a>
+
 Numbers in zelph are not opaque primitives.
 They are **cons-lists of digit nodes** — topological structures within the graph, built from the same `cons` and `nil` predicates used for any list.
 Arithmetic is not hard-coded; it is defined by inference rules that transform these structures.
@@ -361,6 +476,10 @@ This architecture has a remarkable consequence: _calculating_ numbers and _reaso
 If a knowledge base (e.g. Wikidata) records that 13 is a prime number, that semantic fact is directly accessible wherever the list `<13>` appears in a computation.
 
 ### Numbers as Cons-Lists
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/arithmetic_conventional_vs_zelph.svg" width="67%">
+</div>
 
 The list `<42>` is internally stored as `2 cons (4 cons nil)` — least significant digit first.
 The display reverses the order for human readability, so results appear in conventional notation.
@@ -388,6 +507,12 @@ The engine derives `(<1> + <0>) = <1>`, `(<1> + <1>) = <2>`, etc.
 The key point: `followed-by` is a user-defined relation. zelph has no arithmetic kernel. The rule works because the graph contains the corresponding facts.
 
 ### Rule-based Multi-digit Addition
+
+<a href="#" onclick="jumpTo(1068); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/multidigit_addition_pipeline_v2.svg" width="67%">
+</div>
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
 The reference implementation lives in [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
@@ -499,6 +624,27 @@ Found one or more contradictions!
 When a contradiction is detected during fact assertion, the contradictory fact is _not_ entered into the graph.
 Instead, a record of the contradiction is stored, making it visible in reports.
 This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), where thousands of constraint violations in the knowledge graph are detected automatically.
+
+### Wikidata at Scale
+
+<a href="#" onclick="jumpTo(1143); return false;">🎬 Watch this section</a>
+
+<div class="svg-dark-container" style="text-align: center;">
+  <img src="../assets/wikidata_p361_p527_consistency_v2.svg" width="67%">
+</div>
+
+zelph can load and reason over millions of Wikidata facts. A typical consistency check uses negation to detect missing inverse relations:
+
+```
+.load wikidata-20260309-all-pruned.bin
+.lang wikidata
+(X P361 Y, ¬(Y P527 X)) => !
+.run
+```
+
+Here, P361 ("part of") and P527 ("has part") are inverse properties. The rule flags every entity declared "part of" something whose parent does not list it among its parts.
+
+Thousands of such asymmetries exist in Wikidata. These are not necessarily errors — they may reflect deliberate modeling choices about redundancy — but detecting them systematically is the first step toward improving data quality at scale. This is exactly the kind of analysis performed in the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force), supported by a [Wikimedia Community Fund grant](wikidata.md).
 
 ## The Programmatic Layer: Janet
 
