@@ -38,7 +38,7 @@ namespace zelph::io
         Wikidata
     };
 
-    // An abstract strategy class responsible for populating a Zelph network from external files.
+    // An abstract strategy class responsible for populating a zelph network from external files.
     // It handles file path resolution (e.g., finding a source file for a cache file), detects the
     // data schema (e.g., Wikidata vs. Generic), and orchestrates the import/loading process.
     // It serves as a factory to create the appropriate specific manager (Wikidata or Generic).

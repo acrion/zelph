@@ -2,8 +2,7 @@
 import os
 import re
 
-
-# Zelph Markdown Link Processor
+# zelph Markdown Link Processor
 # Purpose: Process markdown files in subdirectories of 'docs/' to convert invalid internal links to Wikidata URLs.
 #          Only processes files in subdirectories (e.g., docs/tree/*.md), not direct files in docs/.
 #          For each subdirectory, collects existing .md files in that subdir only (since subdirs are independent).
@@ -11,9 +10,10 @@ import re
 #          Skips links with :// (external). Modifies files in-place if changes are made.
 # Usage: python replace_invalid_mkdocs_links.py
 
+
 def process_subdirectory(subdir_path):
     # Get all markdown files in this subdirectory only
-    md_files = {f for f in os.listdir(subdir_path) if f.endswith('.md')}
+    md_files = {f for f in os.listdir(subdir_path) if f.endswith(".md")}
 
     print(f"Processing subdirectory: {subdir_path}")
     print(f"Found {len(md_files)} markdown files.")
@@ -30,22 +30,25 @@ def process_subdirectory(subdir_path):
             print(f"... processed {files_processed} files so far in {subdir_path}")
 
         file_path = os.path.join(subdir_path, filename)
-        temp_file_path = file_path + '.tmp'  # Temporary file for writing changes
+        temp_file_path = file_path + ".tmp"  # Temporary file for writing changes
 
         changes = 0
         line_count = 0
 
         # Regex to match markdown links: [text](file.md) - no DOTALL needed since links don't span lines
-        md_link_regex = re.compile(r'\[(.*?)\]\((.*?)\.md\)')
+        md_link_regex = re.compile(r"\[(.*?)\]\((.*?)\.md\)")
 
-        with open(file_path, 'r', encoding='utf-8') as f_in, open(temp_file_path, 'w', encoding='utf-8') as f_out:
+        with (
+            open(file_path, "r", encoding="utf-8") as f_in,
+            open(temp_file_path, "w", encoding="utf-8") as f_out,
+        ):
             for line in f_in:
                 line_count += 1
                 new_line = line
 
                 # Special replacements as workarounds (applied to all lines)
                 temp_line = new_line
-                new_line = new_line.replace('[!](!.md)', '!')
+                new_line = new_line.replace("[!](!.md)", "!")
                 if new_line != temp_line:
                     changes += 1
 
@@ -58,15 +61,15 @@ def process_subdirectory(subdir_path):
 
                 for match in matches:
                     # Always append the part before this match
-                    new_line_parts.append(new_line[last_end:match.start()])
+                    new_line_parts.append(new_line[last_end : match.start()])
 
                     link_text = match.group(1)
                     file_base = match.group(2)
-                    file = file_base + '.md'
+                    file = file_base + ".md"
                     full_match = match.group(0)
 
                     # Skip if it's an external link (contains ://)
-                    if '://' in file_base:
+                    if "://" in file_base:
                         # Append original match
                         new_line_parts.append(full_match)
                     else:
@@ -79,10 +82,14 @@ def process_subdirectory(subdir_path):
                             base_id = file_base
 
                             # Determine Wikidata URL
-                            if base_id.startswith('P'):
-                                wikidata_url = f"https://www.wikidata.org/wiki/Property:{base_id}"
+                            if base_id.startswith("P"):
+                                wikidata_url = (
+                                    f"https://www.wikidata.org/wiki/Property:{base_id}"
+                                )
                             else:
-                                wikidata_url = f"https://www.wikidata.org/wiki/{base_id}"
+                                wikidata_url = (
+                                    f"https://www.wikidata.org/wiki/{base_id}"
+                                )
 
                             # Construct replacement: [link_text](wikidata_url)
                             replacement = f"[{link_text}]({wikidata_url})"
@@ -97,7 +104,7 @@ def process_subdirectory(subdir_path):
                 new_line_parts.append(new_line[last_end:])
 
                 # Join parts for the new line
-                new_line = ''.join(new_line_parts)
+                new_line = "".join(new_line_parts)
 
                 # Write the (possibly changed) line to temp file
                 f_out.write(new_line)
@@ -122,10 +129,14 @@ def process_subdirectory(subdir_path):
 
 
 def main():
-    base_dir = 'docs'
+    base_dir = "docs"
 
     # Find all subdirectories in docs/
-    subdirs = [os.path.join(base_dir, d) for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+    subdirs = [
+        os.path.join(base_dir, d)
+        for d in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, d))
+    ]
 
     if not subdirs:
         print("No subdirectories found in 'docs/'.")

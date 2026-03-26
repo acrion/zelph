@@ -274,7 +274,7 @@ Unification::Unification(
     concurrency::ThreadPool*          pool,
     int                               log_depth,
     ReasoningProfiler&                profiler)
-    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _pool(pool), _log_depth(log_depth), _prof(profiler)
+    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _log_depth(log_depth), _prof(profiler), _pool(pool)
 {
     if (_n->logging_active())
         _prof.unification_instances.fetch_add(1, std::memory_order_relaxed);

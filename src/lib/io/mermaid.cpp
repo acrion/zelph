@@ -719,8 +719,8 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
                 for (network::Node sg : sgs)
                 {
                     if (sg == owner) continue;
-                    std::string cid = "clone_" + std::to_string(static_cast<unsigned long long>(nd))
-                                    + "_" + std::to_string(++clone_counter);
+                    std::string cid       = "clone_" + std::to_string(static_cast<unsigned long long>(nd))
+                                          + "_" + std::to_string(++clone_counter);
                     clone_in_sg[{nd, sg}] = cid;
                     clone_identity_edges.emplace_back(orig_id, cid);
 
@@ -1283,7 +1283,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Zelph Graph Explorer</title>
+    <title>zelph Graph Explorer</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
 

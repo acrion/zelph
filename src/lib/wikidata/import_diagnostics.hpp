@@ -29,12 +29,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/zelph.hpp"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
-#include <sstream>
 #include <vector>
 
 #define ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS 1
@@ -195,6 +193,7 @@ namespace zelph::wikidata
         std::atomic<uint64_t> _set_name_ns{0};
     };
 
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
     static void log_import_window(
         zelph::network::Zelph*                      n,
         const ImportDiagSnapshot&                   cur,
@@ -211,7 +210,6 @@ namespace zelph::wikidata
         uint64_t                                    node_count,
         unsigned int                                num_threads)
     {
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         const uint64_t wall_ns = to_ns(now - last);
         if (wall_ns == 0) return;
 
@@ -327,21 +325,6 @@ namespace zelph::wikidata
             ds << "[ImportDiag] note: cpu(main) excludes external decompressor process '" << read_cur.decompressor_name << "'."
                << std::endl;
         }
-#else
-        (void)n;
-        (void)cur;
-        (void)prev;
-        (void)read_cur;
-        (void)read_prev;
-        (void)now;
-        (void)last;
-        (void)cpu_cur_ns;
-        (void)cpu_prev_ns;
-        (void)current_bytes;
-        (void)total_size;
-        (void)export_constraints;
-        (void)node_count;
-        (void)num_threads;
-#endif
     }
+#endif
 }

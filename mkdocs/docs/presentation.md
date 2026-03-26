@@ -21,7 +21,7 @@ Click on a section to jump to the corresponding part of the video:
 
 - <a href="#" onclick="jumpTo(0);">Introduction</a>: Overview of zelph and its purpose.
 - <a href="#" onclick="jumpTo(99);">Basic Concept</a>: Fundamental ideas behind the semantic network.
-- <a href="#" onclick="jumpTo(146);">Rules in Zelph</a>: How rules are defined and used.
+- <a href="#" onclick="jumpTo(146);">Rules in zelph</a>: How rules are defined and used.
 - <a href="#" onclick="jumpTo(481);">The Inference Engine</a>: Details on the reasoning process.
 - <a href="#" onclick="jumpTo(547);">Question: Quotation Marks?</a> Addressing common syntax questions.
 - <a href="#" onclick="jumpTo(637);">No Edge Labels, but Nodes ⇒ Meta Reasoning About Predicates. In Wikidata terms: No difference between Q- und P-items</a>: Unique approach to relations.

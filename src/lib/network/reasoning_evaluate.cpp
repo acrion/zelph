@@ -79,7 +79,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             log(depth, "evaluate", "Node " + format(condition) + " identified as Conjunction Set.");
 
         // It is a Conjunction Set.
-        // We need to retrieve its elements. In Zelph topology, elements are subjects of PartOf relations pointing to the set.
+        // We need to retrieve its elements. In zelph topology, elements are subjects of PartOf relations pointing to the set.
         // Fact: Element PartOf Set
         // Topology: Set -> RelationNode (Object connects to Relation)
         // Therefore, we must look in get_right(condition) to find the relations where 'condition' is the object.

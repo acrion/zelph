@@ -1065,7 +1065,7 @@ public:
     }
 };
 
-// --- Static Helper Functions for Janet/Zelph Bridge ---
+// --- Static Helper Functions for Janet/zelph Bridge ---
 
 int ScriptEngine::zelph_node_compare(void* p1, void* p2)
 {

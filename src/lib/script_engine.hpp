@@ -59,10 +59,10 @@ namespace zelph
 
         static std::string get_janet_version();
 
-        // Parse Zelph syntax to Janet AST
+        // Parse zelph syntax to Janet AST
         std::string parse_zelph_to_janet(const std::string& input) const;
 
-        // Execute Janet code (either raw or transformed Zelph AST)
+        // Execute Janet code (either raw or transformed zelph AST)
         // is_zelph_ast determines how the output is handled/printed
         void process_janet(const std::string& code, bool is_zelph_ast);
 

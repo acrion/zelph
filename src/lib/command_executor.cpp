@@ -37,6 +37,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "versions.hpp"
 #include "wikidata/wikidata.hpp"
 #include "wikidata/wikidata_text_compressor.hpp"
+
 #include "zelph.capnp.h"
 
 #include <capnp/message.h>
@@ -248,11 +249,11 @@ private:
 
     struct BinHeaderStats
     {
-        uint32_t left_chunk_count    = 0;
-        uint32_t right_chunk_count   = 0;
-        uint32_t name_of_node_count  = 0;
-        uint32_t node_of_name_count  = 0;
-        uint64_t file_size_bytes     = 0;
+        uint32_t left_chunk_count   = 0;
+        uint32_t right_chunk_count  = 0;
+        uint32_t name_of_node_count = 0;
+        uint32_t node_of_name_count = 0;
+        uint64_t file_size_bytes    = 0;
     };
 
     struct BinChunkRef
@@ -339,10 +340,10 @@ private:
             CountingBufferedInputStream counting_input(raw_input);
             auto                        options = make_bin_reader_options();
 
-            uint64_t header_offset = counting_input.bytes_read();
+            uint64_t                     header_offset = counting_input.bytes_read();
             ::capnp::PackedMessageReader main_message(counting_input, options);
             auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
-            data.header_length_bytes = counting_input.bytes_read() - header_offset;
+            data.header_length_bytes          = counting_input.bytes_read() - header_offset;
 
             data.stats.left_chunk_count   = impl.getLeftChunkCount();
             data.stats.right_chunk_count  = impl.getRightChunkCount();
@@ -354,7 +355,7 @@ private:
                 target.reserve(count);
                 for (uint32_t i = 0; i < count; ++i)
                 {
-                    uint64_t before = counting_input.bytes_read();
+                    uint64_t                     before = counting_input.bytes_read();
                     ::capnp::PackedMessageReader chunk_message(counting_input, options);
                     auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
                     BinChunkRef                  ref;
@@ -372,7 +373,7 @@ private:
             data.name_of_node_chunks.reserve(data.stats.name_of_node_count);
             for (uint32_t i = 0; i < data.stats.name_of_node_count; ++i)
             {
-                uint64_t before = counting_input.bytes_read();
+                uint64_t                     before = counting_input.bytes_read();
                 ::capnp::PackedMessageReader chunk_message(counting_input, options);
                 auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
                 BinChunkRef                  ref;
@@ -386,7 +387,7 @@ private:
             data.node_of_name_chunks.reserve(data.stats.node_of_name_count);
             for (uint32_t i = 0; i < data.stats.node_of_name_count; ++i)
             {
-                uint64_t before = counting_input.bytes_read();
+                uint64_t                     before = counting_input.bytes_read();
                 ::capnp::PackedMessageReader chunk_message(counting_input, options);
                 auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
                 BinChunkRef                  ref;
@@ -475,7 +476,7 @@ private:
             if (first_non_space != std::string::npos)
             {
                 const auto last_non_space = token.find_last_not_of(" \t");
-                token                   = token.substr(first_non_space, last_non_space - first_non_space + 1);
+                token                     = token.substr(first_non_space, last_non_space - first_non_space + 1);
             }
             if (token.empty())
             {
@@ -1133,15 +1134,37 @@ private:
                       "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
                       "  in the same directory for faster future loads."},
 
-            {".load-partial", ".load-partial <file.bin|manifest.json> [left=0,1,...|none] [right=0,1,...|none] [nameOfNode=0,1,...|none] [nodeOfName=0,1,...|none] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only]\n"
-                               "Loads the selected serialized chunks from a Zelph .bin file, or from a manifest that points to chunk-sharded storage.\n"
-                               "This is an incomplete graph view intended for read-only inspection only.\n"
-                               "Safe surfaces are metadata, node/name inspection, and direct adjacency lookups.\n"
-                               "Inference, pruning, cleanup, and destructive edits are blocked while partial mode is active.\n"
-                               "If no selectors are provided, all chunks are loaded (except when `meta-only` is used).\n"
-                               "Use '<section>=none' (or '-') to explicitly skip that section.\n"
-                               "For manifest mode, pass 'manifest=path', optional 'source-bin=<path>' and 'shard-root=<path>'.\n"
-                               "Use 'meta-only' to load only the header/bookkeeping without any chunk payloads."},
+            {".load-partial", ".load-partial <file.bin|manifest.json> [selectors...] [options...]\n"
+                              "\n"
+                              "Load selected chunks from a serialized .bin file or a manifest-based\n"
+                              "sharded layout.  The result is a read-only, incomplete graph view.\n"
+                              "Inference (.run), pruning, cleanup, and destructive edits are blocked.\n"
+                              "\n"
+                              "Chunk selectors (comma-separated indices, default: load all):\n"
+                              "  left=0,1,2          – load only left-adjacency chunks 0, 1, 2\n"
+                              "  right=5,6           – load only right-adjacency chunks 5, 6\n"
+                              "  nameOfNode=0,1      – load only name-of-node chunks 0, 1  (alias: name=)\n"
+                              "  nodeOfName=0,1      – load only node-of-name chunks 0, 1  (alias: node-name=)\n"
+                              "  <section>=none      – skip that section entirely (also accepts '-')\n"
+                              "  (omit a selector to load all chunks of that section)\n"
+                              "\n"
+                              "Use .index-file to discover chunk indices and byte offsets,\n"
+                              "and .stat-file for a quick chunk count overview.\n"
+                              "\n"
+                              "Options:\n"
+                              "  meta-only           – load only the header; skip all chunk payloads\n"
+                              "\n"
+                              "Manifest mode (for sharded/remote storage):\n"
+                              "  Pass a .json manifest as the first argument, or use manifest=<path>.\n"
+                              "  source-bin=<path>   – override the .bin path used for the header\n"
+                              "  shard-root=<path>   – local directory containing pre-downloaded shard files\n"
+                              "  Remote chunks (hf:// or https://) are fetched and cached automatically.\n"
+                              "\n"
+                              "Examples:\n"
+                              "  .load-partial data.bin                          – load everything (partial mode)\n"
+                              "  .load-partial data.bin left=0,1 right=none      – two left chunks, no right\n"
+                              "  .load-partial data.bin meta-only                 – header only, no graph data\n"
+                              "  .load-partial manifest.json shard-root=/data/shards"},
 
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
@@ -1178,12 +1201,12 @@ private:
                       "- Number of rules"},
 
             {".stat-file", ".stat-file <file.bin>\n"
-                           "Reads only the serialized Zelph header from the given .bin file and prints\n"
+                           "Reads only the serialized zelph header from the given .bin file and prints\n"
                            "file size and chunk counts for left/right adjacency and name maps.\n"
                            "Does not load the network into memory."},
 
             {".index-file", ".index-file <file.bin> <output.json>\n"
-                            "Scans a serialized Zelph .bin file sequentially and emits a JSON sidecar\n"
+                            "Scans a serialized zelph .bin file sequentially and emits a JSON sidecar\n"
                             "containing byte offsets and lengths for the header and each chunk section.\n"
                             "Does not load the graph into the live network."},
 
@@ -1676,8 +1699,8 @@ private:
         if (cmd.size() < 2)
             throw std::runtime_error("Command .load-partial: Missing .bin file name or manifest");
 
-        const std::string& first_arg = cmd[1];
-        bool               use_manifest = !first_arg.ends_with(".bin");
+        const std::string& first_arg          = cmd[1];
+        bool               use_manifest       = !first_arg.ends_with(".bin");
         std::string        source_or_manifest = first_arg;
         std::string        source_bin_override;
         std::string        shard_root;
@@ -1688,7 +1711,7 @@ private:
         }
 
         network::Zelph::BinChunkSelection selection;
-        bool                             meta_only = false;
+        bool                              meta_only = false;
 
         for (size_t i = 2; i < cmd.size(); ++i)
         {
@@ -1710,27 +1733,27 @@ private:
 
             if (key == "left")
             {
-                selection.left = parse_chunk_index_list(value, "left");
+                selection.left          = parse_chunk_index_list(value, "left");
                 selection.left_explicit = true;
             }
             else if (key == "right")
             {
-                selection.right = parse_chunk_index_list(value, "right");
+                selection.right          = parse_chunk_index_list(value, "right");
                 selection.right_explicit = true;
             }
             else if (key == "nameOfNode" || key == "name")
             {
-                selection.nameOfNode = parse_chunk_index_list(value, "nameOfNode");
+                selection.nameOfNode            = parse_chunk_index_list(value, "nameOfNode");
                 selection.name_of_node_explicit = true;
             }
             else if (key == "nodeOfName" || key == "node-name")
             {
-                selection.nodeOfName = parse_chunk_index_list(value, "nodeOfName");
+                selection.nodeOfName            = parse_chunk_index_list(value, "nodeOfName");
                 selection.node_of_name_explicit = true;
             }
             else if (key == "manifest")
             {
-                use_manifest = true;
+                use_manifest       = true;
                 source_or_manifest = value;
             }
             else if (key == "source-bin" || key == "source_bin")
@@ -1770,8 +1793,8 @@ private:
         }
         watch.stop();
 
-        _data_manager                  = nullptr;
-        _repl_state->partial_load_mode = true;
+        _data_manager                    = nullptr;
+        _repl_state->partial_load_mode   = true;
         _repl_state->partial_load_source = source_or_manifest;
         _n->out("WARNING: partial/incomplete graph loaded; reasoning, pruning, cleanup, and destructive edits are blocked.", true);
         _n->diagnostic(" Time needed for partial loading: " + watch.format(), true);
@@ -2043,8 +2066,8 @@ private:
     {
         if (cmd.size() != 2) throw std::runtime_error("Command .stat-file requires exactly one argument: the input .bin file");
 
-        const std::string& filename = cmd[1];
-        BinHeaderStats     stats    = read_bin_header_stats(filename);
+        const std::string& filename     = cmd[1];
+        BinHeaderStats     stats        = read_bin_header_stats(filename);
         uint64_t           total_chunks = static_cast<uint64_t>(stats.left_chunk_count)
                                         + static_cast<uint64_t>(stats.right_chunk_count)
                                         + static_cast<uint64_t>(stats.name_of_node_count)

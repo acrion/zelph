@@ -234,7 +234,7 @@ void console::Interactive::process(std::string line) const
             return;
         }
 
-        // --- 8. Zelph mode: accumulate until statement is complete, then parse ---
+        // --- 8. zelph mode: accumulate until statement is complete, then parse ---
         if (state->accumulating_zelph)
             state->zelph_buffer += "\n" + line;
         else

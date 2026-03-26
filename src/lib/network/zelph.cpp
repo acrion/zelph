@@ -502,7 +502,7 @@ Node Zelph::list(const std::vector<std::string>& elements)
  * - A dedicated "set node" is created that represents the set as a whole (the super-node).
  * - Each element is linked to this set node via the core.PartOf predicate: (element PartOf set_node).
  * - This allows natural, rule-based queries such as "which nodes are PartOf this set?" or
- *   "create the union of all sets that contain X" directly in Zelph's reasoning engine.
+ *   "create the union of all sets that contain X" directly in zelph's reasoning engine.
  * - The representation is inherently unordered (no head/tail like cons lists) and supports
  *   easy extension for future rule-based arithmetic (union, intersection, cardinality etc.).
  *
