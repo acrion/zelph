@@ -210,6 +210,42 @@ private:
         uint64_t         _count{0};
     };
 
+    class CountingBufferedInputStream : public kj::BufferedInputStream
+    {
+    public:
+        explicit CountingBufferedInputStream(kj::InputStream& inner)
+            : _buffered(inner)
+        {
+        }
+
+        kj::ArrayPtr<const kj::byte> tryGetReadBuffer() override
+        {
+            return _buffered.tryGetReadBuffer();
+        }
+
+        size_t tryRead(void* buffer, size_t minBytes, size_t maxBytes) override
+        {
+            auto n = _buffered.tryRead(buffer, minBytes, maxBytes);
+            _count += n;
+            return n;
+        }
+
+        void skip(size_t bytes) override
+        {
+            _buffered.skip(bytes);
+            _count += bytes;
+        }
+
+        uint64_t bytes_read() const
+        {
+            return _count;
+        }
+
+    private:
+        kj::BufferedInputStreamWrapper _buffered;
+        uint64_t                       _count{0};
+    };
+
     struct BinHeaderStats
     {
         uint32_t left_chunk_count    = 0;
@@ -299,13 +335,12 @@ private:
             data.filename              = filename;
             data.stats.file_size_bytes = std::filesystem::file_size(filename);
 
-            kj::FdInputStream              raw_input(fileno(file));
-            CountingInputStream            counting_input(raw_input);
-            kj::BufferedInputStreamWrapper buffered_input(counting_input);
-            auto                           options = make_bin_reader_options();
+            kj::FdInputStream           raw_input(fileno(file));
+            CountingBufferedInputStream counting_input(raw_input);
+            auto                        options = make_bin_reader_options();
 
             uint64_t header_offset = counting_input.bytes_read();
-            ::capnp::PackedMessageReader main_message(buffered_input, options);
+            ::capnp::PackedMessageReader main_message(counting_input, options);
             auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
             data.header_length_bytes = counting_input.bytes_read() - header_offset;
 
@@ -320,7 +355,7 @@ private:
                 for (uint32_t i = 0; i < count; ++i)
                 {
                     uint64_t before = counting_input.bytes_read();
-                    ::capnp::PackedMessageReader chunk_message(buffered_input, options);
+                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
                     auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
                     BinChunkRef                  ref;
                     ref.chunk_index = chunk.getChunkIndex();
@@ -338,7 +373,7 @@ private:
             for (uint32_t i = 0; i < data.stats.name_of_node_count; ++i)
             {
                 uint64_t before = counting_input.bytes_read();
-                ::capnp::PackedMessageReader chunk_message(buffered_input, options);
+                ::capnp::PackedMessageReader chunk_message(counting_input, options);
                 auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
                 BinChunkRef                  ref;
                 ref.chunk_index = chunk.getChunkIndex();
@@ -352,7 +387,7 @@ private:
             for (uint32_t i = 0; i < data.stats.node_of_name_count; ++i)
             {
                 uint64_t before = counting_input.bytes_read();
-                ::capnp::PackedMessageReader chunk_message(buffered_input, options);
+                ::capnp::PackedMessageReader chunk_message(counting_input, options);
                 auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
                 BinChunkRef                  ref;
                 ref.chunk_index = chunk.getChunkIndex();
