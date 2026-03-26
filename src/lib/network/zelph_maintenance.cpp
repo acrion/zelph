@@ -127,3 +127,21 @@ void Zelph::load_from_file(const std::string& filename) const
 
     _pImpl->loadFromFile(filename);
 }
+
+void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const
+{
+    invalidate_fact_structures_cache();
+
+    _pImpl->loadFromFile(filename, selection, skip_payload);
+}
+
+void Zelph::load_from_manifest(const std::string& manifest_path,
+                               const BinChunkSelection&   selection,
+                               const std::string&         shard_root,
+                               const std::string&         bin_path_override,
+                               const bool                 skip_payload) const
+{
+    invalidate_fact_structures_cache();
+
+    _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
+}
