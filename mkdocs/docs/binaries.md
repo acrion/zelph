@@ -1,6 +1,6 @@
 # Binary Data Files
 
-Here, I will regularly publish precompiled `.bin` files for zelph that you can load and use directly. These files contain prepared semantic networks, mainly based on Wikidata data, but also on other domains. The focus is on efficiency: compared with JSON files, which can take hours to read, `.bin` files load in just a few minutes, depending on the hardware.
+Here, we will regularly publish precompiled `.bin` files for zelph that you can load and use directly. These files contain prepared semantic networks, mainly based on Wikidata data, but also on other domains. The focus is on efficiency: compared with JSON files, which can take hours to read, `.bin` files load in just a few minutes, depending on the hardware.
 
 I plan to upload new `.bin` files regularly based on current Wikidata dumps (see [Wikidata Dumps](https://dumps.wikimedia.org/wikidatawiki/entities/) for transparency), and also to provide files for other data sources in the future.
 
@@ -210,11 +210,55 @@ Additional options for manifest mode:
 
 When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them automatically using `curl` and caches them in a temporary directory. If `shard-root` is set, zelph first looks for matching files there before attempting a remote download.
 
+Manifests can also be loaded directly from Hugging Face:
+
+```
+zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3/manifest.json
+```
+
+### Route Selectors
+
+When a manifest provides a **node route index** (a sidecar JSON file that maps node IDs and names to chunk indices), you can use route selectors instead of specifying chunk indices manually. This is the most convenient way to load only the data relevant to a specific node or name.
+
+| Selector              | Effect                                                                       |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `route-node=<id,...>` | Resolve node IDs to the left, right, and nameOfNode chunks that contain them |
+| `route-name=<name>`   | Resolve a name to the nodeOfName chunk that contains it                      |
+| `route-lang=<lang>`   | Language for the route-name lookup (required with `route-name`)              |
+
+Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support. They can be combined with explicit chunk selectors.
+
+Example — load only the chunks that contain node ID 1:
+
+```
+zelph> .load-partial manifest.json route-node=1
+```
+
+Example — load only the nodeOfName chunk containing name "A" in language "wikidata":
+
+```
+zelph> .load-partial manifest.json route-name=A route-lang=wikidata
+```
+
 ### Sharded Files on Hugging Face
 
-A first proof-of-concept for sharded zelph storage on Hugging Face is available at [chbwa/zelph-sharded](https://huggingface.co/datasets/chbwa/zelph-sharded). This repository demonstrates the v2 manifest format with individually stored shard files that can be fetched on demand. Early benchmarks show significant speedups for selective chunk access: loading a single left chunk from the 2017 pruned file via manifest takes about 0.56s (direct seek) compared to about 2.5s when scanning sequentially through the `.bin`, and for the larger 2026 pruned file, about 1.7s versus about 12.3s.
+Proof-of-concept sharded zelph storage on Hugging Face is available at [chbwa/zelph-sharded](https://huggingface.co/datasets/chbwa/zelph-sharded). This repository demonstrates the v2 and v3 manifest formats with individually stored shard files that can be fetched on demand, including both explicit chunk selection and route-based selection.
 
-The repository also introduces the concept of a **node route index** — a sidecar JSON file (`artifact.route.json`) that maps specific node IDs and name strings to the chunk indices that contain them. This allows external tools to determine exactly which chunks to request for a given query without loading any chunk data first.
+Observed performance for selective chunk access (on the v3 proof artifact):
+
+| Access method                    | Time   |
+| -------------------------------- | ------ |
+| Local explicit partial load (v3) | ~0.16s |
+| Remote HF explicit partial load  | ~7.9s  |
+| Remote HF routed partial load    | ~5.5s  |
+| Sequential fallback (same data)  | ~21s   |
+
+Loading directly from Hugging Face:
+
+```
+zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3/manifest.json left=0
+zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3-route/manifest.json route-node=7009581169707405312
+```
 
 We are working on publishing pre-sharded versions of the full available `.bin` files along with ready-to-use manifest files. The long-term goal is to enable partial loading of Wikidata networks directly from the cloud without downloading entire multi-gigabyte files first.
 
@@ -228,4 +272,4 @@ The pruned versions mentioned above were created by systematically pruning (remo
 
 ## Acknowledgments
 
-The partial loading infrastructure — `.load-partial`, `.stat-file`, `.index-file`, chunk selection, manifest-based loading, remote shard support, and the sharded Hugging Face proof-of-concept — was contributed by [chboishabba](https://github.com/chboishabba). Many thanks for this substantial contribution!
+The partial loading infrastructure — `.load-partial`, `.stat-file`, `.index-file`, chunk selection, manifest-based loading, route selectors, remote shard support, and the sharded Hugging Face proof-of-concept — was contributed by [chboishabba](https://github.com/chboishabba). Many thanks for this substantial contribution!

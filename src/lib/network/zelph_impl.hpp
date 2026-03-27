@@ -156,8 +156,40 @@ namespace zelph::network
                 return hf_path;
             }
 
-            // Expected shape: hf://datasets/<repo>/... or hf://models/<repo>/...
-            return "https://huggingface.co/" + hf_path.substr(5) + "?download=true";
+            const std::string relative = hf_path.substr(5);
+            const size_t first_slash = relative.find('/');
+            if (first_slash == std::string::npos)
+            {
+                return "https://huggingface.co/" + relative;
+            }
+
+            const std::string kind = relative.substr(0, first_slash);
+            const std::string remainder = relative.substr(first_slash + 1);
+            const size_t owner_slash = remainder.find('/');
+            if (owner_slash == std::string::npos)
+            {
+                return "https://huggingface.co/" + relative;
+            }
+
+            const size_t repo_slash = remainder.find('/', owner_slash + 1);
+            if (repo_slash == std::string::npos)
+            {
+                return "https://huggingface.co/" + relative;
+            }
+
+            const std::string repo_ref = remainder.substr(0, repo_slash);
+            const std::string file_path = remainder.substr(repo_slash + 1);
+
+            if (kind == "datasets" || kind == "spaces")
+            {
+                return "https://huggingface.co/" + kind + "/" + repo_ref + "/resolve/main/" + file_path;
+            }
+            if (kind == "models")
+            {
+                return "https://huggingface.co/" + repo_ref + "/resolve/main/" + file_path;
+            }
+
+            return "https://huggingface.co/" + relative;
         }
 
         static void run_shell_command(const std::string& cmd)
@@ -397,12 +429,25 @@ namespace zelph::network
         struct ManifestDescription
         {
             bool            is_v2 = false;
+            bool            is_v3 = false;
+            bool            node_route_supported = false;
             std::string     source_bin_path;
+            std::string     node_route_index_path;
+            std::string     node_route_index_local_path;
             uint64_t        source_header_length_bytes = 0;
             ManifestSection left;
             ManifestSection right;
             ManifestSection name_of_node;
             ManifestSection node_of_name;
+        };
+
+        struct RouteSelectionResolution
+        {
+            chunk_selector left;
+            chunk_selector right;
+            chunk_selector name_of_node;
+            chunk_selector node_of_name;
+            bool           any_match = false;
         };
 
         static size_t skip_json_ws(std::string_view s, size_t pos)
@@ -609,6 +654,206 @@ namespace zelph::network
             return false;
         }
 
+        static bool parse_json_bool_field(std::string_view object_json, const std::string& key, bool& out)
+        {
+            size_t pos = find_json_key_position(object_json, key);
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            const std::string key_marker = '"' + key + '"';
+            pos = object_json.find(':', pos + key_marker.size());
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            pos = skip_json_ws(object_json, pos + 1);
+            if (pos >= object_json.size())
+            {
+                return false;
+            }
+
+            if (object_json.substr(pos, 4) == "true")
+            {
+                out = true;
+                return true;
+            }
+            if (object_json.substr(pos, 5) == "false")
+            {
+                out = false;
+                return true;
+            }
+            return false;
+        }
+
+        static bool parse_json_number_array_field(std::string_view object_json, const std::string& key, std::vector<uint64_t>& out)
+        {
+            size_t pos = find_json_key_position(object_json, key);
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            const std::string key_marker = '"' + key + '"';
+            pos = object_json.find(':', pos + key_marker.size());
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            pos = skip_json_ws(object_json, pos + 1);
+            if (pos >= object_json.size() || object_json[pos] != '[')
+            {
+                return false;
+            }
+
+            size_t array_end = 0;
+            auto   array_json = extract_balanced(object_json, pos, '[', ']', array_end);
+            if (array_json.empty())
+            {
+                return false;
+            }
+
+            out.clear();
+            size_t cursor = pos + 1;
+            const size_t stop = pos + array_json.size() - 1;
+            while (cursor < stop)
+            {
+                cursor = skip_json_ws(object_json, cursor);
+                if (cursor >= stop || object_json[cursor] == ']')
+                {
+                    break;
+                }
+
+                size_t end = cursor;
+                while (end < stop && std::isdigit(static_cast<unsigned char>(object_json[end])))
+                {
+                    ++end;
+                }
+                if (end == cursor)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    out.push_back(std::stoull(std::string(object_json.substr(cursor, end - cursor))));
+                }
+                catch (...)
+                {
+                    return false;
+                }
+
+                cursor = skip_json_ws(object_json, end);
+                if (cursor < stop && object_json[cursor] == ',')
+                {
+                    ++cursor;
+                }
+            }
+
+            return true;
+        }
+
+        static bool parse_json_string_array_field(std::string_view object_json, const std::string& key, std::vector<std::string>& out)
+        {
+            size_t pos = find_json_key_position(object_json, key);
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            const std::string key_marker = '"' + key + '"';
+            pos = object_json.find(':', pos + key_marker.size());
+            if (pos == std::string_view::npos)
+            {
+                return false;
+            }
+
+            pos = skip_json_ws(object_json, pos + 1);
+            if (pos >= object_json.size() || object_json[pos] != '[')
+            {
+                return false;
+            }
+
+            size_t array_end = 0;
+            auto   array_json = extract_balanced(object_json, pos, '[', ']', array_end);
+            if (array_json.empty())
+            {
+                return false;
+            }
+
+            out.clear();
+            size_t cursor = pos + 1;
+            const size_t stop = pos + array_json.size() - 1;
+            while (cursor < stop)
+            {
+                cursor = skip_json_ws(object_json, cursor);
+                if (cursor >= stop || object_json[cursor] == ']')
+                {
+                    break;
+                }
+                if (object_json[cursor] != '"')
+                {
+                    return false;
+                }
+                ++cursor;
+                std::string value;
+                bool escaped = false;
+                while (cursor < stop)
+                {
+                    char c = object_json[cursor++];
+                    if (escaped)
+                    {
+                        switch (c)
+                        {
+                            case '"': value.push_back('"'); break;
+                            case '\\': value.push_back('\\'); break;
+                            case '/': value.push_back('/'); break;
+                            case 'b': value.push_back('\b'); break;
+                            case 'f': value.push_back('\f'); break;
+                            case 'n': value.push_back('\n'); break;
+                            case 'r': value.push_back('\r'); break;
+                            case 't': value.push_back('\t'); break;
+                            case 'u':
+                                if (cursor + 3 <= stop)
+                                {
+                                    cursor += 4;
+                                    value.push_back('?');
+                                    break;
+                                }
+                                return false;
+                            default:
+                                value.push_back(c);
+                                break;
+                        }
+                        escaped = false;
+                        continue;
+                    }
+                    if (c == '\\')
+                    {
+                        escaped = true;
+                        continue;
+                    }
+                    if (c == '"')
+                    {
+                        break;
+                    }
+                    value.push_back(c);
+                }
+                out.push_back(std::move(value));
+
+                cursor = skip_json_ws(object_json, cursor);
+                if (cursor < stop && object_json[cursor] == ',')
+                {
+                    ++cursor;
+                }
+            }
+
+            return true;
+        }
+
         static size_t parse_balanced_span(std::string_view text, size_t start_pos, char open, char close)
         {
             if (start_pos >= text.size() || text[start_pos] != open)
@@ -796,6 +1041,7 @@ namespace zelph::network
 
             ManifestDescription manifest;
             manifest.is_v2 = json_text.find("zelph-hf-layout/v2") != std::string::npos;
+            manifest.is_v3 = json_text.find("zelph-hf-layout/v3") != std::string::npos;
 
             auto json_view = std::string_view(json_text);
             auto source_obj = find_json_object(json_view, "source");
@@ -823,6 +1069,44 @@ namespace zelph::network
                     {
                         parse_json_string_field(bin_obj, "path", manifest.source_bin_path);
                     }
+
+                    const auto node_route_obj = find_json_object(hf_objects, "nodeRouteIndex");
+                    if (!node_route_obj.empty())
+                    {
+                        parse_json_string_field(node_route_obj, "path", manifest.node_route_index_path);
+                        parse_json_string_field(node_route_obj, "localPath", manifest.node_route_index_local_path);
+                    }
+                }
+            }
+
+            {
+                const auto hf_objects = find_json_object(json_view, "hfObjects");
+                if (!hf_objects.empty() && manifest.node_route_index_path.empty() && manifest.node_route_index_local_path.empty())
+                {
+                    const auto node_route_obj = find_json_object(hf_objects, "nodeRouteIndex");
+                    if (!node_route_obj.empty())
+                    {
+                        parse_json_string_field(node_route_obj, "path", manifest.node_route_index_path);
+                        parse_json_string_field(node_route_obj, "localPath", manifest.node_route_index_local_path);
+                    }
+                }
+            }
+
+            manifest.node_route_supported = json_text.find("\"node-route\"") != std::string::npos;
+            if (!manifest.node_route_supported)
+            {
+                const auto capabilities_obj = find_json_object(json_view, "capabilities");
+                if (!capabilities_obj.empty())
+                {
+                    parse_json_bool_field(capabilities_obj, "nodeRouteIndex", manifest.node_route_supported);
+                }
+            }
+            if (!manifest.node_route_supported)
+            {
+                const auto layout_plan_obj = find_json_object(json_view, "layoutPlan");
+                if (!layout_plan_obj.empty())
+                {
+                    parse_json_bool_field(layout_plan_obj, "supportsNodeRouteIndex", manifest.node_route_supported);
                 }
             }
 
@@ -909,6 +1193,282 @@ namespace zelph::network
             throw std::runtime_error("Manifest chunk path not found: " + object_path
                                      + " (tried manifest directory and shard root "
                                      + (shard_root.empty() ? "<not set>" : shard_root) + ")");
+        }
+
+        static std::filesystem::path resolve_manifest_local_path(const std::string& manifest_path,
+                                                                 const std::string& local_path,
+                                                                 const std::string& shard_root)
+        {
+            namespace fs = std::filesystem;
+
+            if (local_path.empty())
+            {
+                return {};
+            }
+
+            const fs::path direct{local_path};
+            std::vector<fs::path> candidates = {direct, fs::path(manifest_path).parent_path() / direct};
+            if (!shard_root.empty())
+            {
+                candidates.emplace_back(fs::path(shard_root) / direct.filename());
+            }
+
+            for (const auto& candidate : candidates)
+            {
+                if (!candidate.empty() && fs::exists(candidate))
+                {
+                    return fs::absolute(candidate);
+                }
+            }
+
+            throw std::runtime_error("Manifest nodeRouteIndex localPath not found: " + local_path);
+        }
+
+        static std::filesystem::path resolve_node_route_index_path(const std::string&         manifest_path,
+                                                                   const ManifestDescription& manifest,
+                                                                   const std::string&         shard_root)
+        {
+            if (!manifest.node_route_index_local_path.empty())
+            {
+                return resolve_manifest_local_path(manifest_path, manifest.node_route_index_local_path, shard_root);
+            }
+
+            if (manifest.node_route_index_path.empty())
+            {
+                throw std::runtime_error("Manifest does not advertise nodeRouteIndex.path");
+            }
+
+            if (is_hf_uri(manifest.node_route_index_path))
+            {
+                if (!shard_root.empty())
+                {
+                    try
+                    {
+                        return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+                return fetch_chunk_to_cache(manifest.node_route_index_path, 0, 0, "node-route-index");
+            }
+
+            return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
+        }
+
+        static std::string_view find_json_array(std::string_view text, const std::string& key)
+        {
+            const std::string key_marker = '"' + key + '"';
+            const size_t      key_pos    = find_json_key_position(text, key);
+            if (key_pos == std::string_view::npos)
+            {
+                return {};
+            }
+
+            size_t colon_pos = text.find(':', key_pos + key_marker.size());
+            if (colon_pos == std::string_view::npos)
+            {
+                return {};
+            }
+
+            size_t value_start = skip_json_ws(text, colon_pos + 1);
+            if (value_start >= text.size() || text[value_start] != '[')
+            {
+                return {};
+            }
+
+            size_t end = 0;
+            return extract_balanced(text, value_start, '[', ']', end);
+        }
+
+        static bool array_contains_uint64(const std::vector<uint64_t>& values, uint64_t needle)
+        {
+            for (uint64_t value : values)
+            {
+                if (value == needle)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static bool array_contains_string(const std::vector<std::string>& values, const std::string& needle)
+        {
+            for (const auto& value : values)
+            {
+                if (value == needle)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static void collect_route_section_matches(std::string_view               routing_obj,
+                                                  const std::string&            section_name,
+                                                  const std::function<void(std::string_view)>& visitor)
+        {
+            const auto section_array = find_json_array(routing_obj, section_name);
+            if (section_array.empty())
+            {
+                return;
+            }
+
+            const size_t array_start = routing_obj.find(section_array);
+            size_t       cursor      = array_start + 1;
+            const size_t stop        = array_start + section_array.size() - 1;
+
+            while (cursor < stop)
+            {
+                cursor = skip_json_ws(routing_obj, cursor);
+                if (cursor >= stop || routing_obj[cursor] == ']')
+                {
+                    break;
+                }
+                if (routing_obj[cursor] != '{')
+                {
+                    throw std::runtime_error("Malformed nodeRouteIndex section: " + section_name);
+                }
+
+                size_t obj_end = 0;
+                auto   object_json = extract_balanced(routing_obj, cursor, '{', '}', obj_end);
+                if (object_json.empty())
+                {
+                    throw std::runtime_error("Malformed nodeRouteIndex entry in section: " + section_name);
+                }
+
+                visitor(object_json);
+
+                cursor = skip_json_ws(routing_obj, obj_end);
+                if (cursor < stop && routing_obj[cursor] == ',')
+                {
+                    ++cursor;
+                }
+            }
+        }
+
+        static RouteSelectionResolution resolve_route_selection(const std::string&               manifest_path,
+                                                                const ManifestDescription&       manifest,
+                                                                const Zelph::BinChunkSelection&  selection,
+                                                                const std::string&               shard_root)
+        {
+            if (!manifest.node_route_supported && manifest.node_route_index_path.empty() && manifest.node_route_index_local_path.empty())
+            {
+                throw std::runtime_error("Manifest does not advertise nodeRouteIndex support");
+            }
+
+            const auto route_path = resolve_node_route_index_path(manifest_path, manifest, shard_root);
+            std::ifstream in(route_path);
+            if (!in.is_open())
+            {
+                throw std::runtime_error("Cannot open nodeRouteIndex sidecar: " + route_path.string());
+            }
+
+            std::string json_text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (json_text.empty())
+            {
+                throw std::runtime_error("nodeRouteIndex sidecar is empty: " + route_path.string());
+            }
+
+            auto routing_obj = find_json_object(std::string_view(json_text), "routing");
+            if (routing_obj.empty())
+            {
+                throw std::runtime_error("nodeRouteIndex sidecar missing routing object: " + route_path.string());
+            }
+
+            RouteSelectionResolution resolved;
+
+            if (selection.route_nodes_explicit)
+            {
+                collect_route_section_matches(routing_obj, "left", [&](std::string_view object_json) {
+                    uint64_t chunk_index = 0;
+                    std::vector<uint64_t> nodes;
+                    if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
+                        || !parse_json_number_array_field(object_json, "nodes", nodes))
+                    {
+                        throw std::runtime_error("Malformed nodeRouteIndex left entry");
+                    }
+
+                    for (uint64_t route_node : selection.route_nodes)
+                    {
+                        if (array_contains_uint64(nodes, route_node))
+                        {
+                            resolved.left.insert(static_cast<uint32_t>(chunk_index));
+                            resolved.any_match = true;
+                            break;
+                        }
+                    }
+                });
+
+                collect_route_section_matches(routing_obj, "right", [&](std::string_view object_json) {
+                    uint64_t chunk_index = 0;
+                    std::vector<uint64_t> nodes;
+                    if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
+                        || !parse_json_number_array_field(object_json, "nodes", nodes))
+                    {
+                        throw std::runtime_error("Malformed nodeRouteIndex right entry");
+                    }
+
+                    for (uint64_t route_node : selection.route_nodes)
+                    {
+                        if (array_contains_uint64(nodes, route_node))
+                        {
+                            resolved.right.insert(static_cast<uint32_t>(chunk_index));
+                            resolved.any_match = true;
+                            break;
+                        }
+                    }
+                });
+
+                collect_route_section_matches(routing_obj, "nameOfNode", [&](std::string_view object_json) {
+                    uint64_t chunk_index = 0;
+                    std::vector<uint64_t> nodes;
+                    if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
+                        || !parse_json_number_array_field(object_json, "nodes", nodes))
+                    {
+                        throw std::runtime_error("Malformed nodeRouteIndex nameOfNode entry");
+                    }
+
+                    for (uint64_t route_node : selection.route_nodes)
+                    {
+                        if (array_contains_uint64(nodes, route_node))
+                        {
+                            resolved.name_of_node.insert(static_cast<uint32_t>(chunk_index));
+                            resolved.any_match = true;
+                            break;
+                        }
+                    }
+                });
+            }
+
+            if (selection.route_name_explicit)
+            {
+                collect_route_section_matches(routing_obj, "nodeOfName", [&](std::string_view object_json) {
+                    uint64_t chunk_index = 0;
+                    std::string lang;
+                    std::vector<std::string> names;
+                    if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
+                        || !parse_json_string_field(object_json, "lang", lang)
+                        || !parse_json_string_array_field(object_json, "names", names))
+                    {
+                        throw std::runtime_error("Malformed nodeRouteIndex nodeOfName entry");
+                    }
+
+                    if (lang == selection.route_lang && array_contains_string(names, selection.route_name))
+                    {
+                        resolved.node_of_name.insert(static_cast<uint32_t>(chunk_index));
+                        resolved.any_match = true;
+                    }
+                });
+            }
+
+            if (!resolved.any_match)
+            {
+                throw std::runtime_error("nodeRouteIndex resolved no matching chunks for requested route selectors");
+            }
+
+            return resolved;
         }
 
         static FILE* open_file_or_throw(const std::string& path)
@@ -1182,7 +1742,13 @@ namespace zelph::network
                              const std::string&              bin_path_hint,
                              const bool                      skip_payload)
         {
-            const ManifestDescription manifest_description = parse_manifest_file(manifest_path);
+            std::string local_manifest_path = manifest_path;
+            if (is_hf_uri(manifest_path))
+            {
+                local_manifest_path = fetch_chunk_to_cache(manifest_path, 0, 0, "manifest").string();
+            }
+
+            const ManifestDescription manifest_description = parse_manifest_file(local_manifest_path);
             const std::string       header_source = bin_path_hint.empty() ? manifest_description.source_bin_path : bin_path_hint;
 
             if (header_source.empty())
@@ -1195,20 +1761,37 @@ namespace zelph::network
             const uint32_t nameOfNodeChunkCount = static_cast<uint32_t>(manifest_description.name_of_node.chunks.size());
             const uint32_t nodeOfNameChunkCount = static_cast<uint32_t>(manifest_description.node_of_name.chunks.size());
 
-            auto leftSelection       = normalize_chunk_selector(selection.left, leftChunkCount, selection.left_explicit);
-            auto rightSelection      = normalize_chunk_selector(selection.right, rightChunkCount, selection.right_explicit);
-            auto nameOfNodeSelection = normalize_chunk_selector(selection.nameOfNode, nameOfNodeChunkCount, selection.name_of_node_explicit);
-            auto nodeOfNameSelection = normalize_chunk_selector(selection.nodeOfName, nodeOfNameChunkCount, selection.node_of_name_explicit);
+            RouteSelectionResolution routed_selection;
+            const bool               route_requested = selection.route_nodes_explicit || selection.route_name_explicit;
+            if (route_requested)
+            {
+                routed_selection = resolve_route_selection(local_manifest_path, manifest_description, selection, shard_root);
+            }
 
-            const chunk_selector* leftSelectionPtr = selection.left_explicit ? &leftSelection : nullptr;
-            const chunk_selector* rightSelectionPtr = selection.right_explicit ? &rightSelection : nullptr;
-            const chunk_selector* nameOfNodeSelectionPtr = selection.name_of_node_explicit ? &nameOfNodeSelection : nullptr;
-            const chunk_selector* nodeOfNameSelectionPtr = selection.node_of_name_explicit ? &nodeOfNameSelection : nullptr;
+            const bool left_explicit = selection.left_explicit || route_requested;
+            const bool right_explicit = selection.right_explicit || route_requested;
+            const bool name_of_node_explicit = selection.name_of_node_explicit || route_requested;
+            const bool node_of_name_explicit = selection.node_of_name_explicit || route_requested;
 
-            const size_t requestedLeftChunks = selection.left_explicit ? leftSelection.size() : leftChunkCount;
-            const size_t requestedRightChunks = selection.right_explicit ? rightSelection.size() : rightChunkCount;
-            const size_t requestedNameOfNodeChunks = selection.name_of_node_explicit ? nameOfNodeSelection.size() : nameOfNodeChunkCount;
-            const size_t requestedNodeOfNameChunks = selection.node_of_name_explicit ? nodeOfNameSelection.size() : nodeOfNameChunkCount;
+            auto leftSelection       = normalize_chunk_selector(selection.left, leftChunkCount, left_explicit);
+            auto rightSelection      = normalize_chunk_selector(selection.right, rightChunkCount, right_explicit);
+            auto nameOfNodeSelection = normalize_chunk_selector(selection.nameOfNode, nameOfNodeChunkCount, name_of_node_explicit);
+            auto nodeOfNameSelection = normalize_chunk_selector(selection.nodeOfName, nodeOfNameChunkCount, node_of_name_explicit);
+
+            leftSelection.insert(routed_selection.left.begin(), routed_selection.left.end());
+            rightSelection.insert(routed_selection.right.begin(), routed_selection.right.end());
+            nameOfNodeSelection.insert(routed_selection.name_of_node.begin(), routed_selection.name_of_node.end());
+            nodeOfNameSelection.insert(routed_selection.node_of_name.begin(), routed_selection.node_of_name.end());
+
+            const chunk_selector* leftSelectionPtr = left_explicit ? &leftSelection : nullptr;
+            const chunk_selector* rightSelectionPtr = right_explicit ? &rightSelection : nullptr;
+            const chunk_selector* nameOfNodeSelectionPtr = name_of_node_explicit ? &nameOfNodeSelection : nullptr;
+            const chunk_selector* nodeOfNameSelectionPtr = node_of_name_explicit ? &nodeOfNameSelection : nullptr;
+
+            const size_t requestedLeftChunks = left_explicit ? leftSelection.size() : leftChunkCount;
+            const size_t requestedRightChunks = right_explicit ? rightSelection.size() : rightChunkCount;
+            const size_t requestedNameOfNodeChunks = name_of_node_explicit ? nameOfNodeSelection.size() : nameOfNodeChunkCount;
+            const size_t requestedNodeOfNameChunks = node_of_name_explicit ? nodeOfNameSelection.size() : nodeOfNameChunkCount;
 
             validate_chunk_selector(leftSelection, leftChunkCount, "left");
             validate_chunk_selector(rightSelection, rightChunkCount, "right");
@@ -1258,7 +1841,8 @@ namespace zelph::network
                 << leftChunkCount << ", right chunks=" << requestedRightChunks << "/"
                 << rightChunkCount << ", nameOfNode chunks=" << requestedNameOfNodeChunks << "/"
                 << nameOfNodeChunkCount << ", nodeOfName chunks=" << requestedNodeOfNameChunks << "/"
-                << nodeOfNameChunkCount << ", skip_payload=" << (skip_payload ? "true" : "false");
+                << nodeOfNameChunkCount << ", route_requested=" << (route_requested ? "true" : "false")
+                << ", skip_payload=" << (skip_payload ? "true" : "false");
 
             if (skip_payload)
             {
@@ -1272,7 +1856,7 @@ namespace zelph::network
                 {
                     if (leftSelection.count(ref.chunk_index) != 1) continue;
 
-                    const bool     is_sharded_ref   = manifest_description.is_v2 && !ref.object_path.empty();
+                    const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
                     const uint64_t source_length    = ref.length;
@@ -1286,7 +1870,7 @@ namespace zelph::network
                             {
                                 if (!shard_root.empty())
                                 {
-                                    source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                                    source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                                 }
                                 else
                                 {
@@ -1302,7 +1886,7 @@ namespace zelph::network
                         }
                         else
                         {
-                            source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                            source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                         }
                     }
                     else if (header_is_remote)
@@ -1341,7 +1925,7 @@ namespace zelph::network
                 {
                     if (rightSelection.count(ref.chunk_index) != 1) continue;
 
-                    const bool     is_sharded_ref   = manifest_description.is_v2 && !ref.object_path.empty();
+                    const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
                     const uint64_t source_length    = ref.length;
@@ -1355,7 +1939,7 @@ namespace zelph::network
                             {
                                 if (!shard_root.empty())
                                 {
-                                    source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                                    source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                                 }
                                 else
                                 {
@@ -1377,7 +1961,7 @@ namespace zelph::network
                         }
                         else
                         {
-                            source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                            source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                         }
                     }
                     else if (header_is_remote)
@@ -1420,7 +2004,7 @@ namespace zelph::network
                 {
                     if (nameOfNodeSelection.count(ref.chunk_index) != 1) continue;
 
-                    const bool     is_sharded_ref   = manifest_description.is_v2 && !ref.object_path.empty();
+                    const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
                     const uint64_t source_length    = ref.length;
@@ -1434,7 +2018,7 @@ namespace zelph::network
                             {
                                 if (!shard_root.empty())
                                 {
-                                    source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                                    source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                                 }
                                 else
                                 {
@@ -1457,7 +2041,7 @@ namespace zelph::network
                         }
                         else
                         {
-                            source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                            source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                         }
                     }
                     else if (header_is_remote)
@@ -1495,7 +2079,7 @@ namespace zelph::network
                 {
                     if (nodeOfNameSelection.count(ref.chunk_index) != 1) continue;
 
-                    const bool     is_sharded_ref   = manifest_description.is_v2 && !ref.object_path.empty();
+                    const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
                     const uint64_t source_length    = ref.length;
@@ -1509,7 +2093,7 @@ namespace zelph::network
                             {
                                 if (!shard_root.empty())
                                 {
-                                    source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                                    source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                                 }
                                 else
                                 {
@@ -1532,7 +2116,7 @@ namespace zelph::network
                         }
                         else
                         {
-                            source_file = resolve_manifest_chunk_path(manifest_path, ref.object_path, shard_root).string();
+                            source_file = resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
                         }
                     }
                     else if (header_is_remote)

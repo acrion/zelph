@@ -506,6 +506,56 @@ private:
         return indices;
     }
 
+    static std::vector<uint64_t> parse_node_id_list(const std::string& value, const std::string& label)
+    {
+        std::vector<uint64_t> ids;
+        if (value.empty() || value == "-" || value == "none")
+        {
+            return ids;
+        }
+
+        std::stringstream stream(value);
+        std::string       token;
+        while (std::getline(stream, token, ','))
+        {
+            if (token.empty())
+            {
+                continue;
+            }
+            const auto first_non_space = token.find_first_not_of(" \t");
+            if (first_non_space != std::string::npos)
+            {
+                const auto last_non_space = token.find_last_not_of(" \t");
+                token                     = token.substr(first_non_space, last_non_space - first_non_space + 1);
+            }
+            if (token.empty())
+            {
+                continue;
+            }
+            if (token == "-" || token == "none")
+            {
+                throw std::runtime_error("Invalid node-route selector '" + token + "' in " + label);
+            }
+
+            try
+            {
+                size_t   pos = 0;
+                uint64_t id  = std::stoull(token, &pos, 10);
+                if (pos != token.size())
+                {
+                    throw std::runtime_error("");
+                }
+                ids.push_back(id);
+            }
+            catch (...)
+            {
+                throw std::runtime_error("Invalid node ID '" + token + "' in " + label);
+            }
+        }
+
+        return ids;
+    }
+
     void require_full_graph_mode(const char* command_name) const
     {
         if (_repl_state && _repl_state->partial_load_mode)
@@ -955,7 +1005,7 @@ private:
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
             ".import <file.zph>          – Load and execute a zelph script file",
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
-            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
+            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
             ".save <file.bin>            – Save the current network to a binary file",
             ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
@@ -1136,8 +1186,9 @@ private:
 
             {".load-partial", ".load-partial <file.bin|manifest.json> [selectors...] [options...]\n"
                               "\n"
-                              "Load selected chunks from a serialized .bin file or a manifest-based\n"
-                              "sharded layout.  The result is a read-only, incomplete graph view.\n"
+                              "Load selected chunks from a serialized .bin file or from a JSON manifest\n"
+                              "that references chunk locations (local paths or remote URIs).\n"
+                              "The result is a read-only, incomplete graph view.\n"
                               "Inference (.run), pruning, cleanup, and destructive edits are blocked.\n"
                               "\n"
                               "Chunk selectors (comma-separated indices, default: load all):\n"
@@ -1150,6 +1201,15 @@ private:
                               "\n"
                               "Use .index-file to discover chunk indices and byte offsets,\n"
                               "and .stat-file for a quick chunk count overview.\n"
+                              "\n"
+                              "Route selectors (manifest mode only, require a node route index):\n"
+                              "  route-node=<id,...>  – resolve node IDs to the chunks that contain them\n"
+                              "                        (sets left, right, and nameOfNode selectors)\n"
+                              "  route-name=<name>    – resolve a name to the nodeOfName chunk that contains it\n"
+                              "  route-lang=<lang>    – language for route-name lookup (required with route-name)\n"
+                              "  Route selectors determine which chunks to load automatically based on\n"
+                              "  the manifest's node route index sidecar. They can be combined with\n"
+                              "  explicit chunk selectors.\n"
                               "\n"
                               "Options:\n"
                               "  meta-only           – load only the header; skip all chunk payloads\n"
@@ -1164,7 +1224,9 @@ private:
                               "  .load-partial data.bin                          – load everything (partial mode)\n"
                               "  .load-partial data.bin left=0,1 right=none      – two left chunks, no right\n"
                               "  .load-partial data.bin meta-only                 – header only, no graph data\n"
-                              "  .load-partial manifest.json shard-root=/data/shards"},
+                              "  .load-partial manifest.json shard-root=/data/shards\n"
+                              "  .load-partial manifest.json route-node=1        – load only chunks containing node 1\n"
+                              "  .load-partial manifest.json route-name=A route-lang=wikidata"},
 
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
@@ -1751,6 +1813,20 @@ private:
                 selection.nodeOfName            = parse_chunk_index_list(value, "nodeOfName");
                 selection.node_of_name_explicit = true;
             }
+            else if (key == "route-node" || key == "route_node")
+            {
+                selection.route_nodes          = parse_node_id_list(value, "route-node");
+                selection.route_nodes_explicit = true;
+            }
+            else if (key == "route-name" || key == "route_name")
+            {
+                selection.route_name          = value;
+                selection.route_name_explicit = true;
+            }
+            else if (key == "route-lang" || key == "route_lang")
+            {
+                selection.route_lang = value;
+            }
             else if (key == "manifest")
             {
                 use_manifest       = true;
@@ -1768,6 +1844,16 @@ private:
             {
                 throw std::runtime_error("Command .load-partial: Unknown selector '" + key + "'");
             }
+        }
+
+        if ((selection.route_nodes_explicit || selection.route_name_explicit) && !use_manifest)
+        {
+            throw std::runtime_error("Command .load-partial: route selectors require manifest mode");
+        }
+
+        if (selection.route_name_explicit && selection.route_lang.empty())
+        {
+            throw std::runtime_error("Command .load-partial: route-name requires route-lang=<lang>");
         }
 
         if (meta_only)

@@ -56,10 +56,15 @@ namespace zelph::network
             std::vector<uint32_t> right;
             std::vector<uint32_t> nameOfNode;
             std::vector<uint32_t> nodeOfName;
+            std::vector<uint64_t> route_nodes;
+            std::string           route_name;
+            std::string           route_lang;
             bool                  left_explicit = false;
             bool                  right_explicit = false;
             bool                  name_of_node_explicit = false;
             bool                  node_of_name_explicit = false;
+            bool                  route_nodes_explicit = false;
+            bool                  route_name_explicit = false;
         };
 
         explicit Zelph(const io::OutputHandler& output = io::default_output_handler);
