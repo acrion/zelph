@@ -1854,7 +1854,7 @@ namespace zelph::network
             {
                 for (const auto& ref : manifest_description.left.chunks)
                 {
-                    if (leftSelection.count(ref.chunk_index) != 1) continue;
+                    if (leftSelectionPtr != nullptr && leftSelection.count(ref.chunk_index) != 1) continue;
 
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
@@ -1923,7 +1923,7 @@ namespace zelph::network
             {
                 for (const auto& ref : manifest_description.right.chunks)
                 {
-                    if (rightSelection.count(ref.chunk_index) != 1) continue;
+                    if (rightSelectionPtr != nullptr && rightSelection.count(ref.chunk_index) != 1) continue;
 
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
@@ -2002,7 +2002,7 @@ namespace zelph::network
             {
                 for (const auto& ref : manifest_description.name_of_node.chunks)
                 {
-                    if (nameOfNodeSelection.count(ref.chunk_index) != 1) continue;
+                    if (nameOfNodeSelectionPtr != nullptr && nameOfNodeSelection.count(ref.chunk_index) != 1) continue;
 
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
@@ -2077,7 +2077,7 @@ namespace zelph::network
             {
                 for (const auto& ref : manifest_description.node_of_name.chunks)
                 {
-                    if (nodeOfNameSelection.count(ref.chunk_index) != 1) continue;
+                    if (nodeOfNameSelectionPtr != nullptr && nodeOfNameSelection.count(ref.chunk_index) != 1) continue;
 
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
