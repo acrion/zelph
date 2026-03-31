@@ -23,7 +23,7 @@
 
 include(FetchContent)
 
-# doctest v2.4.11 declares cmake_minimum_required(VERSION 3.1),
+# doctest v2.4.12 declares cmake_minimum_required(VERSION 3.1),
 # which newer CMake rejects. Allow it to configure anyway.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "")
 
