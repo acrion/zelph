@@ -81,6 +81,15 @@ public:
         auto output = _n->get_output_handler(); // save what's needed
         _n.reset();                             // destroy last
 
+        _repl_state->partial_load_mode         = false;
+        _repl_state->partial_load_source.clear();
+        _repl_state->janet_buffer.clear();
+        _repl_state->zelph_buffer.clear();
+        _repl_state->accumulating_inline_janet = false;
+        _repl_state->accumulating_zelph        = false;
+        _repl_state->script_mode               = ScriptMode::Zelph;
+        _repl_state->reset_requested           = false;
+
         init(output);
         _n->out("Cleared network and re-initialized core nodes.");
     }

@@ -48,6 +48,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <sstream>
 
@@ -416,6 +417,55 @@ private:
             throw std::runtime_error("Command .index-file: Failed to open output file '" + output_filename + "'");
         }
 
+        auto escape_json_string = [](const std::string& value)
+        {
+            std::ostringstream escaped;
+            for (unsigned char ch : value)
+            {
+                switch (ch)
+                {
+                case '\"':
+                    escaped << "\\\"";
+                    break;
+                case '\\':
+                    escaped << "\\\\";
+                    break;
+                case '\b':
+                    escaped << "\\b";
+                    break;
+                case '\f':
+                    escaped << "\\f";
+                    break;
+                case '\n':
+                    escaped << "\\n";
+                    break;
+                case '\r':
+                    escaped << "\\r";
+                    break;
+                case '\t':
+                    escaped << "\\t";
+                    break;
+                default:
+                    if (ch < 0x20)
+                    {
+                        escaped << "\\u"
+                                << std::hex
+                                << std::setw(4)
+                                << std::setfill('0')
+                                << static_cast<int>(ch)
+                                << std::dec
+                                << std::setfill(' ');
+                    }
+                    else
+                    {
+                        escaped << static_cast<char>(ch);
+                    }
+                    break;
+                }
+            }
+            return escaped.str();
+        };
+
         auto write_chunk_array = [&](const char* key, const std::vector<BinChunkRef>& refs)
         {
             out << "  \"" << key << "\": [\n";
@@ -427,11 +477,11 @@ private:
                     << ",\"length\":" << ref.length;
                 if (!ref.which.empty())
                 {
-                    out << ",\"which\":\"" << ref.which << "\"";
+                    out << ",\"which\":\"" << escape_json_string(ref.which) << "\"";
                 }
                 if (!ref.lang.empty())
                 {
-                    out << ",\"lang\":\"" << ref.lang << "\"";
+                    out << ",\"lang\":\"" << escape_json_string(ref.lang) << "\"";
                 }
                 out << "}";
                 if (i + 1 < refs.size())
@@ -444,7 +494,7 @@ private:
         };
 
         out << "{\n";
-        out << "  \"file\":\"" << data.filename << "\",\n";
+        out << "  \"file\":\"" << escape_json_string(data.filename) << "\",\n";
         out << "  \"header\":{\"offset\":0,\"length\":" << data.header_length_bytes << "},\n";
         write_chunk_array("left", data.left_chunks);
         out << ",\n";
@@ -490,11 +540,20 @@ private:
             try
             {
                 size_t   pos   = 0;
-                uint32_t index = static_cast<uint32_t>(std::stoul(token, &pos, 10));
+                if (token[0] == '-')
+                {
+                    throw std::runtime_error("");
+                }
+                uint64_t parsed = std::stoull(token, &pos, 10);
                 if (pos != token.size())
                 {
                     throw std::runtime_error("");
                 }
+                if (parsed > std::numeric_limits<uint32_t>::max())
+                {
+                    throw std::runtime_error("");
+                }
+                uint32_t index = static_cast<uint32_t>(parsed);
                 indices.push_back(index);
             }
             catch (...)
@@ -540,6 +599,10 @@ private:
             try
             {
                 size_t   pos = 0;
+                if (token[0] == '-')
+                {
+                    throw std::runtime_error("");
+                }
                 uint64_t id  = std::stoull(token, &pos, 10);
                 if (pos != token.size())
                 {
@@ -1844,6 +1907,11 @@ private:
             {
                 throw std::runtime_error("Command .load-partial: Unknown selector '" + key + "'");
             }
+        }
+
+        if (use_manifest && source_bin_override.empty() && first_arg.ends_with(".bin"))
+        {
+            source_bin_override = first_arg;
         }
 
         if ((selection.route_nodes_explicit || selection.route_name_explicit) && !use_manifest)
