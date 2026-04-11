@@ -177,6 +177,25 @@ This produces a file containing byte offsets and lengths for the header and ever
 }
 ```
 
+To generate a ready-to-use `zelph-hf-layout/v2` manifest plus individual shard files automatically, use the helper script in `tools/emit_zelph_hf_v2.py`:
+
+```bash
+python tools/emit_zelph_hf_v2.py \
+  --bin /path/to/file.bin \
+  --index /tmp/index.json \
+  --output /tmp/file.hf-v2.json \
+  --artifact-name file \
+  --hf-root hf://datasets/<owner>/<dataset> \
+  --shard-root /tmp/file-shards
+```
+
+This writes:
+
+- a manifest at `/tmp/file.hf-v2.json`
+- one shard object per section-local chunk under `/tmp/file-shards/`
+
+These outputs can then be uploaded to Hugging Face and consumed via `.load-partial manifest.json ...`.
+
 The `headerLengthBytes` value comes from the `header.length` field in the index output. Each chunk entry needs at minimum `chunkIndex`, `offset` (byte offset into the source `.bin`), and `length`.
 
 For sharded layouts where each chunk is stored as a separate file, each chunk entry can additionally contain an `objectPath` field pointing to a local file path or a remote URL. When `objectPath` is present, zelph reads the chunk from that file instead of seeking into the source `.bin`. The manifest version `zelph-hf-layout/v2` is used for this mode. A sharded chunk entry looks like:
