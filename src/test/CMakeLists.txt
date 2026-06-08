@@ -30,7 +30,7 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "")
 FetchContent_Declare(
     doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG v2.4.12
+    GIT_TAG v2.5.2
     SYSTEM
 )
 FetchContent_MakeAvailable(doctest)

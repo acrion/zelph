@@ -45,7 +45,7 @@ if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     FetchContent_Declare(
         mimalloc
         GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-        GIT_TAG v3.2.8
+        GIT_TAG v3.3.2
         SYSTEM
     )
     FetchContent_MakeAvailable(mimalloc)
@@ -179,7 +179,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     CapnProto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG v1.3.0
+    GIT_TAG v1.4.0
     SYSTEM
 )
 
@@ -410,7 +410,7 @@ install(FILES ${CAPNP_HDRS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zelph)
 option(ENABLE_PGO "Enable Profile Guided Optimization" OFF)
 if (ENABLE_PGO)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        # Instrumentation für PGO
+        # Instrumentation for PGO
         if (NOT PGO_GENERATE)
             # Normal build with PGO data
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-use")

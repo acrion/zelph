@@ -539,7 +539,7 @@ private:
 
             try
             {
-                size_t   pos   = 0;
+                size_t pos = 0;
                 if (token[0] == '-')
                 {
                     throw std::runtime_error("");
@@ -598,12 +598,12 @@ private:
 
             try
             {
-                size_t   pos = 0;
+                size_t pos = 0;
                 if (token[0] == '-')
                 {
                     throw std::runtime_error("");
                 }
-                uint64_t id  = std::stoull(token, &pos, 10);
+                uint64_t id = std::stoull(token, &pos, 10);
                 if (pos != token.size())
                 {
                     throw std::runtime_error("");
