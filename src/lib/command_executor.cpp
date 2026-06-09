@@ -341,29 +341,45 @@ private:
             CountingBufferedInputStream counting_input(raw_input);
             auto                        options = make_bin_reader_options();
 
-            uint64_t                     header_offset = counting_input.bytes_read();
-            ::capnp::PackedMessageReader main_message(counting_input, options);
-            auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
-            data.header_length_bytes          = counting_input.bytes_read() - header_offset;
+            // A PackedMessageReader reads its segments lazily. Here we only touch the
+            // root struct (chunkIndex / which / lang), which lives in segment 0, so
+            // any further segments stay unread until the reader is destroyed. The
+            // destructor then skips the remaining segments to position the stream at
+            // the start of the next message. We must therefore measure the consumed
+            // byte count *after* the reader has been destroyed; measuring it while
+            // the reader is still alive yields a length that only covers segment 0,
+            // which produces a gap before the next chunk for large multi-segment
+            // chunks (those exceeding the 512 MiB first segment of saveToFile's
+            // MallocMessageBuilder(1u << 26)).
+            uint64_t header_offset = counting_input.bytes_read();
+            {
+                ::capnp::PackedMessageReader main_message(counting_input, options);
+                auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
+                data.stats.left_chunk_count       = impl.getLeftChunkCount();
+                data.stats.right_chunk_count      = impl.getRightChunkCount();
+                data.stats.name_of_node_count     = impl.getNameOfNodeChunkCount();
+                data.stats.node_of_name_count     = impl.getNodeOfNameChunkCount();
+            }
+            data.header_length_bytes = counting_input.bytes_read() - header_offset;
 
-            data.stats.left_chunk_count   = impl.getLeftChunkCount();
-            data.stats.right_chunk_count  = impl.getRightChunkCount();
-            data.stats.name_of_node_count = impl.getNameOfNodeChunkCount();
-            data.stats.node_of_name_count = impl.getNodeOfNameChunkCount();
-
-            auto read_adj_chunks = [&](uint32_t count, std::vector<BinChunkRef>& target)
+            auto read_adj_chunks = [&](uint32_t                  count,
+                                       std::vector<BinChunkRef>& target)
             {
                 target.reserve(count);
                 for (uint32_t i = 0; i < count; ++i)
                 {
-                    uint64_t                     before = counting_input.bytes_read();
-                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
-                    auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
-                    BinChunkRef                  ref;
-                    ref.chunk_index = chunk.getChunkIndex();
-                    ref.offset      = before;
-                    ref.length      = counting_input.bytes_read() - before;
-                    ref.which       = chunk.getWhich().cStr();
+                    uint64_t    before = counting_input.bytes_read();
+                    BinChunkRef ref;
+                    ref.offset = before;
+                    {
+                        ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                        auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
+                        ref.chunk_index                    = chunk.getChunkIndex();
+                        ref.which                          = chunk.getWhich().cStr();
+                    }
+                    // Measured after chunk_message is destroyed: the destructor has now
+                    // skipped all remaining segments of this message.
+                    ref.length = counting_input.bytes_read() - before;
                     target.push_back(std::move(ref));
                 }
             };
@@ -374,28 +390,32 @@ private:
             data.name_of_node_chunks.reserve(data.stats.name_of_node_count);
             for (uint32_t i = 0; i < data.stats.name_of_node_count; ++i)
             {
-                uint64_t                     before = counting_input.bytes_read();
-                ::capnp::PackedMessageReader chunk_message(counting_input, options);
-                auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
-                BinChunkRef                  ref;
-                ref.chunk_index = chunk.getChunkIndex();
-                ref.offset      = before;
-                ref.length      = counting_input.bytes_read() - before;
-                ref.lang        = chunk.getLang().cStr();
+                uint64_t    before = counting_input.bytes_read();
+                BinChunkRef ref;
+                ref.offset = before;
+                {
+                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                    auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
+                    ref.chunk_index                    = chunk.getChunkIndex();
+                    ref.lang                           = chunk.getLang().cStr();
+                }
+                ref.length = counting_input.bytes_read() - before;
                 data.name_of_node_chunks.push_back(std::move(ref));
             }
 
             data.node_of_name_chunks.reserve(data.stats.node_of_name_count);
             for (uint32_t i = 0; i < data.stats.node_of_name_count; ++i)
             {
-                uint64_t                     before = counting_input.bytes_read();
-                ::capnp::PackedMessageReader chunk_message(counting_input, options);
-                auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
-                BinChunkRef                  ref;
-                ref.chunk_index = chunk.getChunkIndex();
-                ref.offset      = before;
-                ref.length      = counting_input.bytes_read() - before;
-                ref.lang        = chunk.getLang().cStr();
+                uint64_t    before = counting_input.bytes_read();
+                BinChunkRef ref;
+                ref.offset = before;
+                {
+                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                    auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
+                    ref.chunk_index                    = chunk.getChunkIndex();
+                    ref.lang                           = chunk.getLang().cStr();
+                }
+                ref.length = counting_input.bytes_read() - before;
                 data.node_of_name_chunks.push_back(std::move(ref));
             }
 
@@ -539,7 +559,7 @@ private:
 
             try
             {
-                size_t   pos   = 0;
+                size_t pos = 0;
                 if (token[0] == '-')
                 {
                     throw std::runtime_error("");
@@ -598,12 +618,12 @@ private:
 
             try
             {
-                size_t   pos = 0;
+                size_t pos = 0;
                 if (token[0] == '-')
                 {
                     throw std::runtime_error("");
                 }
-                uint64_t id  = std::stoull(token, &pos, 10);
+                uint64_t id = std::stoull(token, &pos, 10);
                 if (pos != token.size())
                 {
                     throw std::runtime_error("");

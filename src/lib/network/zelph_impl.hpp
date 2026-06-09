@@ -37,16 +37,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <kj/io.h>
 
 #include <atomic>
-#include <cstdlib>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <fstream>
-#include <filesystem>
 #include <unordered_set>
 #include <vector>
-#include <cctype>
 
 namespace zelph::network
 {
@@ -156,16 +156,16 @@ namespace zelph::network
                 return hf_path;
             }
 
-            const std::string relative = hf_path.substr(5);
-            const size_t first_slash = relative.find('/');
+            const std::string relative    = hf_path.substr(5);
+            const size_t      first_slash = relative.find('/');
             if (first_slash == std::string::npos)
             {
                 return "https://huggingface.co/" + relative;
             }
 
-            const std::string kind = relative.substr(0, first_slash);
-            const std::string remainder = relative.substr(first_slash + 1);
-            const size_t owner_slash = remainder.find('/');
+            const std::string kind        = relative.substr(0, first_slash);
+            const std::string remainder   = relative.substr(first_slash + 1);
+            const size_t      owner_slash = remainder.find('/');
             if (owner_slash == std::string::npos)
             {
                 return "https://huggingface.co/" + relative;
@@ -177,7 +177,7 @@ namespace zelph::network
                 return "https://huggingface.co/" + relative;
             }
 
-            const std::string repo_ref = remainder.substr(0, repo_slash);
+            const std::string repo_ref  = remainder.substr(0, repo_slash);
             const std::string file_path = remainder.substr(repo_slash + 1);
 
             if (kind == "datasets" || kind == "spaces")
@@ -247,12 +247,12 @@ namespace zelph::network
             _last_var = impl.getLastVar();
         }
 
-        void loadLeftRightChunks(kj::BufferedInputStreamWrapper&       bufferedInput,
-                                 const ::capnp::ReaderOptions&         options,
-                                 uint32_t                              leftChunkCount,
-                                 uint32_t                              rightChunkCount,
-                                 const chunk_selector*                 leftSelection  = nullptr,
-                                 const chunk_selector*                 rightSelection = nullptr)
+        void loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput,
+                                 const ::capnp::ReaderOptions&   options,
+                                 uint32_t                        leftChunkCount,
+                                 uint32_t                        rightChunkCount,
+                                 const chunk_selector*           leftSelection  = nullptr,
+                                 const chunk_selector*           rightSelection = nullptr)
         {
 #ifdef CLEAR_ON_LOAD
             _left.clear();
@@ -324,9 +324,9 @@ namespace zelph::network
         }
 
         void loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput,
-                                  const ::capnp::ReaderOptions&  options,
-                                  uint32_t                       nameOfNodeChunkCount,
-                                  const chunk_selector*          selection = nullptr)
+                                  const ::capnp::ReaderOptions&   options,
+                                  uint32_t                        nameOfNodeChunkCount,
+                                  const chunk_selector*           selection = nullptr)
         {
 #ifdef CLEAR_ON_LOAD
             _name_of_node.clear();
@@ -368,9 +368,9 @@ namespace zelph::network
         }
 
         void loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput,
-                                  const ::capnp::ReaderOptions&  options,
-                                  uint32_t                       nodeOfNameChunkCount,
-                                  const chunk_selector*          selection = nullptr)
+                                  const ::capnp::ReaderOptions&   options,
+                                  uint32_t                        nodeOfNameChunkCount,
+                                  const chunk_selector*           selection = nullptr)
         {
 #ifdef CLEAR_ON_LOAD
             _node_of_name.clear();
@@ -412,9 +412,9 @@ namespace zelph::network
 
         struct ManifestChunkRef
         {
-            uint32_t    chunk_index = 0;
-            uint64_t    source_offset = 0;
-            uint64_t    length = 0;
+            uint32_t    chunk_index       = 0;
+            uint64_t    source_offset     = 0;
+            uint64_t    length            = 0;
             bool        has_source_offset = false;
             std::string object_path;
             std::string which;
@@ -428,8 +428,8 @@ namespace zelph::network
 
         struct ManifestDescription
         {
-            bool            is_v2 = false;
-            bool            is_v3 = false;
+            bool            is_v2                = false;
+            bool            is_v3                = false;
             bool            node_route_supported = false;
             std::string     source_bin_path;
             std::string     node_route_index_path;
@@ -461,8 +461,8 @@ namespace zelph::network
 
         static size_t find_json_key_position(std::string_view text, const std::string& key)
         {
-            const std::string marker = '"' + key + '"';
-            size_t search_pos = 0;
+            const std::string marker     = '"' + key + '"';
+            size_t            search_pos = 0;
             while (search_pos < text.size())
             {
                 const size_t key_pos = text.find(marker, search_pos);
@@ -472,7 +472,7 @@ namespace zelph::network
                 }
 
                 bool in_string = false;
-                bool escaped  = false;
+                bool escaped   = false;
                 for (size_t i = 0; i < key_pos; ++i)
                 {
                     const char c = text[i];
@@ -548,7 +548,7 @@ namespace zelph::network
             }
 
             const std::string key_marker = '"' + key + '"';
-            pos = object_json.find(':', pos + key_marker.size());
+            pos                          = object_json.find(':', pos + key_marker.size());
             if (pos == std::string_view::npos)
             {
                 return false;
@@ -586,7 +586,7 @@ namespace zelph::network
             }
 
             const std::string key_marker = '"' + key + '"';
-            pos = object_json.find(':', pos + key_marker.size());
+            pos                          = object_json.find(':', pos + key_marker.size());
             if (pos == std::string_view::npos)
             {
                 return false;
@@ -608,30 +608,46 @@ namespace zelph::network
                 {
                     switch (c)
                     {
-                        case '"': result.push_back('"'); break;
-                        case '\\': result.push_back('\\'); break;
-                        case '/': result.push_back('/'); break;
-                        case 'b': result.push_back('\b'); break;
-                        case 'f': result.push_back('\f'); break;
-                        case 'n': result.push_back('\n'); break;
-                        case 'r': result.push_back('\r'); break;
-                        case 't': result.push_back('\t'); break;
-                        case 'u':
-                            if (pos + 3 < object_json.size())
+                    case '"':
+                        result.push_back('"');
+                        break;
+                    case '\\':
+                        result.push_back('\\');
+                        break;
+                    case '/':
+                        result.push_back('/');
+                        break;
+                    case 'b':
+                        result.push_back('\b');
+                        break;
+                    case 'f':
+                        result.push_back('\f');
+                        break;
+                    case 'n':
+                        result.push_back('\n');
+                        break;
+                    case 'r':
+                        result.push_back('\r');
+                        break;
+                    case 't':
+                        result.push_back('\t');
+                        break;
+                    case 'u':
+                        if (pos + 3 < object_json.size())
+                        {
+                            const std::string hex = std::string(object_json.substr(pos, 4));
+                            if (std::isxdigit(static_cast<unsigned char>(hex[0])) && std::isxdigit(static_cast<unsigned char>(hex[1]))
+                                && std::isxdigit(static_cast<unsigned char>(hex[2])) && std::isxdigit(static_cast<unsigned char>(hex[3])))
                             {
-                                const std::string hex = std::string(object_json.substr(pos, 4));
-                                if (std::isxdigit(static_cast<unsigned char>(hex[0])) && std::isxdigit(static_cast<unsigned char>(hex[1]))
-                                    && std::isxdigit(static_cast<unsigned char>(hex[2])) && std::isxdigit(static_cast<unsigned char>(hex[3])))
-                                {
-                                    pos += 4;
-                                    result.push_back('?');
-                                    break;
-                                }
+                                pos += 4;
+                                result.push_back('?');
+                                break;
                             }
-                            return false;
-                        default:
-                            result.push_back(c);
-                            break;
+                        }
+                        return false;
+                    default:
+                        result.push_back(c);
+                        break;
                     }
                     escaped = false;
                     continue;
@@ -663,7 +679,7 @@ namespace zelph::network
             }
 
             const std::string key_marker = '"' + key + '"';
-            pos = object_json.find(':', pos + key_marker.size());
+            pos                          = object_json.find(':', pos + key_marker.size());
             if (pos == std::string_view::npos)
             {
                 return false;
@@ -697,7 +713,7 @@ namespace zelph::network
             }
 
             const std::string key_marker = '"' + key + '"';
-            pos = object_json.find(':', pos + key_marker.size());
+            pos                          = object_json.find(':', pos + key_marker.size());
             if (pos == std::string_view::npos)
             {
                 return false;
@@ -709,7 +725,7 @@ namespace zelph::network
                 return false;
             }
 
-            size_t array_end = 0;
+            size_t array_end  = 0;
             auto   array_json = extract_balanced(object_json, pos, '[', ']', array_end);
             if (array_json.empty())
             {
@@ -717,8 +733,8 @@ namespace zelph::network
             }
 
             out.clear();
-            size_t cursor = pos + 1;
-            const size_t stop = pos + array_json.size() - 1;
+            size_t       cursor = pos + 1;
+            const size_t stop   = pos + array_json.size() - 1;
             while (cursor < stop)
             {
                 cursor = skip_json_ws(object_json, cursor);
@@ -765,7 +781,7 @@ namespace zelph::network
             }
 
             const std::string key_marker = '"' + key + '"';
-            pos = object_json.find(':', pos + key_marker.size());
+            pos                          = object_json.find(':', pos + key_marker.size());
             if (pos == std::string_view::npos)
             {
                 return false;
@@ -777,7 +793,7 @@ namespace zelph::network
                 return false;
             }
 
-            size_t array_end = 0;
+            size_t array_end  = 0;
             auto   array_json = extract_balanced(object_json, pos, '[', ']', array_end);
             if (array_json.empty())
             {
@@ -785,8 +801,8 @@ namespace zelph::network
             }
 
             out.clear();
-            size_t cursor = pos + 1;
-            const size_t stop = pos + array_json.size() - 1;
+            size_t       cursor = pos + 1;
+            const size_t stop   = pos + array_json.size() - 1;
             while (cursor < stop)
             {
                 cursor = skip_json_ws(object_json, cursor);
@@ -800,7 +816,7 @@ namespace zelph::network
                 }
                 ++cursor;
                 std::string value;
-                bool escaped = false;
+                bool        escaped = false;
                 while (cursor < stop)
                 {
                     char c = object_json[cursor++];
@@ -808,25 +824,41 @@ namespace zelph::network
                     {
                         switch (c)
                         {
-                            case '"': value.push_back('"'); break;
-                            case '\\': value.push_back('\\'); break;
-                            case '/': value.push_back('/'); break;
-                            case 'b': value.push_back('\b'); break;
-                            case 'f': value.push_back('\f'); break;
-                            case 'n': value.push_back('\n'); break;
-                            case 'r': value.push_back('\r'); break;
-                            case 't': value.push_back('\t'); break;
-                            case 'u':
-                                if (cursor + 3 <= stop)
-                                {
-                                    cursor += 4;
-                                    value.push_back('?');
-                                    break;
-                                }
-                                return false;
-                            default:
-                                value.push_back(c);
+                        case '"':
+                            value.push_back('"');
+                            break;
+                        case '\\':
+                            value.push_back('\\');
+                            break;
+                        case '/':
+                            value.push_back('/');
+                            break;
+                        case 'b':
+                            value.push_back('\b');
+                            break;
+                        case 'f':
+                            value.push_back('\f');
+                            break;
+                        case 'n':
+                            value.push_back('\n');
+                            break;
+                        case 'r':
+                            value.push_back('\r');
+                            break;
+                        case 't':
+                            value.push_back('\t');
+                            break;
+                        case 'u':
+                            if (cursor + 3 <= stop)
+                            {
+                                cursor += 4;
+                                value.push_back('?');
                                 break;
+                            }
+                            return false;
+                        default:
+                            value.push_back(c);
+                            break;
                         }
                         escaped = false;
                         continue;
@@ -861,9 +893,9 @@ namespace zelph::network
                 return std::string_view::npos;
             }
 
-            int  depth = 0;
+            int  depth     = 0;
             bool in_string = false;
-            bool escaped = false;
+            bool escaped   = false;
             for (size_t i = start_pos; i < text.size(); ++i)
             {
                 char c = text[i];
@@ -938,7 +970,7 @@ namespace zelph::network
                 throw std::runtime_error("Manifest section missing: " + section_name);
             }
 
-            const std::string chunks_key = "\"chunks\"";
+            const std::string chunks_key     = "\"chunks\"";
             const size_t      chunks_key_pos = section_obj_view.find(chunks_key);
             if (chunks_key_pos == std::string_view::npos)
             {
@@ -953,7 +985,7 @@ namespace zelph::network
                 throw std::runtime_error("Manifest section malformed (missing '['): " + section_name);
             }
 
-            size_t array_end = 0;
+            size_t array_end     = 0;
             auto   section_array = extract_balanced(section_obj_view, array_start, '[', ']', array_end);
             if (section_array.empty())
             {
@@ -961,8 +993,8 @@ namespace zelph::network
             }
 
             ManifestSection section;
-            size_t         cursor = array_start + 1;
-            const size_t   array_stop = array_start + section_array.size() - 1;
+            size_t          cursor     = array_start + 1;
+            const size_t    array_stop = array_start + section_array.size() - 1;
             while (cursor < array_stop)
             {
                 cursor = skip_json_ws(section_obj_view, cursor);
@@ -975,15 +1007,15 @@ namespace zelph::network
                     throw std::runtime_error("Manifest section malformed (expected object): " + section_name);
                 }
 
-                size_t       obj_end = 0;
-                auto         object_json = extract_balanced(section_obj_view, cursor, '{', '}', obj_end);
+                size_t obj_end     = 0;
+                auto   object_json = extract_balanced(section_obj_view, cursor, '{', '}', obj_end);
                 if (object_json.empty())
                 {
                     throw std::runtime_error("Manifest section malformed (chunk object parse): " + section_name);
                 }
 
                 ManifestChunkRef chunk_ref;
-                uint64_t        chunk_index = 0;
+                uint64_t         chunk_index = 0;
 
                 if (!parse_json_number_field(object_json, "chunkIndex", chunk_index))
                 {
@@ -1043,7 +1075,7 @@ namespace zelph::network
             manifest.is_v2 = json_text.find("zelph-hf-layout/v2") != std::string::npos;
             manifest.is_v3 = json_text.find("zelph-hf-layout/v3") != std::string::npos;
 
-            auto json_view = std::string_view(json_text);
+            auto json_view  = std::string_view(json_text);
             auto source_obj = find_json_object(json_view, "source");
 
             if (!source_obj.empty())
@@ -1125,13 +1157,13 @@ namespace zelph::network
         }
 
         static std::filesystem::path resolve_manifest_chunk_path(const std::string& manifest_path,
-                                                                const std::string& object_path,
-                                                                const std::string& shard_root)
+                                                                 const std::string& object_path,
+                                                                 const std::string& shard_root)
         {
             namespace fs = std::filesystem;
 
             const fs::path manifest_dir = fs::path(manifest_path).parent_path();
-            std::string     normalized = object_path;
+            std::string    normalized   = object_path;
 
             if (normalized.rfind("hf://", 0) == 0)
             {
@@ -1142,8 +1174,8 @@ namespace zelph::network
                 }
             }
 
-            const fs::path local_obj_path = fs::path(normalized);
-            std::vector<fs::path> candidates = {local_obj_path, manifest_dir / local_obj_path};
+            const fs::path        local_obj_path = fs::path(normalized);
+            std::vector<fs::path> candidates     = {local_obj_path, manifest_dir / local_obj_path};
 
             if (!shard_root.empty())
             {
@@ -1168,7 +1200,7 @@ namespace zelph::network
                 if (auto pos = normalized.find(hf_path_sep); pos != std::string::npos)
                 {
                     const std::string tail = normalized.substr(pos + hf_path_sep.size());
-                    const fs::path maybe_tail{tail};
+                    const fs::path    maybe_tail{tail};
                     if (!maybe_tail.empty())
                     {
                         const auto parent = maybe_tail.parent_path();
@@ -1206,7 +1238,7 @@ namespace zelph::network
                 return {};
             }
 
-            const fs::path direct{local_path};
+            const fs::path        direct{local_path};
             std::vector<fs::path> candidates = {direct, fs::path(manifest_path).parent_path() / direct};
             if (!shard_root.empty())
             {
@@ -1305,8 +1337,8 @@ namespace zelph::network
             return false;
         }
 
-        static void collect_route_section_matches(std::string_view               routing_obj,
-                                                  const std::string&            section_name,
+        static void collect_route_section_matches(std::string_view                             routing_obj,
+                                                  const std::string&                           section_name,
                                                   const std::function<void(std::string_view)>& visitor)
         {
             const auto section_array = find_json_array(routing_obj, section_name);
@@ -1331,7 +1363,7 @@ namespace zelph::network
                     throw std::runtime_error("Malformed nodeRouteIndex section: " + section_name);
                 }
 
-                size_t obj_end = 0;
+                size_t obj_end     = 0;
                 auto   object_json = extract_balanced(routing_obj, cursor, '{', '}', obj_end);
                 if (object_json.empty())
                 {
@@ -1348,17 +1380,17 @@ namespace zelph::network
             }
         }
 
-        static RouteSelectionResolution resolve_route_selection(const std::string&               manifest_path,
-                                                                const ManifestDescription&       manifest,
-                                                                const Zelph::BinChunkSelection&  selection,
-                                                                const std::string&               shard_root)
+        static RouteSelectionResolution resolve_route_selection(const std::string&              manifest_path,
+                                                                const ManifestDescription&      manifest,
+                                                                const Zelph::BinChunkSelection& selection,
+                                                                const std::string&              shard_root)
         {
             if (!manifest.node_route_supported && manifest.node_route_index_path.empty() && manifest.node_route_index_local_path.empty())
             {
                 throw std::runtime_error("Manifest does not advertise nodeRouteIndex support");
             }
 
-            const auto route_path = resolve_node_route_index_path(manifest_path, manifest, shard_root);
+            const auto    route_path = resolve_node_route_index_path(manifest_path, manifest, shard_root);
             std::ifstream in(route_path);
             if (!in.is_open())
             {
@@ -1381,7 +1413,8 @@ namespace zelph::network
 
             if (selection.route_nodes_explicit)
             {
-                collect_route_section_matches(routing_obj, "left", [&](std::string_view object_json) {
+                collect_route_section_matches(routing_obj, "left", [&](std::string_view object_json)
+                                              {
                     uint64_t chunk_index = 0;
                     std::vector<uint64_t> nodes;
                     if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
@@ -1398,10 +1431,10 @@ namespace zelph::network
                             resolved.any_match = true;
                             break;
                         }
-                    }
-                });
+                    } });
 
-                collect_route_section_matches(routing_obj, "right", [&](std::string_view object_json) {
+                collect_route_section_matches(routing_obj, "right", [&](std::string_view object_json)
+                                              {
                     uint64_t chunk_index = 0;
                     std::vector<uint64_t> nodes;
                     if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
@@ -1418,10 +1451,10 @@ namespace zelph::network
                             resolved.any_match = true;
                             break;
                         }
-                    }
-                });
+                    } });
 
-                collect_route_section_matches(routing_obj, "nameOfNode", [&](std::string_view object_json) {
+                collect_route_section_matches(routing_obj, "nameOfNode", [&](std::string_view object_json)
+                                              {
                     uint64_t chunk_index = 0;
                     std::vector<uint64_t> nodes;
                     if (!parse_json_number_field(object_json, "chunkIndex", chunk_index)
@@ -1438,13 +1471,13 @@ namespace zelph::network
                             resolved.any_match = true;
                             break;
                         }
-                    }
-                });
+                    } });
             }
 
             if (selection.route_name_explicit)
             {
-                collect_route_section_matches(routing_obj, "nodeOfName", [&](std::string_view object_json) {
+                collect_route_section_matches(routing_obj, "nodeOfName", [&](std::string_view object_json)
+                                              {
                     uint64_t chunk_index = 0;
                     std::string lang;
                     std::vector<std::string> names;
@@ -1459,8 +1492,7 @@ namespace zelph::network
                     {
                         resolved.node_of_name.insert(static_cast<uint32_t>(chunk_index));
                         resolved.any_match = true;
-                    }
-                });
+                    } });
             }
 
             if (!resolved.any_match)
@@ -1483,7 +1515,7 @@ namespace zelph::network
 
         static std::filesystem::path ensure_cache_dir()
         {
-            namespace fs = std::filesystem;
+            namespace fs        = std::filesystem;
             fs::path cache_root = fs::temp_directory_path() / "zelph-hf-cache";
             if (!fs::exists(cache_root))
             {
@@ -1499,7 +1531,7 @@ namespace zelph::network
             for (char c : in)
             {
                 const bool is_safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                                    || c == '-' || c == '_' || c == '.';
+                                  || c == '-' || c == '_' || c == '.';
                 token.push_back(is_safe ? c : '_');
             }
 
@@ -1511,15 +1543,15 @@ namespace zelph::network
         }
 
         static std::filesystem::path fetch_chunk_to_cache(const std::string& source,
-                                                         const uint64_t      offset,
-                                                         const uint64_t      length,
-                                                         const std::string&  section_hint)
+                                                          const uint64_t     offset,
+                                                          const uint64_t     length,
+                                                          const std::string& section_hint)
         {
             namespace fs = std::filesystem;
 
-            std::string token = sanitize_cache_token(section_hint);
-            std::string src_token = sanitize_cache_token(source);
-            fs::path cache_file = ensure_cache_dir() / fs::path(token + "_" + src_token + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".capnp-packed");
+            std::string token      = sanitize_cache_token(section_hint);
+            std::string src_token  = sanitize_cache_token(source);
+            fs::path    cache_file = ensure_cache_dir() / fs::path(token + "_" + src_token + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".capnp-packed");
 
             if (fs::exists(cache_file))
             {
@@ -1562,11 +1594,11 @@ namespace zelph::network
             }
         }
 
-        void loadLeftRightChunkFromPath(const std::string&   source_path,
-                                       uint64_t              source_offset,
-                                       const chunk_selector*  selection,
-                                       const char*           which_name,
-                                       uint32_t              section_count)
+        void loadLeftRightChunkFromPath(const std::string&    source_path,
+                                        uint64_t              source_offset,
+                                        const chunk_selector* selection,
+                                        const char*           which_name,
+                                        uint32_t              section_count)
         {
             FILE* file = open_file_or_throw(source_path);
             try
@@ -1579,13 +1611,13 @@ namespace zelph::network
 
                 kj::FdInputStream              raw_input(fileno(file));
                 kj::BufferedInputStreamWrapper buffered_input(raw_input);
-                ::capnp::PackedMessageReader    chunk_message(buffered_input, options);
+                ::capnp::PackedMessageReader   chunk_message(buffered_input, options);
                 auto                           chunk = chunk_message.getRoot<AdjChunk>();
 
                 if (chunk.getWhich() != which_name)
                 {
                     throw std::runtime_error("Expected chunk type " + std::string(which_name)
-                                              + " but found " + chunk.getWhich().cStr());
+                                             + " but found " + chunk.getWhich().cStr());
                 }
 
                 const uint32_t chunk_index = chunk.getChunkIndex();
@@ -1629,9 +1661,9 @@ namespace zelph::network
             }
         }
 
-        void loadNameOfNodeChunkFromPath(const std::string&   source_path,
-                                        uint64_t                source_offset,
-                                        const chunk_selector*    selection)
+        void loadNameOfNodeChunkFromPath(const std::string&    source_path,
+                                         uint64_t              source_offset,
+                                         const chunk_selector* selection)
         {
             FILE* file = open_file_or_throw(source_path);
             try
@@ -1644,7 +1676,7 @@ namespace zelph::network
 
                 kj::FdInputStream              raw_input(fileno(file));
                 kj::BufferedInputStreamWrapper buffered_input(raw_input);
-                ::capnp::PackedMessageReader    chunk_message(buffered_input, options);
+                ::capnp::PackedMessageReader   chunk_message(buffered_input, options);
                 auto                           chunk = chunk_message.getRoot<NameChunk>();
 
                 const uint32_t chunk_index = chunk.getChunkIndex();
@@ -1657,18 +1689,18 @@ namespace zelph::network
                 }
 
                 const std::string lang = chunk.getLang();
-                auto&              map  = _name_of_node[lang];
+                auto&             map  = _name_of_node[lang];
                 for (auto pair : chunk.getPairs())
                 {
                     try
                     {
                         std::string_view sv = _string_pool.intern(pair.getValue());
-                        map[pair.getKey()] = sv;
+                        map[pair.getKey()]  = sv;
                     }
                     catch (...)
                     {
                         std::string_view sv = _string_pool.intern("?");
-                        map[pair.getKey()] = sv;
+                        map[pair.getKey()]  = sv;
                         io::OutputStream(_output, io::OutputChannel::Error, true)
                             << "Error converting UTF-8 to string for name_of_node key " << pair.getKey();
                     }
@@ -1683,9 +1715,9 @@ namespace zelph::network
             }
         }
 
-        void loadNodeOfNameChunkFromPath(const std::string&   source_path,
-                                        uint64_t                source_offset,
-                                        const chunk_selector*    selection)
+        void loadNodeOfNameChunkFromPath(const std::string&    source_path,
+                                         uint64_t              source_offset,
+                                         const chunk_selector* selection)
         {
             FILE* file = open_file_or_throw(source_path);
             try
@@ -1698,7 +1730,7 @@ namespace zelph::network
 
                 kj::FdInputStream              raw_input(fileno(file));
                 kj::BufferedInputStreamWrapper buffered_input(raw_input);
-                ::capnp::PackedMessageReader    chunk_message(buffered_input, options);
+                ::capnp::PackedMessageReader   chunk_message(buffered_input, options);
                 auto                           chunk = chunk_message.getRoot<NodeNameChunk>();
 
                 const uint32_t chunk_index = chunk.getChunkIndex();
@@ -1710,7 +1742,7 @@ namespace zelph::network
                 }
 
                 const std::string lang = chunk.getLang();
-                auto&              map  = _node_of_name[lang];
+                auto&             map  = _node_of_name[lang];
                 for (auto pair : chunk.getPairs())
                 {
                     try
@@ -1736,11 +1768,11 @@ namespace zelph::network
             }
         }
 
-        void loadFromManifest(const std::string& manifest_path,
-                             const Zelph::BinChunkSelection& selection,
-                             const std::string&              shard_root,
-                             const std::string&              bin_path_hint,
-                             const bool                      skip_payload)
+        void loadFromManifest(const std::string&              manifest_path,
+                              const Zelph::BinChunkSelection& selection,
+                              const std::string&              shard_root,
+                              const std::string&              bin_path_hint,
+                              const bool                      skip_payload)
         {
             std::string local_manifest_path = manifest_path;
             if (is_hf_uri(manifest_path))
@@ -1749,7 +1781,7 @@ namespace zelph::network
             }
 
             const ManifestDescription manifest_description = parse_manifest_file(local_manifest_path);
-            const std::string       header_source = bin_path_hint.empty() ? manifest_description.source_bin_path : bin_path_hint;
+            const std::string         header_source        = bin_path_hint.empty() ? manifest_description.source_bin_path : bin_path_hint;
 
             if (header_source.empty())
             {
@@ -1768,8 +1800,8 @@ namespace zelph::network
                 routed_selection = resolve_route_selection(local_manifest_path, manifest_description, selection, shard_root);
             }
 
-            const bool left_explicit = selection.left_explicit || route_requested;
-            const bool right_explicit = selection.right_explicit || route_requested;
+            const bool left_explicit         = selection.left_explicit || route_requested;
+            const bool right_explicit        = selection.right_explicit || route_requested;
             const bool name_of_node_explicit = selection.name_of_node_explicit || route_requested;
             const bool node_of_name_explicit = selection.node_of_name_explicit || route_requested;
 
@@ -1783,28 +1815,28 @@ namespace zelph::network
             nameOfNodeSelection.insert(routed_selection.name_of_node.begin(), routed_selection.name_of_node.end());
             nodeOfNameSelection.insert(routed_selection.node_of_name.begin(), routed_selection.node_of_name.end());
 
-            const chunk_selector* leftSelectionPtr = left_explicit ? &leftSelection : nullptr;
-            const chunk_selector* rightSelectionPtr = right_explicit ? &rightSelection : nullptr;
+            const chunk_selector* leftSelectionPtr       = left_explicit ? &leftSelection : nullptr;
+            const chunk_selector* rightSelectionPtr      = right_explicit ? &rightSelection : nullptr;
             const chunk_selector* nameOfNodeSelectionPtr = name_of_node_explicit ? &nameOfNodeSelection : nullptr;
             const chunk_selector* nodeOfNameSelectionPtr = node_of_name_explicit ? &nodeOfNameSelection : nullptr;
 
-            const size_t requestedLeftChunks = left_explicit ? leftSelection.size() : leftChunkCount;
-            const size_t requestedRightChunks = right_explicit ? rightSelection.size() : rightChunkCount;
+            const size_t requestedLeftChunks       = left_explicit ? leftSelection.size() : leftChunkCount;
+            const size_t requestedRightChunks      = right_explicit ? rightSelection.size() : rightChunkCount;
             const size_t requestedNameOfNodeChunks = name_of_node_explicit ? nameOfNodeSelection.size() : nameOfNodeChunkCount;
             const size_t requestedNodeOfNameChunks = node_of_name_explicit ? nodeOfNameSelection.size() : nodeOfNameChunkCount;
 
             validate_chunk_selector(leftSelection, leftChunkCount, "left");
             validate_chunk_selector(rightSelection, rightChunkCount, "right");
             validate_chunk_selector(nameOfNodeSelection,
-                                   nameOfNodeChunkCount,
-                                   "nameOfNode");
+                                    nameOfNodeChunkCount,
+                                    "nameOfNode");
             validate_chunk_selector(nodeOfNameSelection,
-                                   nodeOfNameChunkCount,
-                                   "nodeOfName");
+                                    nodeOfNameChunkCount,
+                                    "nodeOfName");
 
             clear_loaded_state();
 
-            const bool header_is_remote = is_hf_uri(header_source);
+            const bool  header_is_remote   = is_hf_uri(header_source);
             std::string header_source_path = header_source;
             if (header_is_remote)
             {
@@ -1826,7 +1858,7 @@ namespace zelph::network
                 kj::FdInputStream              raw_input(fileno(file));
                 kj::BufferedInputStreamWrapper buffered_input(raw_input);
                 ::capnp::PackedMessageReader   main_message(buffered_input, options);
-                auto                          impl = main_message.getRoot<ZelphImpl>();
+                auto                           impl = main_message.getRoot<ZelphImpl>();
                 loadSmallData(impl);
                 fclose(file);
             }
@@ -1956,7 +1988,7 @@ namespace zelph::network
                                                                    0,
                                                                    source_length,
                                                                    "right-" + std::to_string(ref.chunk_index))
-                                                      .string();
+                                                  .string();
                             }
                         }
                         else
@@ -1978,10 +2010,10 @@ namespace zelph::network
                     try
                     {
                         loadLeftRightChunkFromPath(source_file,
-                                                  read_chunk_start,
-                                                  rightSelectionPtr,
-                                                  "right",
-                                                  manifest_description.right.chunks.size());
+                                                   read_chunk_start,
+                                                   rightSelectionPtr,
+                                                   "right",
+                                                   manifest_description.right.chunks.size());
                     }
                     catch (const std::exception& ex)
                     {
@@ -2033,9 +2065,9 @@ namespace zelph::network
                             {
                                 source_file =
                                     fetch_chunk_to_cache(ref.object_path,
-                                                        0,
-                                                        source_length,
-                                                        "nameOfNode-" + std::to_string(ref.chunk_index))
+                                                         0,
+                                                         source_length,
+                                                         "nameOfNode-" + std::to_string(ref.chunk_index))
                                         .string();
                             }
                         }
@@ -2108,9 +2140,9 @@ namespace zelph::network
                             {
                                 source_file =
                                     fetch_chunk_to_cache(ref.object_path,
-                                                        0,
-                                                        source_length,
-                                                        "nodeOfName-" + std::to_string(ref.chunk_index))
+                                                         0,
+                                                         source_length,
+                                                         "nodeOfName-" + std::to_string(ref.chunk_index))
                                         .string();
                             }
                         }
@@ -2265,6 +2297,15 @@ namespace zelph::network
             // Chunk _name_of_node
             // Note: string_view::data() is null-terminated here because the pool
             // stores std::string objects and string_view points into them.
+            //
+            // chunkIndex is assigned section-globally (it keeps counting across
+            // language boundaries) so that it is unique within the section and
+            // equals the chunk's sequential position in the stream. This keeps
+            // the stream-position-based loader (loadNameOfNodeChunks, selects by
+            // `i`) and the chunkIndex-based loader (loadNameOfNodeChunkFromPath,
+            // selects by getChunkIndex()) in agreement. A per-language restart
+            // would make several chunks share chunkIndex 0, 1, ...
+            uint32_t nameOfNodeChunkIndex = 0;
             for (const auto& langMap : _name_of_node)
             {
                 std::string                                    lang = langMap.first;
@@ -2280,7 +2321,7 @@ namespace zelph::network
                     ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
                     auto                          chunk = chunkMessage.initRoot<NameChunk>();
                     chunk.setLang(lang);
-                    chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+                    chunk.setChunkIndex(nameOfNodeChunkIndex++);
 
                     size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
                     auto   pairs    = chunk.initPairs(thisSize);
@@ -2295,6 +2336,8 @@ namespace zelph::network
             }
 
             // Chunk _node_of_name
+            // chunkIndex is assigned section-globally; see _name_of_node above.
+            uint32_t nodeOfNameChunkIndex = 0;
             for (const auto& langMap : _node_of_name)
             {
                 std::string                                    lang = langMap.first;
@@ -2310,7 +2353,7 @@ namespace zelph::network
                     ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
                     auto                          chunk = chunkMessage.initRoot<NodeNameChunk>();
                     chunk.setLang(lang);
-                    chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+                    chunk.setChunkIndex(nodeOfNameChunkIndex++);
 
                     size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
                     auto   pairs    = chunk.initPairs(thisSize);
@@ -2366,7 +2409,7 @@ namespace zelph::network
 
         void loadFromFile(const std::string&              filename,
                           const Zelph::BinChunkSelection& selection,
-                          const bool                     skip_payload)
+                          const bool                      skip_payload)
         {
 #ifdef _WIN32
     #define fileno _fileno
@@ -2396,18 +2439,18 @@ namespace zelph::network
                 uint32_t rightChunkCount      = impl.getRightChunkCount();
                 uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
                 uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
-                auto leftSelector       = normalize_chunk_selector(selection.left, leftChunkCount, selection.left_explicit);
-                auto rightSelector      = normalize_chunk_selector(selection.right, rightChunkCount, selection.right_explicit);
-                auto nameOfNodeSelector = normalize_chunk_selector(selection.nameOfNode, nameOfNodeChunkCount, selection.name_of_node_explicit);
-                auto nodeOfNameSelector = normalize_chunk_selector(selection.nodeOfName, nodeOfNameChunkCount, selection.node_of_name_explicit);
+                auto     leftSelector         = normalize_chunk_selector(selection.left, leftChunkCount, selection.left_explicit);
+                auto     rightSelector        = normalize_chunk_selector(selection.right, rightChunkCount, selection.right_explicit);
+                auto     nameOfNodeSelector   = normalize_chunk_selector(selection.nameOfNode, nameOfNodeChunkCount, selection.name_of_node_explicit);
+                auto     nodeOfNameSelector   = normalize_chunk_selector(selection.nodeOfName, nodeOfNameChunkCount, selection.node_of_name_explicit);
 
-                const chunk_selector* leftSelectorPtr = selection.left_explicit ? &leftSelector : nullptr;
-                const chunk_selector* rightSelectorPtr = selection.right_explicit ? &rightSelector : nullptr;
+                const chunk_selector* leftSelectorPtr       = selection.left_explicit ? &leftSelector : nullptr;
+                const chunk_selector* rightSelectorPtr      = selection.right_explicit ? &rightSelector : nullptr;
                 const chunk_selector* nameOfNodeSelectorPtr = selection.name_of_node_explicit ? &nameOfNodeSelector : nullptr;
                 const chunk_selector* nodeOfNameSelectorPtr = selection.node_of_name_explicit ? &nodeOfNameSelector : nullptr;
 
-                const size_t requestedLeftChunks = selection.left_explicit ? leftSelector.size() : leftChunkCount;
-                const size_t requestedRightChunks = selection.right_explicit ? rightSelector.size() : rightChunkCount;
+                const size_t requestedLeftChunks       = selection.left_explicit ? leftSelector.size() : leftChunkCount;
+                const size_t requestedRightChunks      = selection.right_explicit ? rightSelector.size() : rightChunkCount;
                 const size_t requestedNameOfNodeChunks = selection.name_of_node_explicit ? nameOfNodeSelector.size() : nameOfNodeChunkCount;
                 const size_t requestedNodeOfNameChunks = selection.node_of_name_explicit ? nodeOfNameSelector.size() : nodeOfNameChunkCount;
 
