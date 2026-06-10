@@ -1,0 +1,833 @@
+# sparql.zph - SPARQL subset support for zelph
+#
+# Usage after importing this script:
+#
+#   sparql
+#   SELECT ?x ?y WHERE {
+#     ?x wdt:P31 wd:Q5 .
+#     ?x wdt:P279+ ?y .
+#   }
+#   <empty line>
+#
+# Supported subset:
+#   - SELECT [DISTINCT] ?vars... | *  with WHERE { ... }
+#   - Basic Graph Patterns (triple blocks, '.' separated, ';' and ',' lists)
+#   - Property paths: p+ p* and sequences p1/p2/p3 (each element may carry + or *)
+#   - OPTIONAL { ... }, MINUS { ... }, UNION of group graph patterns
+#   - FILTER with comparison of str(?v) / lang(?v) / vars / literals,
+#     using = != < > <= >=
+#   - Subqueries: { SELECT ... { ... } }
+#   - GROUP BY ?v with (COUNT(?v) AS ?alias)
+#   - ORDER BY ASC(?v) / DESC(?v) / ?v
+#   - LIMIT n, DISTINCT
+#   - PREFIX declarations are parsed; well-known Wikidata prefixes
+#     (wd:, wdt:, p:, pq:, ps:, ...) strip to bare Q/P IDs, since zelph's
+#     wikidata language uses plain IDs as node names.
+#
+# Explicitly out of scope (rejected with an error message):
+#   BIND, VALUES, SERVICE, CONSTRUCT/ASK/DESCRIBE, EXISTS/NOT EXISTS, GRAPH,
+#   HAVING, aggregations other than COUNT, arbitrary FILTER expressions.
+
+%
+# ============================================================
+# 1. Placeholders for missing zelph core functionality
+# ============================================================
+
+# ANTICIPATED CORE API: (zelph/closure start predicate include-start)
+# Should return an array of all nodes reachable from `start` via `predicate`
+# edges (transitive closure, deduplicated). include-start true => reflexive
+# closure (SPARQL `*`), false => one-or-more (SPARQL `+`).
+# Until the native implementation exists, this Janet BFS via zelph/targets
+# is used. It is correct but crosses the C boundary once per node - replace
+# with a native implementation for Wikidata scale.
+(defn zelph-closure [start predicate include-start]
+  (def seen @{})
+  (def result @[])
+  (when include-start
+    (put seen start true)
+    (array/push result start))
+  (var frontier @[start])
+  (while (> (length frontier) 0)
+    (def next-frontier @[])
+    (each node frontier
+      (each tgt (zelph/targets node predicate)
+        (unless (get seen tgt)
+          (put seen tgt true)
+          (array/push result tgt)
+          (array/push next-frontier tgt))))
+    (set frontier next-frontier))
+  result)
+
+# ANTICIPATED CORE API: (zelph/closure-sources target predicate include-target)
+# Inverse direction: all nodes that reach `target` via `predicate`.
+# Needed when the path subject is unbound but the object is bound
+# (e.g.  ?i wdt:P279* wd:Q123  - enumerate all subclasses of Q123).
+(defn zelph-closure-sources [target predicate include-target]
+  (def seen @{})
+  (def result @[])
+  (when include-target
+    (put seen target true)
+    (array/push result target))
+  (var frontier @[target])
+  (while (> (length frontier) 0)
+    (def next-frontier @[])
+    (each node frontier
+      (each src (zelph/sources predicate node)
+        (unless (get seen src)
+          (put seen src true)
+          (array/push result src)
+          (array/push next-frontier src))))
+    (set frontier next-frontier))
+  result)
+
+# ============================================================
+# 2. Prefix handling
+# ============================================================
+# zelph's wikidata language names nodes with bare IDs (Q5, P31).
+# Well-known Wikidata prefixes therefore strip to the local part.
+# Prefixes declared via PREFIX in the query body expand to the full IRI,
+# which is then used as a node name. Note: p:, pq:, ps: refer to statement
+# and qualifier nodes - resolving them to bare IDs is a simplification that
+# only becomes meaningful once qualifier import lands in zelph.
+(def wikidata-prefixes
+  {"wd" true "wdt" true "p" true "pq" true "ps" true
+   "psv" true "pqv" true "wdtn" true})
+
+(def wd-iri-prefixes
+  ["http://www.wikidata.org/entity/"
+   "http://www.wikidata.org/prop/direct/"
+   "http://www.wikidata.org/prop/qualifier/"
+   "http://www.wikidata.org/prop/statement/"
+   "http://www.wikidata.org/prop/"])
+
+# ============================================================
+# 3. PEG grammar for the SPARQL subset
+# ============================================================
+(def sparql-grammar
+  ~{:ws (set " \t\r\n")
+    :s* (any (choice :ws :comment))
+    :s+ (some (choice :ws :comment))
+    :comment (* "#" (any (if-not "\n" 1)) (choice "\n" -1))
+
+    :ncname (some (choice (range "az") (range "AZ") (range "09") (set "_-")))
+
+    # IRIs and prefixed names
+    :iri-ref (group (* (constant :iri) "<" (capture (some (if-not ">" 1))) ">"))
+    # The local part may be empty: example query (2) declares prefixes for
+    # full entity IRIs and references them as bare "violated_1:".
+    :pname (group (* (constant :pname)
+                     (capture (any (choice (range "az") (range "AZ") (range "09") "_")))
+                     ":"
+                     (capture (any (choice (range "az") (range "AZ") (range "09") (set "_-"))))))
+
+    # Variables
+    :var (group (* (constant :var) (choice "?" "$") (capture :ncname)))
+
+    # Literals
+    :string-lit (choice
+                  (* "\"" (capture (any (if-not "\"" 1))) "\"")
+                  (* "'" (capture (any (if-not "'" 1))) "'"))
+    :lang-tag (* "@" (capture :ncname))
+    :literal (group (* (constant :literal) :string-lit (? :lang-tag)))
+    :number (group (* (constant :number)
+                      (capture (* (? "-") (some (range "09"))
+                                  (? (* "." (some (range "09"))))))))
+
+    # Path element: iri/pname optionally followed by + or *
+    :path-mod (capture (set "+*"))
+    :path-elem (group (* (constant :pelem) (choice :iri-ref :pname) (? :path-mod)))
+    :path (group (* (constant :path) :path-elem (any (* "/" :path-elem))))
+
+    # Keywords (accept upper- and lowercase)
+    :kw-select (choice "SELECT" "select")
+    :kw-distinct (choice "DISTINCT" "distinct")
+    :kw-where (choice "WHERE" "where")
+    :kw-optional (choice "OPTIONAL" "optional")
+    :kw-minus (choice "MINUS" "minus")
+    :kw-union (choice "UNION" "union")
+    :kw-filter (choice "FILTER" "filter")
+    :kw-prefix (choice "PREFIX" "prefix")
+    :kw-group (choice "GROUP" "group")
+    :kw-order (choice "ORDER" "order")
+    :kw-by (choice "BY" "by")
+    :kw-limit (choice "LIMIT" "limit")
+    :kw-as (choice "AS" "as")
+    :kw-count (choice "COUNT" "count")
+    :kw-asc (choice "ASC" "asc")
+    :kw-desc (choice "DESC" "desc")
+
+    # Prologue
+    :prefix-decl (group (* (constant :prefix) :kw-prefix :s+
+                           (capture (any (choice (range "az") (range "AZ")
+                                                 (range "09") "_")))
+                           ":" :s* "<" (capture (some (if-not ">" 1))) ">"))
+
+    # Terms usable in subject/object position
+    :term (choice :var :iri-ref :pname :literal :number)
+
+    # Predicate position: variable or path (a path covers a single iri too)
+    :verb (choice :var :path)
+
+    # Object list: obj ("," obj)*
+    :object-list (group (* (constant :objs) :term (any (* :s* "," :s* :term))))
+
+    # Property list: verb objlist (";" verb objlist)*
+    :prop-pair (group (* (constant :pp) :verb :s+ :object-list))
+    :prop-list (* :prop-pair (any (* :s* ";" :s* :prop-pair)))
+
+    # Triples block entry
+    :triples (group (* (constant :triples) :term :s+ :prop-list))
+
+    # FILTER expression (restricted to a single comparison)
+    :func-call (group (* (constant :func)
+                         (capture (choice "str" "STR" "lang" "LANG"))
+                         :s* "(" :s* :var :s* ")"))
+    :cmp-op (capture (choice "<=" ">=" "!=" "=" "<" ">"))
+    :filter-operand (choice :func-call :var :literal :number :iri-ref :pname)
+    :filter-expr (group (* (constant :cmp) :filter-operand :s* :cmp-op
+                           :s* :filter-operand))
+    # Opening and closing parens may be nested, e.g. FILTER ( ( a < b ) ).
+    # Balance is not enforced (acceptable for this subset).
+    :filter (group (* (constant :filter) :kw-filter :s* (some (* "(" :s*))
+                      :filter-expr :s* (some (* ")" :s*))))
+
+    # Graph patterns
+    :group-pattern (group (* (constant :group) "{" :s*
+                             (any (* :pattern-elem :s* (? (* "." :s*)))) "}"))
+
+    :union-pattern (group (* (constant :union)
+                             :group-pattern
+                             (some (* :s* :kw-union :s* :group-pattern))))
+
+    :optional-pattern (group (* (constant :optional) :kw-optional :s*
+                                (choice :union-pattern :group-pattern)))
+    :minus-pattern (group (* (constant :minus) :kw-minus :s* :group-pattern))
+
+    :subquery (group (* (constant :subquery) "{" :s* :select-query :s* "}"))
+
+    :pattern-elem (choice :subquery :union-pattern :optional-pattern
+                          :minus-pattern :filter :group-pattern :triples)
+
+    # SELECT projection
+    :count-expr (group (* (constant :count) "(" :s* :kw-count :s* "("
+                          :s* :var :s* ")" :s* :kw-as :s+ :var :s* ")"))
+    :proj-star (group (* (constant :star) "*"))
+    :projection (group (* (constant :proj)
+                          (some (* :s* (choice :count-expr :var :proj-star)))))
+
+    # Solution modifiers
+    :group-by (group (* (constant :groupby) :kw-group :s+ :kw-by :s+ :var))
+    :order-by (group (* (constant :orderby) :kw-order :s+ :kw-by :s+
+                        (choice
+                          (group (* (constant :ord)
+                                    (capture (choice :kw-asc :kw-desc))
+                                    :s* "(" :s* :var :s* ")"))
+                          (group (* (constant :ord) (constant "ASC") :var)))))
+    :limit (group (* (constant :limit) :kw-limit :s+
+                     (capture (some (range "09")))))
+
+    :select-query (group (* (constant :select)
+                            :kw-select
+                            (? (group (* (constant :distinct) :s+ :kw-distinct)))
+                            :s+ :projection :s*
+                            (? (* :kw-where :s*))
+                            :group-pattern
+                            (any (* :s* (choice :group-by :order-by :limit)))))
+
+    :main (* :s* (group (* (constant :query)
+                           (any (* :prefix-decl :s*))
+                           :select-query))
+             :s* -1)})
+
+(def sparql-peg (peg/compile sparql-grammar))
+
+# ============================================================
+# 4. AST helpers
+# ============================================================
+(defn tag [node] (when (indexed? node) (first node)))
+
+(defn strip-wd-iri
+  "Strip well-known Wikidata IRI prefixes, reducing full IRIs to bare
+   Q/P IDs (zelph's wikidata language uses plain IDs as node names).
+   Non-Wikidata IRIs are returned unchanged and act as literal node names."
+  [iri]
+  (var stripped nil)
+  (each pfx wd-iri-prefixes
+    (when (and (nil? stripped) (string/has-prefix? pfx iri))
+      (set stripped (string/slice iri (length pfx)))))
+  (or stripped iri))
+
+(defn resolve-term
+  "Convert a parsed term AST node into either [:var name] or a concrete
+   node-name string suitable for zelph/fact in the wikidata language."
+  [node prefixes]
+  (case (tag node)
+    :var [:var (node 1)]
+    :iri (strip-wd-iri (node 1))
+    :pname (do
+             (def pfx (node 1))
+             (def local (node 2))
+             (cond
+               (get wikidata-prefixes pfx) local
+               # Declared prefixes expand to the full IRI, which is then
+               # subject to the same Wikidata stripping as direct IRIs.
+               (get prefixes pfx) (strip-wd-iri (string (get prefixes pfx) local))
+               (string pfx ":" local)))
+    :literal (node 1)
+    :number (node 1)
+    (error (string "Unsupported term: " (string/format "%q" node)))))
+
+(defn resolve-path-elem
+  "Returns [pred-name modifier] where modifier is nil, \"+\" or \"*\"."
+  [pelem prefixes]
+  (def pred (resolve-term (pelem 1) prefixes))
+  (def modifier (when (> (length pelem) 2) (pelem 2)))
+  (when (= (tag pred) :var)
+    (error "Variables are not allowed inside property paths"))
+  [pred modifier])
+
+# ============================================================
+# 5. Binding-set utilities (solution sequences)
+# ============================================================
+# A solution is a Janet table mapping variable-name strings to zelph/node
+# values (or plain strings for literals). A solution sequence is an array
+# of such tables.
+
+(defn compatible? [s1 s2]
+  (var ok true)
+  (eachp [k v] s1
+    (when-let [v2 (get s2 k)]
+      (unless (= v v2) (set ok false))))
+  ok)
+
+(defn merge-solutions [s1 s2]
+  (def out (table/clone s1))
+  (eachp [k v] s2 (put out k v))
+  out)
+
+(defn join
+  "Natural join of two solution sequences."
+  [seq1 seq2]
+  (def out @[])
+  (each a seq1
+    (each b seq2
+      (when (compatible? a b)
+        (array/push out (merge-solutions a b)))))
+  out)
+
+(defn left-join
+  "OPTIONAL semantics: keep all of seq1, extend with compatible seq2 rows."
+  [seq1 seq2]
+  (def out @[])
+  (each a seq1
+    (var extended false)
+    (each b seq2
+      (when (compatible? a b)
+        (set extended true)
+        (array/push out (merge-solutions a b))))
+    (unless extended (array/push out a)))
+  out)
+
+(defn shares-bound-var? [a b]
+  (var found false)
+  (eachp [k _] b
+    (unless (nil? (get a k)) (set found true)))
+  found)
+
+(defn minus-join
+  "MINUS semantics: drop seq1 rows that are compatible with some seq2 row
+   sharing at least one bound variable."
+  [seq1 seq2]
+  (filter
+    (fn [a]
+      (not (some (fn [b] (and (compatible? a b) (shares-bound-var? a b)))
+                 seq2)))
+    seq1))
+
+(defn node-key
+  "Stable comparison/dedup key: wikidata ID if available, else any name,
+   else the value's printed form."
+  [v]
+  (cond
+    (nil? v) ""
+    (string? v) v
+    (or (zelph/name v "wikidata") (zelph/name v) (string/format "%q" v))))
+
+(defn distinct-solutions [sols vars]
+  (def seen @{})
+  (def out @[])
+  (each s sols
+    (def key (string/join (map (fn [v] (node-key (get s v))) vars) "\x01"))
+    (unless (get seen key)
+      (put seen key true)
+      (array/push out s)))
+  out)
+
+# ============================================================
+# 6. Evaluating triple patterns
+# ============================================================
+(defn term->query-arg
+  "Convert a resolved term to a zelph/fact argument: bound value from the
+   solution, quoted symbol for free variables, or concrete string/node.
+   Free variables are recorded in var-syms."
+  [term sol var-syms]
+  (if (= (tag term) :var)
+    (do
+      (def name (term 1))
+      (def bound (get sol name))
+      (if (nil? bound)
+        (do
+          (def sym (symbol (string "V" name)))
+          (put var-syms name sym)
+          sym)
+        bound))
+    term))
+
+(defn eval-bgp-block
+  "Evaluate a set of simple (non-path) triples as one conjunction query,
+   joined against existing partial solutions one solution at a time.
+   triples: array of [s p o] resolved-term tuples."
+  [triples solutions]
+  (if (empty? triples)
+    solutions
+    (do
+      (def out @[])
+      (each sol solutions
+        (def var-syms @{})
+        (def args-per-triple
+          (map (fn [[s p o]]
+                 [(term->query-arg s sol var-syms)
+                  (term->query-arg p sol var-syms)
+                  (term->query-arg o sol var-syms)])
+               triples))
+        (if (empty? var-syms)
+          # Fully bound: pure existence check, no graph mutation
+          (when (all (fn [[s p o]] (zelph/exists s p o)) args-per-triple)
+            (array/push out sol))
+          (do
+            (def facts
+              (map (fn [[s p o]] (zelph/fact s p o)) args-per-triple))
+            (def pattern
+              (if (= 1 (length facts))
+                (first facts)
+                (do
+                  (def cset (zelph/set ;facts))
+                  (zelph/fact cset "~" "conjunction")
+                  cset)))
+            (def results (zelph/query pattern))
+            (each r results
+              (def merged (table/clone sol))
+              (eachp [var-name sym] var-syms
+                (def bound (get r sym))
+                (when bound (put merged var-name bound)))
+              (array/push out merged)))))
+      out)))
+
+(defn eval-path-step
+  "Evaluate one transitive path step  subj --pred(+|*)--> obj  against a
+   solution sequence. Either side may be a variable or concrete."
+  [s pred modifier o solutions]
+  (def include-start (= modifier "*"))
+  (def out @[])
+  (each sol solutions
+    (def s-val (if (= (tag s) :var) (get sol (s 1)) s))
+    (def o-val (if (= (tag o) :var) (get sol (o 1)) o))
+    (cond
+      # Subject bound or constant -> forward closure
+      (not (nil? s-val))
+      (do
+        (def s-node (if (string? s-val) (zelph/resolve s-val) s-val))
+        (def o-key (when (not (nil? o-val))
+                     (node-key (if (string? o-val) (zelph/resolve o-val) o-val))))
+        (each tgt (zelph-closure s-node pred include-start)
+          (if (nil? o-val)
+            (do
+              (def merged (table/clone sol))
+              (put merged (o 1) tgt)
+              (array/push out merged))
+            (when (= (node-key tgt) o-key)
+              (array/push out (table/clone sol))))))
+
+      # Only object bound -> backward closure
+      (not (nil? o-val))
+      (do
+        (def o-node (if (string? o-val) (zelph/resolve o-val) o-val))
+        (each src (zelph-closure-sources o-node pred include-start)
+          (def merged (table/clone sol))
+          (put merged (s 1) src)
+          (array/push out merged)))
+
+      # Both ends unbound: enumerate all subjects that actually carry the
+      # predicate, then take the forward closure of each. This touches only
+      # nodes connected via the predicate, so the cost is proportional to
+      # the data. Refused for `*`, where every node in the graph trivially
+      # reaches itself.
+      (do
+        (when include-start
+          (error "Property path with both ends unbound is not supported for *"))
+        (def pairs (zelph/query (zelph/fact 'PATHSUBJ pred 'PATHOBJ)))
+        (def subj-seen @{})
+        (each r pairs
+          (def subj (get r 'PATHSUBJ))
+          (unless (or (nil? subj) (get subj-seen subj))
+            (put subj-seen subj true)
+            (each tgt (zelph-closure subj pred false)
+              (def merged (table/clone sol))
+              (put merged (s 1) subj)
+              (put merged (o 1) tgt)
+              (array/push out merged)))))))
+  out)
+
+(def fresh-counter @[0])
+(defn fresh-var []
+  (put fresh-counter 0 (inc (get fresh-counter 0)))
+  [:var (string "__path" (get fresh-counter 0))])
+
+(defn expand-path
+  "Expand a path AST (sequence of elements, each optionally +/*) between
+   subject s and object o into simple triples and transitive steps,
+   introducing fresh intermediate variables for sequence paths.
+   Returns [simple-triples path-steps]."
+  [s path-node o prefixes]
+  (def elems (slice path-node 1))
+  (def simple @[])
+  (def steps @[])
+  (var current-subj s)
+  (eachp [i pelem] elems
+    (def [pred modifier] (resolve-path-elem pelem prefixes))
+    (def is-last (= i (dec (length elems))))
+    (def current-obj (if is-last o (fresh-var)))
+    (if (nil? modifier)
+      (array/push simple [current-subj pred current-obj])
+      (array/push steps [current-subj pred modifier current-obj]))
+    (set current-subj current-obj))
+  [simple steps])
+
+# ============================================================
+# 7. FILTER evaluation
+# ============================================================
+(defn operand-value [op sol prefixes]
+  (case (tag op)
+    :var (node-key (get sol (op 1)))
+    :func (do
+            (def fname (string/ascii-lower (op 1)))
+            (def var-name ((op 2) 1))
+            (def val (get sol var-name))
+            (case fname
+              "str" (node-key val)
+              # Language tags are not modelled in zelph; lang() yields "".
+              # FILTER (lang(?x) = "en") therefore never matches - labels
+              # are handled via zelph/name in the output layer instead.
+              "lang" ""
+              (error (string "Unsupported function in FILTER: " fname))))
+    :literal (op 1)
+    :number (op 1)
+    :iri (resolve-term op prefixes)
+    :pname (resolve-term op prefixes)
+    (error "Unsupported FILTER operand")))
+
+(defn numeric? [s]
+  (and (string? s)
+       (peg/match '(* (? "-") (some (range "09"))
+                      (? (* "." (some (range "09")))) -1)
+                  s)))
+
+(defn eval-filter [filter-node prefixes solutions]
+  (def expr (filter-node 1))
+  (def [_ left op right] expr)
+  (filter
+    (fn [sol]
+      (def lv (operand-value left sol prefixes))
+      (def rv (operand-value right sol prefixes))
+      (def [l r]
+        (if (and (numeric? lv) (numeric? rv))
+          [(scan-number lv) (scan-number rv)]
+          [(string lv) (string rv)]))
+      (case op
+        "=" (= l r)
+        "!=" (not= l r)
+        "<" (< l r)
+        ">" (> l r)
+        "<=" (<= l r)
+        ">=" (>= l r)
+        false))
+    solutions))
+
+# ============================================================
+# 8. Group graph pattern evaluation
+# ============================================================
+# Forward declarations (mutually recursive: group <-> union <-> select)
+(var eval-group-impl nil)
+(var eval-union-impl nil)
+(var eval-select-impl nil)
+
+(defn eval-group [group-node prefixes solutions]
+  (eval-group-impl group-node prefixes solutions))
+(defn eval-union [union-node prefixes solutions]
+  (eval-union-impl union-node prefixes solutions))
+(defn eval-select [select-node prefixes]
+  (eval-select-impl select-node prefixes))
+
+(set eval-union-impl
+  (fn [union-node prefixes solutions]
+    (def out @[])
+    (each grp (slice union-node 1)
+      (each s (eval-group grp prefixes solutions)
+        (array/push out s)))
+    out))
+
+(set eval-group-impl
+  (fn [group-node prefixes solutions]
+    (var sols solutions)
+    # Consecutive simple triples are batched into one conjunction query;
+    # transitive path steps are applied right after their batch.
+    (def pending-triples @[])
+    (def pending-steps @[])
+
+    # A path step is executable when at least one end is constant or already
+    # bound in some solution. Steps whose ends are both unbound are deferred,
+    # because earlier steps may bind their variables first. Needed e.g. for
+    # example query (7):  ?c P279* ?m  combined with  ?c P279*/P31/P279* ?m -
+    # the P31 triple and the closures around it bind ?c and ?m, after which
+    # the first (initially both-unbound) step becomes a plain check.
+    (defn step-side-bound? [t]
+      (or (not= (tag t) :var)
+          (some (fn [sol] (not (nil? (get sol (t 1))))) sols)))
+
+    (defn flush-pending []
+      (unless (and (empty? pending-triples) (empty? pending-steps))
+        (set sols (eval-bgp-block pending-triples sols))
+        (def steps (array ;pending-steps))
+        (while (> (length steps) 0)
+          (var idx nil)
+          (eachp [i st] steps
+            (when (and (nil? idx)
+                       (or (step-side-bound? (st 0)) (step-side-bound? (st 3))))
+              (set idx i)))
+          # No executable step found: fall back to the first one, whose
+          # both-ends-unbound handling enumerates (+) or rejects (*).
+          (when (nil? idx) (set idx 0))
+          (def [s pred modifier o] (steps idx))
+          (set sols (eval-path-step s pred modifier o sols))
+          (array/remove steps idx))
+        (array/clear pending-triples)
+        (array/clear pending-steps)))
+
+    (each elem (slice group-node 1)
+      (case (tag elem)
+        :triples
+        (do
+          (def subj (resolve-term (elem 1) prefixes))
+          (each pp (slice elem 2)
+            (def verb (pp 1))
+            (def objs (slice (pp 2) 1))
+            (each obj-ast objs
+              (def obj (resolve-term obj-ast prefixes))
+              (if (= (tag verb) :var)
+                (array/push pending-triples [subj [:var (verb 1)] obj])
+                (do
+                  (def [simple steps] (expand-path subj verb obj prefixes))
+                  (each t simple (array/push pending-triples t))
+                  (each st steps (array/push pending-steps st)))))))
+
+        :filter
+        (do (flush-pending)
+            (set sols (eval-filter elem prefixes sols)))
+
+        :optional
+        (do (flush-pending)
+            (def inner (elem 1))
+            (def opt-sols
+              (if (= (tag inner) :union)
+                (eval-union inner prefixes @[@{}])
+                (eval-group inner prefixes @[@{}])))
+            (set sols (left-join sols opt-sols)))
+
+        :minus
+        (do (flush-pending)
+            (def m-sols (eval-group (elem 1) prefixes @[@{}]))
+            (set sols (minus-join sols m-sols)))
+
+        :union
+        (do (flush-pending)
+            (set sols (join sols (eval-union elem prefixes @[@{}]))))
+
+        :group
+        (do (flush-pending)
+            (set sols (eval-group elem prefixes sols)))
+
+        :subquery
+        (do (flush-pending)
+            (def [sub-sols _] (eval-select (elem 1) prefixes))
+            (set sols (join sols sub-sols)))
+
+        (error (string "Unsupported pattern element: "
+                       (string/format "%q" (tag elem))))))
+    (flush-pending)
+    sols))
+
+# ============================================================
+# 9. SELECT evaluation (projection, modifiers)
+# ============================================================
+(set eval-select-impl
+  (fn [select-node prefixes]
+    (var distinct? false)
+    (var projection nil)
+    (var group-pattern nil)
+    (var group-by nil)
+    (var order-by nil)
+    (var limit nil)
+
+    (each part (slice select-node 1)
+      (case (tag part)
+        :distinct (set distinct? true)
+        :proj (set projection part)
+        :group (set group-pattern part)
+        :groupby (set group-by ((part 1) 1))
+        :orderby (set order-by (part 1))
+        :limit (set limit (scan-number (part 1)))
+        nil))
+
+    (var sols (eval-group group-pattern prefixes @[@{}]))
+
+    # --- GROUP BY + COUNT ---
+    (def count-specs
+      (filter (fn [p] (= (tag p) :count)) (slice projection 1)))
+    (when (or group-by (not (empty? count-specs)))
+      (def groups @{})
+      (each s sols
+        (def key (if group-by (node-key (get s group-by)) :all))
+        (def bucket (or (get groups key) @[]))
+        (array/push bucket s)
+        (put groups key bucket))
+      (def grouped @[])
+      (eachp [_ bucket] groups
+        (def rep (table/clone (first bucket)))
+        (each cs count-specs
+          (def alias ((cs 2) 1))
+          (put rep alias (string (length bucket))))
+        (array/push grouped rep))
+      (set sols grouped))
+
+    # --- Projected variable list ---
+    (def proj-vars
+      (if (some (fn [p] (= (tag p) :star)) (slice projection 1))
+        (do
+          (def all-vars @{})
+          (each s sols
+            (eachp [k _] s
+              (unless (string/has-prefix? "__path" k)
+                (put all-vars k true))))
+          (sorted (keys all-vars)))
+        (do
+          (def vars @[])
+          (each p (slice projection 1)
+            (case (tag p)
+              :var (array/push vars (p 1))
+              :count (array/push vars ((p 2) 1))
+              nil))
+          vars)))
+
+    # --- ORDER BY ---
+    # Note: order-by already holds the inner [:ord dir var] tuple, because
+    # the dispatch loop above stores (part 1).
+    (when order-by
+      (def dir (string/ascii-upper (order-by 1)))
+      (def var-name ((order-by 2) 1))
+      (set sols
+        (sorted sols
+          (fn [a b]
+            (def av (node-key (get a var-name)))
+            (def bv (node-key (get b var-name)))
+            (def [x y]
+              (if (and (numeric? av) (numeric? bv))
+                [(scan-number av) (scan-number bv)]
+                [(string av) (string bv)]))
+            (if (= dir "DESC") (> x y) (< x y))))))
+
+    # --- DISTINCT ---
+    (when distinct?
+      (set sols (distinct-solutions sols proj-vars)))
+
+    # --- LIMIT ---
+    (when (and limit (> (length sols) limit))
+      (set sols (array/slice sols 0 limit)))
+
+    # --- Projection: drop unprojected bindings ---
+    (def projected @[])
+    (each s sols
+      (def row @{})
+      (each v proj-vars (put row v (get s v)))
+      (array/push projected row))
+    [projected proj-vars]))
+
+# ============================================================
+# 10. Output formatting
+# ============================================================
+(defn display-value [v]
+  (cond
+    (nil? v) ""
+    (string? v) v
+    (do
+      (def id (zelph/name v "wikidata"))
+      (def label (or (zelph/name v "en") (zelph/name v)))
+      (cond
+        (and id label (not= id label)) (string id " (" label ")")
+        (or id label (string/format "%q" v))))))
+
+(defn format-results
+  "Build the result text. Returned (not printed) so that the C++ keyword
+   dispatcher can emit it through zelph's output handler - this is what
+   makes the output visible to OutputCollector-based tests."
+  [projected proj-vars]
+  (if (empty? projected)
+    "No results."
+    (do
+      (def lines @[])
+      (array/push lines
+        (string/join (map (fn [v] (string "?" v)) proj-vars) "\t"))
+      (each row projected
+        (array/push lines
+          (string/join (map (fn [v] (display-value (get row v)))
+                            proj-vars)
+                       "\t")))
+      (array/push lines
+        (string/format "-- %d result(s) --" (length projected)))
+      (string/join lines "\n"))))
+
+# ============================================================
+# 11. Top-level handler + keyword registration
+# ============================================================
+(def unsupported-keywords
+  ["BIND" "VALUES" "SERVICE" "CONSTRUCT" "DESCRIBE" "GRAPH" "HAVING"])
+
+(defn check-unsupported [text]
+  (def upper (string/ascii-upper text))
+  (each kw unsupported-keywords
+    (when (string/find kw upper)
+      (error (string "SPARQL feature not supported by this subset: " kw)))))
+
+(defn sparql-handler [text]
+  (check-unsupported text)
+  (def parsed (peg/match sparql-peg text))
+  (unless parsed
+    (error (string "SPARQL syntax error or unsupported construct. Subset: "
+                   "SELECT [DISTINCT] / WHERE, BGPs, property paths (+ * /), "
+                   "OPTIONAL, MINUS, UNION, FILTER comparisons, subqueries, "
+                   "GROUP BY + COUNT, ORDER BY, LIMIT")))
+  (def query-node (first parsed))
+
+  (def prefixes @{})
+  (var select-node nil)
+  (each part (slice query-node 1)
+    (case (tag part)
+      :prefix (put prefixes (part 1) (part 2))
+      :select (set select-node part)))
+
+  (def [projected proj-vars] (eval-select select-node prefixes))
+  (format-results projected proj-vars))
+
+(zelph/register-keyword "sparql" sparql-handler)
+
+"SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
+%

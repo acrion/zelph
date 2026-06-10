@@ -81,7 +81,7 @@ public:
         auto output = _n->get_output_handler(); // save what's needed
         _n.reset();                             // destroy last
 
-        _repl_state->partial_load_mode         = false;
+        _repl_state->partial_load_mode = false;
         _repl_state->partial_load_source.clear();
         _repl_state->janet_buffer.clear();
         _repl_state->zelph_buffer.clear();
@@ -89,6 +89,9 @@ public:
         _repl_state->accumulating_zelph        = false;
         _repl_state->script_mode               = ScriptMode::Zelph;
         _repl_state->reset_requested           = false;
+        _repl_state->accumulating_keyword      = false;
+        _repl_state->active_keyword.clear();
+        _repl_state->keyword_buffer.clear();
 
         init(output);
         _n->out("Cleared network and re-initialized core nodes.");
@@ -139,6 +142,7 @@ bool console::Interactive::is_accumulating() const
     const auto& s = _pImpl->_repl_state;
     return s->accumulating_zelph
         || s->accumulating_inline_janet
+        || s->accumulating_keyword
         || s->script_mode == ScriptMode::Janet;
 }
 
@@ -146,6 +150,32 @@ void console::Interactive::process(std::string line) const
 {
     try
     {
+        auto& state = _pImpl->_repl_state;
+
+        // --- 0. Keyword block accumulation (terminated by an empty line) ---
+        if (state->accumulating_keyword)
+        {
+            if (line.find_first_not_of(" \t\r") == std::string::npos)
+            {
+                std::string keyword         = state->active_keyword;
+                std::string text            = state->keyword_buffer;
+                state->accumulating_keyword = false;
+                state->active_keyword.clear();
+                state->keyword_buffer.clear();
+
+                _pImpl->_n->profiler_reset_epoch();
+                _pImpl->_script_engine->invoke_keyword(keyword, text);
+
+                if (state->auto_run)
+                    _pImpl->_n->run(true, false, false, true);
+            }
+            else
+            {
+                state->keyword_buffer += line + "\n";
+            }
+            return;
+        }
+
         // --- 1. Comments (work in all modes) ---
         if (!line.empty() && line[0] == '#') return;
 
@@ -166,8 +196,6 @@ void console::Interactive::process(std::string line) const
 
         // --- 3. Empty lines ---
         if (first_char_pos == std::string::npos) return;
-
-        auto& state = _pImpl->_repl_state;
 
         // --- 4. Accumulating an incomplete inline Janet expression ---
         if (state->accumulating_inline_janet)
@@ -243,7 +271,28 @@ void console::Interactive::process(std::string line) const
             return;
         }
 
-        // --- 8. zelph mode: accumulate until statement is complete, then parse ---
+        // --- 8. Registered syntax keywords (e.g. "sparql")
+        if (!state->accumulating_zelph) // Only when not already accumulating a zelph statement.
+        {
+            size_t      end_of_token = trimmed_utf8.find_first_of(" \t");
+            std::string first_token  = trimmed_utf8.substr(0, end_of_token);
+            if (_pImpl->_script_engine->has_keyword(first_token))
+            {
+                state->active_keyword       = first_token;
+                state->accumulating_keyword = true;
+
+                // Allow content on the same line after the keyword
+                if (end_of_token != std::string::npos)
+                {
+                    std::string rest = zelph::string::trim_left(trimmed_utf8.substr(end_of_token));
+                    if (!rest.empty())
+                        state->keyword_buffer = rest + "\n";
+                }
+                return;
+            }
+        }
+
+        // --- 9. zelph mode: accumulate until statement is complete, then parse ---
         if (state->accumulating_zelph)
             state->zelph_buffer += "\n" + line;
         else

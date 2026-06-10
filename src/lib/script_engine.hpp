@@ -76,6 +76,10 @@ namespace zelph
 
         std::string get_janet_logging_status() const;
 
+        bool has_keyword(const std::string& keyword) const;
+
+        void invoke_keyword(const std::string& keyword, const std::string& text);
+
         // Check whether a Janet code fragment has balanced delimiters
         // (parentheses, brackets, braces), respecting strings and comments.
         // Returns true when the expression is syntactically complete.

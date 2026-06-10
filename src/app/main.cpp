@@ -138,7 +138,7 @@ int main(int argc, char** argv)
                 if (line == exit_command)
                     break;
 
-                if (line.empty())
+                if (line.empty() && !interactive.is_accumulating())
                 {
                     interactive.out("type .help for help --");
                     interactive.prompt(make_prompt(), false);

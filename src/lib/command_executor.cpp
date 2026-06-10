@@ -877,6 +877,17 @@ public:
             _process_line_callback(line_utf8);
         }
 
+        // Flush an unterminated keyword block (EOF acts as the terminating empty line)
+        if (_repl_state->accumulating_keyword)
+        {
+            std::string keyword               = _repl_state->active_keyword;
+            std::string text                  = _repl_state->keyword_buffer;
+            _repl_state->accumulating_keyword = false;
+            _repl_state->active_keyword.clear();
+            _repl_state->keyword_buffer.clear();
+            _script_engine->invoke_keyword(keyword, text);
+        }
+
         // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)
         if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
         {

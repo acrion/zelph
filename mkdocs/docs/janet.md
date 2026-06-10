@@ -325,7 +325,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Return the node’s name as a string (or `nil` if unnamed). Optional `lang` selects the naming language.
 
 - **`(zelph/sources predicate target)`**  
-  Return all subjects `S` such that `S predicate target` exists (read-only traversal).
+  Return exactly those nodes S for which the fact S predicate target exists — i.e. nodes in the subject role. target must be in the object role of the matching fact: given a R b and b R c, (zelph/sources R b) returns only a (not c), and (zelph/targets b R) returns only c (not a).
 
 - **`(zelph/targets subject predicate)`**  
   Return all objects `O` such that `subject predicate O` exists (read-only traversal).

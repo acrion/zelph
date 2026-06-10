@@ -47,6 +47,9 @@ namespace zelph::console
         std::string zelph_buffer;
         bool        accumulating_zelph{false};
         bool        reset_requested{false};
+        bool        accumulating_keyword = false;
+        std::string active_keyword;
+        std::string keyword_buffer;
     };
 
     // Helper RAII struct to temporarily suspend auto-run

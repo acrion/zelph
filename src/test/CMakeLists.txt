@@ -35,8 +35,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(doctest)
 
-add_executable(zelph_tests test_interactive.cpp)
+add_executable(zelph_tests
+    test_reasoning.cpp
+    test_sparql.cpp
+)
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main)
+
+# Absolute path to the repository root, used by tests to locate
+# sample_scripts/sparql.zph independently of the working directory.
+target_compile_definitions(zelph_tests PRIVATE
+    ZELPH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # suppress doctest specific __COUNTER__ warnings
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

@@ -45,10 +45,11 @@ class ScriptEngine::Impl
 public:
     static Impl* s_instance; // Required for static Janet C-function callbacks
 
-    network::Reasoning* _n;
-    JanetTable*         _janet_env = nullptr;
-    Janet               _zelph_peg{};
-    bool                _log_janet_functions = false;
+    network::Reasoning*          _n;
+    JanetTable*                  _janet_env = nullptr;
+    Janet                        _zelph_peg{};
+    bool                         _log_janet_functions = false;
+    std::map<std::string, Janet> _keyword_handlers;
 
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
@@ -64,6 +65,9 @@ public:
         if (s_instance == this) s_instance = nullptr;
         if (_janet_env)
         {
+            for (auto& [kw, handler] : _keyword_handlers)
+                janet_gcunroot(handler);
+            _keyword_handlers.clear();
             janet_gcunroot(_zelph_peg);
             janet_deinit();
         }
@@ -118,6 +122,10 @@ public:
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
+
+        janet_def(_janet_env, "zelph/register-keyword", wrap((JanetCFunction)janet_cfun_zelph_register_keyword), "(zelph/register-keyword keyword handler)\nRegister a REPL syntax keyword. After the keyword is "
+                                                                                                                 "entered, subsequent lines are accumulated verbatim until an empty line, then passed as a single "
+                                                                                                                 "string to handler.");
     }
 
     void setup_module_paths() const
@@ -408,6 +416,11 @@ public:
     // Find all subjects connected to target via predicate.
     // (zelph/sources "in" set-node) → elements of the set
     // (zelph/sources "~" concept)   → instances of that concept
+    //
+    // Implemented as a manual traversal (mirroring janet_cfun_zelph_targets)
+    // instead of get_sources, because the required semantics are directional:
+    // target must participate in the *object role*. A node X connected to
+    // target through a fact "target predicate X" must not be reported.
     static Janet janet_cfun_zelph_sources(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 2);
@@ -423,7 +436,29 @@ public:
             return res;
         }
 
-        network::adjacency_set sources = s_instance->_n->get_sources(predicate, target);
+        network::adjacency_set sources;
+
+        // Traverse: target → relation_nodes → find subjects
+        // Topology: subject <-> relation_node (bidirectional), object -> relation_node,
+        // relation_node -> predicate.
+        // Validate that target is a pure object: in left(rel) but NOT in right(rel).
+        for (network::Node rel : s_instance->_n->get_right(target))
+        {
+            network::adjacency_set rel_right = s_instance->_n->get_right(rel);
+            network::adjacency_set rel_left  = s_instance->_n->get_left(rel);
+
+            if (rel_right.count(predicate) && rel_left.count(target) && rel_right.count(target) == 0)
+            {
+                // Subjects: bidirectional (in both left and right of rel)
+                for (network::Node subj : rel_left)
+                {
+                    if (subj != target && subj != predicate && rel_right.count(subj))
+                    {
+                        sources.insert(subj);
+                    }
+                }
+            }
+        }
 
         JanetArray* result = janet_array(static_cast<int32_t>(sources.size()));
         for (network::Node src : sources)
@@ -851,6 +886,33 @@ public:
         Janet res = janet_wrap_array(result_array);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/query", argc, argv, false, res);
         return res;
+    }
+
+    // Register a keyword that introduces a custom multi-line syntax block in the
+    // REPL and in .zph scripts. The block is terminated by an empty line; the
+    // accumulated text is passed verbatim (as a single string) to the handler.
+    static Janet janet_cfun_zelph_register_keyword(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        const uint8_t* str     = janet_getstring(argv, 0);
+        std::string    keyword = reinterpret_cast<const char*>(str);
+
+        if (keyword.empty() || keyword[0] == '.' || keyword[0] == '%' || keyword[0] == '#')
+            janet_panicf("zelph/register-keyword: invalid keyword '%s'", keyword.c_str());
+        if (keyword.find_first_of(" \t\r\n") != std::string::npos)
+            janet_panicf("zelph/register-keyword: keyword must not contain whitespace");
+        if (!janet_checktype(argv[1], JANET_FUNCTION))
+            janet_panicf("zelph/register-keyword: second argument must be a function");
+
+        auto it = s_instance->_keyword_handlers.find(keyword);
+        if (it != s_instance->_keyword_handlers.end())
+            janet_gcunroot(it->second);
+
+        janet_gcroot(argv[1]);
+        s_instance->_keyword_handlers[keyword] = argv[1];
+        return janet_wrap_nil();
     }
 
     // Helper to generate Janet code for a function call with potential focused arguments.
@@ -1311,6 +1373,60 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
         janet_array_push(jargs, janet_cstringv(arg.c_str()));
     }
     janet_table_put(_pImpl->_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
+}
+
+bool ScriptEngine::has_keyword(const std::string& keyword) const
+{
+    return _pImpl->_keyword_handlers.count(keyword) > 0;
+}
+
+void ScriptEngine::invoke_keyword(const std::string& keyword, const std::string& text)
+{
+    auto it = _pImpl->_keyword_handlers.find(keyword);
+    if (it == _pImpl->_keyword_handlers.end())
+        throw std::runtime_error("No handler registered for keyword '" + keyword + "'");
+
+    _pImpl->_scoped_variables.clear();
+
+    JanetFunction* f   = janet_unwrap_function(it->second);
+    Janet          arg = janet_cstringv(text.c_str());
+    Janet          result;
+    JanetFiber*    fiber = nullptr;
+
+    if (janet_pcall(f, 1, &arg, &result, &fiber) != JANET_SIGNAL_OK)
+    {
+        std::string err = "Janet error in handler for keyword '" + keyword + "'";
+        if (janet_checktype(result, JANET_STRING))
+            err += ": " + std::string(reinterpret_cast<const char*>(janet_unwrap_string(result)));
+        else if (janet_checktype(result, JANET_BUFFER))
+        {
+            JanetBuffer* b = janet_unwrap_buffer(result);
+            err += ": " + std::string(reinterpret_cast<const char*>(b->data), b->count);
+        }
+        throw std::runtime_error(err);
+    }
+
+    // String results are emitted verbatim, line by line, through the output
+    // handler (so they reach OutputCollector in tests and the REPL alike).
+    // Other non-nil results are emitted via their Janet description.
+    if (janet_checktype(result, JANET_STRING) || janet_checktype(result, JANET_BUFFER))
+    {
+        std::string text;
+        if (janet_checktype(result, JANET_STRING))
+            text = reinterpret_cast<const char*>(janet_unwrap_string(result));
+        else
+        {
+            JanetBuffer* b = janet_unwrap_buffer(result);
+            text           = std::string(reinterpret_cast<const char*>(b->data), b->count);
+        }
+        std::istringstream iss(text);
+        for (std::string l; std::getline(iss, l);)
+            _pImpl->_n->out(l, true);
+    }
+    else if (!janet_checktype(result, JANET_NIL))
+    {
+        _pImpl->_n->out(Impl::format_janet(result), true);
+    }
 }
 
 bool ScriptEngine::is_expression_complete(const std::string& code)
