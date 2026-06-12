@@ -82,6 +82,24 @@ namespace zelph::network
         size_t size() const { return _pool.size(); }
     };
 
+    // Per-predicate adjacency index for transitive closures.
+    //
+    // The generic traversal (get_fact_objects / get_fact_subjects) scans
+    // every relation node touching a visited node, regardless of predicate.
+    // At hub nodes (popular Wikidata classes) this means scanning millions
+    // of unrelated relations (e.g. all P31 instance facts of a class) just
+    // to find its few P279 edges. The index is built in one pass over the
+    // relations of a single predicate (_right[predicate]) and maps
+    // subject -> objects and object -> subjects for exactly that predicate;
+    // a BFS over the index touches only true edges.
+    struct PredicateIndex
+    {
+        using adjacency = ankerl::unordered_dense::map<Node, std::vector<Node>>;
+
+        adjacency forward;  // subject -> objects
+        adjacency backward; // object  -> subjects
+    };
+
     class ZELPH_EXPORT Zelph::Impl : public Network
     {
         friend class Zelph;
@@ -220,6 +238,8 @@ namespace zelph::network
 
         void clear_loaded_state()
         {
+            invalidate_predicate_index();
+
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
             std::unique_lock<std::shared_mutex> lock_prob(_mtx_prob);
@@ -2783,6 +2803,205 @@ namespace zelph::network
             }
         }
 
+        // --- Predicate index ------------------------------------------------
+        // Semantics mirror get_fact_objects / get_fact_subjects exactly:
+        // subjects are the bidirectional participants of a relation (except
+        // the predicate itself), objects are the pure-object-role nodes;
+        // variables are excluded on both sides. This includes the existing
+        // behavior for relation nodes that are themselves subjects of other
+        // facts (extra bidirectional participants), so index-backed and
+        // direct lookups always agree.
+        std::shared_ptr<const PredicateIndex> build_predicate_index(Node predicate) const
+        {
+            auto idx = std::make_shared<PredicateIndex>();
+
+            // Same lock order as writers (connect): left before right.
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            const auto rels_it = _right.find(predicate);
+            if (rels_it == _right.end()) return idx;
+
+            std::vector<Node> subjects;
+            for (const Node rel : rels_it->second)
+            {
+                const auto rl_it = _left.find(rel);
+                const auto rr_it = _right.find(rel);
+                if (rl_it == _left.end() || rr_it == _right.end()) continue;
+
+                const adjacency_set& rel_left  = rl_it->second; // {subject, predicate, ...}
+                const adjacency_set& rel_right = rr_it->second; // {subject, objects, ...}
+
+                // rel may be in _right[predicate] because the predicate is the
+                // *subject* of rel (e.g. the auto-created (P ~ ->) fact). Such
+                // relations contribute nothing below, since the predicate is
+                // excluded as a subject candidate and is never a pure object.
+                if (rel_left.count(predicate) == 0) continue;
+
+                subjects.clear();
+                for (const Node cand : rel_left)
+                {
+                    if (cand == predicate || is_var(cand)) continue;
+                    if (rel_right.count(cand) == 1) subjects.push_back(cand);
+                }
+                if (subjects.empty()) continue;
+
+                for (const Node obj : rel_right)
+                {
+                    if (is_var(obj)) continue;
+                    if (rel_left.count(obj) == 1) continue; // bidirectional => not a pure object
+                    for (const Node subj : subjects)
+                    {
+                        idx->forward[subj].push_back(obj);
+                        idx->backward[obj].push_back(subj);
+                    }
+                }
+            }
+
+            return idx;
+        }
+
+        std::shared_ptr<const PredicateIndex> predicate_index(Node predicate) const
+        {
+            {
+                std::shared_lock lock(_pred_idx_mtx);
+                const auto       it = _pred_idx_cache.find(predicate);
+                if (it != _pred_idx_cache.end()) return it->second;
+            }
+
+            auto idx = build_predicate_index(predicate);
+
+            std::unique_lock lock(_pred_idx_mtx);
+            const auto [it, inserted] = _pred_idx_cache.try_emplace(predicate, std::move(idx));
+            if (inserted) _pred_idx_has_entries.store(true, std::memory_order_release);
+            return it->second;
+        }
+
+        // Lookup that only consumes an already-built index; never triggers a
+        // build. Returns true if an index for the predicate exists (out then
+        // holds the complete answer, possibly empty).
+        bool try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const
+        {
+            if (!_pred_idx_has_entries.load(std::memory_order_acquire)) return false;
+
+            std::shared_ptr<const PredicateIndex> idx;
+            {
+                std::shared_lock lock(_pred_idx_mtx);
+                const auto       it = _pred_idx_cache.find(predicate);
+                if (it == _pred_idx_cache.end()) return false;
+                idx = it->second;
+            }
+
+            const auto& map = forward ? idx->forward : idx->backward;
+            const auto  it  = map.find(node);
+            if (it != map.end())
+            {
+                for (const Node n : it->second)
+                    out.insert(n);
+            }
+            return true;
+        }
+
+        void invalidate_predicate_index() const noexcept
+        {
+            if (!_pred_idx_has_entries.exchange(false, std::memory_order_acq_rel)) return;
+            std::unique_lock lock(_pred_idx_mtx);
+            _pred_idx_cache.clear();
+        }
+
+        // Lock-once transitive traversal working directly on _left/_right
+        // references: no adjacency_set copies, no per-edge lock acquisitions.
+        // Aborts and returns false once `scan_budget` relation entries have
+        // been scanned - hub nodes blow the budget immediately, signalling
+        // the caller to switch to the predicate index. On false, `result`
+        // is partial and must be discarded.
+        bool try_transitive_direct(Node           start,
+                                   Node           predicate,
+                                   bool           include_start,
+                                   bool           forward,
+                                   size_t         scan_budget,
+                                   adjacency_set& result) const
+        {
+            // Same lock order as writers (connect): left before right.
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            ankerl::unordered_dense::set<Node> seen;
+            std::vector<Node>                  frontier{start};
+            size_t                             scanned = 0;
+
+            if (include_start)
+            {
+                seen.insert(start);
+                result.insert(start);
+            }
+
+            auto expand = [&](const Node n, std::vector<Node>& next) -> bool
+            {
+                // Outgoing edges of n: relations where n is subject or object.
+                const auto edges_it = _left.find(n);
+                if (edges_it == _left.end()) return true;
+
+                scanned += edges_it->second.size();
+                if (scanned > scan_budget) return false;
+
+                for (const Node rel : edges_it->second)
+                {
+                    const auto rl_it = _left.find(rel);
+                    if (rl_it == _left.end()) continue;
+                    const adjacency_set& rel_left = rl_it->second;
+                    if (rel_left.count(predicate) == 0) continue;
+
+                    const auto rr_it = _right.find(rel);
+                    if (rr_it == _right.end()) continue;
+                    const adjacency_set& rel_right = rr_it->second;
+
+                    if (forward)
+                    {
+                        // n must be the subject (bidirectional with rel).
+                        if (rel_left.count(n) == 0 || rel_right.count(n) == 0) continue;
+                        for (const Node obj : rel_right)
+                        {
+                            if (obj == n || is_var(obj)) continue;
+                            if (rel_left.count(obj) == 1) continue; // not a pure object
+                            if (seen.insert(obj).second)
+                            {
+                                result.insert(obj);
+                                next.push_back(obj);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // n must be in the pure object role.
+                        if (rel_right.count(n) == 0 || rel_left.count(n) == 1) continue;
+                        for (const Node subj : rel_right)
+                        {
+                            if (subj == n || subj == predicate || is_var(subj)) continue;
+                            if (rel_left.count(subj) == 0) continue; // subjects are bidirectional
+                            if (seen.insert(subj).second)
+                            {
+                                result.insert(subj);
+                                next.push_back(subj);
+                            }
+                        }
+                    }
+                }
+                return true;
+            };
+
+            while (!frontier.empty())
+            {
+                std::vector<Node> next;
+                for (const Node n : frontier)
+                {
+                    if (!expand(n, next)) return false;
+                }
+                frontier = std::move(next);
+            }
+            return true;
+        }
+
         void emit(io::OutputChannel channel, const std::string& text, bool newline = true) const
         {
             if (_output)
@@ -2804,6 +3023,10 @@ namespace zelph::network
         mutable std::shared_mutex                                              _fs_cache_mtx;
         mutable ankerl::unordered_dense::map<Node, std::vector<FactStructure>> _fs_cache;
         mutable std::atomic<bool>                                              _fs_cache_has_entries{false};
+
+        mutable std::shared_mutex                                                         _pred_idx_mtx;
+        mutable ankerl::unordered_dense::map<Node, std::shared_ptr<const PredicateIndex>> _pred_idx_cache;
+        mutable std::atomic<bool>                                                         _pred_idx_has_entries{false};
 
         int               _max_log_depth{0};
         bool              _logging{false};

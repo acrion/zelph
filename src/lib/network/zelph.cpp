@@ -38,6 +38,48 @@ using std::ranges::all_of;
 
 using namespace zelph::network;
 
+namespace
+{
+    // Relation entries a direct (index-free) closure traversal may scan
+    // before switching to the predicate index. Small closures on small
+    // graphs stay index-free and fast; hub-heavy traversals on Wikidata
+    // exhaust the budget immediately and pay the (cached) index build once.
+    constexpr size_t kDirectClosureScanBudget = size_t(1) << 16;
+
+    adjacency_set bfs_over_index(const PredicateIndex::adjacency& adj, const Node start, const bool include_start)
+    {
+        adjacency_set                      result;
+        ankerl::unordered_dense::set<Node> seen;
+        std::vector<Node>                  frontier{start};
+
+        if (include_start)
+        {
+            seen.insert(start);
+            result.insert(start);
+        }
+
+        while (!frontier.empty())
+        {
+            std::vector<Node> next;
+            for (const Node n : frontier)
+            {
+                const auto it = adj.find(n);
+                if (it == adj.end()) continue;
+                for (const Node t : it->second)
+                {
+                    if (seen.insert(t).second)
+                    {
+                        result.insert(t);
+                        next.push_back(t);
+                    }
+                }
+            }
+            frontier = std::move(next);
+        }
+        return result;
+    }
+}
+
 std::string Zelph::get_version()
 {
     return get_zelph_version();
@@ -170,6 +212,11 @@ adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) 
 {
     adjacency_set objects;
 
+    // Consume an already-built predicate index if one exists (built lazily
+    // by the transitive closures); this never triggers a build itself.
+    if (_pImpl->try_indexed_fact_lookup(predicate, subject, /*forward*/ true, objects))
+        return objects;
+
     for (const Node rel : get_right(subject))
     {
         // Validate: predicate in right(rel), subject bidirectional (in left and right).
@@ -196,6 +243,9 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
 {
     adjacency_set subjects;
 
+    if (_pImpl->try_indexed_fact_lookup(predicate, object, /*forward*/ false, subjects))
+        return subjects;
+
     for (const Node rel : get_right(object))
     {
         if (has_right_edge(rel, predicate) && has_left_edge(rel, object) && !has_right_edge(rel, object))
@@ -218,69 +268,31 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
 // include_start true gives the reflexive closure (SPARQL `*`); with false
 // (SPARQL `+`) the start node is still included when it is reachable from
 // itself via a cycle of one or more steps.
+//
+// Two-stage strategy: a lock-once direct traversal handles small closures
+// without any index; once its scan budget is exhausted (hub nodes), the
+// closure switches to the cached per-predicate index.
 adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, const bool include_start) const
 {
-    adjacency_set                      result;
-    ankerl::unordered_dense::set<Node> seen;
-    std::vector<Node>                  frontier{start};
+    adjacency_set result;
+    if (_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, kDirectClosureScanBudget, result))
+        return result;
 
-    if (include_start)
-    {
-        seen.insert(start);
-        result.insert(start);
-    }
-
-    while (!frontier.empty())
-    {
-        std::vector<Node> next;
-        for (const Node n : frontier)
-        {
-            for (const Node t : get_fact_objects(n, predicate))
-            {
-                if (seen.insert(t).second)
-                {
-                    result.insert(t);
-                    next.push_back(t);
-                }
-            }
-        }
-        frontier = std::move(next);
-    }
-
-    return result;
+    result.clear();
+    const auto idx = _pImpl->predicate_index(predicate);
+    return bfs_over_index(idx->forward, start, include_start);
 }
 
 // Transitive closure following the predicate backward (object -> subject).
 adjacency_set Zelph::transitive_sources(const Node target, const Node predicate, const bool include_target) const
 {
-    adjacency_set                      result;
-    ankerl::unordered_dense::set<Node> seen;
-    std::vector<Node>                  frontier{target};
+    adjacency_set result;
+    if (_pImpl->try_transitive_direct(target, predicate, include_target, /*forward*/ false, kDirectClosureScanBudget, result))
+        return result;
 
-    if (include_target)
-    {
-        seen.insert(target);
-        result.insert(target);
-    }
-
-    while (!frontier.empty())
-    {
-        std::vector<Node> next;
-        for (const Node n : frontier)
-        {
-            for (const Node s : get_fact_subjects(predicate, n))
-            {
-                if (seen.insert(s).second)
-                {
-                    result.insert(s);
-                    next.push_back(s);
-                }
-            }
-        }
-        frontier = std::move(next);
-    }
-
-    return result;
+    result.clear();
+    const auto idx = _pImpl->predicate_index(predicate);
+    return bfs_over_index(idx->backward, target, include_target);
 }
 
 adjacency_set Zelph::filter(const adjacency_set& source, const Node target) const
@@ -895,6 +907,8 @@ void Zelph::store_fact_structures_cached(Node fact, const std::vector<FactStruct
 
 void Zelph::invalidate_fact_structures_cache() const noexcept
 {
+    _pImpl->invalidate_predicate_index();
+
     // If cache already empty, do nothing (avoid lock)
     if (!_pImpl->_fs_cache_has_entries.exchange(false, std::memory_order_acq_rel))
         return;

@@ -36,6 +36,29 @@
 
 %
 # ============================================================
+# 0. Optional phase profiling
+# ============================================================
+# Enable from the REPL with:   %(set sparql-profile true)
+# Disable with:                %(set sparql-profile false)
+# Every evaluation phase that takes longer than 1 ms then prints a line
+# like  [sparql  4.231s] minus-join 3214x2987  (durations and row counts).
+# Output goes to stdout directly (Janet print), which is fine in the REPL.
+(var sparql-profile false)
+
+(defn prof
+  "Run f, printing its duration with the given label when profiling is on."
+  [label f]
+  (if sparql-profile
+    (do
+      (def t0 (os/clock :monotonic))
+      (def r (f))
+      (def dt (- (os/clock :monotonic) t0))
+      (when (> dt 0.001)
+        (print (string/format "[sparql %7.3fs] %s" dt label)))
+      r)
+    (f)))
+
+# ============================================================
 # 1. Native closure wrappers (with per-query cache)
 # ============================================================
 
@@ -57,14 +80,16 @@
 (defn zelph-closure [start predicate include-start]
   (def key [:fwd start predicate include-start])
   (or (get closure-cache key)
-      (let [arr (zelph/closure start predicate include-start)]
+      (let [arr (prof (string "closure fwd " (or (zelph/name start "wikidata") start))
+                      (fn [] (zelph/closure start predicate include-start)))]
         (put closure-cache key arr)
         arr)))
 
 (defn zelph-closure-sources [target predicate include-target]
   (def key [:bwd target predicate include-target])
   (or (get closure-cache key)
-      (let [arr (zelph/closure-sources target predicate include-target)]
+      (let [arr (prof (string "closure bwd " (or (zelph/name target "wikidata") target))
+                      (fn [] (zelph/closure-sources target predicate include-target)))]
         (put closure-cache key arr)
         arr)))
 
@@ -318,44 +343,26 @@
   (eachp [k v] s2 (put out k v))
   out)
 
-(defn join
-  "Natural join of two solution sequences."
-  [seq1 seq2]
-  (def out @[])
-  (each a seq1
-    (each b seq2
-      (when (compatible? a b)
-        (array/push out (merge-solutions a b)))))
-  out)
+(defn- solution-keys [sols]
+  (def ks @{})
+  (each s sols (eachp [k _] s (put ks k true)))
+  ks)
 
-(defn left-join
-  "OPTIONAL semantics: keep all of seq1, extend with compatible seq2 rows."
+(defn- common-vars
+  "Sorted array of variable names occurring on both sides."
   [seq1 seq2]
-  (def out @[])
-  (each a seq1
-    (var extended false)
-    (each b seq2
-      (when (compatible? a b)
-        (set extended true)
-        (array/push out (merge-solutions a b))))
-    (unless extended (array/push out a)))
-  out)
+  (def k1 (solution-keys seq1))
+  (def k2 (solution-keys seq2))
+  (def common (seq [k :keys k1 :when (get k2 k)] k))
+  (sort common)
+  common)
 
-(defn shares-bound-var? [a b]
-  (var found false)
-  (eachp [k _] b
-    (unless (nil? (get a k)) (set found true)))
-  found)
-
-(defn minus-join
-  "MINUS semantics: drop seq1 rows that are compatible with some seq2 row
-   sharing at least one bound variable."
-  [seq1 seq2]
-  (filter
-    (fn [a]
-      (not (some (fn [b] (and (compatible? a b) (shares-bound-var? a b)))
-                 seq2)))
-    seq1))
+(defn- all-bound? [sols vars]
+  (var ok true)
+  (each s sols
+    (each k vars
+      (when (nil? (get s k)) (set ok false))))
+  ok)
 
 (defn node-key
   "Stable comparison/dedup key: wikidata ID if available, else any name,
@@ -365,6 +372,117 @@
     (nil? v) ""
     (string? v) v
     (or (zelph/name v "wikidata") (zelph/name v) (string/format "%q" v))))
+
+(defn- sol-signature [s vars]
+  (string/join (map (fn [k] (node-key (get s k))) vars) "\x01"))
+
+(defn join
+  "Natural join of two solution sequences. Hash join over the shared
+   variables when every row binds all of them (the supported query class
+   always does); the quadratic nested loop remains as fallback, which also
+   covers compatibility-via-absence for ragged rows."
+  [seq1 seq2]
+  (if (or (empty? seq1) (empty? seq2))
+    @[]
+    (do
+      (def common (common-vars seq1 seq2))
+      (cond
+        # No shared variables: full cross product (as before)
+        (empty? common)
+        (do
+          (def out @[])
+          (each a seq1
+            (each b seq2
+              (array/push out (merge-solutions a b))))
+          out)
+
+        (and (all-bound? seq1 common) (all-bound? seq2 common))
+        (do
+          (def buckets @{})
+          (each b seq2
+            (def key (sol-signature b common))
+            (def bucket (or (get buckets key) @[]))
+            (array/push bucket b)
+            (put buckets key bucket))
+          (def out @[])
+          (each a seq1
+            (each b (or (get buckets (sol-signature a common)) [])
+              (array/push out (merge-solutions a b))))
+          out)
+
+        # Fallback: nested loop
+        (do
+          (def out @[])
+          (each a seq1
+            (each b seq2
+              (when (compatible? a b)
+                (array/push out (merge-solutions a b)))))
+          out)))))
+
+(defn left-join
+  "OPTIONAL semantics: keep all of seq1, extend with compatible seq2 rows."
+  [seq1 seq2]
+  (def common (if (empty? seq2) @[] (common-vars seq1 seq2)))
+  (cond
+    (empty? seq2)
+    (array ;seq1)
+
+    (and (not (empty? common)) (all-bound? seq1 common) (all-bound? seq2 common))
+    (do
+      (def buckets @{})
+      (each b seq2
+        (def key (sol-signature b common))
+        (def bucket (or (get buckets key) @[]))
+        (array/push bucket b)
+        (put buckets key bucket))
+      (def out @[])
+      (each a seq1
+        (def bucket (get buckets (sol-signature a common)))
+        (if (or (nil? bucket) (empty? bucket))
+          (array/push out a)
+          (each b bucket (array/push out (merge-solutions a b)))))
+      out)
+
+    # No shared vars, or ragged bindings: nested loop (original semantics)
+    (do
+      (def out @[])
+      (each a seq1
+        (var extended false)
+        (each b seq2
+          (when (compatible? a b)
+            (set extended true)
+            (array/push out (merge-solutions a b))))
+        (unless extended (array/push out a)))
+      out)))
+
+(defn shares-bound-var? [a b]
+  (var found false)
+  (eachp [k _] b
+    (unless (nil? (get a k)) (set found true)))
+  found)
+
+(defn minus-join
+  "MINUS semantics: drop seq1 rows that are compatible with some seq2 row
+   sharing at least one bound variable. Hash-based O(n+m) when every row
+   binds all shared variables; quadratic fallback otherwise."
+  [seq1 seq2]
+  (def common (if (or (empty? seq1) (empty? seq2)) @[] (common-vars seq1 seq2)))
+  (cond
+    # No shared variables (or nothing to subtract): nothing is removed
+    (empty? common)
+    (array ;seq1)
+
+    (and (all-bound? seq1 common) (all-bound? seq2 common))
+    (do
+      (def blocked @{})
+      (each b seq2 (put blocked (sol-signature b common) true))
+      (filter (fn [a] (not (get blocked (sol-signature a common)))) seq1))
+
+    (filter
+      (fn [a]
+        (not (some (fn [b] (and (compatible? a b) (shares-bound-var? a b)))
+                   seq2)))
+      seq1)))
 
 (defn distinct-solutions [sols vars]
   (def seen @{})
@@ -726,7 +844,9 @@
 
     (defn flush-pending []
       (unless (and (empty? pending-triples) (empty? pending-steps))
-        (set sols (eval-bgp-block pending-triples sols))
+        (def triple-count (length pending-triples))
+        (set sols (prof (string "bgp " triple-count " triple(s) over " (length sols) " sol(s)")
+                        (fn [] (eval-bgp-block pending-triples sols))))
         (def steps (array ;pending-steps))
 
         # --- Closure-intersection optimization ---
@@ -751,7 +871,9 @@
         (eachp [var-name idxs] var-groups
           (when (> (length idxs) 1)
             (def group-steps (map (fn [i] (steps i)) idxs))
-            (set sols (eval-step-group var-name group-steps sols))
+            (set sols (prof (string "closure-intersection ?" var-name
+                                    " (" (length idxs) " steps)")
+                            (fn [] (eval-step-group var-name group-steps sols))))
             (each i idxs (put consumed i true))))
 
         (def remaining @[])
@@ -768,7 +890,8 @@
           # both-ends-unbound handling enumerates (+) or rejects (*).
           (when (nil? idx) (set idx 0))
           (def [s pred modifier o] (remaining idx))
-          (set sols (eval-path-step s pred modifier o sols))
+          (set sols (prof (string "path-step over " (length sols) " sol(s)")
+                          (fn [] (eval-path-step s pred modifier o sols))))
           (array/remove remaining idx))
         (array/clear pending-triples)
         (array/clear pending-steps)))
@@ -803,10 +926,13 @@
             # graphs.
             (def inner (elem 1))
             (def opt-sols
-              (if (= (tag inner) :union)
-                (eval-union inner prefixes sols)
-                (eval-group inner prefixes sols)))
-            (set sols (left-join sols opt-sols)))
+              (prof (string "optional inner (" (length sols) " seeds)")
+                    (fn []
+                      (if (= (tag inner) :union)
+                        (eval-union inner prefixes sols)
+                        (eval-group inner prefixes sols)))))
+            (set sols (prof (string "left-join " (length sols) "x" (length opt-sols))
+                            (fn [] (left-join sols opt-sols)))))
 
         :minus
         (do (flush-pending)
@@ -816,8 +942,10 @@
             # differs only when the group shares no variables with the
             # outer pattern - a case the supported query class never uses,
             # and independent evaluation would enumerate the whole graph.
-            (def m-sols (eval-group (elem 1) prefixes sols))
-            (set sols (minus-join sols m-sols)))
+            (def m-sols (prof (string "minus inner (" (length sols) " seeds)")
+                              (fn [] (eval-group (elem 1) prefixes sols))))
+            (set sols (prof (string "minus-join " (length sols) "x" (length m-sols))
+                            (fn [] (minus-join sols m-sols)))))
 
         :union
         (do (flush-pending)
@@ -833,7 +961,8 @@
         :subquery
         (do (flush-pending)
             (def [sub-sols _] (eval-select (elem 1) prefixes))
-            (set sols (join sols sub-sols)))
+            (set sols (prof (string "subquery join " (length sols) "x" (length sub-sols))
+                            (fn [] (join sols sub-sols)))))
 
         (error (string "Unsupported pattern element: "
                        (string/format "%q" (tag elem))))))
@@ -1040,7 +1169,8 @@
           :prefix (put prefixes (part 1) (part 2))
           :select (set select-node part)))
 
-      (def [projected proj-vars] (eval-select select-node prefixes))
+      (def [projected proj-vars]
+        (prof "total eval" (fn [] (eval-select select-node prefixes))))
       (format-results projected proj-vars))))
 
 (zelph/register-keyword "sparql" sparql-handler)

@@ -37,8 +37,34 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <unistd.h>    // for execvp, getenv
 #endif
 
+#include <chrono>
+#include <cstdio>
 #include <iostream>
+#include <string>
 #include <vector>
+
+namespace
+{
+    // Print a timing line after a REPL input only when it took noticeable
+    // time. A script import (.import file) arrives as a single REPL line,
+    // so it yields exactly one timing - never one per script line.
+    constexpr std::chrono::milliseconds kReplTimingThreshold{10};
+
+    std::string format_duration(const std::chrono::steady_clock::duration d)
+    {
+        using namespace std::chrono;
+        const long long ms = duration_cast<milliseconds>(d).count();
+        if (ms < 1000) return std::to_string(ms) + " ms";
+
+        const long long s = ms / 1000;
+        char            buf[64];
+        if (s < 60)
+            std::snprintf(buf, sizeof(buf), "%lld.%03lld s", s, ms % 1000);
+        else
+            std::snprintf(buf, sizeof(buf), "%lldm%lld.%03llds", s / 60, s % 60, ms % 1000);
+        return buf;
+    }
+}
 
 using namespace zelph::console;
 Interactive interactive;
@@ -145,6 +171,8 @@ int main(int argc, char** argv)
                     continue;
                 }
 
+                const auto start_time = std::chrono::steady_clock::now();
+
                 try
                 {
                     interactive.process(line);
@@ -152,6 +180,12 @@ int main(int argc, char** argv)
                 catch (const std::exception& e)
                 {
                     interactive.err(e.what());
+                }
+
+                const auto elapsed = std::chrono::steady_clock::now() - start_time;
+                if (elapsed >= kReplTimingThreshold)
+                {
+                    interactive.log("-- " + format_duration(elapsed) + " --");
                 }
 
                 interactive.prompt(make_prompt(), false);
