@@ -373,8 +373,17 @@
     (string? v) v
     (or (zelph/name v "wikidata") (zelph/name v) (string/format "%q" v))))
 
-(defn- sol-signature [s vars]
-  (string/join (map (fn [k] (node-key (get s k))) vars) "\x01"))
+(defn- sol-key-fn
+  "Returns a function mapping a solution to a hashable join key over the
+   given (sorted, non-empty) common variables. For a single variable the
+   bound value itself is the key - the zelph/node abstract type hashes and
+   compares by node id, so this needs no name lookups and cannot collide.
+   For multiple variables a string signature via node-key is used."
+  [vars]
+  (if (= 1 (length vars))
+    (let [k (first vars)]
+      (fn [s] (get s k)))
+    (fn [s] (string/join (map (fn [k] (node-key (get s k))) vars) "\x01"))))
 
 (defn join
   "Natural join of two solution sequences. Hash join over the shared
@@ -398,15 +407,16 @@
 
         (and (all-bound? seq1 common) (all-bound? seq2 common))
         (do
+          (def keyf (sol-key-fn common))
           (def buckets @{})
           (each b seq2
-            (def key (sol-signature b common))
+            (def key (keyf b))
             (def bucket (or (get buckets key) @[]))
             (array/push bucket b)
             (put buckets key bucket))
           (def out @[])
           (each a seq1
-            (each b (or (get buckets (sol-signature a common)) [])
+            (each b (or (get buckets (keyf a)) [])
               (array/push out (merge-solutions a b))))
           out)
 
@@ -429,15 +439,16 @@
 
     (and (not (empty? common)) (all-bound? seq1 common) (all-bound? seq2 common))
     (do
+      (def keyf (sol-key-fn common))
       (def buckets @{})
       (each b seq2
-        (def key (sol-signature b common))
+        (def key (keyf b))
         (def bucket (or (get buckets key) @[]))
         (array/push bucket b)
         (put buckets key bucket))
       (def out @[])
       (each a seq1
-        (def bucket (get buckets (sol-signature a common)))
+        (def bucket (get buckets (keyf a)))
         (if (or (nil? bucket) (empty? bucket))
           (array/push out a)
           (each b bucket (array/push out (merge-solutions a b)))))
@@ -474,9 +485,10 @@
 
     (and (all-bound? seq1 common) (all-bound? seq2 common))
     (do
+      (def keyf (sol-key-fn common))
       (def blocked @{})
-      (each b seq2 (put blocked (sol-signature b common) true))
-      (filter (fn [a] (not (get blocked (sol-signature a common)))) seq1))
+      (each b seq2 (put blocked (keyf b) true))
+      (filter (fn [a] (not (get blocked (keyf a)))) seq1))
 
     (filter
       (fn [a]

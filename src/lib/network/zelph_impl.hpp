@@ -45,7 +45,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace zelph::network
@@ -2803,14 +2805,29 @@ namespace zelph::network
             }
         }
 
-        // --- Predicate index ------------------------------------------------
-        // Semantics mirror get_fact_objects / get_fact_subjects exactly:
-        // subjects are the bidirectional participants of a relation (except
-        // the predicate itself), objects are the pure-object-role nodes;
-        // variables are excluded on both sides. This includes the existing
-        // behavior for relation nodes that are themselves subjects of other
-        // facts (extra bidirectional participants), so index-backed and
-        // direct lookups always agree.
+        static unsigned int index_build_threads()
+        {
+            const unsigned int hw = std::thread::hardware_concurrency();
+            return hw == 0 ? 4u : hw;
+        }
+
+        // Two-phase parallel build.
+        //
+        // Phase 1 extracts (subject, object) pairs from the predicate's
+        // relation nodes. On large datasets this phase is dominated by
+        // random access into the adjacency maps - on machines where the
+        // working set exceeds RAM (zram/swap) every lookup is a page fault,
+        // so parallel workers that keep many faults in flight are the main
+        // lever. The coordinating thread holds both shared locks for the
+        // whole build; workers read _left/_right without locking, which is
+        // sound because the held shared locks exclude all writers.
+        //
+        // Phase 2 sorts each direction and fills the maps with exact-size
+        // vectors, avoiding per-insert reallocation churn.
+        //
+        // Semantics mirror get_fact_objects / get_fact_subjects exactly
+        // (bidirectional participants except the predicate act as subjects,
+        // pure-object-role nodes are objects, variables excluded).
         std::shared_ptr<const PredicateIndex> build_predicate_index(Node predicate) const
         {
             auto idx = std::make_shared<PredicateIndex>();
@@ -2822,41 +2839,158 @@ namespace zelph::network
             const auto rels_it = _right.find(predicate);
             if (rels_it == _right.end()) return idx;
 
-            std::vector<Node> subjects;
+            // Snapshot the relation nodes into a flat vector for chunking.
+            std::vector<Node> rels;
+            rels.reserve(rels_it->second.size());
             for (const Node rel : rels_it->second)
+                rels.push_back(rel);
+
+            using Pair = std::pair<Node, Node>; // (subject, object)
+
+            const size_t n_threads =
+                rels.size() >= (size_t(1) << 15) ? index_build_threads() : 1;
+
+            emit(io::OutputChannel::Diagnostic,
+                 "Building adjacency index over " + std::to_string(rels.size())
+                     + " relation nodes (" + std::to_string(n_threads) + " thread(s))...");
+
+            std::vector<std::vector<Pair>> partial(n_threads);
+            std::atomic<bool>              failed{false};
+
+            auto extract_chunk = [&](const size_t begin, const size_t end, std::vector<Pair>& out_pairs)
             {
-                const auto rl_it = _left.find(rel);
-                const auto rr_it = _right.find(rel);
-                if (rl_it == _left.end() || rr_it == _right.end()) continue;
-
-                const adjacency_set& rel_left  = rl_it->second; // {subject, predicate, ...}
-                const adjacency_set& rel_right = rr_it->second; // {subject, objects, ...}
-
-                // rel may be in _right[predicate] because the predicate is the
-                // *subject* of rel (e.g. the auto-created (P ~ ->) fact). Such
-                // relations contribute nothing below, since the predicate is
-                // excluded as a subject candidate and is never a pure object.
-                if (rel_left.count(predicate) == 0) continue;
-
-                subjects.clear();
-                for (const Node cand : rel_left)
+                try
                 {
-                    if (cand == predicate || is_var(cand)) continue;
-                    if (rel_right.count(cand) == 1) subjects.push_back(cand);
-                }
-                if (subjects.empty()) continue;
-
-                for (const Node obj : rel_right)
-                {
-                    if (is_var(obj)) continue;
-                    if (rel_left.count(obj) == 1) continue; // bidirectional => not a pure object
-                    for (const Node subj : subjects)
+                    std::vector<Node> subjects;
+                    for (size_t i = begin; i < end; ++i)
                     {
-                        idx->forward[subj].push_back(obj);
-                        idx->backward[obj].push_back(subj);
+                        const Node rel = rels[i];
+
+                        const auto rl_it = _left.find(rel);
+                        const auto rr_it = _right.find(rel);
+                        if (rl_it == _left.end() || rr_it == _right.end()) continue;
+
+                        const adjacency_set& rel_left  = rl_it->second;
+                        const adjacency_set& rel_right = rr_it->second;
+
+                        // rel may be in _right[predicate] because the predicate
+                        // is the *subject* of rel (e.g. (P ~ ->)); such relations
+                        // contribute nothing below.
+                        if (rel_left.count(predicate) == 0) continue;
+
+                        subjects.clear();
+                        for (const Node cand : rel_left)
+                        {
+                            if (cand == predicate || is_var(cand)) continue;
+                            if (rel_right.count(cand) == 1) subjects.push_back(cand);
+                        }
+                        if (subjects.empty()) continue;
+
+                        for (const Node obj : rel_right)
+                        {
+                            if (is_var(obj)) continue;
+                            if (rel_left.count(obj) == 1) continue; // not a pure object
+                            for (const Node subj : subjects)
+                            {
+                                out_pairs.emplace_back(subj, obj);
+                            }
+                        }
                     }
                 }
+                catch (...)
+                {
+                    failed.store(true, std::memory_order_relaxed);
+                }
+            };
+
+            if (n_threads == 1)
+            {
+                extract_chunk(0, rels.size(), partial[0]);
             }
+            else
+            {
+                std::vector<std::thread> workers;
+                workers.reserve(n_threads);
+                const size_t chunk = (rels.size() + n_threads - 1) / n_threads;
+                for (size_t t = 0; t < n_threads; ++t)
+                {
+                    const size_t begin = t * chunk;
+                    const size_t end   = std::min(rels.size(), begin + chunk);
+                    if (begin >= end) break;
+                    workers.emplace_back([&extract_chunk, &partial, begin, end, t]
+                                         { extract_chunk(begin, end, partial[t]); });
+                }
+                for (auto& w : workers)
+                    w.join();
+            }
+
+            if (failed.load(std::memory_order_relaxed))
+            {
+                throw std::runtime_error("Predicate index build failed (worker exception)");
+            }
+
+            size_t total = 0;
+            for (const auto& p : partial)
+                total += p.size();
+
+            std::vector<Pair> fw;
+            fw.reserve(total);
+            for (auto& p : partial)
+            {
+                fw.insert(fw.end(), p.begin(), p.end());
+                p.clear();
+                p.shrink_to_fit();
+            }
+
+            std::vector<Pair> bw;
+            bw.reserve(fw.size());
+            for (const auto& [s, o] : fw)
+                bw.emplace_back(o, s);
+
+            // Phase 2: sort + group per direction (deduplicates adjacent
+            // identical pairs, which can arise from relation nodes that are
+            // themselves subjects of other facts).
+            auto fill = [&failed](std::vector<Pair>& pairs, PredicateIndex::adjacency& out)
+            {
+                try
+                {
+                    std::sort(pairs.begin(), pairs.end());
+                    out.reserve(pairs.size());
+                    size_t i = 0;
+                    while (i < pairs.size())
+                    {
+                        size_t j = i;
+                        while (j < pairs.size() && pairs[j].first == pairs[i].first)
+                            ++j;
+
+                        auto& vec = out[pairs[i].first];
+                        vec.reserve(j - i);
+                        for (size_t k = i; k < j; ++k)
+                        {
+                            if (k > i && pairs[k] == pairs[k - 1]) continue;
+                            vec.push_back(pairs[k].second);
+                        }
+                        i = j;
+                    }
+                }
+                catch (...)
+                {
+                    failed.store(true, std::memory_order_relaxed);
+                }
+            };
+
+            std::thread bw_thread([&]
+                                  { fill(bw, idx->backward); });
+            fill(fw, idx->forward);
+            bw_thread.join();
+
+            if (failed.load(std::memory_order_relaxed))
+            {
+                throw std::runtime_error("Predicate index build failed (fill exception)");
+            }
+
+            emit(io::OutputChannel::Diagnostic,
+                 "Adjacency index ready: " + std::to_string(total) + " edges.");
 
             return idx;
         }
