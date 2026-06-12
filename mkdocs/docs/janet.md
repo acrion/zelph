@@ -777,7 +777,7 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 
 | zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |
 | :------------------------------ | :-------------------------------------------------- | :-------------------------------------------------------------------------- |
-| `Berlin`                        | `(zelph/resolve "Berlin")`                          | Resolve a name to a node                                                    |
+| `Berlin`                        | `(zelph/resolve "Berlin" "en")`                     | Resolve a name to a node, with an optional language argument                |
 | `X`, `_Var`                     | `'X`, `'_Var`                                       | Variable (single uppercase letter or `_`-prefixed)                          |
 | `sun is yellow`                 | `(zelph/fact "sun" "is" "yellow")`                  | Create a fact (triple)                                                      |
 | `(sun is yellow)`               | `(zelph/fact "sun" "is" "yellow")`                  | Nested fact (returns relation node)                                         |

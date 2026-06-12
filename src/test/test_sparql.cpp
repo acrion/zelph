@@ -72,21 +72,21 @@ namespace
         interactive.process("");
     }
 
-    // Base test graph (Wikidata-flavored IDs as plain node names):
-    //   Q1, Q2 are instances (P31) of Q5; Q3 is an instance of Q6.
-    //   Q5 and Q6 are subclasses (P279) of Q50, which is a subclass of Q500.
-    //   Q1 additionally has P21 = Q6581097.
+    // Base test graph (Wikidata-flavored IDs as plain node names).
+    // wd:/wdt: terms resolve explicitly in the "wikidata" language, so the
+    // test data must be created there as well.
     void setup_base_graph(const zelph::console::Interactive& interactive)
     {
         process_lines(interactive, R"(
-Q1 P31 Q5
-Q2 P31 Q5
-Q3 P31 Q6
-Q5 P279 Q50
-Q6 P279 Q50
-Q50 P279 Q500
-Q1 P21 Q6581097
-)");
+    .lang wikidata
+    Q1 P31 Q5
+    Q2 P31 Q5
+    Q3 P31 Q6
+    Q5 P279 Q50
+    Q6 P279 Q50
+    Q50 P279 Q500
+    Q1 P21 Q6581097
+    )");
     }
 
     // Disjointness graph with qualifier-style structures simulated as plain
@@ -98,17 +98,18 @@ Q1 P21 Q6581097
     void setup_disjointness_graph(const zelph::console::Interactive& interactive)
     {
         process_lines(interactive, R"(
-QC P2738 QL
-QL P11260 QD1
-QL P11260 QD2
-QC2 P2738 QL2
-QL2 wikibase:rank wikibase:DeprecatedRank
-QL2 P11260 QD1
-QL2 P11260 QD2
-QX P279 QD1
-QX P279 QD2
-QI P31 QX
-)");
+    .lang wikidata
+    QC P2738 QL
+    QL P11260 QD1
+    QL P11260 QD2
+    QC2 P2738 QL2
+    QL2 wikibase:rank wikibase:DeprecatedRank
+    QL2 P11260 QD1
+    QL2 P11260 QD2
+    QX P279 QD1
+    QX P279 QD2
+    QI P31 QX
+    )");
     }
 } // anonymous namespace
 
@@ -296,6 +297,7 @@ TEST_CASE("sparql: three-element sequence path with bound object (example querie
                    {
         load_sparql(interactive);
         process_lines(interactive, R"(
+.lang wikidata
 QA P279 QM
 QA P31 QM
 QB P279 QM
@@ -321,6 +323,7 @@ TEST_CASE("sparql: classes without order via step reordering (example query 7)")
                    {
         load_sparql(interactive);
         process_lines(interactive, R"(
+.lang wikidata
 QA P279 QM
 QA P31 QM
 QB P279 QM
@@ -507,6 +510,7 @@ TEST_CASE("sparql: FILTER with numeric comparison")
                    {
         load_sparql(interactive);
         process_lines(interactive, R"(
+.lang wikidata
 QA P569 1985
 QB P569 1995
 )");
@@ -612,6 +616,7 @@ TEST_CASE("sparql: subquery with GROUP BY, COUNT and ORDER BY (example query 1)"
                    {
         load_sparql(interactive);
         process_lines(interactive, R"(
+.lang wikidata
 QA1 P106 Q11631
 QA2 P106 Q11631
 QA1 P19 QC1
@@ -643,7 +648,10 @@ TEST_CASE("sparql: custom PREFIX declaration expands to full IRI node names")
                    {
         load_sparql(interactive);
         // The predicate node is named by its full IRI in the graph.
-        process_lines(interactive, R"(QA "http://example.org/knows" QB)");
+        process_lines(interactive, R"(
+.lang wikidata
+QA "http://example.org/knows" QB
+)");
         collector.clear();
 
         run_sparql(interactive, R"(PREFIX ex: <http://example.org/>
@@ -686,6 +694,7 @@ TEST_CASE("sparql: disjointness culprit query with MINUS and P279+ (example quer
         // QD2 inherits the violation via QD1 and must be filtered out by
         // MINUS - only the topmost culprit QD1 remains.
         process_lines(interactive, R"(
+.lang wikidata
 QD1 P279 QV1
 QD1 P279 QV2
 QD2 P279 QD1
@@ -861,6 +870,7 @@ TEST_CASE("sparql: diamond hierarchy is deduplicated in closures")
                    {
         load_sparql(interactive);
         process_lines(interactive, R"(
+.lang wikidata
 DA P279 DB
 DA P279 DC
 DB P279 DD
@@ -874,4 +884,61 @@ DC P279 DD
         collector.clear();
         run_sparql(interactive, "SELECT ?i WHERE { ?i wdt:P279+ wd:DD . }");
         CHECK(any_output_contains(collector, "-- 3 result(s) --")); });
+}
+
+TEST_CASE("sparql: wd:/wdt: terms resolve in the wikidata language regardless of .lang")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        interactive.process(".lang zelph");
+        collector.clear();
+
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }");
+
+        CHECK(any_output_contains(collector, "Q1"));
+        CHECK(any_output_contains(collector, "Q2"));
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+TEST_CASE("sparql: COUNT(DISTINCT ...) collapses duplicate bindings")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        collector.clear();
+
+        // Without DISTINCT this counts 5 rows; the distinct classes
+        // reachable via P279+ are Q50 and Q500.
+        run_sparql(interactive,
+                   "SELECT (COUNT(DISTINCT ?class) AS ?n) WHERE { ?i wdt:P279+ ?class . }");
+
+        CHECK(any_output_contains(collector, "2"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: COUNT(DISTINCT) over intersecting closures (violation count query)")
+{
+    // The exact shape of the paper's per-pair violation count, which also
+    // exercises the closure-intersection evaluation (eval-step-group).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+.lang wikidata
+QD1 P279 QV1
+QD1 P279 QV2
+QD2 P279 QD1
+)");
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT (COUNT(DISTINCT ?c) AS ?n) WHERE {
+  ?c wdt:P279+ wd:QV1 .
+  ?c wdt:P279+ wd:QV2 .
+})");
+
+        CHECK(any_output_contains(collector, "2"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
 }

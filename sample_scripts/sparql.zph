@@ -36,7 +36,7 @@
 
 %
 # ============================================================
-# 1. Native closure wrappers
+# 1. Native closure wrappers (with per-query cache)
 # ============================================================
 
 # Thin wrappers around the native transitive closure in the zelph core
@@ -45,11 +45,28 @@
 # include-start true => reflexive closure (SPARQL `*`); false => one-or-more
 # (SPARQL `+`), where the start node is still included when it is reachable
 # from itself via a cycle of one or more steps.
+#
+# Closures are memoized for the duration of one query (the cache is cleared
+# in sparql-handler before evaluation). Within a query the graph only gains
+# pattern facts with variable endpoints, which the native closure ignores
+# (is_var nodes are excluded), so reuse is safe. This lets a MINUS group
+# that repeats the closures of the outer pattern - the shape of the
+# disjointness culprit queries - get them for free.
+(def closure-cache @{})
+
 (defn zelph-closure [start predicate include-start]
-  (zelph/closure start predicate include-start))
+  (def key [:fwd start predicate include-start])
+  (or (get closure-cache key)
+      (let [arr (zelph/closure start predicate include-start)]
+        (put closure-cache key arr)
+        arr)))
 
 (defn zelph-closure-sources [target predicate include-target]
-  (zelph/closure-sources target predicate include-target))
+  (def key [:bwd target predicate include-target])
+  (or (get closure-cache key)
+      (let [arr (zelph/closure-sources target predicate include-target)]
+        (put closure-cache key arr)
+        arr)))
 
 # ============================================================
 # 2. Prefix handling
@@ -180,8 +197,9 @@
                           :minus-pattern :filter :group-pattern :triples)
 
     # SELECT projection
-    :count-expr (group (* (constant :count) "(" :s* :kw-count :s* "("
-                          :s* :var :s* ")" :s* :kw-as :s+ :var :s* ")"))
+    :count-expr (group (* (constant :count) "(" :s* :kw-count :s* "(" :s*
+                          (? (group (* (constant :cdistinct) :kw-distinct :s+)))
+                          :var :s* ")" :s* :kw-as :s+ :var :s* ")"))
     :proj-star (group (* (constant :star) "*"))
     :projection (group (* (constant :proj)
                           (some (* :s* (choice :count-expr :var :proj-star)))))
@@ -217,20 +235,34 @@
 # ============================================================
 (defn tag [node] (when (indexed? node) (first node)))
 
+(defn resolve-wd-id
+  "Resolve a bare Wikidata ID (Q.../P...) explicitly in the 'wikidata'
+   language, independent of the REPL's current .lang setting."
+  [id]
+  (zelph/resolve id "wikidata"))
+
 (defn strip-wd-iri
-  "Strip well-known Wikidata IRI prefixes, reducing full IRIs to bare
-   Q/P IDs (zelph's wikidata language uses plain IDs as node names).
-   Non-Wikidata IRIs are returned unchanged and act as literal node names."
+  "Strip well-known Wikidata IRI prefixes and resolve the bare Q/P ID in
+   the 'wikidata' language (returns a zelph/node). Non-Wikidata IRIs are
+   returned unchanged as strings and act as node names resolved in the
+   current language."
   [iri]
   (var stripped nil)
   (each pfx wd-iri-prefixes
     (when (and (nil? stripped) (string/has-prefix? pfx iri))
       (set stripped (string/slice iri (length pfx)))))
-  (or stripped iri))
+  (if stripped (resolve-wd-id stripped) iri))
+
+(defn as-node
+  "Coerce a concrete term to a zelph/node: strings are resolved in the
+   current language, nodes pass through unchanged."
+  [v]
+  (if (string? v) (zelph/resolve v) v))
 
 (defn resolve-term
-  "Convert a parsed term AST node into either [:var name] or a concrete
-   node-name string suitable for zelph/fact in the wikidata language."
+  "Convert a parsed term AST node into [:var name], a zelph/node (for
+   Wikidata-prefixed terms, explicitly bound to the 'wikidata' language),
+   or a plain string resolved later in the current language."
   [node prefixes]
   (case (tag node)
     :var [:var (node 1)]
@@ -239,7 +271,7 @@
              (def pfx (node 1))
              (def local (node 2))
              (cond
-               (get wikidata-prefixes pfx) local
+               (get wikidata-prefixes pfx) (resolve-wd-id local)
                # Declared prefixes expand to the full IRI, which is then
                # subject to the same Wikidata stripping as direct IRIs.
                (get prefixes pfx) (strip-wd-iri (string (get prefixes pfx) local))
@@ -247,6 +279,16 @@
     :literal (node 1)
     :number (node 1)
     (error (string "Unsupported term: " (string/format "%q" node)))))
+
+(defn parse-count-spec
+  "Decompose a :count AST node into [counted-var alias distinct?].
+   Shapes: [:count [:var c] [:var alias]]
+           [:count [:cdistinct] [:var c] [:var alias]]"
+  [cs]
+  (def parts (slice cs 1))
+  (def dist? (= (tag (first parts)) :cdistinct))
+  (def vars (filter (fn [p] (= (tag p) :var)) parts))
+  [((vars 0) 1) ((vars 1) 1) dist?])
 
 (defn resolve-path-elem
   "Returns [pred-name modifier] where modifier is nil, \"+\" or \"*\"."
@@ -355,14 +397,44 @@
     term))
 
 (defn eval-bgp-block
-  "Evaluate a set of simple (non-path) triples as one conjunction query,
-   joined against existing partial solutions one solution at a time.
+  "Evaluate a set of simple (non-path) triples against existing partial
+   solutions one solution at a time. A single triple with a concrete
+   predicate and exactly one free end is answered by a direct adjacency
+   lookup (zelph/targets / zelph/sources) - O(deg(node)) instead of a
+   scan over all facts of the predicate per solution, no pattern facts
+   are created in the graph and no engine caches are invalidated.
+   Everything else goes through one conjunction query via the
+   unification engine.
    triples: array of [s p o] resolved-term tuples."
   [triples solutions]
   (if (empty? triples)
     solutions
     (do
       (def out @[])
+
+      (defn run-unification [sol args-per-triple var-syms]
+        (def facts
+          (map (fn [[s p o]] (zelph/fact s p o)) args-per-triple))
+        (def pattern
+          (if (= 1 (length facts))
+            (first facts)
+            (do
+              (def cset (zelph/set ;facts))
+              (zelph/fact cset "~" "conjunction")
+              cset)))
+        (def results (zelph/query pattern))
+        (each r results
+          (def merged (table/clone sol))
+          (eachp [var-name sym] var-syms
+            (def bound (get r sym))
+            (when bound (put merged var-name bound)))
+          (array/push out merged)))
+
+      (defn push-binding [sol var-syms value]
+        (def merged (table/clone sol))
+        (eachp [var-name _] var-syms (put merged var-name value))
+        (array/push out merged))
+
       (each sol solutions
         (def var-syms @{})
         (def args-per-triple
@@ -376,22 +448,20 @@
           (when (all (fn [[s p o]] (zelph/exists s p o)) args-per-triple)
             (array/push out sol))
           (do
-            (def facts
-              (map (fn [[s p o]] (zelph/fact s p o)) args-per-triple))
-            (def pattern
-              (if (= 1 (length facts))
-                (first facts)
-                (do
-                  (def cset (zelph/set ;facts))
-                  (zelph/fact cset "~" "conjunction")
-                  cset)))
-            (def results (zelph/query pattern))
-            (each r results
-              (def merged (table/clone sol))
-              (eachp [var-name sym] var-syms
-                (def bound (get r sym))
-                (when bound (put merged var-name bound)))
-              (array/push out merged)))))
+            (def fast
+              (and (= 1 (length args-per-triple))
+                   (= 1 (length var-syms))
+                   (let [[s p o] (first args-per-triple)]
+                     (and (not (symbol? p))
+                          (not= (symbol? s) (symbol? o))))))
+            (if fast
+              (let [[s p o] (first args-per-triple)]
+                (if (symbol? o)
+                  (each tgt (zelph/targets s p)
+                    (push-binding sol var-syms tgt))
+                  (each src (zelph/sources p o)
+                    (push-binding sol var-syms src))))
+              (run-unification sol args-per-triple var-syms)))))
       out)))
 
 (defn closure-set
@@ -418,9 +488,9 @@
     # --- Object is constant: one backward closure for all solutions ---
     (not (nil? o-const))
     (do
-      (def reach (zelph-closure-sources (zelph/resolve o-const) pred include-start))
+      (def reach (zelph-closure-sources (as-node o-const) pred include-start))
       (def reach-set (closure-set reach))
-      (def s-fixed (when s-const (zelph/resolve s-const)))
+      (def s-fixed (when s-const (as-node s-const)))
       (each sol solutions
         (def s-val (or s-fixed (get sol (s 1))))
         (if (nil? s-val)
@@ -434,7 +504,7 @@
     # --- Subject is constant: one forward closure for all solutions ---
     (not (nil? s-const))
     (do
-      (def reach (zelph-closure (zelph/resolve s-const) pred include-start))
+      (def reach (zelph-closure (as-node s-const) pred include-start))
       (def reach-set (closure-set reach))
       (each sol solutions
         (def o-val (get sol (o 1)))
@@ -500,6 +570,44 @@
                   (array/push out merged)))))))))
   out)
 
+(defn step-candidates
+  "Compute the candidate node set for the variable end of a transitive
+   step whose other end is constant. Returns [arr membership-set]."
+  [st]
+  (def [s pred modifier o] st)
+  (def include (= modifier "*"))
+  (def arr
+    (if (= (tag s) :var)
+      (zelph-closure-sources (as-node o) pred include)
+      (zelph-closure (as-node s) pred include)))
+  [arr (closure-set arr)])
+
+(defn eval-step-group
+  "Conjunction of transitive steps that all bind the same still-unbound
+   variable from a constant end, e.g. the disjointness query shape
+     ?class wdt:P279+ wd:A .  ?class wdt:P279+ wd:B .
+   Every closure is computed exactly once; only the smallest closure is
+   enumerated, the others act as membership filters. This avoids
+   materializing solution rows for the larger closures."
+  [var-name group-steps solutions]
+  (def closures (map step-candidates group-steps))
+  (var min-i 0)
+  (eachp [i c] closures
+    (when (< (length (c 0)) (length ((closures min-i) 0)))
+      (set min-i i)))
+  (def base-arr ((closures min-i) 0))
+  (def other-sets
+    (seq [i :range [0 (length closures)] :when (not= i min-i)]
+      ((closures i) 1)))
+  (def out @[])
+  (each sol solutions
+    (each cand base-arr
+      (when (all (fn [cset] (get cset cand)) other-sets)
+        (def merged (table/clone sol))
+        (put merged var-name cand)
+        (array/push out merged))))
+  out)
+
 (def fresh-counter @[0])
 (defn fresh-var []
   (put fresh-counter 0 (inc (get fresh-counter 0)))
@@ -544,8 +652,8 @@
               (error (string "Unsupported function in FILTER: " fname))))
     :literal (op 1)
     :number (op 1)
-    :iri (resolve-term op prefixes)
-    :pname (resolve-term op prefixes)
+    :iri (node-key (resolve-term op prefixes))
+    :pname (node-key (resolve-term op prefixes))
     (error "Unsupported FILTER operand")))
 
 (defn numeric? [s]
@@ -620,18 +728,48 @@
       (unless (and (empty? pending-triples) (empty? pending-steps))
         (set sols (eval-bgp-block pending-triples sols))
         (def steps (array ;pending-steps))
-        (while (> (length steps) 0)
+
+        # --- Closure-intersection optimization ---
+        # Steps that bind the same still-unbound variable from a constant
+        # end are evaluated as one group via eval-step-group: enumerate
+        # the smallest closure, filter through the others.
+        (def var-groups @{})
+        (eachp [i st] steps
+          (def [s _pred _mod o] st)
+          (def var-end
+            (cond
+              (and (= (tag s) :var) (not= (tag o) :var)) s
+              (and (= (tag o) :var) (not= (tag s) :var)) o
+              nil))
+          (when (and var-end (not (step-side-bound? var-end)))
+            (def key (var-end 1))
+            (def bucket (or (get var-groups key) @[]))
+            (array/push bucket i)
+            (put var-groups key bucket)))
+
+        (def consumed @{})
+        (eachp [var-name idxs] var-groups
+          (when (> (length idxs) 1)
+            (def group-steps (map (fn [i] (steps i)) idxs))
+            (set sols (eval-step-group var-name group-steps sols))
+            (each i idxs (put consumed i true))))
+
+        (def remaining @[])
+        (eachp [i st] steps
+          (unless (get consumed i) (array/push remaining st)))
+
+        (while (> (length remaining) 0)
           (var idx nil)
-          (eachp [i st] steps
+          (eachp [i st] remaining
             (when (and (nil? idx)
                        (or (step-side-bound? (st 0)) (step-side-bound? (st 3))))
               (set idx i)))
           # No executable step found: fall back to the first one, whose
           # both-ends-unbound handling enumerates (+) or rejects (*).
           (when (nil? idx) (set idx 0))
-          (def [s pred modifier o] (steps idx))
+          (def [s pred modifier o] (remaining idx))
           (set sols (eval-path-step s pred modifier o sols))
-          (array/remove steps idx))
+          (array/remove remaining idx))
         (array/clear pending-triples)
         (array/clear pending-steps)))
 
@@ -740,15 +878,25 @@
       (eachp [_ bucket] groups
         (def rep (table/clone (first bucket)))
         (each cs count-specs
-          (def alias ((cs 2) 1))
-          (put rep alias (string (length bucket))))
+          (def [cvar alias dist?] (parse-count-spec cs))
+          (def n
+            (if dist?
+              (do
+                (def seen @{})
+                (each s bucket
+                  (def v (get s cvar))
+                  (unless (nil? v) (put seen (node-key v) true)))
+                (length seen))
+              (length bucket)))
+          (put rep alias (string n)))
         (array/push grouped rep))
       # SPARQL semantics: an aggregate without GROUP BY over an empty
       # solution sequence yields a single row with COUNT = 0.
       (when (and (empty? grouped) (nil? group-by))
         (def rep @{})
         (each cs count-specs
-          (put rep ((cs 2) 1) "0"))
+          (def [_ alias _] (parse-count-spec cs))
+          (put rep alias "0"))
         (array/push grouped rep))
       (set sols grouped))
 
@@ -767,7 +915,7 @@
           (each p (slice projection 1)
             (case (tag p)
               :var (array/push vars (p 1))
-              :count (array/push vars ((p 2) 1))
+              :count (array/push vars ((parse-count-spec p) 1))
               nil))
           vars)))
 
@@ -876,12 +1024,13 @@
     :incomplete
     (do
       (check-unsupported text)
+      (table/clear closure-cache)
       (def parsed (peg/match sparql-peg text))
       (unless parsed
         (error (string "SPARQL syntax error or unsupported construct. Subset: "
                        "SELECT [DISTINCT] / WHERE, BGPs, property paths (+ * /), "
                        "OPTIONAL, MINUS, UNION, FILTER comparisons, subqueries, "
-                       "GROUP BY + COUNT, ORDER BY, LIMIT")))
+                       "GROUP BY + COUNT [DISTINCT], ORDER BY, LIMIT")))
       (def query-node (first parsed))
 
       (def prefixes @{})

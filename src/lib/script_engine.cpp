@@ -101,7 +101,8 @@ public:
         janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)janet_cfun_zelph_list_chars), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.");
         janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
 
-        janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name)\nResolve a string to its node in the current language, creating it if needed.");
+        janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
+                                                                                               "lang defaults to the current language (as set by .lang).");
 
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
@@ -807,17 +808,26 @@ public:
         return res;
     }
 
-    // Resolve a name to a node in the current language (convenience for Janet code)
+    // Resolve a name to a node, optionally in an explicit language.
+    // (zelph/resolve "Q5" "wikidata") binds the node to the wikidata language
+    // regardless of the current .lang setting.
     static Janet janet_cfun_zelph_resolve(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 1);
+        janet_arity(argc, 1, 2);
         if (!s_instance) return janet_wrap_nil();
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, true);
 
         const uint8_t* str  = janet_getstring(argv, 0);
         std::string    wstr = reinterpret_cast<const char*>(str);
-        network::Node  n    = s_instance->_n->node(wstr, s_instance->_n->lang());
-        Janet          res  = zelph_wrap_node(n);
+
+        std::string lang = s_instance->_n->lang();
+        if (argc >= 2 && janet_checktype(argv[1], JANET_STRING))
+        {
+            lang = reinterpret_cast<const char*>(janet_unwrap_string(argv[1]));
+        }
+
+        network::Node n   = s_instance->_n->node(wstr, lang);
+        Janet         res = zelph_wrap_node(n);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, false, res);
         return res;
     }
