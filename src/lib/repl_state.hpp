@@ -50,6 +50,7 @@ namespace zelph::console
         bool        accumulating_keyword = false;
         std::string active_keyword;
         std::string keyword_buffer;
+        bool        keyword_prev_blank = false;
     };
 
     // Helper RAII struct to temporarily suspend auto-run

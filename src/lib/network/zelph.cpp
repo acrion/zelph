@@ -162,6 +162,127 @@ adjacency_set Zelph::get_sources(const Node relationType, const Node target, con
     return sources;
 }
 
+// Find all objects O such that the fact (subject predicate O) exists.
+// Topology: subject <-> relation_node (bidirectional), object -> relation_node,
+// relation_node -> predicate. Moved here from the Janet binding layer, which
+// previously duplicated this topology knowledge.
+adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) const
+{
+    adjacency_set objects;
+
+    for (const Node rel : get_right(subject))
+    {
+        // Validate: predicate in right(rel), subject bidirectional (in left and right).
+        if (has_right_edge(rel, predicate) && has_right_edge(rel, subject) && has_left_edge(rel, subject))
+        {
+            for (const Node obj : get_left(rel))
+            {
+                // Objects: in left(rel) but NOT in right(rel) (unidirectional).
+                if (obj != subject && !is_var(obj) && !has_right_edge(rel, obj))
+                {
+                    objects.insert(obj);
+                }
+            }
+        }
+    }
+
+    return objects;
+}
+
+// Find all subjects S such that the fact (S predicate object) exists.
+// The directional counterpart of get_fact_objects: object must participate
+// in the pure object role (in left(rel) but NOT in right(rel)).
+adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) const
+{
+    adjacency_set subjects;
+
+    for (const Node rel : get_right(object))
+    {
+        if (has_right_edge(rel, predicate) && has_left_edge(rel, object) && !has_right_edge(rel, object))
+        {
+            for (const Node subj : get_left(rel))
+            {
+                // Subjects: bidirectional (in both left and right of rel).
+                if (subj != object && subj != predicate && !is_var(subj) && has_right_edge(rel, subj))
+                {
+                    subjects.insert(subj);
+                }
+            }
+        }
+    }
+
+    return subjects;
+}
+
+// Transitive closure following the predicate forward (subject -> object).
+// include_start true gives the reflexive closure (SPARQL `*`); with false
+// (SPARQL `+`) the start node is still included when it is reachable from
+// itself via a cycle of one or more steps.
+adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, const bool include_start) const
+{
+    adjacency_set                      result;
+    ankerl::unordered_dense::set<Node> seen;
+    std::vector<Node>                  frontier{start};
+
+    if (include_start)
+    {
+        seen.insert(start);
+        result.insert(start);
+    }
+
+    while (!frontier.empty())
+    {
+        std::vector<Node> next;
+        for (const Node n : frontier)
+        {
+            for (const Node t : get_fact_objects(n, predicate))
+            {
+                if (seen.insert(t).second)
+                {
+                    result.insert(t);
+                    next.push_back(t);
+                }
+            }
+        }
+        frontier = std::move(next);
+    }
+
+    return result;
+}
+
+// Transitive closure following the predicate backward (object -> subject).
+adjacency_set Zelph::transitive_sources(const Node target, const Node predicate, const bool include_target) const
+{
+    adjacency_set                      result;
+    ankerl::unordered_dense::set<Node> seen;
+    std::vector<Node>                  frontier{target};
+
+    if (include_target)
+    {
+        seen.insert(target);
+        result.insert(target);
+    }
+
+    while (!frontier.empty())
+    {
+        std::vector<Node> next;
+        for (const Node n : frontier)
+        {
+            for (const Node s : get_fact_subjects(predicate, n))
+            {
+                if (seen.insert(s).second)
+                {
+                    result.insert(s);
+                    next.push_back(s);
+                }
+            }
+        }
+        frontier = std::move(next);
+    }
+
+    return result;
+}
+
 adjacency_set Zelph::filter(const adjacency_set& source, const Node target) const
 {
     adjacency_set result;

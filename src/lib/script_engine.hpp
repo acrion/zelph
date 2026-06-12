@@ -78,7 +78,7 @@ namespace zelph
 
         bool has_keyword(const std::string& keyword) const;
 
-        void invoke_keyword(const std::string& keyword, const std::string& text);
+        bool invoke_keyword(const std::string& keyword, const std::string& text, const bool force);
 
         // Check whether a Janet code fragment has balanced delimiters
         // (parentheses, brackets, braces), respecting strings and comments.

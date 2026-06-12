@@ -772,7 +772,20 @@ TEST_CASE("sparql: unsupported feature is rejected with an error")
         CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
 }
 
-TEST_CASE("sparql: syntax error is rejected with an error")
+TEST_CASE("sparql: syntax error in a complete block is rejected with an error")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        collector.clear();
+
+        interactive.process("sparql");
+        // SELECT present and braces balanced -> dispatched, then PEG fails.
+        interactive.process("SELECT ?x WHERE { ?x }");
+        CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
+}
+
+TEST_CASE("sparql: incomplete block is force-dispatched by two blank lines")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -781,7 +794,33 @@ TEST_CASE("sparql: syntax error is rejected with an error")
 
         interactive.process("sparql");
         interactive.process("this is not sparql at all");
+        // First blank line: handler vetoes (:incomplete), accumulation
+        // continues. Second blank line: forced dispatch -> error.
+        interactive.process("");
         CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
+}
+
+TEST_CASE("sparql: blank lines inside a pasted query do not terminate the block")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("PREFIX wd: <http://www.wikidata.org/entity/>");
+        interactive.process("PREFIX wdt: <http://www.wikidata.org/prop/direct/>");
+        interactive.process(""); // blank line after the prologue (no SELECT yet)
+        interactive.process("SELECT ?x WHERE {");
+        interactive.process(""); // blank line inside WHERE (braces unbalanced)
+        interactive.process("  ?x wdt:P31 wd:Q5 .");
+        interactive.process("}");
+        interactive.process(""); // complete -> dispatch
+
+        CHECK(any_output_contains(collector, "Q1"));
+        CHECK(any_output_contains(collector, "Q2"));
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -811,4 +850,28 @@ TEST_CASE("sparql: keyword block in an imported script is flushed at EOF")
         CHECK(any_output_contains(collector, "Q1"));
         CHECK(any_output_contains(collector, "Q2"));
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+TEST_CASE("sparql: diamond hierarchy is deduplicated in closures")
+{
+    // Exercises (a) BFS deduplication in the native closure and (b) the
+    // membership tables keyed by zelph/node values (hash/compare of the
+    // abstract type across distinct wrapper instances).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+DA P279 DB
+DA P279 DC
+DB P279 DD
+DC P279 DD
+)");
+        collector.clear();
+        run_sparql(interactive, "SELECT ?c WHERE { wd:DA wdt:P279+ ?c . }");
+        // DB, DC, DD - DD reached via two paths must appear once.
+        CHECK(any_output_contains(collector, "-- 3 result(s) --"));
+
+        collector.clear();
+        run_sparql(interactive, "SELECT ?i WHERE { ?i wdt:P279+ wd:DD . }");
+        CHECK(any_output_contains(collector, "-- 3 result(s) --")); });
 }

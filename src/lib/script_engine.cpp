@@ -126,6 +126,12 @@ public:
         janet_def(_janet_env, "zelph/register-keyword", wrap((JanetCFunction)janet_cfun_zelph_register_keyword), "(zelph/register-keyword keyword handler)\nRegister a REPL syntax keyword. After the keyword is "
                                                                                                                  "entered, subsequent lines are accumulated verbatim until an empty line, then passed as a single "
                                                                                                                  "string to handler.");
+
+        janet_def(_janet_env, "zelph/closure", wrap((JanetCFunction)janet_cfun_zelph_closure), "(zelph/closure start predicate &opt include-start)\nTransitive closure following predicate "
+                                                                                               "forward (subject to object). include-start true gives the reflexive closure (SPARQL *).");
+
+        janet_def(_janet_env, "zelph/closure-sources", wrap((JanetCFunction)janet_cfun_zelph_closure_sources), "(zelph/closure-sources target predicate &opt include-target)\nTransitive closure following "
+                                                                                                               "predicate backward (object to subject). include-target true gives the reflexive closure.");
     }
 
     void setup_module_paths() const
@@ -436,29 +442,7 @@ public:
             return res;
         }
 
-        network::adjacency_set sources;
-
-        // Traverse: target → relation_nodes → find subjects
-        // Topology: subject <-> relation_node (bidirectional), object -> relation_node,
-        // relation_node -> predicate.
-        // Validate that target is a pure object: in left(rel) but NOT in right(rel).
-        for (network::Node rel : s_instance->_n->get_right(target))
-        {
-            network::adjacency_set rel_right = s_instance->_n->get_right(rel);
-            network::adjacency_set rel_left  = s_instance->_n->get_left(rel);
-
-            if (rel_right.count(predicate) && rel_left.count(target) && rel_right.count(target) == 0)
-            {
-                // Subjects: bidirectional (in both left and right of rel)
-                for (network::Node subj : rel_left)
-                {
-                    if (subj != target && subj != predicate && rel_right.count(subj))
-                    {
-                        sources.insert(subj);
-                    }
-                }
-            }
-        }
+        network::adjacency_set sources = s_instance->_n->get_fact_subjects(predicate, target);
 
         JanetArray* result = janet_array(static_cast<int32_t>(sources.size()));
         for (network::Node src : sources)
@@ -489,28 +473,7 @@ public:
             return res;
         }
 
-        network::adjacency_set targets;
-
-        // Traverse: subject → relation_nodes → find objects
-        // Topology: subject <-> relation_node (bidirectional), object -> relation_node, relation_node -> predicate
-        for (network::Node rel : s_instance->_n->get_right(subject))
-        {
-            network::adjacency_set rel_right = s_instance->_n->get_right(rel);
-            network::adjacency_set rel_left  = s_instance->_n->get_left(rel);
-
-            // Validate: predicate in right, subject bidirectional (in both left and right)
-            if (rel_right.count(predicate) && rel_right.count(subject) && rel_left.count(subject))
-            {
-                // Objects: in left but NOT in right (unidirectional connection)
-                for (network::Node obj : rel_left)
-                {
-                    if (obj != subject && rel_right.count(obj) == 0)
-                    {
-                        targets.insert(obj);
-                    }
-                }
-            }
-        }
+        network::adjacency_set targets = s_instance->_n->get_fact_objects(subject, predicate);
 
         JanetArray* result = janet_array(static_cast<int32_t>(targets.size()));
         for (network::Node nd : targets)
@@ -520,6 +483,45 @@ public:
         Janet res = janet_wrap_array(result);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/targets", argc, argv, false, res);
         return res;
+    }
+
+    // Shared implementation for the two closure bindings.
+    static Janet closure_impl(int32_t argc, Janet* argv, const char* name, bool forward)
+    {
+        janet_arity(argc, 2, 3);
+        if (!s_instance) return janet_wrap_array(janet_array(0));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
+
+        network::Node anchor    = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node predicate = s_instance->resolve_janet_arg_no_create(argv[1]);
+        bool          include   = argc >= 3 && janet_truthy(argv[2]);
+
+        network::adjacency_set nodes;
+        if (anchor && predicate)
+        {
+            nodes = forward
+                      ? s_instance->_n->transitive_targets(anchor, predicate, include)
+                      : s_instance->_n->transitive_sources(anchor, predicate, include);
+        }
+
+        JanetArray* result = janet_array(static_cast<int32_t>(nodes.size()));
+        for (network::Node nd : nodes)
+        {
+            janet_array_push(result, zelph_wrap_node(nd));
+        }
+        Janet res = janet_wrap_array(result);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);
+        return res;
+    }
+
+    static Janet janet_cfun_zelph_closure(int32_t argc, Janet* argv)
+    {
+        return closure_impl(argc, argv, "zelph/closure", true);
+    }
+
+    static Janet janet_cfun_zelph_closure_sources(int32_t argc, Janet* argv)
+    {
+        return closure_impl(argc, argv, "zelph/closure-sources", false);
     }
 
     // Extract the car (first element / subject) of a cons cell.
@@ -1380,7 +1382,7 @@ bool ScriptEngine::has_keyword(const std::string& keyword) const
     return _pImpl->_keyword_handlers.count(keyword) > 0;
 }
 
-void ScriptEngine::invoke_keyword(const std::string& keyword, const std::string& text)
+bool ScriptEngine::invoke_keyword(const std::string& keyword, const std::string& text, const bool force)
 {
     auto it = _pImpl->_keyword_handlers.find(keyword);
     if (it == _pImpl->_keyword_handlers.end())
@@ -1406,6 +1408,20 @@ void ScriptEngine::invoke_keyword(const std::string& keyword, const std::string&
         throw std::runtime_error(err);
     }
 
+    // Veto protocol: a handler may return :incomplete to signal that the
+    // accumulated text is not yet a complete block (e.g. unbalanced braces).
+    // The dispatcher then resumes accumulation. Under force (second
+    // consecutive blank line, or EOF in a script) the veto is an error.
+    if (janet_checktype(result, JANET_KEYWORD))
+    {
+        const uint8_t* kw = janet_unwrap_keyword(result);
+        if (std::string(reinterpret_cast<const char*>(kw)) == "incomplete")
+        {
+            if (!force) return false;
+            throw std::runtime_error("Keyword block for '" + keyword + "' is incomplete");
+        }
+    }
+
     // String results are emitted verbatim, line by line, through the output
     // handler (so they reach OutputCollector in tests and the REPL alike).
     // Other non-nil results are emitted via their Janet description.
@@ -1427,6 +1443,8 @@ void ScriptEngine::invoke_keyword(const std::string& keyword, const std::string&
     {
         _pImpl->_n->out(Impl::format_janet(result), true);
     }
+
+    return true;
 }
 
 bool ScriptEngine::is_expression_complete(const std::string& code)

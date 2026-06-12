@@ -7,8 +7,14 @@
 #     ?x wdt:P31 wd:Q5 .
 #     ?x wdt:P279+ ?y .
 #   }
-#   <empty line>
+#   <blank line>
 #
+# A blank line asks the handler whether the query is complete (veto
+# protocol): while no SELECT has been seen or braces are unbalanced, the
+# blank line becomes part of the query and accumulation continues - so
+# pretty-printed queries containing blank lines can be pasted verbatim.
+# Two consecutive blank lines force dispatch (escape hatch for broken
+# input).#
 # Supported subset:
 #   - SELECT [DISTINCT] ?vars... | *  with WHERE { ... }
 #   - Basic Graph Patterns (triple blocks, '.' separated, ';' and ',' lists)
@@ -30,55 +36,20 @@
 
 %
 # ============================================================
-# 1. Placeholders for missing zelph core functionality
+# 1. Native closure wrappers
 # ============================================================
 
-# ANTICIPATED CORE API: (zelph/closure start predicate include-start)
-# Should return an array of all nodes reachable from `start` via `predicate`
-# edges (transitive closure, deduplicated). include-start true => reflexive
-# closure (SPARQL `*`), false => one-or-more (SPARQL `+`).
-# Until the native implementation exists, this Janet BFS via zelph/targets
-# is used. It is correct but crosses the C boundary once per node - replace
-# with a native implementation for Wikidata scale.
+# Thin wrappers around the native transitive closure in the zelph core
+# (Zelph::transitive_targets / Zelph::transitive_sources, exposed as
+# zelph/closure and zelph/closure-sources).
+# include-start true => reflexive closure (SPARQL `*`); false => one-or-more
+# (SPARQL `+`), where the start node is still included when it is reachable
+# from itself via a cycle of one or more steps.
 (defn zelph-closure [start predicate include-start]
-  (def seen @{})
-  (def result @[])
-  (when include-start
-    (put seen start true)
-    (array/push result start))
-  (var frontier @[start])
-  (while (> (length frontier) 0)
-    (def next-frontier @[])
-    (each node frontier
-      (each tgt (zelph/targets node predicate)
-        (unless (get seen tgt)
-          (put seen tgt true)
-          (array/push result tgt)
-          (array/push next-frontier tgt))))
-    (set frontier next-frontier))
-  result)
+  (zelph/closure start predicate include-start))
 
-# ANTICIPATED CORE API: (zelph/closure-sources target predicate include-target)
-# Inverse direction: all nodes that reach `target` via `predicate`.
-# Needed when the path subject is unbound but the object is bound
-# (e.g.  ?i wdt:P279* wd:Q123  - enumerate all subclasses of Q123).
 (defn zelph-closure-sources [target predicate include-target]
-  (def seen @{})
-  (def result @[])
-  (when include-target
-    (put seen target true)
-    (array/push result target))
-  (var frontier @[target])
-  (while (> (length frontier) 0)
-    (def next-frontier @[])
-    (each node frontier
-      (each src (zelph/sources predicate node)
-        (unless (get seen src)
-          (put seen src true)
-          (array/push result src)
-          (array/push next-frontier src))))
-    (set frontier next-frontier))
-  result)
+  (zelph/closure-sources target predicate include-target))
 
 # ============================================================
 # 2. Prefix handling
@@ -423,59 +394,110 @@
               (array/push out merged)))))
       out)))
 
+(defn closure-set
+  "Build a membership table from a closure array. Keys are the zelph/node
+   values themselves: the zelph/node abstract type defines hash and compare,
+   so distinct wrappers of the same node compare equal."
+  [arr]
+  (def tbl @{})
+  (each n arr (put tbl n true))
+  tbl)
+
 (defn eval-path-step
   "Evaluate one transitive path step  subj --pred(+|*)--> obj  against a
-   solution sequence. Either side may be a variable or concrete."
+   solution sequence. Closures for constant endpoints are computed exactly
+   once and shared across all solutions; bound variables are checked via
+   set membership instead of per-solution closures."
   [s pred modifier o solutions]
   (def include-start (= modifier "*"))
   (def out @[])
-  (each sol solutions
-    (def s-val (if (= (tag s) :var) (get sol (s 1)) s))
-    (def o-val (if (= (tag o) :var) (get sol (o 1)) o))
-    (cond
-      # Subject bound or constant -> forward closure
-      (not (nil? s-val))
-      (do
-        (def s-node (if (string? s-val) (zelph/resolve s-val) s-val))
-        (def o-key (when (not (nil? o-val))
-                     (node-key (if (string? o-val) (zelph/resolve o-val) o-val))))
-        (each tgt (zelph-closure s-node pred include-start)
-          (if (nil? o-val)
-            (do
-              (def merged (table/clone sol))
-              (put merged (o 1) tgt)
-              (array/push out merged))
-            (when (= (node-key tgt) o-key)
-              (array/push out (table/clone sol))))))
+  (def s-const (when (not= (tag s) :var) s))
+  (def o-const (when (not= (tag o) :var) o))
 
-      # Only object bound -> backward closure
-      (not (nil? o-val))
-      (do
-        (def o-node (if (string? o-val) (zelph/resolve o-val) o-val))
-        (each src (zelph-closure-sources o-node pred include-start)
-          (def merged (table/clone sol))
-          (put merged (s 1) src)
-          (array/push out merged)))
+  (cond
+    # --- Object is constant: one backward closure for all solutions ---
+    (not (nil? o-const))
+    (do
+      (def reach (zelph-closure-sources (zelph/resolve o-const) pred include-start))
+      (def reach-set (closure-set reach))
+      (def s-fixed (when s-const (zelph/resolve s-const)))
+      (each sol solutions
+        (def s-val (or s-fixed (get sol (s 1))))
+        (if (nil? s-val)
+          (each src reach
+            (def merged (table/clone sol))
+            (put merged (s 1) src)
+            (array/push out merged))
+          (when (get reach-set s-val)
+            (array/push out sol)))))
 
-      # Both ends unbound: enumerate all subjects that actually carry the
-      # predicate, then take the forward closure of each. This touches only
-      # nodes connected via the predicate, so the cost is proportional to
-      # the data. Refused for `*`, where every node in the graph trivially
-      # reaches itself.
-      (do
-        (when include-start
-          (error "Property path with both ends unbound is not supported for *"))
-        (def pairs (zelph/query (zelph/fact 'PATHSUBJ pred 'PATHOBJ)))
-        (def subj-seen @{})
-        (each r pairs
-          (def subj (get r 'PATHSUBJ))
-          (unless (or (nil? subj) (get subj-seen subj))
-            (put subj-seen subj true)
-            (each tgt (zelph-closure subj pred false)
+    # --- Subject is constant: one forward closure for all solutions ---
+    (not (nil? s-const))
+    (do
+      (def reach (zelph-closure (zelph/resolve s-const) pred include-start))
+      (def reach-set (closure-set reach))
+      (each sol solutions
+        (def o-val (get sol (o 1)))
+        (if (nil? o-val)
+          (each tgt reach
+            (def merged (table/clone sol))
+            (put merged (o 1) tgt)
+            (array/push out merged))
+          (when (get reach-set o-val)
+            (array/push out sol)))))
+
+    # --- Both ends are variables: per-solution, memoized by bound node ---
+    (do
+      (def memo @{})
+      (defn cached [fwd node]
+        (def key [fwd node])
+        (or (get memo key)
+            (let [arr (if fwd
+                        (zelph-closure node pred include-start)
+                        (zelph-closure-sources node pred include-start))
+                  entry [arr (closure-set arr)]]
+              (put memo key entry)
+              entry)))
+      (each sol solutions
+        (def s-val (get sol (s 1)))
+        (def o-val (get sol (o 1)))
+        (cond
+          (not (nil? s-val))
+          (do
+            (def [arr aset] (cached true s-val))
+            (if (nil? o-val)
+              (each tgt arr
+                (def merged (table/clone sol))
+                (put merged (o 1) tgt)
+                (array/push out merged))
+              (when (get aset o-val)
+                (array/push out sol))))
+
+          (not (nil? o-val))
+          (do
+            (def [arr _aset] (cached false o-val))
+            (each src arr
               (def merged (table/clone sol))
-              (put merged (s 1) subj)
-              (put merged (o 1) tgt)
-              (array/push out merged)))))))
+              (put merged (s 1) src)
+              (array/push out merged)))
+
+          # Both unbound in this solution: enumerate all subjects that
+          # actually carry the predicate, then take the forward closure of
+          # each. Refused for `*`, where every node trivially reaches itself.
+          (do
+            (when include-start
+              (error "Property path with both ends unbound is not supported for *"))
+            (def pairs (zelph/query (zelph/fact 'PATHSUBJ pred 'PATHOBJ)))
+            (def subj-seen @{})
+            (each r pairs
+              (def subj (get r 'PATHSUBJ))
+              (unless (or (nil? subj) (get subj-seen subj))
+                (put subj-seen subj true)
+                (each tgt (zelph-closure subj pred false)
+                  (def merged (table/clone sol))
+                  (put merged (s 1) subj)
+                  (put merged (o 1) tgt)
+                  (array/push out merged)))))))))
   out)
 
 (def fresh-counter @[0])
@@ -636,21 +658,35 @@
 
         :optional
         (do (flush-pending)
+            # Correlated evaluation: the inner pattern is seeded with the
+            # current solutions, so bound variables (e.g. ?x) restrict the
+            # search instead of enumerating the whole graph. Equivalent
+            # results for shared-variable patterns, vastly cheaper on large
+            # graphs.
             (def inner (elem 1))
             (def opt-sols
               (if (= (tag inner) :union)
-                (eval-union inner prefixes @[@{}])
-                (eval-group inner prefixes @[@{}])))
+                (eval-union inner prefixes sols)
+                (eval-group inner prefixes sols)))
             (set sols (left-join sols opt-sols)))
 
         :minus
         (do (flush-pending)
-            (def m-sols (eval-group (elem 1) prefixes @[@{}]))
+            # Correlated evaluation (seeded with current solutions). This
+            # gives FILTER NOT EXISTS semantics: a row is dropped when it
+            # can be extended to satisfy the pattern. Strict SPARQL MINUS
+            # differs only when the group shares no variables with the
+            # outer pattern - a case the supported query class never uses,
+            # and independent evaluation would enumerate the whole graph.
+            (def m-sols (eval-group (elem 1) prefixes sols))
             (set sols (minus-join sols m-sols)))
 
         :union
         (do (flush-pending)
-            (set sols (join sols (eval-union elem prefixes @[@{}]))))
+            # Each branch is seeded with the current solutions (correlated),
+            # so the per-branch results are already joined - no cross join
+            # against an independent enumeration needed.
+            (set sols (eval-union elem prefixes sols)))
 
         :group
         (do (flush-pending)
@@ -706,6 +742,13 @@
         (each cs count-specs
           (def alias ((cs 2) 1))
           (put rep alias (string (length bucket))))
+        (array/push grouped rep))
+      # SPARQL semantics: an aggregate without GROUP BY over an empty
+      # solution sequence yields a single row with COUNT = 0.
+      (when (and (empty? grouped) (nil? group-by))
+        (def rep @{})
+        (each cs count-specs
+          (put rep ((cs 2) 1) "0"))
         (array/push grouped rep))
       (set sols grouped))
 
@@ -807,25 +850,49 @@
     (when (string/find kw upper)
       (error (string "SPARQL feature not supported by this subset: " kw)))))
 
+(defn sparql-incomplete?
+  "Completeness check for the keyword dispatcher's veto protocol. A single
+   blank line asks the handler whether the accumulated text is complete;
+   returning :incomplete resumes accumulation, so blank lines inside pasted
+   queries (e.g. between the PREFIX prologue and SELECT) are harmless. Two
+   consecutive blank lines force dispatch.
+   Incomplete while: no SELECT seen yet (prologue phase), no opening brace
+   yet, or braces unbalanced. Braces inside string literals or comments are
+   not excluded - acceptable for the supported query class."
+  [text]
+  (def upper (string/ascii-upper text))
+  (or (nil? (string/find "SELECT" upper))
+      (nil? (string/find "{" text))
+      (do
+        (var depth 0)
+        (each b text
+          (case b
+            123 (++ depth)    # {
+            125 (-- depth)))  # }
+        (not= depth 0))))
+
 (defn sparql-handler [text]
-  (check-unsupported text)
-  (def parsed (peg/match sparql-peg text))
-  (unless parsed
-    (error (string "SPARQL syntax error or unsupported construct. Subset: "
-                   "SELECT [DISTINCT] / WHERE, BGPs, property paths (+ * /), "
-                   "OPTIONAL, MINUS, UNION, FILTER comparisons, subqueries, "
-                   "GROUP BY + COUNT, ORDER BY, LIMIT")))
-  (def query-node (first parsed))
+  (if (sparql-incomplete? text)
+    :incomplete
+    (do
+      (check-unsupported text)
+      (def parsed (peg/match sparql-peg text))
+      (unless parsed
+        (error (string "SPARQL syntax error or unsupported construct. Subset: "
+                       "SELECT [DISTINCT] / WHERE, BGPs, property paths (+ * /), "
+                       "OPTIONAL, MINUS, UNION, FILTER comparisons, subqueries, "
+                       "GROUP BY + COUNT, ORDER BY, LIMIT")))
+      (def query-node (first parsed))
 
-  (def prefixes @{})
-  (var select-node nil)
-  (each part (slice query-node 1)
-    (case (tag part)
-      :prefix (put prefixes (part 1) (part 2))
-      :select (set select-node part)))
+      (def prefixes @{})
+      (var select-node nil)
+      (each part (slice query-node 1)
+        (case (tag part)
+          :prefix (put prefixes (part 1) (part 2))
+          :select (set select-node part)))
 
-  (def [projected proj-vars] (eval-select select-node prefixes))
-  (format-results projected proj-vars))
+      (def [projected proj-vars] (eval-select select-node prefixes))
+      (format-results projected proj-vars))))
 
 (zelph/register-keyword "sparql" sparql-handler)
 

@@ -59,12 +59,12 @@ namespace zelph::network
             std::vector<uint64_t> route_nodes;
             std::string           route_name;
             std::string           route_lang;
-            bool                  left_explicit = false;
-            bool                  right_explicit = false;
+            bool                  left_explicit         = false;
+            bool                  right_explicit        = false;
             bool                  name_of_node_explicit = false;
             bool                  node_of_name_explicit = false;
-            bool                  route_nodes_explicit = false;
-            bool                  route_name_explicit = false;
+            bool                  route_nodes_explicit  = false;
+            bool                  route_name_explicit   = false;
         };
 
         explicit Zelph(const io::OutputHandler& output = io::default_output_handler);
@@ -111,6 +111,10 @@ namespace zelph::network
         Node                 node(const std::string& name, std::string lang = "");
         bool                 exists(uint64_t nd) const;
         adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
+        adjacency_set        get_fact_objects(Node subject, Node predicate) const;
+        adjacency_set        get_fact_subjects(Node predicate, Node object) const;
+        adjacency_set        transitive_targets(Node start, Node predicate, bool include_start) const;
+        adjacency_set        transitive_sources(Node target, Node predicate, bool include_target) const;
         adjacency_set        filter(const adjacency_set& source, Node target) const;
         adjacency_set        filter(Node fact, Node relationType, Node target) const;
         static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
@@ -188,11 +192,11 @@ namespace zelph::network
         void          save_to_file(const std::string& filename) const;
         void          load_from_file(const std::string& filename) const;
         void          load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
-        void          load_from_manifest(const std::string& manifest_path,
+        void          load_from_manifest(const std::string&       manifest_path,
                                          const BinChunkSelection& selection,
-                                         const std::string& shard_root = "",
-                                         const std::string& bin_path_override = "",
-                                         bool skip_payload = false) const;
+                                         const std::string&       shard_root        = "",
+                                         const std::string&       bin_path_override = "",
+                                         bool                     skip_payload      = false) const;
 
         // --- Members ---
 

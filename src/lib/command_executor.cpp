@@ -877,7 +877,10 @@ public:
             _process_line_callback(line_utf8);
         }
 
-        // Flush an unterminated keyword block (EOF acts as the terminating empty line)
+        // Flush an unterminated keyword block. EOF forces dispatch: the
+        // handler's :incomplete veto does not apply here - a script that
+        // ends inside a keyword block is a script bug, which invoke_keyword
+        // reports as an error under force.
         if (_repl_state->accumulating_keyword)
         {
             std::string keyword               = _repl_state->active_keyword;
@@ -885,7 +888,8 @@ public:
             _repl_state->accumulating_keyword = false;
             _repl_state->active_keyword.clear();
             _repl_state->keyword_buffer.clear();
-            _script_engine->invoke_keyword(keyword, text);
+            _repl_state->keyword_prev_blank = false;
+            _script_engine->invoke_keyword(keyword, text, /*force*/ true);
         }
 
         // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)

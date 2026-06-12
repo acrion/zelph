@@ -152,26 +152,53 @@ void console::Interactive::process(std::string line) const
     {
         auto& state = _pImpl->_repl_state;
 
-        // --- 0. Keyword block accumulation (terminated by an empty line) ---
+        // --- 0. Keyword block accumulation ---
         if (state->accumulating_keyword)
         {
             if (line.find_first_not_of(" \t\r") == std::string::npos)
             {
-                std::string keyword         = state->active_keyword;
-                std::string text            = state->keyword_buffer;
-                state->accumulating_keyword = false;
-                state->active_keyword.clear();
-                state->keyword_buffer.clear();
+                const bool force = state->keyword_prev_blank;
 
                 _pImpl->_n->profiler_reset_epoch();
-                _pImpl->_script_engine->invoke_keyword(keyword, text);
 
-                if (state->auto_run)
-                    _pImpl->_n->run(true, false, false, true);
+                bool dispatched = false;
+                try
+                {
+                    dispatched = _pImpl->_script_engine->invoke_keyword(
+                        state->active_keyword, state->keyword_buffer, force);
+                }
+                catch (...)
+                {
+                    // Leave keyword mode on handler errors so the REPL is not stuck.
+                    state->accumulating_keyword = false;
+                    state->active_keyword.clear();
+                    state->keyword_buffer.clear();
+                    state->keyword_prev_blank = false;
+                    throw;
+                }
+
+                if (dispatched)
+                {
+                    state->accumulating_keyword = false;
+                    state->active_keyword.clear();
+                    state->keyword_buffer.clear();
+                    state->keyword_prev_blank = false;
+
+                    if (state->auto_run)
+                        _pImpl->_n->run(true, false, false, true);
+                }
+                else
+                {
+                    // Handler vetoed (:incomplete): the blank line belongs to the
+                    // text; a second consecutive blank line forces dispatch.
+                    state->keyword_buffer += "\n";
+                    state->keyword_prev_blank = true;
+                }
             }
             else
             {
                 state->keyword_buffer += line + "\n";
+                state->keyword_prev_blank = false;
             }
             return;
         }
