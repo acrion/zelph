@@ -40,6 +40,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -218,6 +219,122 @@ namespace zelph::network
             if (rc != 0)
             {
                 throw std::runtime_error("Command failed with code " + std::to_string(rc) + ": " + cmd);
+            }
+        }
+
+        // --- Predicate index persistence ------------------------------------
+        // Indexes are cached on disk next to the loaded .bin file
+        // (<bin>.pidx.<predicate-node-id>) so that later sessions on the same
+        // file skip the expensive extraction phase entirely. A sidecar is only
+        // read or written while the in-memory graph is an unmodified image of
+        // the loaded file: any edge mutation (everything that triggers
+        // invalidate_fact_structures_cache, including pattern facts created by
+        // queries through the unification path) disables sidecar I/O for the
+        // rest of the session, and closures fall back to building from the
+        // graph. The validation snapshot is taken at load time, so node
+        // creation without edges (e.g. zelph/resolve during queries) does not
+        // interfere. Files store host-endian raw pairs - they are machine-
+        // local caches, not an interchange format.
+
+        struct PidxHeader
+        {
+            char     magic[4]; // "ZPIX"
+            uint32_t version;  // 1
+            uint64_t predicate;
+            uint64_t node_count;
+            uint64_t last;
+            uint64_t last_var;
+            uint64_t pair_count;
+        };
+
+        using IndexPair = std::pair<Node, Node>; // (subject, object)
+        static_assert(sizeof(IndexPair) == 2 * sizeof(Node), "IndexPair must be tightly packed");
+
+        std::string pidx_path(const Node predicate) const
+        {
+            return _pidx_base + ".pidx." + std::to_string(predicate);
+        }
+
+        bool try_load_pidx(const Node predicate, std::vector<IndexPair>& out) const
+        {
+            if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
+                return false;
+
+            const std::string path = pidx_path(predicate);
+            FILE*             file = fopen(path.c_str(), "rb");
+            if (!file) return false;
+
+            bool ok = false;
+            try
+            {
+                PidxHeader h{};
+                if (fread(&h, sizeof(h), 1, file) == 1
+                    && std::memcmp(h.magic, "ZPIX", 4) == 0
+                    && h.version == 1
+                    && h.predicate == predicate
+                    && h.node_count == _pidx_node_count
+                    && h.last == _pidx_last
+                    && h.last_var == _pidx_last_var)
+                {
+                    out.resize(h.pair_count);
+                    ok = h.pair_count == 0
+                      || fread(out.data(), sizeof(IndexPair), h.pair_count, file) == h.pair_count;
+                }
+            }
+            catch (...)
+            {
+                ok = false;
+            }
+            fclose(file);
+
+            if (ok)
+            {
+                emit(io::OutputChannel::Diagnostic,
+                     "Loaded adjacency index from " + path + " (" + std::to_string(out.size()) + " edges).");
+            }
+            else
+            {
+                out.clear();
+            }
+            return ok;
+        }
+
+        void try_save_pidx(const Node predicate, const std::vector<IndexPair>& pairs) const
+        {
+            if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
+                return;
+
+            const std::string path = pidx_path(predicate);
+            FILE*             file = fopen(path.c_str(), "wb");
+            if (!file)
+            {
+                emit(io::OutputChannel::Diagnostic, "Could not write adjacency index sidecar: " + path);
+                return;
+            }
+
+            PidxHeader h{};
+            std::memcpy(h.magic, "ZPIX", 4);
+            h.version    = 1;
+            h.predicate  = predicate;
+            h.node_count = _pidx_node_count;
+            h.last       = _pidx_last;
+            h.last_var   = _pidx_last_var;
+            h.pair_count = pairs.size();
+
+            const bool ok = fwrite(&h, sizeof(h), 1, file) == 1
+                         && (pairs.empty()
+                             || fwrite(pairs.data(), sizeof(IndexPair), pairs.size(), file) == pairs.size());
+            fclose(file);
+
+            if (ok)
+            {
+                emit(io::OutputChannel::Diagnostic,
+                     "Saved adjacency index to " + path + " (" + std::to_string(pairs.size()) + " edges).");
+            }
+            else
+            {
+                emit(io::OutputChannel::Diagnostic, "Failed to write adjacency index sidecar: " + path);
+                std::remove(path.c_str());
             }
         }
 
@@ -2427,6 +2544,14 @@ namespace zelph::network
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
 
             fclose(file);
+
+            // Enable predicate-index sidecar I/O for this file and take the
+            // validation snapshot of the freshly loaded, unmodified graph.
+            _pidx_base       = filename;
+            _pidx_node_count = _left.size();
+            _pidx_last       = _last;
+            _pidx_last_var   = _last_var;
+            _pidx_io_enabled.store(true, std::memory_order_release);
         }
 
         void loadFromFile(const std::string&              filename,
@@ -2811,41 +2936,24 @@ namespace zelph::network
             return hw == 0 ? 4u : hw;
         }
 
-        // Two-phase parallel build.
-        //
-        // Phase 1 extracts (subject, object) pairs from the predicate's
-        // relation nodes. On large datasets this phase is dominated by
-        // random access into the adjacency maps - on machines where the
-        // working set exceeds RAM (zram/swap) every lookup is a page fault,
-        // so parallel workers that keep many faults in flight are the main
-        // lever. The coordinating thread holds both shared locks for the
-        // whole build; workers read _left/_right without locking, which is
-        // sound because the held shared locks exclude all writers.
-        //
-        // Phase 2 sorts each direction and fills the maps with exact-size
-        // vectors, avoiding per-insert reallocation churn.
-        //
-        // Semantics mirror get_fact_objects / get_fact_subjects exactly
-        // (bidirectional participants except the predicate act as subjects,
-        // pure-object-role nodes are objects, variables excluded).
-        std::shared_ptr<const PredicateIndex> build_predicate_index(Node predicate) const
+        // Phase 1: extract (subject, object) pairs from the predicate's
+        // relation nodes (parallel; see previous comments on locking and
+        // swap-bound random access). Returns the unsorted forward pairs.
+        std::vector<IndexPair> extract_predicate_pairs(const Node predicate) const
         {
-            auto idx = std::make_shared<PredicateIndex>();
-
             // Same lock order as writers (connect): left before right.
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
             std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            const auto rels_it = _right.find(predicate);
-            if (rels_it == _right.end()) return idx;
+            std::vector<IndexPair> fw;
 
-            // Snapshot the relation nodes into a flat vector for chunking.
+            const auto rels_it = _right.find(predicate);
+            if (rels_it == _right.end()) return fw;
+
             std::vector<Node> rels;
             rels.reserve(rels_it->second.size());
             for (const Node rel : rels_it->second)
                 rels.push_back(rel);
-
-            using Pair = std::pair<Node, Node>; // (subject, object)
 
             const size_t n_threads =
                 rels.size() >= (size_t(1) << 15) ? index_build_threads() : 1;
@@ -2854,10 +2962,10 @@ namespace zelph::network
                  "Building adjacency index over " + std::to_string(rels.size())
                      + " relation nodes (" + std::to_string(n_threads) + " thread(s))...");
 
-            std::vector<std::vector<Pair>> partial(n_threads);
-            std::atomic<bool>              failed{false};
+            std::vector<std::vector<IndexPair>> partial(n_threads);
+            std::atomic<bool>                   failed{false};
 
-            auto extract_chunk = [&](const size_t begin, const size_t end, std::vector<Pair>& out_pairs)
+            auto extract_chunk = [&](const size_t begin, const size_t end, std::vector<IndexPair>& out_pairs)
             {
                 try
                 {
@@ -2933,7 +3041,6 @@ namespace zelph::network
             for (const auto& p : partial)
                 total += p.size();
 
-            std::vector<Pair> fw;
             fw.reserve(total);
             for (auto& p : partial)
             {
@@ -2942,15 +3049,23 @@ namespace zelph::network
                 p.shrink_to_fit();
             }
 
-            std::vector<Pair> bw;
+            return fw;
+        }
+
+        // Phase 2: sort each direction and fill the maps with exact-size
+        // vectors. fw is sorted in place (and stays valid for persisting).
+        std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw) const
+        {
+            auto idx = std::make_shared<PredicateIndex>();
+
+            std::vector<IndexPair> bw;
             bw.reserve(fw.size());
             for (const auto& [s, o] : fw)
                 bw.emplace_back(o, s);
 
-            // Phase 2: sort + group per direction (deduplicates adjacent
-            // identical pairs, which can arise from relation nodes that are
-            // themselves subjects of other facts).
-            auto fill = [&failed](std::vector<Pair>& pairs, PredicateIndex::adjacency& out)
+            std::atomic<bool> failed{false};
+
+            auto fill = [&failed](std::vector<IndexPair>& pairs, PredicateIndex::adjacency& out)
             {
                 try
                 {
@@ -2979,6 +3094,7 @@ namespace zelph::network
                 }
             };
 
+
             std::thread bw_thread([&]
                                   { fill(bw, idx->backward); });
             fill(fw, idx->forward);
@@ -2989,13 +3105,10 @@ namespace zelph::network
                 throw std::runtime_error("Predicate index build failed (fill exception)");
             }
 
-            emit(io::OutputChannel::Diagnostic,
-                 "Adjacency index ready: " + std::to_string(total) + " edges.");
-
             return idx;
         }
 
-        std::shared_ptr<const PredicateIndex> predicate_index(Node predicate) const
+        std::shared_ptr<const PredicateIndex> predicate_index(const Node predicate) const
         {
             {
                 std::shared_lock lock(_pred_idx_mtx);
@@ -3003,7 +3116,24 @@ namespace zelph::network
                 if (it != _pred_idx_cache.end()) return it->second;
             }
 
-            auto idx = build_predicate_index(predicate);
+            std::vector<IndexPair> fw;
+            bool                   fresh = false;
+
+            if (!try_load_pidx(predicate, fw))
+            {
+                fw    = extract_predicate_pairs(predicate);
+                fresh = true;
+            }
+
+            auto idx = index_from_pairs(fw); // sorts fw in place
+
+            emit(io::OutputChannel::Diagnostic,
+                 "Adjacency index ready: " + std::to_string(fw.size()) + " edges.");
+
+            if (fresh)
+            {
+                try_save_pidx(predicate, fw);
+            }
 
             std::unique_lock lock(_pred_idx_mtx);
             const auto [it, inserted] = _pred_idx_cache.try_emplace(predicate, std::move(idx));
@@ -3038,6 +3168,8 @@ namespace zelph::network
 
         void invalidate_predicate_index() const noexcept
         {
+            _pidx_io_enabled.store(false, std::memory_order_release);
+
             if (!_pred_idx_has_entries.exchange(false, std::memory_order_acq_rel)) return;
             std::unique_lock lock(_pred_idx_mtx);
             _pred_idx_cache.clear();
@@ -3161,6 +3293,12 @@ namespace zelph::network
         mutable std::shared_mutex                                                         _pred_idx_mtx;
         mutable ankerl::unordered_dense::map<Node, std::shared_ptr<const PredicateIndex>> _pred_idx_cache;
         mutable std::atomic<bool>                                                         _pred_idx_has_entries{false};
+
+        std::string               _pidx_base;
+        Node                      _pidx_node_count{0};
+        Node                      _pidx_last{0};
+        Node                      _pidx_last_var{0};
+        mutable std::atomic<bool> _pidx_io_enabled{false};
 
         int               _max_log_depth{0};
         bool              _logging{false};
