@@ -96,22 +96,29 @@
 # ============================================================
 # 2. Prefix handling
 # ============================================================
-# zelph's wikidata language names nodes with bare IDs (Q5, P31).
-# Well-known Wikidata prefixes therefore strip to the local part.
-# Prefixes declared via PREFIX in the query body expand to the full IRI,
-# which is then used as a node name. Note: p:, pq:, ps: refer to statement
-# and qualifier nodes - resolving them to bare IDs is a simplification that
-# only becomes meaningful once qualifier import lands in zelph.
+# zelph's wikidata language names direct-triple nodes with bare IDs
+# (Q5, P31). The reified statement layer created by .wikidata-qualifiers
+# keeps the RDF prefix as part of the node name (p:P2738, ps:P2738,
+# pq:P11260, wikibase:rank), so that e.g. wdt:P279+ closures can never
+# leak into statement nodes. Each SPARQL prefix therefore maps to the
+# node-name prefix used in the wikidata language; all of these resolve
+# explicitly in the "wikidata" language, independent of the REPL's .lang.
 (def wikidata-prefixes
-  {"wd" true "wdt" true "p" true "pq" true "ps" true
-   "psv" true "pqv" true "wdtn" true})
+  {"wd" "" "wdt" ""
+   "p" "p:" "pq" "pq:" "ps" "ps:"
+   "psv" "psv:" "pqv" "pqv:" "wdtn" "wdtn:"
+   "wikibase" "wikibase:"})
 
+# Full-IRI prefixes map the same way. Order matters: the more specific
+# prop/direct, prop/qualifier and prop/statement prefixes must be checked
+# before the generic prop/ prefix.
 (def wd-iri-prefixes
-  ["http://www.wikidata.org/entity/"
-   "http://www.wikidata.org/prop/direct/"
-   "http://www.wikidata.org/prop/qualifier/"
-   "http://www.wikidata.org/prop/statement/"
-   "http://www.wikidata.org/prop/"])
+  [["http://www.wikidata.org/entity/" ""]
+   ["http://www.wikidata.org/prop/direct/" ""]
+   ["http://www.wikidata.org/prop/qualifier/" "pq:"]
+   ["http://www.wikidata.org/prop/statement/" "ps:"]
+   ["http://www.wikidata.org/prop/" "p:"]
+   ["http://wikiba.se/ontology#" "wikibase:"]])
 
 # ============================================================
 # 3. PEG grammar for the SPARQL subset
@@ -267,16 +274,17 @@
   (zelph/resolve id "wikidata"))
 
 (defn strip-wd-iri
-  "Strip well-known Wikidata IRI prefixes and resolve the bare Q/P ID in
-   the 'wikidata' language (returns a zelph/node). Non-Wikidata IRIs are
-   returned unchanged as strings and act as node names resolved in the
-   current language."
+  "Strip well-known Wikidata IRI prefixes and resolve the (possibly
+   name-prefixed) ID in the 'wikidata' language (returns a zelph/node).
+   Non-Wikidata IRIs are returned unchanged as strings and act as node
+   names resolved in the current language."
   [iri]
-  (var stripped nil)
-  (each pfx wd-iri-prefixes
-    (when (and (nil? stripped) (string/has-prefix? pfx iri))
-      (set stripped (string/slice iri (length pfx)))))
-  (if stripped (resolve-wd-id stripped) iri))
+  (var resolved nil)
+  (each [iri-pfx name-pfx] wd-iri-prefixes
+    (when (and (nil? resolved) (string/has-prefix? iri-pfx iri))
+      (set resolved
+           (resolve-wd-id (string name-pfx (string/slice iri (length iri-pfx)))))))
+  (if resolved resolved iri))
 
 (defn as-node
   "Coerce a concrete term to a zelph/node: strings are resolved in the
@@ -295,10 +303,11 @@
     :pname (do
              (def pfx (node 1))
              (def local (node 2))
+             (def wd-pfx (get wikidata-prefixes pfx))
              (cond
-               (get wikidata-prefixes pfx) (resolve-wd-id local)
+               wd-pfx (resolve-wd-id (string wd-pfx local))
                # Declared prefixes expand to the full IRI, which is then
-               # subject to the same Wikidata stripping as direct IRIs.
+               # subject to the same Wikidata mapping as direct IRIs.
                (get prefixes pfx) (strip-wd-iri (string (get prefixes pfx) local))
                (string pfx ":" local)))
     :literal (node 1)

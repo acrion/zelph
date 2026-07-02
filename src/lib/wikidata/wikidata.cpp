@@ -41,6 +41,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iomanip> // for std::setprecision
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -1046,4 +1047,481 @@ void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
     }
 
     _pImpl->_n->diagnostic_stream() << "Export completed." << std::endl;
+}
+
+// ---------------------------------------------------------------------------
+// Qualifier import
+// ---------------------------------------------------------------------------
+
+namespace zelph::wikidata
+{
+    struct QualifierImportCounters
+    {
+        std::atomic<uint64_t> statements{0};      // materialized statement nodes
+        std::atomic<uint64_t> qualifier_facts{0}; // pq: facts created
+        std::atomic<uint64_t> skipped_values{0};  // novalue/somevalue/unsupported datavalues
+    };
+}
+
+namespace
+{
+    // Index of the matching closing brace for the opening brace at 'open'
+    // (line[open] must be '{'). String- and escape-aware. Returns npos on
+    // imbalance.
+    size_t find_matching_brace(const std::string& line, size_t open)
+    {
+        int  depth     = 0;
+        bool in_string = false;
+        bool escape    = false;
+        for (size_t i = open; i < line.size(); ++i)
+        {
+            const char c = line[i];
+            if (escape)
+            {
+                escape = false;
+                continue;
+            }
+            if (in_string)
+            {
+                if (c == '\\')
+                    escape = true;
+                else if (c == '"')
+                    in_string = false;
+                continue;
+            }
+            if (c == '"')
+            {
+                in_string = true;
+                continue;
+            }
+            if (c == '{')
+                ++depth;
+            else if (c == '}' && --depth == 0)
+                return i;
+        }
+        return std::string::npos;
+    }
+
+    // Extract the string value of  <key_tag>value"  searching in [from, to).
+    // key_tag must include the opening quote of the value, e.g. "\"time\":\"".
+    // Skips escaped quotes when locating the closing quote; the value itself
+    // is returned with raw JSON escapes (consistent with the label import).
+    std::string extract_json_string(const std::string& line, const std::string& key_tag, size_t from, size_t to)
+    {
+        const size_t k = line.find(key_tag, from);
+        if (k == std::string::npos || k >= to) return {};
+        const size_t v0 = k + key_tag.size();
+
+        size_t v1 = v0;
+        while (true)
+        {
+            v1 = line.find('"', v1);
+            if (v1 == std::string::npos || v1 >= to) return {};
+            size_t backslashes = 0;
+            while (v1 >= v0 + backslashes + 1 && line[v1 - backslashes - 1] == '\\')
+                ++backslashes;
+            if (backslashes % 2 == 0) break; // unescaped quote
+            ++v1;
+        }
+        return line.substr(v0, v1 - v0);
+    }
+
+    // The statement id is the only "id" value inside a claim object that
+    // contains '$' (entity ids in datavalues never do).
+    std::string find_statement_id(const std::string& line, size_t begin, size_t end)
+    {
+        static const std::string id_tag("\"id\":\"");
+        size_t                   pos = begin;
+        while ((pos = line.find(id_tag, pos)) != std::string::npos && pos < end)
+        {
+            const size_t v0 = pos + id_tag.size();
+            const size_t v1 = line.find('"', v0);
+            if (v1 == std::string::npos || v1 > end) break;
+            std::string id = line.substr(v0, v1 - v0);
+            if (id.find('$') != std::string::npos) return id;
+            pos = v1;
+        }
+        return {};
+    }
+
+    // Parse the datavalue of a snak (range [snak_begin, snak_end]) into a
+    // node name for the "wikidata" language. Returns an empty string when
+    // the value cannot (or should not) be represented as a node:
+    //   - snaktype novalue/somevalue
+    //   - globecoordinate and other object-valued types without a canonical
+    //     scalar representation
+    // Entity values use their Q/P ID; time/quantity/string/monolingualtext
+    // use the raw scalar (e.g. "+2020-01-01T00:00:00Z", "+42"). Keeping the
+    // raw scalar allows later rule-based interpretation (e.g. converting
+    // digit strings into zelph cons lists for arithmetic) without changing
+    // the import. The quantity unit is ignored for now.
+    std::string parse_snak_value(const std::string& line, size_t snak_begin, size_t snak_end)
+    {
+        const std::string snaktype = extract_json_string(line, "\"snaktype\":\"", snak_begin, snak_end);
+        if (snaktype != "value") return {};
+
+        static const std::string dv_tag("\"datavalue\":");
+        const size_t             dv = line.find(dv_tag, snak_begin);
+        if (dv == std::string::npos || dv >= snak_end) return {};
+        const size_t dv_open = dv + dv_tag.size();
+        if (dv_open >= snak_end || line[dv_open] != '{') return {};
+        const size_t dv_close = find_matching_brace(line, dv_open);
+        if (dv_close == std::string::npos || dv_close > snak_end) return {};
+
+        const std::string dtype = extract_json_string(line, "\"type\":\"", dv_open, dv_close);
+
+        if (dtype == "wikibase-entityid")
+            return extract_json_string(line, "\"id\":\"", dv_open, dv_close);
+        if (dtype == "time")
+            return extract_json_string(line, "\"time\":\"", dv_open, dv_close);
+        if (dtype == "quantity")
+            return extract_json_string(line, "\"amount\":\"", dv_open, dv_close);
+        if (dtype == "monolingualtext")
+            return extract_json_string(line, "\"text\":\"", dv_open, dv_close);
+        if (dtype == "string")
+            return extract_json_string(line, "\"value\":\"", dv_open, dv_close);
+
+        return {};
+    }
+}
+
+void Wikidata::process_qualifier_entry(const std::string&                     line,
+                                       const std::unordered_set<std::string>& selected_qualifier_properties,
+                                       const std::vector<std::string>&        screen_patterns,
+                                       QualifierImportCounters&               counters)
+{
+    static const std::string id_tag("\"id\":\"");
+    const size_t             id0 = line.find(id_tag);
+    if (id0 == std::string::npos) return;
+    const size_t id1 = line.find('"', id0 + id_tag.size());
+    if (id1 == std::string::npos) return;
+    const std::string entity_id = line.substr(id0 + id_tag.size(), id1 - id0 - id_tag.size());
+
+    // Only items and properties (skip lexemes etc.). Processing P entities
+    // materializes constraint statements (P2302 with P2305/P2306/P5314
+    // qualifiers), which prepares qualifier-dependent property constraints.
+    if (entity_id.empty() || (entity_id[0] != 'Q' && entity_id[0] != 'P')) return;
+
+    // Cheap pre-screen for selective imports: a qualifier (or reference)
+    // snak array for property P looks like  "P...":[{"snaktype"  - claims
+    // instead start with  "P...":[{"mainsnak" . Reference snaks may pass the
+    // screen but are ignored by the detailed parse below (we only descend
+    // into "qualifiers" blocks), so a false positive only costs time.
+    if (!screen_patterns.empty())
+    {
+        bool any = false;
+        for (const auto& pattern : screen_patterns)
+        {
+            if (line.find(pattern) != std::string::npos)
+            {
+                any = true;
+                break;
+            }
+        }
+        if (!any) return;
+    }
+
+    // Per-thread caches, mirroring process_import.
+    thread_local std::unordered_map<std::string, network::Node> node_cache;
+    thread_local std::unordered_set<network::Node>              typed_predicates;
+
+    auto cached_node = [&](const std::string& name) -> network::Node
+    {
+        auto it = node_cache.find(name);
+        if (it != node_cache.end()) return it->second;
+        const network::Node n = _pImpl->_n->node(name, "wikidata");
+        node_cache.emplace(name, n);
+        return n;
+    };
+
+    auto predicate_node = [&](const std::string& name) -> network::Node
+    {
+        const network::Node n = cached_node(name);
+        if (typed_predicates.insert(n).second)
+        {
+            _pImpl->_n->fact_import_trusted_single_object(
+                n, _pImpl->_n->core.IsA, _pImpl->_n->core.RelationTypeCategory);
+        }
+        return n;
+    };
+
+    network::Node subject = 0;
+
+    static const std::string claim_tag("{\"mainsnak\":{\"snaktype\":");
+    static const std::string qualifiers_tag("\"qualifiers\":{");
+    static const std::string mainsnak_tag("\"mainsnak\":");
+
+    size_t claim_pos = id1;
+    while ((claim_pos = line.find(claim_tag, claim_pos)) != std::string::npos)
+    {
+        const size_t claim_start = claim_pos;
+        const size_t claim_end   = find_matching_brace(line, claim_start);
+        if (claim_end == std::string::npos) return; // malformed line
+        claim_pos = claim_end + 1;
+
+        // Statements without qualifiers are not materialized.
+        const size_t q_tag = line.find(qualifiers_tag, claim_start);
+        if (q_tag == std::string::npos || q_tag > claim_end) continue;
+        const size_t q_open  = q_tag + qualifiers_tag.size() - 1; // the '{'
+        const size_t q_close = find_matching_brace(line, q_open);
+        if (q_close == std::string::npos || q_close > claim_end) continue;
+
+        // Collect (qualifier property, value name) pairs passing the filter.
+        // The qualifiers object has the shape {"P580":[{snak},...],"P582":[...]}.
+        std::vector<std::pair<std::string, std::string>> qualifier_values;
+        size_t                                           pos = q_open + 1;
+        while (pos < q_close)
+        {
+            const size_t key0 = line.find('"', pos);
+            if (key0 == std::string::npos || key0 >= q_close) break;
+            const size_t key1 = line.find('"', key0 + 1);
+            if (key1 == std::string::npos || key1 >= q_close) break;
+            const std::string qual_prop = line.substr(key0 + 1, key1 - key0 - 1);
+            const size_t      arr_open  = line.find('[', key1);
+            if (arr_open == std::string::npos || arr_open >= q_close) break;
+
+            const bool wanted = selected_qualifier_properties.empty()
+                             || selected_qualifier_properties.count(qual_prop) > 0;
+
+            size_t p2 = arr_open + 1;
+            while (p2 < q_close)
+            {
+                const size_t snak_open = line.find('{', p2);
+                const size_t arr_close = line.find(']', p2);
+                if (arr_close == std::string::npos)
+                {
+                    p2 = q_close;
+                    break;
+                }
+                if (snak_open == std::string::npos || arr_close < snak_open)
+                {
+                    p2 = arr_close + 1; // end of this property's snak array
+                    break;
+                }
+                const size_t snak_close = find_matching_brace(line, snak_open);
+                if (snak_close == std::string::npos || snak_close > q_close)
+                {
+                    p2 = q_close;
+                    break;
+                }
+                if (wanted)
+                {
+                    std::string value = parse_snak_value(line, snak_open, snak_close);
+                    if (value.empty())
+                        counters.skipped_values.fetch_add(1, std::memory_order_relaxed);
+                    else
+                        qualifier_values.emplace_back(qual_prop, std::move(value));
+                }
+                p2 = snak_close + 1;
+            }
+            pos = p2;
+        }
+
+        if (qualifier_values.empty()) continue;
+
+        const std::string statement_id = find_statement_id(line, claim_start, claim_end);
+        if (statement_id.empty()) continue;
+
+        // The mainsnak's property is the first "property" in the claim.
+        const std::string main_prop = extract_json_string(line, "\"property\":\"", claim_start, claim_end);
+        if (main_prop.empty() || main_prop[0] != 'P') continue;
+
+        // Main value (may be empty for novalue/somevalue/unsupported types).
+        std::string main_value;
+        {
+            const size_t ms_tag = line.find(mainsnak_tag, claim_start);
+            if (ms_tag != std::string::npos && ms_tag < claim_end)
+            {
+                const size_t ms_open = ms_tag + mainsnak_tag.size();
+                if (ms_open < claim_end && line[ms_open] == '{')
+                {
+                    const size_t ms_close = find_matching_brace(line, ms_open);
+                    if (ms_close != std::string::npos && ms_close <= claim_end)
+                        main_value = parse_snak_value(line, ms_open, ms_close);
+                }
+            }
+        }
+
+        const std::string rank = extract_json_string(line, "\"rank\":\"", claim_start, claim_end);
+        std::string       rank_node_name;
+        if (rank == "normal")
+            rank_node_name = "wikibase:NormalRank";
+        else if (rank == "preferred")
+            rank_node_name = "wikibase:PreferredRank";
+        else if (rank == "deprecated")
+            rank_node_name = "wikibase:DeprecatedRank";
+
+        try
+        {
+            if (subject == 0) subject = _pImpl->_n->node(entity_id, "wikidata");
+            const network::Node stmt = _pImpl->_n->node(statement_id, "wikidata");
+
+            _pImpl->_n->fact_import_trusted_single_object(subject, predicate_node("p:" + main_prop), stmt);
+
+            if (!main_value.empty())
+            {
+                const network::Node value_node = _pImpl->_n->node(main_value, "wikidata");
+                _pImpl->_n->fact_import_trusted_single_object(stmt, predicate_node("ps:" + main_prop), value_node);
+            }
+
+            for (const auto& [qual_prop, value] : qualifier_values)
+            {
+                const network::Node value_node = _pImpl->_n->node(value, "wikidata");
+                _pImpl->_n->fact_import_trusted_single_object(stmt, predicate_node("pq:" + qual_prop), value_node);
+                counters.qualifier_facts.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            if (!rank_node_name.empty())
+            {
+                _pImpl->_n->fact_import_trusted_single_object(stmt, predicate_node("wikibase:rank"), cached_node(rank_node_name));
+            }
+
+            counters.statements.fetch_add(1, std::memory_order_relaxed);
+        }
+        catch (std::exception& ex)
+        {
+            _pImpl->_n->error(ex.what(), true);
+        }
+    }
+}
+
+void Wikidata::import_qualifiers(const std::vector<std::string>& qualifier_properties)
+{
+    if (_pImpl->_original_source_path.empty())
+    {
+        throw std::runtime_error("Qualifier import requires the original Wikidata JSON dump "
+                                 "(.json or .json.bz2), but it could not be located based on the input path.");
+    }
+
+    const std::unordered_set<std::string> selected(qualifier_properties.begin(), qualifier_properties.end());
+
+    std::vector<std::string> screen_patterns;
+    screen_patterns.reserve(qualifier_properties.size());
+    for (const auto& p : qualifier_properties)
+    {
+        screen_patterns.push_back("\"" + p + "\":[{\"snaktype\"");
+    }
+
+    _pImpl->_n->diagnostic_stream() << "Number of nodes prior qualifier import: " << _pImpl->_n->count() << std::endl;
+    _pImpl->_n->diagnostic("Importing qualifiers from " + _pImpl->_original_source_path.string()
+                               + (selected.empty()
+                                      ? " (all qualifier properties)"
+                                      : " (" + std::to_string(selected.size()) + " selected qualifier properties)"),
+                           true);
+
+    const unsigned int num_threads = 4;
+
+    io::ReadAsync read_async(_pImpl->_original_source_path, num_threads * 2, [this](const std::string& msg)
+                             { _pImpl->_n->diagnostic(msg, true); });
+
+    if (!read_async.error_text().empty())
+    {
+        throw std::runtime_error(read_async.error_text());
+    }
+
+    const std::streamsize total_size      = read_async.get_total_size();
+    const size_t          baseline_memory = zelph::platform::get_process_memory_usage();
+
+    std::atomic<std::streamoff> bytes_read{0};
+    std::atomic<unsigned int>   active_threads{num_threads};
+    QualifierImportCounters     counters;
+    std::vector<std::thread>    workers;
+
+    auto worker_func = [&]()
+    {
+        std::vector<std::pair<std::string, std::streamoff>> batch;
+        while (read_async.get_batch(batch))
+        {
+            for (auto& [line, streampos] : batch)
+            {
+                auto old = bytes_read.load(std::memory_order_relaxed);
+                while (streampos > old
+                       && !bytes_read.compare_exchange_weak(old, streampos, std::memory_order_relaxed))
+                    ;
+
+                try
+                {
+                    process_qualifier_entry(line, selected, screen_patterns, counters);
+                }
+                catch (std::exception& ex)
+                {
+                    _pImpl->_n->error(ex.what(), true);
+                }
+            }
+        }
+        active_threads.fetch_sub(1, std::memory_order_relaxed);
+    };
+
+    workers.reserve(num_threads);
+    for (unsigned int i = 0; i < num_threads; ++i)
+    {
+        workers.emplace_back(worker_func);
+    }
+
+    const auto start_time       = std::chrono::steady_clock::now();
+    auto       last_update_time = start_time;
+
+    while (active_threads.load(std::memory_order_relaxed) > 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        const auto current_time = std::chrono::steady_clock::now();
+        if (std::chrono::duration<double>(current_time - last_update_time).count() >= 60.0)
+        {
+            const std::streamoff current_bytes = bytes_read.load(std::memory_order_relaxed);
+            const double         percentage    = total_size > 0
+                                                   ? (static_cast<double>(current_bytes) / static_cast<double>(total_size)) * 100.0
+                                                   : 0.0;
+            const auto           elapsed_sec   = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+
+            int eta_seconds = 0;
+            if (elapsed_sec > 0 && current_bytes > 0)
+            {
+                const double speed = static_cast<double>(current_bytes) / static_cast<double>(elapsed_sec);
+                eta_seconds        = static_cast<int>(static_cast<double>(total_size - current_bytes) / speed);
+            }
+            int eta_minutes = eta_seconds / 60;
+            eta_seconds %= 60;
+            const int eta_hours = eta_minutes / 60;
+            eta_minutes %= 60;
+
+            const size_t current_memory = zelph::platform::get_process_memory_usage();
+            const size_t memory_used    = (current_memory > baseline_memory) ? current_memory - baseline_memory : 0;
+
+            std::ostringstream oss;
+            oss << "Progress: " << std::fixed << std::setprecision(2) << percentage << "% "
+                << current_bytes << "/" << total_size << " bytes"
+                << " | Statements: " << counters.statements.load(std::memory_order_relaxed)
+                << " | Qualifier facts: " << counters.qualifier_facts.load(std::memory_order_relaxed)
+                << " | Nodes: " << _pImpl->_n->count()
+                << " | ETA: ";
+            if (eta_hours > 0) oss << eta_hours << "h ";
+            if (eta_minutes > 0) oss << eta_minutes << "m ";
+            oss << eta_seconds << "s"
+                << " | Additional Memory: " << std::fixed << std::setprecision(1)
+                << (static_cast<double>(memory_used) / (1024.0 * 1024.0 * 1024.0)) << " GiB";
+            _pImpl->_n->diagnostic(oss.str(), true);
+
+            last_update_time = current_time;
+        }
+    }
+
+    for (auto& worker : workers)
+    {
+        if (worker.joinable()) worker.join();
+    }
+
+    if (!read_async.error_text().empty())
+    {
+        throw std::runtime_error(read_async.error_text());
+    }
+
+    std::ostringstream oss;
+    oss << "Qualifier import completed: "
+        << counters.statements.load() << " statement nodes, "
+        << counters.qualifier_facts.load() << " qualifier facts, "
+        << counters.skipped_values.load() << " skipped values (novalue/somevalue/unsupported)."
+        << " Total nodes: " << _pImpl->_n->count();
+    _pImpl->_n->diagnostic(oss.str(), true);
+    _pImpl->_n->out("Use .save <file.bin> to persist the combined network.", true);
 }

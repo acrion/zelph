@@ -139,6 +139,8 @@ private:
         { cmd_load_partial(c); };
         _command_map[".wikidata-constraints"] = [this](auto& c)
         { cmd_wikidata_constraints(c); };
+        _command_map[".wikidata-qualifiers"] = [this](auto& c)
+        { cmd_wikidata_qualifiers(c); };
         _command_map[".list-rules"] = [this](auto& c)
         { cmd_list_rules(c); };
         _command_map[".list-predicate-usage"] = [this](auto& c)
@@ -1118,6 +1120,7 @@ private:
             ".auto-run                   – Toggle automatic execution of .run after each input",
             ".parallel                   – Toggle parallel processing (default: on)",
             ".wikidata-constraints <json> <dir> – Export constraints to a directory",
+            ".wikidata-qualifiers <json> [P1 P2 ...] – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
             ".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
             "",
             "Type \".help <command>\" for detailed information about a specific command.",
@@ -1393,6 +1396,35 @@ private:
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
                                       "to the specified output directory."},
+
+            {".wikidata-qualifiers", ".wikidata-qualifiers <wikidata-dump.json[.bz2]> [P-id1 P-id2 ...]\n"
+                                     "Imports statement qualifiers from a Wikidata JSON dump into the current network.\n"
+                                     "Without P-ids: imports all qualifiers. With P-ids: imports only qualifiers whose\n"
+                                     "property is listed (e.g. P11260); a statement is only materialized if it\n"
+                                     "contributes at least one matching qualifier.\n"
+                                     "\n"
+                                     "For each such statement, reified structures are created as ordinary nodes and\n"
+                                     "facts in the 'wikidata' language (matching the RDF statement layer):\n"
+                                     "  <subject>   p:<P>          <statement>   – links entity to its statement node\n"
+                                     "  <statement> ps:<P>         <main value>  – the statement's main value\n"
+                                     "  <statement> pq:<Pq>        <value>       – one fact per imported qualifier\n"
+                                     "  <statement> wikibase:rank  wikibase:{Normal|Preferred|Deprecated}Rank\n"
+                                     "Statement nodes are named by their Wikidata statement ID (contains '$').\n"
+                                     "\n"
+                                     "IMPORTANT: Load the base network first (.load <all.bin>), so that subjects and\n"
+                                     "entity values attach to the existing Q/P nodes via their 'wikidata' names.\n"
+                                     "The import is idempotent and incremental: re-running it (e.g. with additional\n"
+                                     "qualifier properties) extends the loaded network. Persist the combined result\n"
+                                     "with .save <file.bin>.\n"
+                                     "\n"
+                                     "Value handling: entity values use their Q/P ID; time, quantity, string and\n"
+                                     "monolingual text values become nodes named by their raw value (e.g.\n"
+                                     "'+2020-01-01T00:00:00Z', '+42'). novalue/somevalue and coordinates are skipped.\n"
+                                     "\n"
+                                     "Example (disjointness analysis, 'list item' qualifiers on P2738):\n"
+                                     "  .load wikidata-20260309-all.bin\n"
+                                     "  .wikidata-qualifiers wikidata-20260309-all.json.bz2 P11260\n"
+                                     "  .save wikidata-20260309-all-P11260.bin"},
 
             {".export-wikidata", ".export-wikidata <wikidata-dump.json> <Qid1> [Qid2 ...]\n"
                                  "Extracts the exact JSON line for each given Wikidata ID (Q…)\n"
@@ -2021,6 +2053,54 @@ private:
         }
 
         _n->diagnostic(" Time needed for exporting constraints: " + std::to_string(static_cast<double>(watch.duration()) / 1000) + "s", true);
+    }
+    void cmd_wikidata_qualifiers(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .wikidata-qualifiers: Missing json file name");
+
+        if (_repl_state->partial_load_mode)
+        {
+            throw std::runtime_error("Command .wikidata-qualifiers: blocked while a partial/incomplete graph is loaded");
+        }
+
+        std::vector<std::string> qualifier_properties(cmd.begin() + 2, cmd.end());
+        for (const auto& p : qualifier_properties)
+        {
+            bool valid = p.size() >= 2 && p[0] == 'P';
+            for (size_t i = 1; valid && i < p.size(); ++i)
+            {
+                valid = p[i] >= '0' && p[i] <= '9';
+            }
+            if (!valid)
+            {
+                throw std::runtime_error("Command .wikidata-qualifiers: '" + p
+                                         + "' is not a Wikidata property ID (expected P<number>)");
+            }
+        }
+
+        if (_repl_state->auto_run)
+        {
+            _repl_state->auto_run = false;
+            _n->out("Auto-run has been disabled due to importing a large dataset.", true);
+        }
+
+        chrono::StopWatch watch;
+        watch.start();
+
+        // Local manager on purpose: _data_manager stays associated with the
+        // network loaded via .load.
+        auto data_manager = io::DataManager::create(_n, cmd[1]);
+        auto wikidata_mgr = std::dynamic_pointer_cast<wikidata::Wikidata>(data_manager);
+        if (!wikidata_mgr)
+        {
+            throw std::runtime_error("Command .wikidata-qualifiers: '" + cmd[1]
+                                     + "' is not a Wikidata JSON dump (.json or .json.bz2)");
+        }
+
+        wikidata_mgr->import_qualifiers(qualifier_properties);
+
+        watch.stop();
+        _n->diagnostic(" Time needed for qualifier import: " + watch.format(), true);
     }
     void cmd_export_wikidata(const std::vector<std::string>& cmd)
     {

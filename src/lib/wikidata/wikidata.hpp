@@ -29,10 +29,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/zelph.hpp"
 
 #include <filesystem>
+#include <unordered_set>
 
 namespace zelph::wikidata
 {
     struct ImportThreadStats;
+    struct QualifierImportCounters;
 
     class Wikidata : public io::DataManager
     {
@@ -53,6 +55,36 @@ namespace zelph::wikidata
          */
         void export_entities(const std::vector<std::string>& entity_ids);
 
+        /**
+         * @brief Imports statement qualifiers from the original Wikidata JSON
+         *        dump into the current network, materializing reified
+         *        statement structures as ordinary nodes and facts in the
+         *        "wikidata" language:
+         *          <subject>   p:<P>         <statement node>
+         *          <statement> ps:<P>        <main value>
+         *          <statement> pq:<Pq>       <qualifier value>
+         *          <statement> wikibase:rank wikibase:{Normal|Preferred|Deprecated}Rank
+         *        Statement nodes are named by their Wikidata statement ID
+         *        (which always contains '$' and therefore cannot collide
+         *        with Q/P IDs). The RDF prefix is kept as part of the
+         *        predicate node name so that direct-triple predicates (bare
+         *        P279 etc.) and statement-layer predicates never share a
+         *        node; otherwise transitive closures like wdt:P279+ would
+         *        leak into statement nodes.
+         *
+         *        An empty property list imports all qualifiers; otherwise
+         *        only qualifiers whose property is listed are imported, and
+         *        a statement is only materialized if it contributes at least
+         *        one matching qualifier.
+         *
+         *        The base network (Q/P items) should be loaded beforehand so
+         *        subjects and entity values attach to existing nodes via
+         *        their "wikidata" names. The import is idempotent (facts are
+         *        content-addressed), so it can be re-run or extended
+         *        incrementally.
+         */
+        void import_qualifiers(const std::vector<std::string>& qualifier_properties);
+
     private:
         void process_constraints(const std::string& line, std::string id_str, const std::string& dir);
         void process_entry(const std::string& line,
@@ -66,6 +98,10 @@ namespace zelph::wikidata
                             bool               log,
                             size_t             id1,
                             ImportThreadStats* diag = nullptr);
+        void process_qualifier_entry(const std::string&                     line,
+                                     const std::unordered_set<std::string>& selected_qualifier_properties,
+                                     const std::vector<std::string>&        screen_patterns,
+                                     QualifierImportCounters&               counters);
 
         class Impl;
         Impl* const _pImpl; // must stay at top of members list because of initialization order

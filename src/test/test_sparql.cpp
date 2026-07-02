@@ -43,8 +43,8 @@ using namespace zelph::test;
 // Several of them fail or time out on public SPARQL endpoints (QLever,
 // Blazegraph); the miniatures here pin down the semantics zelph must provide
 // to solve them. Qualifier-style structures (p:, pq:, wikibase:rank) are
-// simulated as ordinary triples - once the qualifier import materializes
-// these triples from real dumps, the same queries run unchanged on real data.
+// simulated as ordinary triples - the simulated shape is exactly what
+// .wikidata-qualifiers materializes from real dumps.
 
 namespace
 {
@@ -89,27 +89,28 @@ namespace
     )");
     }
 
-    // Disjointness graph with qualifier-style structures simulated as plain
-    // triples (the shape the future qualifier import will materialize):
-    //   QC has a disjoint-union statement QL with the pair (QD1, QD2).
-    //   QC2 has an equivalent statement QL2, but QL2 is deprecated.
-    //   QX is a subclass of both QD1 and QD2 (the violation).
+    // Disjointness graph in the exact shape .wikidata-qualifiers
+    // materializes from real dumps:
+    //   QC has a disjoint-union statement QL (main value QU) with the
+    //   pair (QD1, QD2). QC2 has an equivalent statement QL2, but QL2 is
+    //   deprecated. QX is a subclass of both QD1 and QD2 (the violation).
     //   QI is an instance of QX.
     void setup_disjointness_graph(const zelph::console::Interactive& interactive)
     {
         process_lines(interactive, R"(
-    .lang wikidata
-    QC P2738 QL
-    QL P11260 QD1
-    QL P11260 QD2
-    QC2 P2738 QL2
-    QL2 wikibase:rank wikibase:DeprecatedRank
-    QL2 P11260 QD1
-    QL2 P11260 QD2
-    QX P279 QD1
-    QX P279 QD2
-    QI P31 QX
-    )");
+        .lang wikidata
+        QC p:P2738 QL
+        QL ps:P2738 QU
+        QL pq:P11260 QD1
+        QL pq:P11260 QD2
+        QC2 p:P2738 QL2
+        QL2 wikibase:rank wikibase:DeprecatedRank
+        QL2 pq:P11260 QD1
+        QL2 pq:P11260 QD2
+        QX P279 QD1
+        QX P279 QD2
+        QI P31 QX
+        )");
     }
 } // anonymous namespace
 
@@ -761,6 +762,44 @@ TEST_CASE("sparql: disjointness instances via P31/P279* (example query 6)")
 
         // QI is an instance of QX, which is a subclass of both QD1 and QD2.
         CHECK(any_output_contains(collector, "QI QC QD1 QD2"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: qualifier prefixes resolve in the wikidata language regardless of .lang")
+{
+    // p:, pq: and wikibase: now resolve explicitly in the wikidata
+    // language, like wd:/wdt: - no prior .lang wikidata required.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_disjointness_graph(interactive);
+        interactive.process(".lang zelph");
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT DISTINCT ?i ?class WHERE {
+  ?class p:P2738 ?l .
+  MINUS { ?l wikibase:rank wikibase:DeprecatedRank . }
+  ?l pq:P11260 ?disj1 . ?l pq:P11260 ?disj2 .
+  FILTER ( ( str(?disj1) < str(?disj2) ) )
+  ?i wdt:P279* ?disj1 . ?i wdt:P279* ?disj2 .
+})");
+
+        CHECK(any_output_contains(collector, "QX QC"));
+        CHECK_FALSE(any_output_contains(collector, "QC2"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: statement main value via sequence path p:/ps:")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_disjointness_graph(interactive);
+        collector.clear();
+
+        run_sparql(interactive, "SELECT ?v WHERE { wd:QC p:P2738/ps:P2738 ?v . }");
+
+        CHECK(any_output_contains(collector, "QU"));
         CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
 }
 
