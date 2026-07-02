@@ -21,10 +21,13 @@ nav:
   - Presentation: presentation.md
   - Quick Start Guide: quickstart.md
   - Performing Queries: queries.md
+  - SPARQL Queries: sparql.md
   - Scripting with Janet: janet.md
   - Importing and Exporting Data: import-export.md
   - Binary Data Files: binaries.md
+  - Sharding and Partial Loading: sharding.md
   - Use Case - Wikidata: wikidata.md
+  - Wikidata Qualifiers: qualifiers.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

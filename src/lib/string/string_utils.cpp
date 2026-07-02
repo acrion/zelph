@@ -44,7 +44,7 @@ namespace zelph::string
                     // cppcheck-suppress stlcstrConstructor
                     std::string_view hexCode(input.data() + i + 2, 4);
                     bool             isValidHex = std::all_of(hexCode.begin(), hexCode.end(), [](unsigned char c)
-                                                  { return std::isxdigit(c); });
+                                                              { return std::isxdigit(c); });
 
                     if (isValidHex)
                     {
@@ -142,7 +142,15 @@ namespace zelph::string
         {
             if (escape)
             {
-                current.push_back(c);
+                if (c == '"' || c == '\\')
+                {
+                    current.push_back(c);
+                }
+                else
+                {
+                    current.push_back('\\');
+                    current.push_back(c);
+                }
                 escape = false;
                 continue;
             }

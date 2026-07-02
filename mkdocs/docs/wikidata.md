@@ -27,6 +27,8 @@ This fundamental similarity enables zelph to:
 
 This structural compatibility makes zelph well suited to analysing and enriching Wikidata’s knowledge graph while maintaining its semantic integrity.
 
+Since version 0.9.6, this extends to Wikidata's **statement layer**: qualifiers can be imported as reified statement structures and queried natively or via [SPARQL](sparql.md) — see [Wikidata Qualifiers](qualifiers.md).
+
 ## Technical Implementation
 
 ### Memory Efficiency
@@ -222,6 +224,12 @@ With the same command, you can load a `.bin` file directly
 ### Advanced Commands
 
 zelph provides several additional commands for working with Wikidata:
+
+- **Import qualifiers:** add Wikidata's statement/qualifier layer to an already loaded network, enabling qualifier-based queries and constraint checking (see [Wikidata Qualifiers](qualifiers.md)):
+
+  ```zelph
+  .wikidata-qualifiers download/wikidata-20250127-all.json P11260
+  ```
 
 - **Export constraints:** extract constraints from the dump and generate zelph scripts for them:
 

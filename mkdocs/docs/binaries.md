@@ -36,6 +36,8 @@ This loads the entire network into memory. Afterwards, you can execute queries, 
 
 Tip: if you work with the full JSON file, zelph automatically creates a `.bin` cache file during the first import to speed up future runs.
 
+In addition, **qualifier-extended variants** are available (currently `wikidata-20260309-all-P11260.bin`, containing the statement/qualifier layer needed for disjointness analysis). See [Wikidata Qualifiers](qualifiers.md) for details; additional qualifier sets are available on request.
+
 ## Partial Loading
 
 Since version 0.9.6, zelph supports **partial loading** of `.bin` files. Instead of materialising the entire network into RAM, you can selectively load individual chunks, significantly reducing memory usage and load time. This is especially useful for inspecting or querying large networks on machines that cannot hold the full graph in memory, or for external tools that need targeted access to specific parts of the graph without loading the whole dataset.

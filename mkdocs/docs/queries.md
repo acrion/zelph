@@ -4,6 +4,8 @@ zelph provides powerful querying capabilities directly in its scripting language
 
 Queries are statements that contain variables (single uppercase letters) but no `=>` (which would make them rules). They are evaluated immediately without needing `.run`, though inference can expand the graph beforehand to reveal more matches.
 
+> **Prefer standard SPARQL?** Since version 0.9.6, zelph also supports a substantial subset of the SPARQL query language, including transitive property paths (`wdt:P279+`), `OPTIONAL`, `MINUS`, `UNION`, `FILTER`, subqueries, and aggregation. Because SPARQL is standardized, existing queries — for example from the Wikidata Query Service — often run unchanged. See [SPARQL Queries](sparql.md). This page covers zelph's native query syntax, which additionally integrates with rules and inference.
+
 ## Key Features
 
 - **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query.

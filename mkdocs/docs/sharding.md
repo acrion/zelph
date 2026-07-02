@@ -22,12 +22,12 @@ Partial loading has been available since version 0.9.6.
 
 A `.bin` file is a sequence of [Cap'n Proto](https://capnproto.org/) packed messages: one small header message followed by the chunks of four sections.
 
-| Section      | Contents                                                          |
-| ------------ | ----------------------------------------------------------------- |
-| `left`       | left-adjacency data (outgoing connections per node)               |
-| `right`      | right-adjacency data (incoming connections per node)              |
-| `nameOfNode` | node ID → human-readable name, grouped by language                |
-| `nodeOfName` | human-readable name → node ID, grouped by language                |
+| Section      | Contents                                             |
+| ------------ | ---------------------------------------------------- |
+| `left`       | left-adjacency data (outgoing connections per node)  |
+| `right`      | right-adjacency data (incoming connections per node) |
+| `nameOfNode` | node ID → human-readable name, grouped by language   |
+| `nodeOfName` | human-readable name → node ID, grouped by language   |
 
 Each section is split into chunks of up to 1,000,000 entries. The `left` and `right` sections are keyed and ordered by node ID. The two name sections are grouped by language and ordered by their respective key: `nameOfNode` is sorted by node ID, `nodeOfName` is sorted by the name string.
 
@@ -116,15 +116,15 @@ zelph> .load-partial /path/to/file.bin meta-only
 
 ### Selector Reference
 
-| Selector             | Effect                                                       |
-| -------------------- | ------------------------------------------------------------ |
-| `left=0,1,2`         | Load only left-adjacency chunks 0, 1, and 2                  |
-| `right=5,6`          | Load only right-adjacency chunks 5 and 6                     |
-| `nameOfNode=0,1`     | Load only name-of-node chunks 0 and 1 (alias: `name=`)       |
-| `nodeOfName=0,1`     | Load only node-of-name chunks 0 and 1 (alias: `node-name=`)  |
-| `<section>=none`     | Skip that section entirely (also accepts `-`)                |
-| _(selector omitted)_ | Load all chunks of that section                              |
-| `meta-only`          | Load only the header; skip all chunk payloads                |
+| Selector             | Effect                                                      |
+| -------------------- | ----------------------------------------------------------- |
+| `left=0,1,2`         | Load only left-adjacency chunks 0, 1, and 2                 |
+| `right=5,6`          | Load only right-adjacency chunks 5 and 6                    |
+| `nameOfNode=0,1`     | Load only name-of-node chunks 0 and 1 (alias: `name=`)      |
+| `nodeOfName=0,1`     | Load only node-of-name chunks 0 and 1 (alias: `node-name=`) |
+| `<section>=none`     | Skip that section entirely (also accepts `-`)               |
+| _(selector omitted)_ | Load all chunks of that section                             |
+| `meta-only`          | Load only the header; skip all chunk payloads               |
 
 ### Example
 
@@ -217,11 +217,11 @@ zelph> .load-partial /path/to/file.hf-v2.json left=0 right=0
 
 Additional options for manifest mode:
 
-| Option              | Effect                                                              |
-| ------------------- | ------------------------------------------------------------------- |
-| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)      |
-| `shard-root=<path>` | Local directory containing pre-downloaded shard files               |
-| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg)   |
+| Option              | Effect                                                            |
+| ------------------- | ----------------------------------------------------------------- |
+| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)    |
+| `shard-root=<path>` | Local directory containing pre-downloaded shard files             |
+| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg) |
 
 When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them with `curl` and caches them in a temporary directory. If `shard-root` is set, zelph looks there first before downloading.
 
@@ -261,11 +261,11 @@ zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all/wikidata-2
 
 When a manifest advertises a **node route index** — a sidecar JSON that maps node IDs and names to the chunks containing them — you can select by node or name instead of by raw chunk index:
 
-| Selector              | Effect                                                                        |
-| --------------------- | ----------------------------------------------------------------------------- |
-| `route-node=<id,...>` | Resolve node IDs to the left, right, and nameOfNode chunks that contain them  |
-| `route-name=<name>`   | Resolve a name to the nodeOfName chunk that contains it                        |
-| `route-lang=<lang>`   | Language for the route-name lookup (required with `route-name`)               |
+| Selector              | Effect                                                                       |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `route-node=<id,...>` | Resolve node IDs to the left, right, and nameOfNode chunks that contain them |
+| `route-name=<name>`   | Resolve a name to the nodeOfName chunk that contains it                      |
+| `route-lang=<lang>`   | Language for the route-name lookup (required with `route-name`)              |
 
 Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support; they can be combined with explicit chunk selectors.
 
