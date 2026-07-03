@@ -1,0 +1,2 @@
+.load-partial /home/stefan/zelph/wikidata-20260309-all-pruned.hf-v2.json shard-root=/home/stefan/zelph/wikidata-20260309-all-pruned-shards left=0 right=0 nameOfNode=0 nodeOfName=0
+.stat

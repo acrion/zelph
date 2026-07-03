@@ -276,6 +276,7 @@ add_library(zelph_lib SHARED
     network/contradiction_error.hpp
     network/fact_structure.hpp
     network/fact_structure_types.hpp
+    network/manifest_loader.hpp
     network/network.hpp
     network/reasoning.cpp
     network/reasoning_deduce.cpp
