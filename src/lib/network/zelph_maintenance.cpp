@@ -135,13 +135,46 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
     _pImpl->loadFromFile(filename, selection, skip_payload);
 }
 
-void Zelph::load_from_manifest(const std::string& manifest_path,
-                               const BinChunkSelection&   selection,
-                               const std::string&         shard_root,
-                               const std::string&         bin_path_override,
-                               const bool                 skip_payload) const
+void Zelph::load_from_manifest(const std::string&       manifest_path,
+                               const BinChunkSelection& selection,
+                               const std::string&       shard_root,
+                               const std::string&       bin_path_override,
+                               const bool               skip_payload) const
 {
     invalidate_fact_structures_cache();
 
     _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
+}
+
+void        Zelph::set_active_cluster(const std::string& name) const { _pImpl->set_active_cluster(name); }
+void        Zelph::deactivate_cluster() const { _pImpl->deactivate_cluster(); }
+std::string Zelph::active_cluster_name() const { return _pImpl->active_cluster_name(); }
+
+std::vector<std::pair<std::string, size_t>> Zelph::list_clusters() const { return _pImpl->list_clusters(); }
+
+bool Zelph::merge_cluster(const std::string& from, const std::string& to) const
+{
+    return _pImpl->merge_cluster(from, to);
+}
+
+// Destructive: removes every node recorded in the cluster, including all
+// of their edges and names. Nodes that no longer exist (e.g. merged away
+// by set_name) are skipped silently.
+size_t Zelph::drop_cluster(const std::string& name) const
+{
+    const std::vector<Node> nodes = _pImpl->take_cluster(name);
+    if (nodes.empty()) return 0;
+
+    invalidate_fact_structures_cache();
+
+    size_t removed = 0;
+    for (const Node n : nodes)
+    {
+        if (_pImpl->exists(n))
+        {
+            remove_node(n);
+            ++removed;
+        }
+    }
+    return removed;
 }

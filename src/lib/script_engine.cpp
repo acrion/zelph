@@ -92,6 +92,7 @@ public:
         register_zelph_functions();
         setup_module_paths();
         setup_peg();
+        setup_numbers();
     }
 
     void register_zelph_functions() const
@@ -246,6 +247,11 @@ public:
                 # Unquote: ,identifier references a Janet variable
                 :tag-unquote (group (* (constant :unquote) "," (capture (some :symchars))))
 
+                # Number literal: $<token>. Syntax only -- the interpretation is
+                # delegated to the redefinable Janet function zelph/number, so the
+                # internal number representation is defined by scripts, not by C++.
+                :tag-number (group (* (constant :number) "$" (capture (some :symchars))))
+
                 # Atom Definition Order:
                 # 1. Quoted (always safe)
                 # 2. Multi-char arrows (e.g. "=>"). Must be before raw-atom because "=" is a symchar.
@@ -293,7 +299,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-negation :tag-var :tag-unquote :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -317,6 +323,21 @@ public:
         janet_dostring(_janet_env, "(def zelph-peg (peg/compile zelph-grammar))", "init", &out);
         _zelph_peg = out;
         janet_gcroot(_zelph_peg);
+    }
+
+    void setup_numbers() const
+    {
+        const char* code = R"janet(
+            (defn zelph/number
+              "Fallback for $-literals: no number representation is loaded."
+              [s]
+              (error (string "number literal $" s " has no representation - "
+                             "load a script that defines zelph/number "
+                             "(e.g. arithmetic.zph or binary-arithmetic.zph)")))
+        )janet";
+
+        Janet out;
+        janet_dostring(_janet_env, code, "default-numbers", &out);
     }
 
     static std::string format_janet(Janet j)
@@ -1514,6 +1535,13 @@ public:
             // so the LSB (rightmost char) becomes the outermost cons cell.
             std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             return "(zelph/list-chars " + content + ")";
+        }
+        else if (type == "number")
+        {
+            // $-literal: delegate the representation to the (redefinable)
+            // Janet function zelph/number. Validation happens there too.
+            std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+            return "(zelph/number " + content + ")";
         }
 
         return "nil";

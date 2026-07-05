@@ -22,6 +22,41 @@
 #   <101> + <11>       (5 + 3 = 8 -> <1000>)
 #   <1111> + <1>       (15 + 1 = 16 -> <10000>)
 
+%
+(defn- half-decimal
+  "Halve a decimal digit string. Returns [quotient remainder-bit]."
+  [s]
+  (var carry 0)
+  (def buf @"")
+  (each c s
+    (def d (+ (* carry 10) (- c (chr "0"))))
+    (buffer/push-string buf (string (math/floor (/ d 2))))
+    (set carry (% d 2)))
+  (def q (string/triml (string buf) "0"))
+  [(if (= q "") "0" q) carry])
+
+(defn zelph/number
+  "Decimal literal -> LSB-first binary cons list. Pure string arithmetic,
+  so arbitrarily large literals work. Runs at the parsing/I-O layer, not
+  inside the reasoning engine."
+  [s]
+  (when (or (= s "")
+            (some (fn [c] (or (< c (chr "0")) (> c (chr "9")))) s))
+    (error (string "invalid decimal literal $" s)))
+  (if (= s "0")
+    (zelph/list-chars "0")
+    (do
+      (def bits @"")
+      (var cur s)
+      (while (not= cur "0")
+        (def [q r] (half-decimal cur))
+        (buffer/push-string bits (string r))
+        (set cur q))
+      # bits is LSB-first; zelph/list-chars expects printed (MSB-first)
+      # order and reverses internally, so reverse here.
+      (zelph/list-chars (string/reverse (string bits))))))
+%
+
 # ---------------------------------------------------------------------------
 # Full-adder truth table: 8 input combinations, each with sum and carry-out
 # ---------------------------------------------------------------------------

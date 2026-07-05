@@ -201,6 +201,13 @@ namespace zelph::network
                                          const std::string&       bin_path_override = "",
                                          bool                     skip_payload      = false) const;
 
+        void                                        set_active_cluster(const std::string& name) const;
+        void                                        deactivate_cluster() const;
+        std::string                                 active_cluster_name() const;
+        std::vector<std::pair<std::string, size_t>> list_clusters() const;
+        size_t                                      drop_cluster(const std::string& name) const;
+        bool                                        merge_cluster(const std::string& from, const std::string& to) const;
+
         // --- Members ---
 
         class Impl;

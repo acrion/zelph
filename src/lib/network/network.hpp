@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <ankerl/unordered_dense.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -124,6 +125,8 @@ namespace zelph::network
             {
                 return relation;
             }
+
+            note_created(relation);
 
             auto [rel_right_it, inserted_right] =
                 (subject == object)
@@ -368,6 +371,7 @@ namespace zelph::network
 
             _left[_last]  = adjacency_set{};
             _right[_last] = adjacency_set{};
+            note_created(_last);
             return _last;
         }
 
@@ -425,6 +429,7 @@ namespace zelph::network
 
             _left[a]  = adjacency_set{};
             _right[a] = adjacency_set{};
+            note_created(a);
         }
 
         static inline uint64_t mix_bits(uint64_t seed, uint64_t value)
@@ -570,6 +575,88 @@ namespace zelph::network
             return it == _weights.end() ? fallback : it->second;
         }
 
+        // --- Node clusters (named workspaces) ---
+        //
+        // A cluster records the IDs of nodes created while it is active:
+        // sequential nodes (create), relation/hash nodes materialized by
+        // fact() (create(Node)), and trusted-import relations. Facts that
+        // already existed are NOT recorded, so dropping a cluster can never
+        // destroy pre-existing knowledge. Node IDs are never altered;
+        // membership is a side table, so nodes outside any cluster cost
+        // nothing. Variables are never tracked. Clusters are not yet
+        // persisted by save_to_file.
+
+        void set_active_cluster(const std::string& name)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            _active_cluster.store(&_clusters[name], std::memory_order_release);
+            _active_cluster_name = name;
+        }
+
+        void deactivate_cluster()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            _active_cluster.store(nullptr, std::memory_order_release);
+            _active_cluster_name.clear();
+        }
+
+        std::string active_cluster_name() const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            return _active_cluster_name;
+        }
+
+        std::vector<std::pair<std::string, size_t>> list_clusters() const
+        {
+            std::lock_guard                             lock(_mtx_clusters);
+            std::vector<std::pair<std::string, size_t>> out;
+            out.reserve(_clusters.size());
+            for (const auto& [name, nodes] : _clusters)
+                out.emplace_back(name, nodes.size());
+            return out;
+        }
+
+        // Removes the bookkeeping and hands the node list to the caller
+        // (Zelph::drop_cluster removes the nodes themselves). Deactivates
+        // the cluster if it was active. Empty result if the name is unknown.
+        std::vector<Node> take_cluster(const std::string& name)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            auto            it = _clusters.find(name);
+            if (it == _clusters.end()) return {};
+            std::vector<Node> nodes(it->second.begin(), it->second.end());
+            if (_active_cluster.load(std::memory_order_acquire) == &it->second)
+            {
+                _active_cluster.store(nullptr, std::memory_order_release);
+                _active_cluster_name.clear();
+            }
+            _clusters.erase(it);
+            return nodes;
+        }
+
+        // Set union, then erases `from`. to == "" merges into the default
+        // cluster: the bookkeeping is dropped, the nodes become ordinary
+        // nodes. No edges are touched in either case.
+        bool merge_cluster(const std::string& from, const std::string& to)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            auto            it = _clusters.find(from);
+            if (it == _clusters.end() || from == to) return it != _clusters.end() && from == to;
+            if (!to.empty())
+            {
+                auto& target = _clusters[to];
+                for (Node n : it->second)
+                    target.insert(n);
+            }
+            if (_active_cluster.load(std::memory_order_acquire) == &it->second)
+            {
+                _active_cluster.store(nullptr, std::memory_order_release);
+                _active_cluster_name.clear();
+            }
+            _clusters.erase(it);
+            return true;
+        }
+
 #ifdef NDEBUG
     protected:
 #endif
@@ -586,8 +673,13 @@ namespace zelph::network
         // Nodes and edges that carry no weight cost nothing here.
         ankerl::unordered_dense::map<Node, double> _weights;
 
-        Node                      _last{Node()};
-        Node                      _last_var{Node()};
+        Node                                                      _last{Node()};
+        Node                                                      _last_var{Node()};
+        std::map<std::string, ankerl::unordered_dense::set<Node>> _clusters;
+        std::atomic<ankerl::unordered_dense::set<Node>*>          _active_cluster{nullptr};
+        std::string                                               _active_cluster_name;
+
+        mutable std::mutex        _mtx_clusters;
         mutable std::shared_mutex _mtx_weights;
         mutable std::shared_mutex _smtx_left;
         mutable std::shared_mutex _smtx_right;
@@ -599,6 +691,15 @@ namespace zelph::network
         static constexpr Node mark_hash           = 0x4000000000000000ull;
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
+
+        // Called from all three node-materialization paths. Lock order is
+        // always adjacency locks -> _mtx_clusters, never the reverse.
+        void note_created(Node n)
+        {
+            if (_active_cluster.load(std::memory_order_acquire) == nullptr) return; // fast path
+            std::lock_guard lock(_mtx_clusters);
+            if (auto* c = _active_cluster.load(std::memory_order_acquire)) c->insert(n);
+        }
 
         typename decltype(_weights)::iterator find_weight(Node a, Node b, Node& hash)
         {

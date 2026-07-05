@@ -179,6 +179,12 @@ private:
         { cmd_export_wikidata(c); };
         _command_map[".parallel"] = [this](auto& c)
         { cmd_parallel(c); };
+        _command_map[".cluster"] = [this](auto& c)
+        { cmd_cluster(c); };
+        _command_map[".cluster-drop"] = [this](auto& c)
+        { cmd_cluster_drop(c); };
+        _command_map[".cluster-merge"] = [this](auto& c)
+        { cmd_cluster_merge(c); };
     }
 
     // --- Helpers ---
@@ -1122,6 +1128,9 @@ private:
             ".wikidata-constraints <json> <dir> – Export constraints to a directory",
             ".wikidata-qualifiers <json> [P1 P2 ...] – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
             ".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
+            ".cluster [name]             – Show clusters, or activate one ('default' = no cluster)",
+            ".cluster-drop <name>        – Remove a cluster INCLUDING all nodes created in it",
+            ".cluster-merge <from> <to>  – Move a cluster's membership into another ('default' = keep nodes, forget cluster)",
             "",
             "Type \".help <command>\" for detailed information about a specific command.",
             "",
@@ -1430,7 +1439,28 @@ private:
                                  "Extracts the exact JSON line for each given Wikidata ID (Q…)\n"
                                  "from the dump and writes it to <id>.json in the current directory.\n"
                                  "The dump can be .json or .json.bz2.\n"
-                                 "No import, no .bin cache, no network – pure extraction."}};
+                                 "No import, no .bin cache, no network – pure extraction."},
+
+            {".cluster", ".cluster [name]\n"
+                         "Without argument: lists all clusters with node counts and shows the active one.\n"
+                         "With argument: activates the named cluster (created if needed). All nodes and\n"
+                         "facts created from now on are recorded in it — including relation nodes,\n"
+                         "rule definitions, query patterns, and facts deduced by .run. Facts that\n"
+                         "already existed before are never recorded.\n"
+                         "'.cluster default' deactivates cluster tracking.\n"
+                         "Note: clusters are session state and are not persisted by .save."},
+
+            {".cluster-drop", ".cluster-drop <name>\n"
+                              "Removes every node recorded in the cluster, including all edges and names\n"
+                              "(rollback semantics). Pre-existing knowledge is untouched, but facts created\n"
+                              "OUTSIDE the cluster that reference cluster nodes lose those connections.\n"
+                              "WARNING: destructive and irreversible."},
+
+            {".cluster-merge", ".cluster-merge <from> <to>\n"
+                               "Moves the membership bookkeeping of <from> into <to> (commit semantics).\n"
+                               "No nodes or edges are touched. If <to> is 'default', the nodes simply\n"
+                               "become ordinary nodes."},
+        };
 
         if (cmd[0] == ".help")
         {
@@ -2433,6 +2463,46 @@ private:
 
         _n->toggle_parallel();
         _n->out("Parallel processing is now " + std::string(_n->use_parallel() ? "enabled" : "disabled") + ".", true);
+    }
+    void cmd_cluster(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() == 1)
+        {
+            const std::string active = _n->active_cluster_name();
+            _n->out("Active cluster: " + (active.empty() ? "default" : active), true);
+            for (const auto& [name, count] : _n->list_clusters())
+                _n->out("  " + name + ": " + std::to_string(count) + " node(s)", true);
+            return;
+        }
+        if (cmd.size() != 2) throw std::runtime_error("Usage: .cluster [name]");
+
+        if (cmd[1] == "default")
+        {
+            _n->deactivate_cluster();
+            _n->out("Active cluster: default", true);
+        }
+        else
+        {
+            _n->set_active_cluster(cmd[1]);
+            _n->out("Active cluster: " + cmd[1], true);
+        }
+    }
+
+    void cmd_cluster_drop(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 2) throw std::runtime_error("Usage: .cluster-drop <name>");
+        if (cmd[1] == "default") throw std::runtime_error(".cluster-drop: the default cluster cannot be dropped");
+        const size_t removed = _n->drop_cluster(cmd[1]);
+        _n->out("Dropped cluster " + cmd[1] + ": removed " + std::to_string(removed) + " node(s).", true);
+    }
+
+    void cmd_cluster_merge(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 3) throw std::runtime_error("Usage: .cluster-merge <from> <to>  (to may be 'default')");
+        const std::string to = (cmd[2] == "default") ? "" : cmd[2];
+        if (!_n->merge_cluster(cmd[1], to))
+            throw std::runtime_error(".cluster-merge: unknown cluster '" + cmd[1] + "'");
+        _n->out("Merged cluster " + cmd[1] + " into " + cmd[2] + ".", true);
     }
 };
 
