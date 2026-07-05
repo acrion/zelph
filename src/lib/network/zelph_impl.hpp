@@ -221,13 +221,13 @@ namespace zelph::network
 
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
-            std::unique_lock<std::shared_mutex> lock_prob(_mtx_prob);
+            std::unique_lock<std::shared_mutex> lock_weights(_mtx_weights);
             std::unique_lock<std::shared_mutex> lock_node_name(_mtx_node_of_name);
             std::unique_lock<std::shared_mutex> lock_name_node(_mtx_name_of_node);
 
             _left.clear();
             _right.clear();
-            _probabilities.clear();
+            _weights.clear();
             _name_of_node.clear();
             _node_of_name.clear();
             _string_pool.clear();
@@ -236,11 +236,11 @@ namespace zelph::network
         void loadSmallData(const ZelphImpl::Reader& impl)
         {
 #ifdef CLEAR_ON_LOAD
-            _probabilities.clear();
+            _weights.clear();
 #endif
             for (auto p : impl.getProbabilities())
             {
-                _probabilities[p.getHash()] = static_cast<long double>(p.getProb());
+                _weights[p.getHash()] = static_cast<long double>(p.getProb());
             }
             _last     = impl.getLast();
             _last_var = impl.getLastVar();
@@ -1001,7 +1001,7 @@ namespace zelph::network
         {
             const size_t chunkSize = 1000000; // 1M entries per chunk
 
-            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _probabilities.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
+            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _weights.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: string pool size=" << _string_pool.size();
 
@@ -1021,9 +1021,9 @@ namespace zelph::network
             auto                          impl = mainMessage.initRoot<ZelphImpl>();
 
             // Serialize probabilities
-            auto   probs = impl.initProbabilities(_probabilities.size());
+            auto   probs = impl.initProbabilities(_weights.size());
             size_t idx   = 0;
-            for (const auto& p : _probabilities)
+            for (const auto& p : _weights)
             {
                 probs[idx].setHash(p.first);
                 probs[idx].setProb(static_cast<double>(p.second));

@@ -36,6 +36,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(doctest)
 
 add_executable(zelph_tests
+    test_neural.cpp
     test_reasoning.cpp
     test_sparql.cpp
     test_wikidata_qualifiers.cpp

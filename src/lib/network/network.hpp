@@ -32,7 +32,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
@@ -69,21 +68,23 @@ namespace zelph::network
                     throw std::runtime_error("Network::connect: setting probabilities for connection that include variables");
                 }
 
+                // Probability semantics (constrained view of the weight store):
+                // range checks and contradiction handling apply only on this path.
                 Node             hash;
-                std::unique_lock lock3(_mtx_prob);
-                auto             it = find_probability(a, b, hash);
+                std::unique_lock lock3(_mtx_weights);
+                auto             it = find_weight(a, b, hash);
 
-                if (it == _probabilities.end())
+                if (it == _weights.end())
                 {
-                    _probabilities[hash] = probability;
+                    _weights[hash] = static_cast<double>(probability);
                 }
-                else if (it->second >= 0.5L && probability >= 0.5L)
+                else if (it->second >= 0.5 && probability >= 0.5L)
                 {
-                    it->second = std::max(it->second, probability);
+                    it->second = std::max(it->second, static_cast<double>(probability));
                 }
-                else if (it->second <= 0.5L && probability <= 0.5L)
+                else if (it->second <= 0.5 && probability <= 0.5L)
                 {
-                    it->second = std::min(it->second, probability);
+                    it->second = std::min(it->second, static_cast<double>(probability));
                 }
                 else
                 {
@@ -171,12 +172,12 @@ namespace zelph::network
 
             // Remove probability if exists
             {
-                std::unique_lock lock_prob(_mtx_prob);
+                std::unique_lock lock_weights(_mtx_weights);
                 Node             hash;
-                auto             it = find_probability(a, b, hash);
-                if (it != _probabilities.end())
+                auto             it = find_weight(a, b, hash);
+                if (it != _weights.end())
                 {
-                    _probabilities.erase(it);
+                    _weights.erase(it);
                 }
             }
         }
@@ -342,9 +343,9 @@ namespace zelph::network
             if (itLeft != _left.end() && itLeft->second.count(b) == 1)
             {
                 Node             hash;
-                std::shared_lock lock3(_mtx_prob);
-                auto             it = find_probability(a, b, hash);
-                return it == _probabilities.end() ? 1 : it->second;
+                std::shared_lock lock3(_mtx_weights);
+                auto             it = find_weight(a, b, hash);
+                return it == _weights.end() ? 1 : static_cast<long double>(it->second);
             }
             else
             {
@@ -539,18 +540,57 @@ namespace zelph::network
             return it->second;
         }
 
+        // --- Raw edge weights (neural substrate) ---
+
+        // Set the weight of the directed edge a -> b. The edge must already exist.
+        // No range constraints and no contradiction checks apply here; fact
+        // probabilities are a constrained view of this same store, this is the
+        // raw access path.
+        void set_edge_weight(Node a, Node b, double w)
+        {
+            {
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                auto                                it = _left.find(a);
+                if (it == _left.end() || it->second.count(b) == 0)
+                {
+                    throw std::runtime_error("Network::set_edge_weight: edge " + std::to_string(a) + " -> " + std::to_string(b) + " does not exist");
+                }
+            }
+
+            std::unique_lock lock(_mtx_weights);
+            _weights[create_hash(a, b)] = w;
+        }
+
+        // Weight of the directed edge a -> b; `fallback` if no entry exists.
+        // The canonical fallback is 1 (mirroring probability semantics).
+        double edge_weight(Node a, Node b, double fallback = 1.0) const
+        {
+            std::shared_lock lock(_mtx_weights);
+            auto             it = _weights.find(create_hash(a, b));
+            return it == _weights.end() ? fallback : it->second;
+        }
+
 #ifdef NDEBUG
     protected:
 #endif
         adjacency_map _left;
         adjacency_map _right;
 
-        std::map<Node, long double> _probabilities;
-        Node                        _last{Node()};
-        Node                        _last_var{Node()};
-        mutable std::shared_mutex   _mtx_prob;
-        mutable std::shared_mutex   _smtx_left;
-        mutable std::shared_mutex   _smtx_right;
+        // Sparse edge-weight store, keyed by create_hash(a, b) of a directed edge.
+        // Two interpretations share this store:
+        //   - fact probabilities (edge: relation -> predicate), range [0, 1],
+        //     absent entry == 1. This is the historical "probability" semantics;
+        //     it is enforced by connect() / probability(), not by the store itself.
+        //   - neural synapse weights (edge: neuron -> neuron), unconstrained,
+        //     absent entry == 1. Accessed via set_edge_weight() / edge_weight().
+        // Nodes and edges that carry no weight cost nothing here.
+        ankerl::unordered_dense::map<Node, double> _weights;
+
+        Node                      _last{Node()};
+        Node                      _last_var{Node()};
+        mutable std::shared_mutex _mtx_weights;
+        mutable std::shared_mutex _smtx_left;
+        mutable std::shared_mutex _smtx_right;
 
 #ifdef NDEBUG
     private:
@@ -560,10 +600,10 @@ namespace zelph::network
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
 
-        typename decltype(_probabilities)::iterator find_probability(Node a, Node b, Node& hash)
+        typename decltype(_weights)::iterator find_weight(Node a, Node b, Node& hash)
         {
             hash = create_hash(a, b);
-            return _probabilities.find(hash);
+            return _weights.find(hash);
         }
 
 #ifdef _MSC_VER

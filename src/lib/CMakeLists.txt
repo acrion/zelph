@@ -278,6 +278,8 @@ add_library(zelph_lib SHARED
     network/fact_structure_types.hpp
     network/manifest_loader.hpp
     network/network.hpp
+    network/neural.cpp
+    network/neural.hpp
     network/reasoning.cpp
     network/reasoning_deduce.cpp
     network/reasoning_evaluate.cpp

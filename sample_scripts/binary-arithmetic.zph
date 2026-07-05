@@ -1,0 +1,95 @@
+# Rule-based binary addition for arbitrarily large non-negative integers.
+#
+# Numbers are stored LSB-first as cons lists of bit atoms: <101> (binary 101,
+# decimal 5) is stored as 1 cons (0 cons (1 cons nil)). node_to_string
+# reverses the display order, so results appear MSB-first as entered.
+#
+# Unlike arithmetic.zph (base 10), the digit-level knowledge is NOT a
+# generated lookup table. It is the truth table of the full adder: 16
+# hand-written axioms, the logical minimum for positional addition. In
+# base 2, the "table" degenerates into the Boolean axioms themselves.
+# The entire script is native zelph syntax -- no Janet involved.
+#
+# The recursion rules (A0, D1-D3, As1-As3, C0) are identical to
+# arithmetic.zph: they are base-agnostic. Only the digit axioms differ.
+#
+# Do NOT load this script together with arithmetic.zph: both define
+# d+/ci/sum/co facts over the digits 0 and 1, with base-specific and
+# mutually inconsistent values (e.g. (1 d+ 1): sum 2 in base 10, but
+# sum 0 / co 1 in base 2). The reasoning engine would match both.
+#
+# Usage after loading this script:
+#   <101> + <11>       (5 + 3 = 8 -> <1000>)
+#   <1111> + <1>       (15 + 1 = 16 -> <10000>)
+
+# ---------------------------------------------------------------------------
+# Full-adder truth table: 8 input combinations, each with sum and carry-out
+# ---------------------------------------------------------------------------
+((0 d+ 0) ci 0) sum 0
+((0 d+ 0) ci 0) co 0
+((1 d+ 0) ci 0) sum 1
+((1 d+ 0) ci 0) co 0
+((0 d+ 1) ci 0) sum 1
+((0 d+ 1) ci 0) co 0
+((1 d+ 1) ci 0) sum 0
+((1 d+ 1) ci 0) co 1
+((0 d+ 0) ci 1) sum 1
+((0 d+ 0) ci 1) co 0
+((1 d+ 0) ci 1) sum 0
+((1 d+ 0) ci 1) co 1
+((0 d+ 1) ci 1) sum 0
+((0 d+ 1) ci 1) co 1
+((1 d+ 1) ci 1) sum 1
+((1 d+ 1) ci 1) co 1
+
+# ---------------------------------------------------------------------------
+# Base cases: nil + nil with carry-in 0 and 1
+# ---------------------------------------------------------------------------
+((nil add nil) ci 0) sum nil
+((nil add nil) ci 1) sum <1>
+
+# ---------------------------------------------------------------------------
+# Rule A0 -- Trigger: seed internal addition with carry-in 0
+# ---------------------------------------------------------------------------
+(N + M) => ((N add M) ci 0)
+
+# ---------------------------------------------------------------------------
+# Rules D1-D3 -- Decompose: propagate carry-out into the recursive subproblem
+# ---------------------------------------------------------------------------
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) co E)
+=> ((R add S) ci E)
+
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) co E)
+=> ((R add nil) ci E)
+
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) co E)
+=> ((nil add S) ci E)
+
+# ---------------------------------------------------------------------------
+# Rules As1-As3 -- Assemble: once the inner sum T is known, prepend digit D
+# ---------------------------------------------------------------------------
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) sum D,
+ ((A d+ B) ci C) co E,
+ ((R add S) ci E) sum T)
+=> ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) sum D,
+ ((A d+ 0) ci C) co E,
+ ((R add nil) ci E) sum T)
+=> ((((A cons R) add nil) ci C) sum (D cons T))
+
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) sum D,
+ ((0 d+ B) ci C) co E,
+ ((nil add S) ci E) sum T)
+=> (((nil add (B cons S)) ci C) sum (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule C0 -- Connect: expose the result under the user-facing + predicate
+# ---------------------------------------------------------------------------
+(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)

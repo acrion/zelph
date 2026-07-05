@@ -546,6 +546,36 @@ Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node
     return _pImpl->insert_fact_single_object_trusted(subject, predicate, object);
 }
 
+// --- Raw weighted edges (neural substrate) ---
+//
+// A "synapse" is a plain directed edge between two ordinary nodes plus an
+// entry in the sparse edge-weight store. It deliberately bypasses fact
+// reification: raw edges carry no predicate, so they are invisible to the
+// reasoning engine (parse_fact, get_fact_objects and the transitive
+// traversals all require relation nodes with predicate edges, which plain
+// node -> node edges never have). Conversely, fact topology never creates
+// direct node -> node edges between two non-hash nodes, so raw synapses
+// and facts coexist in the same adjacency maps without ambiguity.
+//
+// No caches are invalidated here: fact structures and predicate indexes
+// only depend on fact topology, which raw edges do not touch. This keeps
+// weight write-back during training cheap.
+void Zelph::connect_weighted(const Node from, const Node to, const double weight) const
+{
+    _pImpl->connect(from, to);
+    _pImpl->set_edge_weight(from, to, weight);
+}
+
+double Zelph::edge_weight(const Node from, const Node to, const double fallback) const
+{
+    return _pImpl->edge_weight(from, to, fallback);
+}
+
+void Zelph::set_edge_weight(const Node from, const Node to, const double weight) const
+{
+    _pImpl->set_edge_weight(from, to, weight);
+}
+
 /**
  * Builds a Lisp-style singly linked list from a vector of Node elements using cons cells.
  *

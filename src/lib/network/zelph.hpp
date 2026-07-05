@@ -157,6 +157,9 @@ namespace zelph::network
         void                 log(int depth, const std::string& category, const std::string& message) const;
         bool                 use_parallel() const { return _use_parallel; }
         void                 toggle_parallel() { _use_parallel = !_use_parallel; }
+        void                 connect_weighted(Node from, Node to, double weight) const;
+        double               edge_weight(Node from, Node to, double fallback = 1.0) const;
+        void                 set_edge_weight(Node from, Node to, double weight) const;
 
         // --- Implemented in zelph_names.cpp (name management) ---
 

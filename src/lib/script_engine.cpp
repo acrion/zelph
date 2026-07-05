@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "script_engine.hpp"
+#include "network/neural.hpp"
 #include "network/reasoning.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
@@ -33,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <janetconf.h>
 #include <map>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
@@ -50,6 +52,16 @@ public:
     Janet                        _zelph_peg{};
     bool                         _log_janet_functions = false;
     std::map<std::string, Janet> _keyword_handlers;
+
+    // Compiled neural networks (session-scoped caches, discarded on .reset).
+    // Handles handed to Janet are indexes into this vector.
+    std::vector<std::unique_ptr<network::NeuralNet>> _neural_nets;
+
+    network::NeuralNet* get_net(int32_t handle)
+    {
+        if (handle < 0 || static_cast<size_t>(handle) >= _neural_nets.size()) return nullptr;
+        return _neural_nets[static_cast<size_t>(handle)].get();
+    }
 
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
@@ -133,6 +145,41 @@ public:
 
         janet_def(_janet_env, "zelph/closure-sources", wrap((JanetCFunction)janet_cfun_zelph_closure_sources), "(zelph/closure-sources target predicate &opt include-target)\nTransitive closure following "
                                                                                                                "predicate backward (object to subject). include-target true gives the reflexive closure.");
+
+        janet_def(_janet_env, "zelph/nn-connect", wrap((JanetCFunction)janet_cfun_zelph_nn_connect), "(zelph/nn-connect from to &opt weight)\nCreate a raw weighted edge (synapse) from -> to, creating nodes as needed. "
+                                                                                                     "Raw edges carry no predicate and are invisible to the reasoning engine. weight defaults to 1.");
+
+        janet_def(_janet_env, "zelph/weight", wrap((JanetCFunction)janet_cfun_zelph_weight), "(zelph/weight from to)\nWeight of the raw edge from -> to, or nil if the edge does not exist. "
+                                                                                             "An existing edge without a stored weight yields 1.");
+
+        janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)janet_cfun_zelph_set_weight), "(zelph/set-weight from to w)\nSet the weight of an existing raw edge.");
+
+        janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
+                                                                                                     "input first, output last. Neurons are the subjects of (neuron in layer) facts, ordered by node id. "
+                                                                                                     "Returns an integer handle. The compiled net is a discardable cache; the graph stays the source of truth.");
+
+        janet_def(_janet_env, "zelph/nn-nodes", wrap((JanetCFunction)janet_cfun_zelph_nn_nodes), "(zelph/nn-nodes handle layer)\nNeurons of a compiled layer in index order (defines input/output vector order).");
+
+        janet_def(_janet_env, "zelph/nn-eval", wrap((JanetCFunction)janet_cfun_zelph_nn_eval), "(zelph/nn-eval handle inputs)\nForward pass; inputs/outputs are arrays of numbers in zelph/nn-nodes order. "
+                                                                                               "Hidden layers use ReLU, the output layer is linear.");
+
+        janet_def(_janet_env, "zelph/nn-train", wrap((JanetCFunction)janet_cfun_zelph_nn_train), "(zelph/nn-train handle inputs targets &opt learning-rate)\nOne SGD step on a single sample; returns the loss "
+                                                                                                 "(0.5 * sum of squared errors) before the update. learning-rate defaults to 0.01.");
+
+        janet_def(_janet_env, "zelph/nn-write-back", wrap((JanetCFunction)janet_cfun_zelph_nn_write_back), "(zelph/nn-write-back handle)\nWrite the compiled net's weights back into the graph's edge-weight store, "
+                                                                                                           "so they survive .save and are picked up by future zelph/nn-compile calls.");
+
+        janet_def(_janet_env, "zelph/nn-connect-layers", wrap((JanetCFunction)janet_cfun_zelph_nn_connect_layers), "(zelph/nn-connect-layers from-layer to-layer &opt scale seed)\nCreate raw synapses between all members of two layers "
+                                                                                                                   "((neuron in layer) facts, ascending node id). Weights are uniform in [-scale, scale]; scale defaults to 0.1, scale 0 gives exact zeros. "
+                                                                                                                   "seed defaults to 42 for reproducible initialization. Existing edges are left untouched, so trained weights survive re-wiring. "
+                                                                                                                   "Returns the number of edges created.");
+
+        janet_def(_janet_env, "zelph/nn-train-nodes", wrap((JanetCFunction)janet_cfun_zelph_nn_train_nodes), "(zelph/nn-train-nodes handle inputs targets &opt learning-rate)\nOne SGD step, addressing neurons by node instead of by index. "
+                                                                                                             "inputs/targets are arrays whose elements are nodes (activation 1) or [node activation] pairs; all other neurons are 0. "
+                                                                                                             "A typical call encodes one fact: inputs [S P], targets [O]. Returns the loss before the update. learning-rate defaults to 0.01.");
+
+        janet_def(_janet_env, "zelph/nn-eval-nodes", wrap((JanetCFunction)janet_cfun_zelph_nn_eval_nodes), "(zelph/nn-eval-nodes handle inputs &opt top-k)\nForward pass with node-addressed multi-hot input. Returns an array of [node score] "
+                                                                                                           "tuples for the output layer, sorted by descending score (ties by ascending node id), limited to top-k if given.");
     }
 
     void setup_module_paths() const
@@ -523,6 +570,340 @@ public:
     static Janet janet_cfun_zelph_closure_sources(int32_t argc, Janet* argv)
     {
         return closure_impl(argc, argv, "zelph/closure-sources", false);
+    }
+
+    // Read a Janet array/tuple of numbers into a vector<double>.
+    static std::vector<double> janet_number_vector(Janet v, const char* what)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(v, &data, &len))
+            janet_panicf("%s: expected an array or tuple of numbers", what);
+
+        std::vector<double> out;
+        out.reserve(static_cast<size_t>(len));
+        for (int32_t i = 0; i < len; ++i)
+        {
+            if (!janet_checktype(data[i], JANET_NUMBER))
+                janet_panicf("%s: element %d is not a number", what, i);
+            out.push_back(janet_unwrap_number(data[i]));
+        }
+        return out;
+    }
+
+    // Create a raw weighted edge (synapse) from -> to, creating the nodes if
+    // necessary. Raw edges carry no predicate and are invisible to reasoning.
+    static Janet janet_cfun_zelph_nn_connect(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 2, 3);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node from = s_instance->resolve_janet_arg(argv[0]);
+        network::Node to   = s_instance->resolve_janet_arg(argv[1]);
+        if (!from || !to) janet_panicf("zelph/nn-connect: could not resolve nodes");
+
+        const double w = argc >= 3 ? janet_getnumber(argv, 2) : 1.0;
+
+        s_instance->_n->connect_weighted(from, to, w);
+        return janet_wrap_nil();
+    }
+
+    // Weight of the raw edge from -> to, or nil if no such edge exists.
+    static Janet janet_cfun_zelph_weight(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!a || !b || !s_instance->_n->has_right_edge(a, b)) return janet_wrap_nil();
+
+        return janet_wrap_number(s_instance->_n->edge_weight(a, b, 1.0));
+    }
+
+    // Set the weight of an existing raw edge.
+    static Janet janet_cfun_zelph_set_weight(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 3);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!a || !b) janet_panicf("zelph/set-weight: could not resolve nodes");
+        if (!s_instance->_n->has_right_edge(a, b))
+            janet_panicf("zelph/set-weight: edge does not exist (use zelph/nn-connect to create it)");
+
+        s_instance->_n->set_edge_weight(a, b, janet_getnumber(argv, 2));
+        return janet_wrap_nil();
+    }
+
+    // Compile a feed-forward view of a sub-graph. Argument: indexed collection
+    // of layer nodes, input first, output last. Returns an integer handle.
+    static Janet janet_cfun_zelph_nn_compile(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(argv[0], &data, &len) || len < 2)
+            janet_panicf("zelph/nn-compile: expected an array of at least 2 layer nodes");
+
+        std::vector<network::Node> layers;
+        layers.reserve(static_cast<size_t>(len));
+        for (int32_t i = 0; i < len; ++i)
+        {
+            network::Node n = s_instance->resolve_janet_arg_no_create(data[i]);
+            if (!n) janet_panicf("zelph/nn-compile: layer at index %d could not be resolved", i);
+            layers.push_back(n);
+        }
+
+        std::string err;
+        try
+        {
+            auto net = network::NeuralNet::compile(*s_instance->_n, layers);
+            s_instance->_neural_nets.push_back(std::move(net));
+            return janet_wrap_integer(static_cast<int32_t>(s_instance->_neural_nets.size() - 1));
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-compile: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Neurons of a compiled layer in index order (defines input/output order).
+    static Janet janet_cfun_zelph_nn_nodes(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-nodes: invalid network handle");
+
+        const int32_t layer = janet_getinteger(argv, 1);
+        if (layer < 0 || static_cast<size_t>(layer) >= net->layer_count())
+            janet_panicf("zelph/nn-nodes: layer index out of range");
+
+        const auto& nodes  = net->layer_nodes(static_cast<size_t>(layer));
+        JanetArray* result = janet_array(static_cast<int32_t>(nodes.size()));
+        for (network::Node n : nodes)
+        {
+            janet_array_push(result, zelph_wrap_node(n));
+        }
+        return janet_wrap_array(result);
+    }
+
+    // Forward pass. inputs: numbers in zelph/nn-nodes order of layer 0.
+    static Janet janet_cfun_zelph_nn_eval(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-eval: invalid network handle");
+
+        std::vector<double> in = janet_number_vector(argv[1], "zelph/nn-eval");
+
+        std::string err;
+        try
+        {
+            const std::vector<double> out    = net->forward(in);
+            JanetArray*               result = janet_array(static_cast<int32_t>(out.size()));
+            for (const double v : out)
+            {
+                janet_array_push(result, janet_wrap_number(v));
+            }
+            return janet_wrap_array(result);
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-eval: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // One SGD step on a single sample; returns the loss before the update.
+    static Janet janet_cfun_zelph_nn_train(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, 4);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-train: invalid network handle");
+
+        std::vector<double> in  = janet_number_vector(argv[1], "zelph/nn-train");
+        std::vector<double> tgt = janet_number_vector(argv[2], "zelph/nn-train");
+        const double        lr  = argc >= 4 ? janet_getnumber(argv, 3) : 0.01;
+
+        std::string err;
+        try
+        {
+            return janet_wrap_number(net->train_step(in, tgt, lr));
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-train: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Write trained weights back into the graph's edge-weight store.
+    static Janet janet_cfun_zelph_nn_write_back(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-write-back: invalid network handle");
+
+        net->write_back(*s_instance->_n);
+        return janet_wrap_nil();
+    }
+
+    // Parse an indexed collection whose elements are either a node-like value
+    // (activation 1) or a [node activation] pair, into (Node, activation)
+    // pairs. Node-like values are resolved without creating nodes. Graded
+    // activations allow feeding quantitative graph data (e.g. edge weights of
+    // another compiled net) as training samples.
+    static std::vector<std::pair<network::Node, double>> janet_node_activations(Janet v, const char* what)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(v, &data, &len))
+            janet_panicf("%s: expected an array or tuple of nodes or [node activation] pairs", what);
+
+        std::vector<std::pair<network::Node, double>> out;
+        out.reserve(static_cast<size_t>(len));
+
+        for (int32_t i = 0; i < len; ++i)
+        {
+            Janet  element    = data[i];
+            double activation = 1.0;
+
+            const Janet* pair;
+            int32_t      pair_len;
+            if ((janet_checktype(element, JANET_TUPLE) || janet_checktype(element, JANET_ARRAY))
+                && janet_indexed_view(element, &pair, &pair_len))
+            {
+                if (pair_len != 2 || !janet_checktype(pair[1], JANET_NUMBER))
+                    janet_panicf("%s: element %d must be a node or a [node activation] pair", what, i);
+                element    = pair[0];
+                activation = janet_unwrap_number(pair[1]);
+            }
+
+            network::Node n = s_instance->resolve_janet_arg_no_create(element);
+            if (!n) janet_panicf("%s: element %d could not be resolved to an existing node", what, i);
+            out.emplace_back(n, activation);
+        }
+        return out;
+    }
+
+    // Fully connect two layers with raw synapses. Existing edges are left
+    // untouched, so trained weights survive re-wiring and the call is
+    // idempotent. Intended for dense hidden layers; data-driven sparse wiring
+    // should use zelph/nn-connect per edge instead.
+    static Janet janet_cfun_zelph_nn_connect_layers(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 2, 4);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::Node from_layer = s_instance->resolve_janet_arg_no_create(argv[0]);
+        network::Node to_layer   = s_instance->resolve_janet_arg_no_create(argv[1]);
+        if (!from_layer || !to_layer) janet_panicf("zelph/nn-connect-layers: could not resolve layer nodes");
+
+        const double   scale = argc >= 3 ? janet_getnumber(argv, 2) : 0.1;
+        const uint64_t seed  = argc >= 4 ? static_cast<uint64_t>(janet_getnumber(argv, 3)) : 42u;
+
+        const std::vector<network::Node> pre  = network::layer_members(*s_instance->_n, from_layer);
+        const std::vector<network::Node> post = network::layer_members(*s_instance->_n, to_layer);
+        if (pre.empty() || post.empty())
+            janet_panicf("zelph/nn-connect-layers: a layer has no members (expected (neuron in layer) facts)");
+
+        std::mt19937_64                        rng(seed);
+        std::uniform_real_distribution<double> dist(-scale, scale);
+
+        int64_t created = 0;
+        for (const network::Node a : pre)
+        {
+            for (const network::Node b : post)
+            {
+                if (s_instance->_n->has_right_edge(a, b)) continue; // preserve existing synapses and their weights
+
+                const double w = scale == 0.0 ? 0.0 : dist(rng);
+                s_instance->_n->connect_weighted(a, b, w);
+                ++created;
+            }
+        }
+
+        return janet_wrap_number(static_cast<double>(created));
+    }
+
+    // One SGD step with node-addressed input/target.
+    static Janet janet_cfun_zelph_nn_train_nodes(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, 4);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-train-nodes: invalid network handle");
+
+        auto         in  = janet_node_activations(argv[1], "zelph/nn-train-nodes");
+        auto         tgt = janet_node_activations(argv[2], "zelph/nn-train-nodes");
+        const double lr  = argc >= 4 ? janet_getnumber(argv, 3) : 0.01;
+
+        std::string err;
+        try
+        {
+            return janet_wrap_number(net->train_nodes(in, tgt, lr));
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-train-nodes: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Forward pass with node-addressed input; returns scored output nodes.
+    static Janet janet_cfun_zelph_nn_eval_nodes(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 2, 3);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-eval-nodes: invalid network handle");
+
+        auto          in    = janet_node_activations(argv[1], "zelph/nn-eval-nodes");
+        const int32_t top_k = argc >= 3 ? janet_getinteger(argv, 2) : -1;
+
+        std::string err;
+        try
+        {
+            auto scored = net->eval_nodes(in);
+
+            std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b)
+                      { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+
+            const size_t n = top_k < 0 ? scored.size() : std::min(static_cast<size_t>(top_k), scored.size());
+
+            JanetArray* result = janet_array(static_cast<int32_t>(n));
+            for (size_t i = 0; i < n; ++i)
+            {
+                Janet pair[2] = {zelph_wrap_node(scored[i].first), janet_wrap_number(scored[i].second)};
+                janet_array_push(result, janet_wrap_tuple(janet_tuple_n(pair, 2)));
+            }
+            return janet_wrap_array(result);
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-eval-nodes: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
     }
 
     // Extract the car (first element / subject) of a cons cell.

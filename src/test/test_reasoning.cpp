@@ -457,6 +457,86 @@ TEST_CASE("multi-digit addition via rules")
 }
 
 // ---------------------------------------------------------------------------
+// Binary addition via rules -- no generated lookup table
+// ---------------------------------------------------------------------------
+
+TEST_CASE("binary addition via rules (full-adder axioms, no generated table)")
+{
+    run_both_modes([](const auto& collector, const auto& interactive)
+                   {
+        // The digit-level knowledge is the hand-written full-adder truth
+        // table (16 facts). The recursion rules are identical to the base-10
+        // test above -- they are base-agnostic. No Janet code is involved.
+        static const std::string script = R"zelph(
+((0 d+ 0) ci 0) sum 0
+((0 d+ 0) ci 0) co 0
+((1 d+ 0) ci 0) sum 1
+((1 d+ 0) ci 0) co 0
+((0 d+ 1) ci 0) sum 1
+((0 d+ 1) ci 0) co 0
+((1 d+ 1) ci 0) sum 0
+((1 d+ 1) ci 0) co 1
+((0 d+ 0) ci 1) sum 1
+((0 d+ 0) ci 1) co 0
+((1 d+ 0) ci 1) sum 0
+((1 d+ 0) ci 1) co 1
+((0 d+ 1) ci 1) sum 0
+((0 d+ 1) ci 1) co 1
+((1 d+ 1) ci 1) sum 1
+((1 d+ 1) ci 1) co 1
+((nil add nil) ci 0) sum nil
+((nil add nil) ci 1) sum <1>
+(N + M) => ((N add M) ci 0)
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) co E)
+=> ((R add S) ci E)
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) co E)
+=> ((R add nil) ci E)
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) co E)
+=> ((nil add S) ci E)
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) ci C) sum D,
+ ((A d+ B) ci C) co E,
+ ((R add S) ci E) sum T)
+=> ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+(((A cons R) add nil) ci C,
+ ((A d+ 0) ci C) sum D,
+ ((A d+ 0) ci C) co E,
+ ((R add nil) ci E) sum T)
+=> ((((A cons R) add nil) ci C) sum (D cons T))
+((nil add (B cons S)) ci C,
+ ((0 d+ B) ci C) sum D,
+ ((0 d+ B) ci C) co E,
+ ((nil add S) ci E) sum T)
+=> (((nil add (B cons S)) ci C) sum (D cons T))
+(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)
+)zelph";
+
+        process_lines(interactive, script);
+
+        SUBCASE("101 + 11 = 1000 (5 + 3 = 8)")
+        {
+            interactive.process("<101> + <11>");
+            interactive.run(true, false, false);
+            CHECK(any_output_starts_with(collector, "((<101> + <11>) = <1000>)"));
+        }
+        SUBCASE("1111 + 1 = 10000 (carry chain through all positions)")
+        {
+            interactive.process("<1111> + <1>");
+            interactive.run(true, false, false);
+            CHECK(any_output_starts_with(collector, "((<1111> + <1>) = <10000>)"));
+        }
+        SUBCASE("1010 + 110 = 10000 (10 + 6 = 16, mixed lengths)")
+        {
+            interactive.process("<1010> + <110>");
+            interactive.run(true, false, false);
+            CHECK(any_output_starts_with(collector, "((<1010> + <110>) = <10000>)"));
+        } });
+}
+
+// ---------------------------------------------------------------------------
 // Transitive relation deduction
 // ---------------------------------------------------------------------------
 
