@@ -164,6 +164,16 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         return;
     }
 
+    // 2b. Unnamed variables must never be expanded structurally: a
+    // variable node's edges only reflect the rule patterns it occurs
+    // in, so the structural formatting below would dump rule topology
+    // instead of a value.
+    if (network::Zelph::is_var(resolved))
+    {
+        result = string::mark_identifier("??");
+        return;
+    }
+
     // 3. Cons List Detection (Sequence)
     // Check if 'resolved' is a cons cell (relation node whose predicate is Cons).
     // If so, walk the cons chain and format as < e1 e2 ... en >.

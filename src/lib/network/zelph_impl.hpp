@@ -1456,15 +1456,28 @@ namespace zelph::network
             std::string_view sv = _string_pool.intern(name);
 
             // 3. If another node currently owns that name, detach its forward mapping
+            // 3. If another node currently owns that name, detach its forward mapping
             auto rev_it = rev.find(sv);
             if (rev_it != rev.end() && rev_it->second != node)
             {
                 const Node previous_owner = rev_it->second;
 
-                auto prev_fwd_it = fwd.find(previous_owner);
-                if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
+                // Variable nodes intentionally share display names: every
+                // statement creates fresh variable nodes, and their names are
+                // purely cosmetic and statement-scoped (parsing resolves
+                // variables through the scoped variable table, not through
+                // this map). Stealing the forward mapping here would strip
+                // the display name from the variables of every earlier rule
+                // that used the same variable name (they would render as
+                // «??»). Keep the previous owner's forward entry when it is
+                // a variable; the reverse entry stays last-wins.
+                if (!is_var(previous_owner))
                 {
-                    fwd.erase(prev_fwd_it);
+                    auto prev_fwd_it = fwd.find(previous_owner);
+                    if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
+                    {
+                        fwd.erase(prev_fwd_it);
+                    }
                 }
 
                 rev_it->second = node;

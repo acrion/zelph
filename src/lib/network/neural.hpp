@@ -87,6 +87,9 @@ namespace zelph::network
         // the output layer in neuron index order (unsorted).
         std::vector<std::pair<Node, double>> eval_nodes(const std::vector<std::pair<Node, double>>& input) const;
 
+        // Membership test, used by the reasoning engine's ≈ evaluation.
+        bool has_node(size_t layer, Node n) const { return _index.at(layer).count(n) != 0; }
+
     private:
         NeuralNet() = default;
 

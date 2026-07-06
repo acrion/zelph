@@ -330,6 +330,12 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/targets subject predicate)`**  
   Return all objects `O` such that `subject predicate O` exists (read-only traversal).
 
+- **`(zelph/closure start predicate &opt include-start)`**  
+  Transitive closure following `predicate` forward (subject to object). `include-start` true gives the reflexive closure (the `*` of SPARQL property paths).
+
+- **`(zelph/closure-sources target predicate &opt include-target)`**  
+  Transitive closure following `predicate` backward (object to subject). `include-target` true gives the reflexive closure.
+
 ##### Cons cell inspection (read-only)
 
 - **`(zelph/car cell)`**  
@@ -337,6 +343,28 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 
 - **`(zelph/cdr cell)`**  
   Return the cdr (rest of list) of a cons cell. Returns the `nil` list terminator node for the last cell; returns `nil` if `cell` is not a cons cell.
+
+##### Neural network functions
+
+zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can consult via the `≈` operator. The full documentation — including semantics, training workflow, and a Wikidata proof of concept — is on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:
+
+- **`(zelph/nn-connect from to &opt weight)`** — create a raw weighted edge (synapse); invisible to reasoning. Default weight 1.
+- **`(zelph/weight from to)`** — weight of a raw edge, or `nil` if the edge does not exist.
+- **`(zelph/set-weight from to w)`** — set the weight of an existing raw edge.
+- **`(zelph/nn-compile layers)`** — compile a feed-forward view of a sub-graph (layer nodes, input first); returns an integer handle.
+- **`(zelph/nn-nodes handle layer)`** — neurons of a compiled layer in index order.
+- **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors.
+- **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step; returns the loss before the update.
+- **`(zelph/nn-write-back handle)`** — write trained weights back into the graph's weight store (required for `.save` and for `≈` conditions).
+- **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — densely wire two layers; idempotent, preserves existing weights.
+- **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
+- **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
+- **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
+
+##### Redefinable hooks
+
+- **`(zelph/number str)`**  
+  Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph) (decimal) or [`binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
 
 ### Referencing Janet Variables in zelph: Unquote `,`
 
@@ -773,6 +801,18 @@ As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops
 
 The rules above are general-purpose (they work on any list, not just numbers). The lookup table encodes digit arithmetic as graph facts. From here, additional rules can process multi-digit numbers by walking lists from right to left, extracting digits, applying the lookup table, handling carries, and constructing new result lists using fresh variables — all within zelph's reasoning engine.
 
+### Extending the REPL: `zelph/register-keyword`
+
+`(zelph/register-keyword keyword handler)` registers a custom multi-line syntax block for the REPL and for `.zph` scripts. After the keyword is entered (optionally with content on the same line), subsequent lines are accumulated verbatim until an empty line, then passed as a single string to `handler`. The handler may return `:incomplete` to signal that the block is not yet complete (e.g. unbalanced braces) — accumulation then continues, and a second consecutive blank line forces dispatch. String results are printed line by line.
+
+This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
+
+### Extending the REPL: `zelph/register-keyword`
+
+`(zelph/register-keyword keyword handler)` registers a custom multi-line syntax block for the REPL and for `.zph` scripts. After the keyword is entered (optionally with content on the same line), subsequent lines are accumulated verbatim until an empty line, then passed as a single string to `handler`. The handler may return `:incomplete` to signal that the block is not yet complete (e.g. unbalanced braces) — accumulation then continues, and a second consecutive blank line forces dispatch. String results are printed line by line.
+
+This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
+
 ### Summary: zelph Syntax and Janet Equivalents
 
 | zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |
@@ -800,3 +840,5 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 | `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)`         | Create inference rule                                                       |
 | `(cond1, cond2, cond3)`         | _(desugars to)_ set + `~ conjunction`               | Conjunction expression (comma sugar), evaluates to the conjunction set node |
 | `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |
+| `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
+| `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |

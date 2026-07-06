@@ -252,13 +252,23 @@ void console::Interactive::process(std::string line) const
                 if (!state->janet_buffer.empty())
                 {
                     _pImpl->_n->profiler_reset_epoch();
-                    _pImpl->_script_engine->process_janet(state->janet_buffer, false);
+
+                    // Reset block state BEFORE executing: if the code throws, the REPL
+                    // must not stay stuck in Janet block mode (empty prompt, stale
+                    // buffer re-executed on every subsequent '%').
+                    const std::string code = state->janet_buffer;
                     state->janet_buffer.clear();
+                    state->script_mode = ScriptMode::Zelph;
+
+                    _pImpl->_script_engine->process_janet(code, false);
 
                     if (state->auto_run)
                         _pImpl->_n->run(true, false, false, true);
                 }
-                state->script_mode = ScriptMode::Zelph;
+                else
+                {
+                    state->script_mode = ScriptMode::Zelph;
+                }
             }
             else
             {

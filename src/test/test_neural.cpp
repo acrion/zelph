@@ -285,3 +285,93 @@ red in KOut
         interactive.process(R"(%(string "pred:" (top1 "earth" "haspart") "," (top1 "earth" "color") "," (top1 "mars" "haspart") "," (top1 "mars" "color")))");
         CHECK(any_output_contains(collector, "pred:crust,blue,core,red")); });
 }
+
+// ---------------------------------------------------------------------------
+// Neural rule conditions (≈)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: approx guard mode verifies facts and propagates confidence")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s1 in GIn
+o1 in GOut
+o2 in GOut
+%(zelph/nn-connect "s1" "o1" 0.8)
+%(zelph/nn-connect "s1" "o2" 0.2)
+gnet nn-layers <GIn GOut>
+s1 relG o1
+s1 relG o2
+(A relG B, ≈gnet(A relG B)) => (A verifiedG B)
+)");
+        // o1 scores 0.8 > 0.5 -> verified; o2 scores 0.2 -> condition fails.
+        CHECK(any_output_starts_with(collector, "( s1 verifiedG o1 )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( s1 verifiedG o2 )"));
+
+        // Confidence propagation: the deduced fact's probability (0.8)
+        // lives in the shared weight store on the fact->predicate edge.
+        collector.clear();
+        interactive.process(R"(%(let [f (zelph/fact "s1" "verifiedG" "o1")] (if (< 0.79 (zelph/weight f "verifiedG") 0.81) "conf-ok" "conf-bad")))");
+        CHECK(any_output_contains(collector, "conf-ok")); });
+}
+
+TEST_CASE("neural: approx generator mode proposes bindings above threshold")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+s2 marked yes
+(A marked yes, ≈hnet(A relH X)) => (A suggestedH X)
+)");
+        CHECK(any_output_starts_with(collector, "( s2 suggestedH c1 )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( s2 suggestedH c2 )")); });
+}
+
+TEST_CASE("neural: approx with missing net definition fails the condition gracefully")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s3 relQ o3
+(A relQ B, ≈ghostnet(A relQ B)) => (A verifiedQ B)
+)");
+        // No nn-layers definition for ghostnet: the condition simply
+        // fails; no deduction, no crash.
+        CHECK_FALSE(any_output_starts_with(collector, "( s3 verifiedQ")); });
+}
+
+// ---------------------------------------------------------------------------
+// nn.zph end-to-end: train from graph facts, use via Janet and via ≈
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: nn.zph link predictor end-to-end with approx rules")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import " + std::string(ZELPH_SOURCE_DIR) + "/sample_scripts/nn.zph");
+        process_lines(interactive, R"(
+earth haspart crust
+mars haspart core
+%(def h (nn/link-predictor "wnet" [(zelph/resolve "earth") (zelph/resolve "mars")] ["haspart"] :epochs 200 :lr 0.2))
+)");
+        // Direct prediction through the Janet layer.
+        collector.clear();
+        interactive.process(R"(%(let [[n s] (first (nn/predict-names h ["earth" "haspart"] 1))] n))");
+        CHECK(any_output_contains(collector, "crust"));
+
+        // The declared net is addressable from ≈ rules via its graph name.
+        collector.clear();
+        process_lines(interactive, R"(
+(A haspart B, ≈wnet(A haspart B)) => (A verifiedW B)
+)");
+        CHECK(any_output_starts_with(collector, "( earth verifiedW crust )"));
+        CHECK(any_output_starts_with(collector, "( mars verifiedW core )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( earth verifiedW core )")); });
+}

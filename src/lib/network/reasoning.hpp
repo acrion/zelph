@@ -30,12 +30,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "io/markdown.hpp"
 #include "io/output.hpp"
 #include "network_types.hpp"
+#include "neural.hpp"
 #include "reasoning_profiler.hpp"
 #include "zelph.hpp"
 
 #include <zelph_export.h>
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,6 +54,11 @@ namespace zelph::network
         std::shared_ptr<Variables>                variables{std::make_shared<Variables>()};
         std::shared_ptr<Variables>                unequals{std::make_shared<Variables>()};
         std::shared_ptr<std::unordered_set<Node>> excluded{std::make_shared<std::unordered_set<Node>>()};
+
+        // Accumulated confidence of ≈ conditions along this binding path;
+        // stays 1.0 when no neural condition fired. Propagated into deduce()
+        // and stored as the deduced fact's probability.
+        double confidence{1.0};
     };
 
     struct ReasoningContext
@@ -81,7 +88,11 @@ namespace zelph::network
         void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
         void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
         void apply_rule(const network::Node& rule, network::Node condition);
-        void profiler_reset_epoch() { _prof.reset_epoch(); }
+        void profiler_reset_epoch()
+        {
+            _prof.reset_epoch();
+            _nn_cache.clear();
+        }
 
         // --- Implemented in reasoning_pruning.cpp ---
 
@@ -102,11 +113,16 @@ namespace zelph::network
 
         // --- Implemented in reasoning_deduce.cpp ---
 
-        void deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx);
+        void deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx, double confidence);
         bool consequences_already_exist(const Variables&     condition_bindings,
                                         const adjacency_set& deductions,
                                         Node                 parent,
                                         const int            depth);
+
+        // --- Implemented in reasoning_neural.cpp ---
+        const NeuralNet* compiled_net(Node net_node, int depth);
+        void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
+        void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
         // --- Members ---
 
@@ -130,5 +146,10 @@ namespace zelph::network
         std::unordered_set<Node>                 _nodes_to_prune;
         std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};
         ReasoningProfiler                        _prof;
+
+        // --- Neural (≈) support ---
+        Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
+        Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
+        std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;          // compiled nets, cleared per epoch
     };
 }

@@ -129,7 +129,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 log(depth, "evaluate", "Entering conjunction " + format(condition) + " with " + std::to_string(sorted_conditions->size()) + " sub-conditions");
 
             // Recurse into the conjunction
-            evaluate(RulePos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded}), ctx, depth + 1);
+            RulePos conj_pos({condition, sorted_conditions, 0, rule.variables, rule.unequals, excluded});
+            conj_pos.confidence = rule.confidence;
+            evaluate(conj_pos, ctx, depth + 1);
         }
         else if (should_log(depth))
         {
@@ -143,6 +145,16 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         // It filters bindings where both sides resolve to the same node.
         {
             adjacency_set guard_rels = filter(condition, core.IsA, core.RelationTypeCategory);
+
+            // --- Neural Condition (≈) ---
+            // An approx condition IS the tag fact (pattern nn net), so its
+            // predicate identifies it -- same detection scheme as != below.
+            if (_nn_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _nn_pred)
+            {
+                evaluate_neural(condition, rule, ctx, depth);
+                return;
+            }
+
             if (guard_rels.size() == 1 && *guard_rels.begin() == core.Unequal)
             {
                 if (should_log(depth))
@@ -229,7 +241,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                             try
                             {
-                                deduce(*vars, rule.node, depth, ctx_copy);
+                                deduce(*vars, rule.node, depth, ctx_copy, rule.confidence);
                             }
                             catch (const contradiction_error& error)
                             {
@@ -354,7 +366,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                         try
                         {
-                            deduce(*bindings, rule.node, depth, ctx_copy);
+                            deduce(*bindings, rule.node, depth, ctx_copy, rule.confidence);
                         }
                         catch (const contradiction_error& error)
                         {
@@ -653,7 +665,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                     try
                     {
-                        deduce(*joined, rule.node, depth, ctx_copy);
+                        deduce(*joined, rule.node, depth, ctx_copy, rule.confidence);
                     }
                     catch (const contradiction_error& error)
                     {

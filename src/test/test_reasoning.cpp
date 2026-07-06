@@ -676,3 +676,36 @@ nodeB P279 nodeD
         CHECK(any_output_contains(collector, "nodeA,nodeC"));
         CHECK_FALSE(any_output_contains(collector, "nodeD")); });
 }
+
+// ---------------------------------------------------------------------------
+// Variable name sharing across rules
+// ---------------------------------------------------------------------------
+
+TEST_CASE("naming: variable names re-used by a later rule keep earlier rules intact")
+{
+    // Each statement creates fresh variable nodes; rule topology is anchored
+    // via core.Causes / core.Conjunction and stays unambiguous even when two
+    // rules use the same variable NAMES (A, B, C). This test guards both the
+    // functional property and the display: assigning "A" to rule 2's fresh
+    // variable must not strip the name from rule 1's variable.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A ancestor B, B ancestor C) => (A ancestor C)
+(R is transitive, A R B, B R C) => (A R C)
+x ancestor y
+y ancestor z
+5 > 4
+4 > 3
+> is transitive
+)");
+        // Functional: BOTH rules fire despite shared variable names.
+        CHECK(any_output_starts_with(collector, "( x ancestor z )"));
+        CHECK(any_output_starts_with(collector, "( 5 > 3 )"));
+
+        // Display: rule 1's variables are still shown by name in .list-rules.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(A «ancestor» B)"));
+        CHECK_FALSE(any_output_contains(collector, "«??» «ancestor»")); });
+}

@@ -23,6 +23,7 @@ nav:
   - Performing Queries: queries.md
   - SPARQL Queries: sparql.md
   - Scripting with Janet: janet.md
+  - Neural Networks in the Graph: neural.md
   - Importing and Exporting Data: import-export.md
   - Binary Data Files: binaries.md
   - Sharding and Partial Loading: sharding.md

@@ -516,6 +516,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
 The reference implementation lives in [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
+A second reference implementation, [sample_scripts/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
 
 The algorithm consists of three parts:
 
@@ -596,6 +597,18 @@ X P31 Q49008
 This lists all 10,018 prime numbers recorded in Wikidata — the same nodes that would appear in a cons-list produced by arithmetic rules.
 Knowledge and computation are not separate layers.
 
+### Number Literals
+
+Cons-lists are a general-purpose structure — numbers are merely one _use_ of them, and zelph deliberately does not hard-code any numeric representation. Which base is used, or whether digits are decimal characters at all, is decided entirely by the loaded rule scripts. The parser, however, offers two pieces of syntax sugar that make the numeric use case pleasant without constraining it:
+
+1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
+
+2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom.
+
+   (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
+
+This split keeps the philosophy intact: the _representation_ of numbers lives in scripts and rules, while the _convenience_ of familiar decimal input lives in the parser — decoupled through one redefinable function.
+
 ## Beyond Arithmetic
 
 The techniques demonstrated by the addition algorithm — deep unification, recursive decomposition via cons-lists, fresh variable generation, and digit-level lookup tables — are general-purpose.
@@ -607,6 +620,10 @@ Because fact nodes can themselves appear as subjects or objects, zelph naturally
 For example, declaring a relation to be symmetric, transitive, or functional is a statement about a predicate — and the inference engine treats it as an ordinary fact that conditions can match against.
 
 This enables concise, generic rules that would require meta-interpreters or reflection mechanisms in traditional logic programming systems.
+
+### Neural Rule Conditions
+
+Since version 0.9.7, rule conditions can also consult a **neural network** living inside the same graph, via the `≈` operator — verifying facts against a learned model (guard mode) or generating candidate bindings above a confidence threshold (generator mode), with the confidence flowing into the deduced fact's probability. This neuro-symbolic capability has its own page: [Neural Networks in the Graph](neural.md).
 
 ### Contradiction Detection
 

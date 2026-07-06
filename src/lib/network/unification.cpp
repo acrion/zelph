@@ -265,6 +265,39 @@ static bool contains_variable_shallow(Zelph* n, Node nd, const int depth)
     return false;
 }
 
+// Deep variant of contains_variable_shallow: returns true if nd is a VAR,
+// or if its structural closure (subject, predicate, objects at any depth)
+// contains a VAR node.
+//
+// Rationale: the subject/object-driven snapshot anchors on a node and scans
+// only its adjacency. That is correct for concrete nodes (atoms or fully
+// concrete structures), because data facts referencing them are directly
+// adjacent. A pattern node with variables at ANY depth, however, must match
+// OTHER graph nodes via structural unification -- its own adjacency contains
+// only rule topology, so an anchor lookup would silently miss all data.
+// The shallow check is not sufficient here: e.g. the rule subject
+// ((A cons R) add (B cons S)) has no variables in its immediate structure;
+// the variables sit one level deeper inside the cons cells. This is exactly
+// the case the former BFS-based template check was introduced for
+// ("extend parallel reasoning to cover cons cells").
+static bool contains_variable_deep(Zelph* n, Node nd, const int depth, std::unordered_set<Node>& visited)
+{
+    if (nd == 0) return false;
+    if (Zelph::Impl::is_var(nd)) return true;
+    if (!Zelph::Impl::is_hash(nd)) return false;  // plain atom -> no internal structure
+    if (!visited.insert(nd).second) return false; // cycle protection
+
+    auto structs = get_fact_structures(n, nd, false, depth);
+    for (const auto& fs : structs)
+    {
+        if (contains_variable_deep(n, fs.subject, depth, visited)) return true;
+        if (contains_variable_deep(n, fs.predicate, depth, visited)) return true;
+        for (Node o : fs.objects)
+            if (contains_variable_deep(n, o, depth, visited)) return true;
+    }
+    return false;
+}
+
 Unification::Unification(
     Zelph*                            n,
     Node                              condition,
@@ -503,92 +536,21 @@ bool Unification::increment_fact_index()
 
             if (_n->use_parallel())
             {
-                auto is_relation_type = [&](Node x) -> bool
-                {
-                    return _n->check_fact(x, _n->core.IsA, {_n->core.RelationTypeCategory}).is_correct();
-                };
-
-                auto is_in_current_rule_template = [&](Node needle) -> bool
-                {
-                    if (_parent == 0 || needle == 0) return false;
-
-                    if (Zelph::Impl::is_var(needle))
-                        needle = string::get(*_variables, needle, needle);
-
-                    if (needle == 0) return false;
-
-                    if (is_relation_type(needle)) return false;
-
-                    std::deque<Node>         q;
-                    std::unordered_set<Node> seen;
-                    q.push_back(_parent);
-
-                    Node membership_pred = 0;
-                    {
-                        std::unordered_set<Node> preds;
-                        for (Node rel : _n->get_right(_parent)) // Object -> Relation (incoming only => object has outgoing to rel)
-                        {
-                            zelph::network::FactStructure fs;
-                            if (!zelph::network::try_get_preferred_structure(_n, rel, fs, _log_depth)) continue;
-
-                            // _parent must be an object (incoming only => in objects, but not bidirectional)
-                            if (fs.objects.count(_parent) == 0) continue;
-
-                            // Predicate must be a RelationType
-                            if (!is_relation_type(fs.predicate)) continue;
-
-                            preds.insert(fs.predicate);
-                        }
-                        if (preds.size() == 1) membership_pred = *preds.begin();
-                    }
-
-                    while (!q.empty())
-                    {
-                        Node x = q.front();
-                        q.pop_front();
-
-                        if (x == 0) continue;
-                        if (!seen.insert(x).second) continue;
-
-                        if (x == needle) return true;
-
-                        // 1) If x is the conjunction set (_parent): expand over its membership facts
-                        if (x == _parent)
-                        {
-                            for (Node rel : _n->get_right(_parent))
-                            {
-                                zelph::network::FactStructure fs;
-                                if (!zelph::network::try_get_preferred_structure(_n, rel, fs, _log_depth)) continue;
-                                if (fs.objects.count(_parent) == 0) continue;
-
-                                if (membership_pred != 0 && fs.predicate != membership_pred) continue;
-
-                                q.push_back(rel);
-                                q.push_back(fs.subject);
-                                // TODO: Add more objects (besides _parent)?
-                            }
-                            continue;
-                        }
-
-                        // 2) If x is a fact node: expand syntactically into subject/objects.
-                        //    Important: We do not run outward from atoms.
-                        {
-                            zelph::network::FactStructure fx;
-                            if (zelph::network::try_get_preferred_structure(_n, x, fx, _log_depth))
-                            {
-                                q.push_back(fx.subject);
-                                for (Node o : fx.objects)
-                                    q.push_back(o);
-                            }
-                        }
-                    }
-
-                    return false;
-                };
-
-                // Rule template nodes exist in the graph.
-                // The subject/object-driven shortcut is only correct if the lookup node
-                // is NOT part of the current rule template.
+                // Rule-template nodes exist in the graph. The subject/object-
+                // driven shortcut must not anchor on nodes that are themselves
+                // rule topology: the conjunction set node, or pattern fact
+                // nodes containing variables.
+                //
+                // Concrete atoms that merely OCCUR inside the template (e.g.
+                // the constant Q6256 in a condition (A P31 Q6256)) are valid
+                // anchors: their adjacency is exactly the data we want to
+                // scan. The previous BFS-based check rejected them, forcing a
+                // full-relation snapshot -- catastrophic for high-cardinality
+                // relations like P31 (~15M facts).
+                //
+                // Template fact nodes that still end up in the candidate
+                // snapshot are rejected later by extract_bindings via
+                // contains_variable_shallow, exactly as in the full-scan path.
                 auto is_concrete_lookup_node = [&](Node nd) -> bool
                 {
                     if (nd == 0) return false;
@@ -599,7 +561,8 @@ bool Unification::increment_fact_index()
                     if (nd == 0 || Zelph::Impl::is_var(nd) || !_n->exists(nd))
                         return false;
 
-                    if (is_in_current_rule_template(nd))
+                    std::unordered_set<Node> visited;
+                    if (nd == _parent || contains_variable_deep(_n, nd, _log_depth, visited))
                     {
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                             u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));

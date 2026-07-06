@@ -1,0 +1,138 @@
+# nn.zph -- generic helpers for graph-driven neural networks.
+#
+# Conventions (shared with the reasoning engine's neural conditions):
+#   - layer membership:  (neuron in layer)             [in = core PartOf]
+#   - net definition:    (net nn-layers <L1 .. Ln>)    [nn-layers in lang "zelph"]
+#     with the INPUT layer first and the OUTPUT layer last.
+#
+# The graph is the single source of truth: nn/compile reads the layer
+# list back from the nn-layers fact, and the same fact is what the
+# reasoning engine compiles from when a rule uses an approx condition.
+#
+# All functions accept nodes or name strings (resolved in the current
+# language) interchangeably.
+
+%
+(defn- as-node [x] (if (bytes? x) (zelph/resolve x) x))
+
+(defn nn/in-layer
+  "Add nodes to a layer via (node in layer) facts. Idempotent."
+  [nodes layer]
+  (def l (as-node layer))
+  (each n nodes
+    (zelph/fact (as-node n) "in" l))
+  l)
+
+(defn nn/declare
+  "Declare a net: creates (net nn-layers <L1 .. Ln>), input layer first.
+  This graph-level definition is what approx conditions compile from."
+  [net layers]
+  (def net-node (as-node net))
+  (def pred (zelph/resolve "nn-layers" "zelph"))
+  (zelph/fact net-node pred (zelph/list ;(map as-node layers)))
+  net-node)
+
+(defn nn/layers
+  "Read a net's layer nodes back from its nn-layers fact."
+  [net]
+  (def pred (zelph/resolve "nn-layers" "zelph"))
+  (def lists (zelph/targets (as-node net) pred))
+  (when (empty? lists)
+    (error "nn/layers: no nn-layers definition found"))
+  (def out @[])
+  (var cell (first lists))
+  (while (and cell (zelph/car cell))
+    (array/push out (zelph/car cell))
+    (set cell (zelph/cdr cell)))
+  out)
+
+(defn nn/wire-dense
+  "Create dense raw synapses between consecutive layers of a declared
+  net. Existing synapses keep their weights (idempotent). scale 0 gives
+  exact-zero initialization (deterministic, fine for linear nets)."
+  [net &opt scale seed]
+  (default scale 0)
+  (default seed 42)
+  (def ls (nn/layers net))
+  (var created 0)
+  (for i 0 (dec (length ls))
+    (+= created (zelph/nn-connect-layers (get ls i) (get ls (inc i)) scale seed)))
+  created)
+
+(defn nn/compile
+  "Compile a declared net; returns the handle for eval/train calls."
+  [net]
+  (zelph/nn-compile (nn/layers net)))
+
+(defn nn/gather
+  "Collect (S P O) triples from the graph: for every subject and every
+  predicate, one sample per existing object. Read-only."
+  [subjects preds]
+  (def samples @[])
+  (each s subjects
+    (def sn (as-node s))
+    (each p preds
+      (def pn (as-node p))
+      (each o (zelph/targets sn pn)
+        (array/push samples [sn pn o]))))
+  samples)
+
+(defn nn/train-triples
+  "SGD training on (S P O) samples: input {S, P}, target one-hot {O}.
+  The zero targets on all other output neurons act as implicit negative
+  samples. Returns the mean loss of the last epoch."
+  [handle samples &opt epochs lr]
+  (default epochs 100)
+  (default lr 0.1)
+  (var last-loss 0)
+  (for e 0 epochs
+    (set last-loss 0)
+    (each [s p o] samples
+      (+= last-loss (zelph/nn-train-nodes handle [s p] [o] lr))))
+  (if (empty? samples) 0 (/ last-loss (length samples))))
+
+(defn nn/predict
+  "Forward pass; returns up to k [node score] tuples, best first."
+  [handle inputs &opt k]
+  (default k 5)
+  (zelph/nn-eval-nodes handle (map as-node inputs) k))
+
+(defn nn/predict-names
+  "Like nn/predict, but returns [name score] pairs for easy printing."
+  [handle inputs &opt k lang]
+  (map (fn [[n score]]
+         [(or (if lang (zelph/name n lang) (zelph/name n)) (string n))
+          score])
+       (nn/predict handle inputs k)))
+
+(defn nn/link-predictor
+  "End-to-end setup: gathers (S P O) samples, builds <net>-in (subjects
+  and predicates) and <net>-out (objects) layers, declares and wires the
+  net, compiles, trains, and writes the trained weights back into the
+  graph -- so that ≈ conditions and future compiles pick them up. Returns the handle.
+  extra-subjects may add untrained nodes to the input layer; note that
+  with identity encoding and zero init they cannot yield predictions
+  until they receive training signal."
+  [net subjects preds &named epochs lr extra-subjects]
+  (default epochs 100)
+  (default lr 0.1)
+  (default extra-subjects [])
+  (def samples (nn/gather subjects preds))
+  (when (empty? samples)
+    (error "nn/link-predictor: no (S P O) samples found"))
+  (def net-node (as-node net))
+  (def base (or (zelph/name net-node) "net"))
+  (def lin  (zelph/resolve (string base "-in")))
+  (def lout (zelph/resolve (string base "-out")))
+  (nn/in-layer (map as-node subjects) lin)
+  (nn/in-layer (map as-node extra-subjects) lin)
+  (nn/in-layer (map as-node preds) lin)
+  (nn/in-layer (map (fn [[s p o]] o) samples) lout)
+  (nn/declare net-node [lin lout])
+  (nn/wire-dense net-node)
+  (def handle (nn/compile net-node))
+  (def loss (nn/train-triples handle samples epochs lr))
+  (zelph/nn-write-back handle)
+  (print (string "nn/link-predictor: " (length samples) " samples, final mean loss " (string/format "%.5f" loss)))
+  handle)
+%

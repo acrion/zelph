@@ -134,6 +134,9 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 {
     _prof.note_rule_applied(rule ? rule : condition);
 
+    _nn_pred        = get_node("nn", "zelph");
+    _nn_layers_pred = get_node("nn-layers", "zelph");
+
     if (should_log(1))
     {
         std::string formatted_rule;
@@ -248,6 +251,11 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // (negation at -1000 is always last, != at -500 is second-to-last).
             if (rels_for_score.size() == 1 && *rels_for_score.begin() == core.Unequal)
                 score -= 500;
+
+            // Neural conditions want maximal bindings and are comparatively
+            // expensive: evaluate after != (-500), before negation (-1000).
+            if (_nn_pred != 0 && rels_for_score.size() == 1 && *rels_for_score.begin() == _nn_pred)
+                score -= 800;
 
             // Prefer conditions whose predicate has fewer matching facts
             if (rels_for_score.size() == 1)

@@ -283,6 +283,7 @@ add_library(zelph_lib SHARED
     network/reasoning.cpp
     network/reasoning_deduce.cpp
     network/reasoning_evaluate.cpp
+    network/reasoning_neural.cpp
     network/reasoning_pruning.cpp
     network/reasoning.hpp
     network/reasoning_profiler.hpp

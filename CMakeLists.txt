@@ -33,8 +33,8 @@ if(NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
     endif()
 endif()
 
-project(zelph VERSION 0.9.6 LANGUAGES C CXX)
-set(ZELPH_VERSION_SUFFIX "" CACHE STRING "Version suffix appended to the reported project version")
+project(zelph VERSION 0.9.7 LANGUAGES C CXX)
+set(ZELPH_VERSION_SUFFIX "-dev" CACHE STRING "Version suffix appended to the reported project version")
 
 include(GNUInstallDirs)
 

@@ -239,19 +239,19 @@ TEST_CASE("number literals: $ delegates to redefinable zelph/number")
                        // Decimal representation: identical to compact <...> syntax.
                        interactive.process("%(defn zelph/number [s] (zelph/list-chars s))");
                        collector.clear();
-                       interactive.process("$42 result_of test1");
+                       interactive.process("&42 result_of test1");
                        CHECK(any_output_starts_with(collector, "<42> result_of test1"));
 
                        // Binary representation: numeric variant suffices for test range.
                        interactive.process(R"(%(defn zelph/number [s] (var n (scan-number s)) (def bits @"") (while (> n 0) (buffer/push-string bits (string (% n 2))) (set n (math/floor (/ n 2)))) (zelph/list-chars (if (empty? bits) "0" (string/reverse (string bits))))))");
                        collector.clear();
-                       interactive.process("$5 result_of test2");
+                       interactive.process("&5 result_of test2");
                        CHECK(any_output_starts_with(collector, "<101> result_of test2"));
 
                        // Existing atoms starting with $ semantics: plain atom untouched?
                        // ($foo is not a number literal because zelph/number rejects it --
                        // it never reaches zelph/number: the atom rule only loses to the
-                       // number rule, whose transformation calls zelph/number; so $foo
+                       // number rule, whose transformation calls zelph/number; so &foo
                        // errors under the decimal defn? -> covered manually if needed.)
                    });
 }

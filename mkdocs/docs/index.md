@@ -260,7 +260,7 @@ The cons-list representation naturally distinguishes between:
 - a **character node** such as `"4"` (a normal named node), and
 - a **single-element list** `( "4" cons nil )` (a different node: a cons cell)
 
-Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting).
+Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting). For convenient input, the parser additionally supports `&`-prefixed number literals (e.g. `&42`), which delegate to the redefinable function `zelph/number` — so you can always type decimal even when the loaded arithmetic script uses a different internal base. See [Number Literals](logic.md#number-literals).
 
 #### The Focus Operator `*`
 
@@ -727,6 +727,7 @@ Current focus areas include:
 
 - **Graph-based arithmetic and symbolic computation**: zelph now supports rule-based multi-digit addition as a proof of concept for computation that emerges purely from graph topology (see [Logic and Computation](logic.md#semantic-math-computation-as-graph-rewriting)). This opens pathways towards using zelph as a foundation for formal reasoning and symbolic mathematics — a direction that bears some resemblance to [Lean](https://lean-lang.org), but which is based on a graph-native, homoiconic representation.
 - **Transitive reasoning and Wikidata integration**: A [second Wikimedia Rapid Fund proposal](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Transitive_Reasoning,_Qualifier_Support,_and_SPARQL-Subset_Integration_(ID:_23759260)>) targets transitive reasoning over Wikidata's subclass hierarchy, qualifier support, and SPARQL-subset integration — capabilities that also serve as building blocks for more general symbolic computation.
+- **Neural networks in the graph**: Since 0.9.7, zelph embeds a neural substrate directly in the semantic network — weighted edges as synapses, layers as ordinary sets, and rule conditions that consult trained networks via the `≈` operator. See [Neural Networks in the Graph](neural.md).
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
 Regarding potential Wikidata integration and the enhancement of semantic scripts, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.

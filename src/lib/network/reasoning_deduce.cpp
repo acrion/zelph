@@ -32,7 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx)
+void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx, const double confidence)
 {
     if (logging_active())
         _prof.deduce_calls.fetch_add(1, std::memory_order_relaxed);
@@ -230,7 +230,10 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
                         try
                         {
-                            d       = fact(source, rel, targets);
+                            // Confidence < 1 (from ≈ conditions) becomes the fact's probability in
+                            // the shared weight store. Note: if the fact already exists (known
+                            // correct), the existing probability is NOT upgraded or touched.
+                            d       = fact(source, rel, targets, confidence);
                             created = true;
 
                             if (logging_active())

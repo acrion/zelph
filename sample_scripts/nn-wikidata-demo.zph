@@ -1,0 +1,115 @@
+# nn-wikidata-demo.zph -- proof of concept: neural link prediction on
+# real Wikidata data, integrated with the reasoning engine via approx
+# rule conditions.
+#
+# Prerequisites, in this order:
+#   .load wikidata-20260309-all-pruned.bin     (full dump works too)
+#   .import sample_scripts/nn.zph
+#   .import sample_scripts/nn-wikidata-demo.zph
+#
+# The demo trains a net "geo" to predict a country's continent (P30),
+# then uses it in two rules:
+#   - guard:     re-derive plausible (A P30 X) facts as P30-verified,
+#                with the net's confidence as the fact's probability
+#   - generator: propose continents per country; proposals without a
+#                backing P30 fact surface as P30-candidate
+#
+# Everything the demo creates (layers, synapses, rules, deductions)
+# lives in the cluster "nn-demo":
+#   .cluster-drop nn-demo     removes the whole experiment
+#   .cluster-merge nn-demo default   keeps it
+.cluster nn-demo
+.lang wikidata
+
+%
+(def p31 (zelph/resolve "P31" "wikidata"))
+(def p30 (zelph/resolve "P30" "wikidata"))
+
+# Countries: direct instances of country (Q6256) OR sovereign state
+# (Q3624078). Many countries (e.g. Germany) carry only the latter.
+(def seen @{})
+(def countries @[])
+(each cls ["Q6256" "Q3624078"]
+  (each n (zelph/sources p31 (zelph/resolve cls "wikidata"))
+    (def id (zelph/name n "wikidata"))
+    (unless (get seen id)
+      (put seen id true)
+      (array/push countries n))))
+(print (string "countries found: " (length countries)))
+
+# Materialize the country set as facts so the rules below can match it
+# directly. This replaces the former (A P31 Q6256) rule condition, which
+# (a) missed sovereign states like Germany (Q183) and (b) forced the
+# engine to scan all ~15M P31 facts per rule. demo-country has only
+# |countries| facts, so unification is fast; the facts live in the
+# nn-demo cluster and are dropped together with everything else.
+(each n countries
+  (zelph/fact n "demo-country" "yes"))
+
+(def geo (nn/link-predictor "geo" countries [p30] :epochs 150 :lr 0.2))
+
+# Sanity checks over the actual training set (robust against dump
+# variations), not over hard-coded QIDs.
+(each n (array/slice countries 0 (min 3 (length countries)))
+  (print (string (zelph/name n "wikidata") " (" (or (zelph/name n "en") "?") "):"))
+  (each [name score] (nn/predict-names geo [n p30] 3 "en")
+    (print (string "    " name "  " (string/format "%.3f" score)))))
+%
+
+# Guard rule, restricted to the demo's country set: P30 also exists on
+# cities, mountains etc., which are not in the net's input layer --
+# without the restriction, those facts would be judged on the P30 prior
+# weight alone.
+(A demo-country yes, A P30 X, ≈geo(A P30 X)) => (A P30-verified X)
+
+# Generator rule: the net proposes continents (confidence > 0.5);
+# proposals not backed by an existing P30 fact are the interesting
+# ones -- potential completions or, on multi-continent countries like
+# Russia or Turkey, borderline judgements near the 0.5 threshold.
+(A demo-country yes, ≈geo(A P30 X), ¬(A P30 X)) => (A P30-candidate X)
+
+.run
+
+%
+# --- A-Z verification --------------------------------------------------
+# Confidences deduced via ≈ are stored as fact probabilities in the
+# shared weight store (edge: fact node -> predicate). Reading them back
+# closes the loop: net score -> rule confidence -> graph.
+(defn fact-conf [s p o]
+  # Read-only in effect: zelph/fact is only reached when the fact
+  # already exists; it then returns the existing node without touching
+  # the stored probability.
+  (if (zelph/exists s p o)
+    (zelph/weight (zelph/fact s p o) p)
+    nil))
+
+(defn show [pred rows]
+  (print (string pred " facts: " (length rows)))
+  (each row (array/slice rows 0 (min 5 (length rows)))
+    (def a (get row '_A))
+    (def x (get row '_X))
+    (print (string "  " (zelph/name a) " (" (or (zelph/name a "en") "?") ") -> "
+                   (zelph/name x)
+                   "  conf=" (string/format "%.3f" (fact-conf a pred x))))))
+
+(show "P30-verified"  (zelph/query (zelph/fact '_A "P30-verified" '_X)))
+(show "P30-candidate" (zelph/query (zelph/fact '_A "P30-candidate" '_X)))
+
+# --- Q183 (Germany) diagnostics -----------------------------------------
+# Germany carries only P31 Q3624078 in full dumps; whether it is covered
+# here depends on the pruned dump. Neither hard-coding an expectation nor
+# skipping silently: print the data and the derived facts.
+(def q183-node (find (fn [n] (= (zelph/name n "wikidata") "Q183")) countries))
+(if (nil? q183-node)
+  (print "Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks")
+  (do
+    (def targets (zelph/targets q183-node p30))
+    (print (string "Q183 P30 facts: "
+                   (if (empty? targets) "none"
+                       (string/join (map (fn [n] (zelph/name n "wikidata")) targets) ","))))
+    (print "Q183 net scores:")
+    (each [name score] (nn/predict-names geo [q183-node p30] 3 "en")
+      (print (string "    " name "  " (string/format "%.3f" score))))
+    (print (string "Q183 P30-verified Q46:  " (zelph/exists "Q183" "P30-verified" "Q46")))
+    (print (string "Q183 P30-candidate Q46: " (zelph/exists "Q183" "P30-candidate" "Q46")))))
+%

@@ -181,6 +181,9 @@ public:
 
         janet_def(_janet_env, "zelph/nn-eval-nodes", wrap((JanetCFunction)janet_cfun_zelph_nn_eval_nodes), "(zelph/nn-eval-nodes handle inputs &opt top-k)\nForward pass with node-addressed multi-hot input. Returns an array of [node score] "
                                                                                                            "tuples for the output layer, sorted by descending score (ties by ascending node id), limited to top-k if given.");
+
+        janet_def(_janet_env, "zelph/approx", wrap((JanetCFunction)janet_cfun_zelph_approx), "(zelph/approx pattern net-name)\nTag a fact pattern as a neural rule condition: creates (pattern nn net). "
+                                                                                             "Desugared form of ≈net(pattern). Returns the pattern node.");
     }
 
     void setup_module_paths() const
@@ -247,10 +250,15 @@ public:
                 # Unquote: ,identifier references a Janet variable
                 :tag-unquote (group (* (constant :unquote) "," (capture (some :symchars))))
 
-                # Number literal: $<token>. Syntax only -- the interpretation is
+                # Neural condition sugar: ≈net(pattern). Syntax only -- desugars to
+                # (zelph/approx pattern "net"), which tags the pattern in the graph.
+                :tag-approx (group (* (constant :approx) "≈" (capture (some :symchars)) :s* :val-any))
+
+                # Number literal: &<token>. Syntax only -- the interpretation is
                 # delegated to the redefinable Janet function zelph/number, so the
                 # internal number representation is defined by scripts, not by C++.
-                :tag-number (group (* (constant :number) "$" (capture (some :symchars))))
+                # (& as prefix is a nod to BBC BASIC / Amstrad CPC number literals.)
+                :tag-number (group (* (constant :number) "&" (capture (some :symchars))))
 
                 # Atom Definition Order:
                 # 1. Quoted (always safe)
@@ -299,7 +307,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-negation :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -331,7 +339,7 @@ public:
             (defn zelph/number
               "Fallback for $-literals: no number representation is loaded."
               [s]
-              (error (string "number literal $" s " has no representation - "
+              (error (string "number literal &" s " has no representation - "
                              "load a script that defines zelph/number "
                              "(e.g. arithmetic.zph or binary-arithmetic.zph)")))
         )janet";
@@ -927,6 +935,31 @@ public:
         return janet_wrap_nil(); // unreachable
     }
 
+    // Tag a fact pattern as a neural condition and return the TAG FACT
+    // (pattern nn <net>) -- not the pattern. The tag fact itself becomes
+    // the rule condition, structurally analogous to a != guard, so the
+    // pattern can additionally appear as an ordinary (binding) condition
+    // in the same rule without the two collapsing into one node.
+    static Janet janet_cfun_zelph_approx(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/approx", argc, argv, true);
+
+        network::Node pattern = zelph_unwrap_node(argv[0]);
+        if (!pattern) janet_panicf("zelph/approx: first argument must be a fact pattern node");
+
+        const uint8_t* str     = janet_getstring(argv, 1);
+        network::Node  net     = s_instance->_n->node(reinterpret_cast<const char*>(str), s_instance->_n->lang());
+        network::Node  nn_pred = s_instance->_n->node("nn", "zelph");
+
+        network::Node tag = s_instance->_n->fact(pattern, nn_pred, {net});
+
+        Janet res = zelph_wrap_node(tag);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/approx", argc, argv, false, res);
+        return res;
+    }
+
     // Extract the car (first element / subject) of a cons cell.
     // Returns nil if the argument is nil or not a valid cons cell.
     static Janet janet_cfun_zelph_car(int32_t argc, Janet* argv)
@@ -1479,6 +1512,19 @@ public:
             // Desugars ¬X to (zelph/negate X)
             // which tags the pattern node with core.Negation and returns it.
             return "(zelph/negate " + transform_arg(data[1]) + ")";
+        }
+        else if (type == "approx")
+        {
+            // [:approx net-name inner] -- desugars ≈net(pattern) to
+            // (zelph/approx pattern "net"): tags the pattern with the fact
+            // (pattern nn net) and returns the pattern node, so it can serve
+            // as a rule condition like any other pattern.
+            if (len < 3) return "nil";
+            std::string net;
+            if (janet_checktype(data[1], JANET_STRING))
+                net = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
+            return "(zelph/approx " + transform_arg(data[2])
+                 + " \"" + string::replace_all_copy(net, "\"", "\\\"") + "\")";
         }
         else if (type == "list-nodes")
         {
