@@ -1,0 +1,16 @@
+.load /home/stefan/zelph/wikidata-20260309-all-pruned.bin
+.import sparql
+%(set sparql-profile true)
+sparql
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT DISTINCT ?class WHERE {
+  ?class wdt:P279+ wd:Q215627 .
+  ?class wdt:P279+ wd:Q43229 .
+  MINUS {
+    ?class wdt:P279 ?parent .
+    ?parent wdt:P279+ wd:Q215627 .
+    ?parent wdt:P279+ wd:Q43229 .
+  }
+}
+
