@@ -13,6 +13,12 @@
 
 %
 (defn zelph/number [s] (zelph/list-chars s))
+
+# Register the digit alphabet (ascending order of value) so that
+# node_to_string displays digit cons lists as decimal &-literals -- the
+# inverse of the &-input syntax above. Display registration only; the graph
+# topology and all other cons lists are unaffected.
+(zelph/set-number-digits (map string (range 10)))
 %
 
 # ---------------------------------------------------------------------------

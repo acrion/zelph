@@ -292,16 +292,16 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
                 Node rel = *rels_for_score.begin();
                 if (!Zelph::Impl::is_var(rel))
                 {
-                    adjacency_set rel_facts;
-                    if (_pImpl->snapshot_left_of(rel, rel_facts))
+                    // Size-only lookup: snapshot_left_of copied the entire
+                    // relation extent per scoring iteration just to read its
+                    // size -- catastrophic for high-cardinality relations
+                    // such as P31 on a full Wikidata load.
+                    const size_t n = _pImpl->left_count_of(rel);
+                    if (n > 0)
                     {
                         // Subtract a small penalty proportional to log(fact_count)
                         // so that high-cardinality relations are tried last
-                        size_t n = rel_facts.size();
-                        if (n > 0)
-                        {
-                            score -= std::log2(static_cast<double>(n));
-                        }
+                        score -= std::log2(static_cast<double>(n));
                     }
                 }
             }

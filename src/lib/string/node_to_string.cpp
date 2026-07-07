@@ -68,6 +68,29 @@ namespace zelph::string
     }
 }
 
+namespace
+{
+    // In-place: dec (MSB-first decimal digit string) := dec * base + add.
+    // Pure string arithmetic, so arbitrarily large numbers work. Used to
+    // convert a registered-digit cons list (any base) to its decimal
+    // &-literal display.
+    void mul_add_decimal(std::string& dec, const uint64_t base, const uint64_t add)
+    {
+        uint64_t carry = add;
+        for (auto it = dec.rbegin(); it != dec.rend(); ++it)
+        {
+            const uint64_t v = static_cast<uint64_t>(*it - '0') * base + carry;
+            *it              = static_cast<char>('0' + v % 10);
+            carry            = v / 10;
+        }
+        while (carry != 0)
+        {
+            dec.insert(dec.begin(), static_cast<char>('0' + carry % 10));
+            carry /= 10;
+        }
+    }
+}
+
 void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
 {
     // Formats a node into a string representation.
@@ -217,6 +240,44 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
             if (!list_elements.empty())
             {
+                // Number display: if a digit alphabet is registered via
+                // zelph/set-number-digits (see stdlib/arithmetic.zph), a
+                // properly nil-terminated cons list consisting solely of
+                // registered digit nodes is rendered as a decimal &-literal
+                // -- the exact inverse of the &-input syntax (zelph/number).
+                // Any other cons list (unterminated chains, variables,
+                // unregistered elements) falls through to the generic <...>
+                // display below, so cons lists remain general-purpose.
+                if (const auto digit_values = z->number_digit_values())
+                {
+                    if (current == z->core.Nil) // walk must have ended at the nil terminator
+                    {
+                        bool           all_digits = true;
+                        std::string    dec        = "0";
+                        const uint64_t base       = static_cast<uint64_t>(digit_values->size());
+
+                        // list_elements is LSB-first; iterate MSB-first and
+                        // accumulate dec = dec * base + digit_value.
+                        for (auto it = list_elements.rbegin(); it != list_elements.rend(); ++it)
+                        {
+                            const network::Node eff = resolve_var(*it);
+                            const auto          dv  = digit_values->find(eff);
+                            if (network::Zelph::is_var(eff) || dv == digit_values->end())
+                            {
+                                all_digits = false;
+                                break;
+                            }
+                            mul_add_decimal(dec, base, dv->second);
+                        }
+
+                        if (all_digits)
+                        {
+                            result = "&" + dec;
+                            return;
+                        }
+                    }
+                }
+
                 // Check whether all elements are single-character named nodes (digit-like).
                 // Ensure no variable is present, so we don't accidentally contract variable lists.
                 bool all_single_char = true;

@@ -255,3 +255,37 @@ TEST_CASE("number literals: $ delegates to redefinable zelph/number")
                        // errors under the decimal defn? -> covered manually if needed.)
                    });
 }
+
+// ---------------------------------------------------------------------------
+// Number display: registered digit alphabet
+// ---------------------------------------------------------------------------
+
+TEST_CASE("number display: registered digits render lists as decimal &-literals")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Decimal representation: display is the identity conversion.
+        interactive.process("%(defn zelph/number [s] (zelph/list-chars s))");
+        interactive.process("%(zelph/set-number-digits (map string (range 10)))");
+        collector.clear();
+        interactive.process("&42 result_of testd1");
+        CHECK(any_output_starts_with(collector, "&42 result_of testd1"));
+
+        // Cons lists with unregistered elements keep the generic display.
+        collector.clear();
+        interactive.process("<ab> tagged testd2");
+        CHECK(any_output_contains(collector, "<ab>"));
+
+        // Binary representation: display converts back to decimal (&5 <-> <101>).
+        interactive.process(R"(%(defn zelph/number [s] (var n (scan-number s)) (def bits @"") (while (> n 0) (buffer/push-string bits (string (% n 2))) (set n (math/floor (/ n 2)))) (zelph/list-chars (if (empty? bits) "0" (string/reverse (string bits))))))");
+        interactive.process(R"(%(zelph/set-number-digits ["0" "1"]))");
+        collector.clear();
+        interactive.process("&5 result_of testd3");
+        CHECK(any_output_starts_with(collector, "&5 result_of testd3"));
+
+        // Empty array disables the feature -> generic display again.
+        interactive.process("%(zelph/set-number-digits [])");
+        collector.clear();
+        interactive.process("&5 result_of testd4");
+        CHECK(any_output_starts_with(collector, "<101> result_of testd4")); });
+}

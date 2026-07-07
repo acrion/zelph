@@ -719,3 +719,53 @@ y ancestor z
         CHECK(any_output_contains(collector, "(A «ancestor» B)"));
         CHECK_FALSE(any_output_contains(collector, "«??» «ancestor»")); });
 }
+
+// ---------------------------------------------------------------------------
+// Bound-pattern grounding: exact object-set semantics for nested patterns
+// ---------------------------------------------------------------------------
+
+TEST_CASE("grounding: fully bound nested pattern requires the exact fact node")
+{
+    // Documents a deliberate design decision of bound-pattern grounding
+    // (ground_pattern in unification.cpp): once all variables of a
+    // structured condition SUBJECT are bound, the pattern denotes exactly
+    // one fact node, resolved via hash lookup with EXACT object-set
+    // semantics -- consistent with instantiate_fact() and the termination
+    // guard. Deep unification's greedy subset matching of objects is
+    // deliberately NOT replicated at this point: a graph fact carrying
+    // additional objects is a different node and is not found. (Top-level
+    // condition objects keep the documented "objects as alternatives"
+    // subset semantics via extract_bindings.) To restore subset matching
+    // for this corner case, ground_pattern would have to return Unbound
+    // instead of Missing -- at the cost of falling back to a full scan.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x trigger b1
+(a d+ b1 b2) ci c
+((a d+ b1 b2) ci c) co e
+(x trigger B, ((a d+ B) ci c) co E) => (found B E)
+)");
+        // The first condition binds B = b1 (bound subject x guarantees it
+        // is evaluated first). The grounded pattern ((a d+ b1) ci c) then
+        // denotes a fact node that does not exist -- only the multi-object
+        // variant ((a d+ b1 b2) ci c) does -- so the condition fails
+        // instead of subset-matching the multi-object fact.
+        CHECK_FALSE(any_output_starts_with(collector, "( found")); });
+}
+
+TEST_CASE("grounding: fully bound nested pattern anchors on the exact fact node")
+{
+    // Positive control for the exact-object semantics above: with the
+    // exact single-object fact present, grounding resolves the pattern to
+    // the concrete node and the rule fires via a direct anchor (no scan).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x trigger b1
+(a d+ b1) ci c
+((a d+ b1) ci c) co e
+(x trigger B, ((a d+ B) ci c) co E) => (found B E)
+)");
+        CHECK(any_output_starts_with(collector, "( found b1 e )")); });
+}

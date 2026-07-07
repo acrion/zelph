@@ -161,6 +161,17 @@ namespace zelph::network
         double               edge_weight(Node from, Node to, double fallback = 1.0) const;
         void                 set_edge_weight(Node from, Node to, double weight) const;
 
+        // --- Number display (registered digit alphabet) ---
+        // A script may register the digit alphabet of its number
+        // representation, in ascending order of value. node_to_string then
+        // renders cons lists consisting solely of these digit nodes as
+        // decimal &-literals -- the exact inverse of the &-input syntax
+        // (zelph/number). An empty vector disables the feature. Any other
+        // list keeps the generic <...> display, so cons lists stay
+        // general-purpose. See stdlib/arithmetic.zph.
+        void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
+        std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
+
         // --- Implemented in zelph_names.cpp (name management) ---
 
         void                     set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
@@ -228,9 +239,11 @@ namespace zelph::network
         } core;
 
     protected:
-        std::string                                    _lang{"en"};
-        std::unordered_map<network::Node, std::string> _core_names_by_node;
-        std::unordered_map<std::string, network::Node> _core_names_by_name;
-        bool                                           _use_parallel{true};
+        std::string                                               _lang{"en"};
+        std::unordered_map<network::Node, std::string>            _core_names_by_node;
+        std::unordered_map<std::string, network::Node>            _core_names_by_name;
+        bool                                                      _use_parallel{true};
+        std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
+        mutable std::shared_mutex                                 _smtx_number_digits;
     };
 }

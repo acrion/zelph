@@ -56,6 +56,11 @@
       # bits is LSB-first; zelph/list-chars expects printed (MSB-first)
       # order and reverses internally, so reverse here.
       (zelph/list-chars (string/reverse (string bits))))))
+
+# Register the binary digit alphabet (ascending order of value):
+# node_to_string then displays these cons lists as decimal &-literals,
+# inverting the &-input conversion above. Display only.
+(zelph/set-number-digits ["0" "1"])
 %
 
 # ---------------------------------------------------------------------------

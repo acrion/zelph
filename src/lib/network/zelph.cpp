@@ -576,6 +576,35 @@ void Zelph::set_edge_weight(const Node from, const Node to, const double weight)
     _pImpl->set_edge_weight(from, to, weight);
 }
 
+void Zelph::set_number_digits(const std::vector<Node>& digits_ascending)
+{
+    std::shared_ptr<const std::unordered_map<Node, uint32_t>> table;
+
+    if (!digits_ascending.empty())
+    {
+        if (digits_ascending.size() < 2)
+            throw std::invalid_argument("set_number_digits: at least 2 digits are required (or none to disable)");
+
+        auto map = std::make_shared<std::unordered_map<Node, uint32_t>>();
+        for (size_t i = 0; i < digits_ascending.size(); ++i)
+            (*map)[digits_ascending[i]] = static_cast<uint32_t>(i);
+
+        if (map->size() != digits_ascending.size())
+            throw std::invalid_argument("set_number_digits: duplicate digit nodes");
+
+        table = std::move(map);
+    }
+
+    std::unique_lock lock(_smtx_number_digits);
+    _number_digits = std::move(table);
+}
+
+std::shared_ptr<const std::unordered_map<Node, uint32_t>> Zelph::number_digit_values() const
+{
+    std::shared_lock lock(_smtx_number_digits);
+    return _number_digits;
+}
+
 /**
  * Builds a Lisp-style singly linked list from a vector of Node elements using cons cells.
  *

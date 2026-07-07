@@ -366,6 +366,14 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/number str)`**  
   Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) (decimal) or [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
 
+- **`(zelph/set-number-digits digits)`**  
+  Register the digit alphabet of the loaded number representation, as an array
+  of digit nodes or names in ascending order of value (e.g. `["0" "1"]` for
+  binary). `node_to_string` then displays every `nil`-terminated cons list
+  consisting solely of these digit nodes as a decimal `&`-literal -- the
+  inverse of `zelph/number`. All other cons lists keep the generic `<...>`
+  display. An empty array disables the feature.
+
 ### Referencing Janet Variables in zelph: Unquote `,`
 
 The `,` (comma) operator bridges the two languages in the opposite direction: it allows zelph statements to reference values defined in Janet. Prefix any Janet variable name with `,` inside zelph syntax:
@@ -807,12 +815,6 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 
 This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
 
-### Extending the REPL: `zelph/register-keyword`
-
-`(zelph/register-keyword keyword handler)` registers a custom multi-line syntax block for the REPL and for `.zph` scripts. After the keyword is entered (optionally with content on the same line), subsequent lines are accumulated verbatim until an empty line, then passed as a single string to `handler`. The handler may return `:incomplete` to signal that the block is not yet complete (e.g. unbalanced braces) — accumulation then continues, and a second consecutive blank line forces dispatch. String results are printed line by line.
-
-This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
-
 ### Summary: zelph Syntax and Janet Equivalents
 
 | zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |
@@ -841,4 +843,5 @@ This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` k
 | `(cond1, cond2, cond3)`         | _(desugars to)_ set + `~ conjunction`               | Conjunction expression (comma sugar), evaluates to the conjunction set node |
 | `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |
 | `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
+| `&`-literal display             | `(zelph/set-number-digits ["0" "1" ...])`           | Register digit alphabet; digit lists display as decimal `&`-literals        |
 | `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |

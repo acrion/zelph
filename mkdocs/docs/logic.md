@@ -540,6 +540,11 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 #### A Worked Example
 
+> Note: since `arithmetic.zph` registers its digit alphabet, a live session
+> displays these lists as decimal `&`-literals (e.g. `&12345` instead of
+> `<12345>`). The raw `<...>` notation is kept below to make the underlying
+> cons structure visible.
+
 ```
 .import arithmetic
 (<12345> + <98765>) = X
@@ -584,6 +589,25 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 Nothing in the engine is hard-coded for addition.
 The computation emerges from the same topological primitives used for ordinary knowledge representation — facts, conjunctions, cons-lists — plus eight generic inference rules.
 
+#### Asserting vs. Querying
+
+`&123456 + &987654` is an assertion, not a query: it adds the `+` fact to the
+graph, and the inference engine derives the result (plus all intermediate
+`add`/`ci`/`sum` states) exactly once. Re-entering the same assertion produces
+no output -- the fixpoint has already been reached, which is correct
+forward-chaining behaviour. To retrieve a result (again), use a query:
+
+```
+(&123456 + &987654) = X
+```
+
+Queries contain variables and are always evaluated, so this prints the result
+no matter how often it is repeated. The derived intermediate facts
+deliberately stay in the graph: they are reusable knowledge for subsequent
+computations. To sandbox a computation instead, wrap it in a
+[cluster](index.md#node-clusters-transactional-workspaces) and drop it
+afterwards.
+
 ### Semantic Integration with Knowledge Graphs
 
 Because list elements are ordinary graph nodes, any arithmetic rule that produces a digit automatically inherits all semantic facts known about that digit.
@@ -603,9 +627,19 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
 
 1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
 
-2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom.
+2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
 
-   (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
+3. **Symmetric output.** The display side mirrors the input side: a script can
+   register its digit alphabet via `(zelph/set-number-digits ["0" "1" ...])`
+   (digit nodes or names, in ascending order of value). From then on,
+   `node_to_string` renders every properly `nil`-terminated cons list that
+   consists _solely_ of registered digit nodes as a decimal `&`-literal --
+   regardless of the internal base. `stdlib/arithmetic.zph` registers `0`–`9`,
+   `stdlib/binary-arithmetic.zph` registers `0` and `1`, so both display `&5`
+   for their respective internal lists `<5>` and `<101>`. Any other cons list
+   -- including lists of single-character nodes that are not registered digits
+   -- keeps the generic `<...>` display, so cons lists remain general-purpose.
+   An empty array disables the feature.
 
 This split keeps the philosophy intact: the _representation_ of numbers lives in scripts and rules, while the _convenience_ of familiar decimal input lives in the parser — decoupled through one redefinable function.
 

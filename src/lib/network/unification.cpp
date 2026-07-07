@@ -734,11 +734,11 @@ bool Unification::increment_fact_index()
                     // Filter candidates: we only want facts that are of type 'current_rel'
                     for (Node fact : candidates)
                     {
-                        if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+                        if (_n->has_left_edge(fact, current_rel)) continue;
 
                         // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
                         // So get_right(Fact) contains RelationType.
-                        if (_n->get_right(fact).count(current_rel) == 1)
+                        if (_n->has_right_edge(fact, current_rel))
                         {
                             _facts_snapshot.insert(fact);
                         }
@@ -763,9 +763,9 @@ bool Unification::increment_fact_index()
                         _facts_snapshot.clear();
                         for (Node fact : candidates)
                         {
-                            if (_n->_pImpl->get_left(fact).count(current_rel) == 1) continue;
+                            if (_n->has_left_edge(fact, current_rel)) continue;
 
-                            if (_n->get_right(fact).count(current_rel) == 1)
+                            if (_n->has_right_edge(fact, current_rel))
                             {
                                 _facts_snapshot.insert(fact);
                             }
@@ -833,7 +833,7 @@ bool Unification::increment_fact_index()
         {
             return false;
         }
-    } while (_n->_pImpl->get_left(*_fact_index).count(*_relation_index) == 1); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
+    } while (_n->has_left_edge(*_fact_index, *_relation_index)); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
 
     return true;
 }
@@ -943,7 +943,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
             return results;
         }
     }
-    else if (_subject_pred_hint && _n->get_right(subject).count(_subject_pred_hint) == 0)
+    else if (_subject_pred_hint && !_n->has_right_edge(subject, _subject_pred_hint))
     {
         if (_n->logging_active()) _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
         return results;

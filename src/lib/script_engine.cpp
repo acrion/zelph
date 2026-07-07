@@ -184,6 +184,12 @@ public:
 
         janet_def(_janet_env, "zelph/approx", wrap((JanetCFunction)janet_cfun_zelph_approx), "(zelph/approx pattern net-name)\nTag a fact pattern as a neural rule condition: creates (pattern nn net). "
                                                                                              "Desugared form of ≈net(pattern). Returns the pattern node.");
+
+        janet_def(_janet_env, "zelph/set-number-digits", wrap((JanetCFunction)janet_cfun_zelph_set_number_digits), "(zelph/set-number-digits digits)\nRegister the digit alphabet of the loaded number representation, as an "
+                                                                                                                   "array of digit nodes or names in ascending order of value (e.g. [\"0\" \"1\"] for binary). "
+                                                                                                                   "node_to_string then displays every nil-terminated cons list consisting solely of these digit "
+                                                                                                                   "nodes as a decimal &-literal -- the inverse of the &-input syntax (zelph/number). All other "
+                                                                                                                   "cons lists keep the generic <...> display. An empty array disables the feature.");
     }
 
     void setup_module_paths() const
@@ -958,6 +964,45 @@ public:
         Janet res = zelph_wrap_node(tag);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/approx", argc, argv, false, res);
         return res;
+    }
+
+    // Register the digit alphabet for &-literal display (inverse of the
+    // &-input syntax). Digits are given in ascending order of value; the
+    // base is the array length. C++ makes no assumptions about the digit
+    // names, their count, or their internal order -- the only hardcoded
+    // convention is that &-literals are always decimal, on input and output.
+    static Janet janet_cfun_zelph_set_number_digits(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-number-digits", argc, argv, true);
+
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(argv[0], &data, &len))
+            janet_panicf("zelph/set-number-digits: expected an array or tuple of digit nodes/names");
+
+        std::vector<network::Node> digits;
+        digits.reserve(static_cast<size_t>(len));
+        for (int32_t i = 0; i < len; ++i)
+        {
+            network::Node nd = s_instance->resolve_janet_arg(data[i]);
+            if (!nd) janet_panicf("zelph/set-number-digits: digit at index %d could not be resolved", i);
+            digits.push_back(nd);
+        }
+
+        std::string err;
+        try
+        {
+            s_instance->_n->set_number_digits(digits);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/set-number-digits: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
     }
 
     // Extract the car (first element / subject) of a cons cell.

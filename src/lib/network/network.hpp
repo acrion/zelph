@@ -521,6 +521,17 @@ namespace zelph::network
             return true;
         }
 
+        // Size-only counterpart of snapshot_left_of: the number of incoming
+        // edges of b (for a predicate node: the number of facts using it as
+        // relation type) WITHOUT copying the adjacency set. Used for
+        // cardinality heuristics such as condition ordering.
+        size_t left_count_of(Node b) const
+        {
+            std::shared_lock<std::shared_mutex> lock(_smtx_right);
+            auto                                it = _right.find(b);
+            return it == _right.end() ? 0 : it->second.size();
+        }
+
         // get predecessors / incoming edges
         adjacency_set get_left(const Node b) const
         {
