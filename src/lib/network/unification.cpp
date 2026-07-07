@@ -298,6 +298,115 @@ static bool contains_variable_deep(Zelph* n, Node nd, const int depth, std::unor
     return false;
 }
 
+// --- Bound-pattern grounding -------------------------------------------------
+//
+// A structured rule pattern whose variables are all bound by earlier
+// conditions denotes exactly one concrete node: the fact node obtained by
+// substituting the bindings bottom-up. ground_pattern resolves that node via
+// pure hash lookups (check_fact) WITHOUT creating anything.
+//
+// Result semantics:
+//   Grounded  out = the existing concrete node
+//   Unbound   at least one variable is unbound (or the structure is cyclic /
+//             undecomposable) -> caller falls back to scanning
+//   Missing   all variables are bound, but the denoted fact does not exist
+//             -> the condition cannot match at all (fail fast)
+//
+// NOTE on multi-object facts: lookup uses check_fact and therefore EXACT
+// object-set semantics -- the same interpretation that instantiate_fact()
+// and the termination guard (consequences_already_exist) apply to fully
+// bound patterns. extract_bindings' greedy subset matching of objects is
+// deliberately NOT replicated here: a graph fact carrying additional objects
+// beyond the pattern's is a different node and is not found. If that corner
+// case ever becomes relevant, returning Unbound instead of Missing below
+// restores the scan-based (subset-matching) behaviour.
+
+enum class GroundResult
+{
+    Grounded,
+    Unbound,
+    Missing
+};
+
+static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars, const int depth, Node& out, std::vector<Node>& history)
+{
+    if (pattern == 0) return GroundResult::Unbound;
+
+    if (Zelph::Impl::is_var(pattern))
+    {
+        const Node bound = zelph::string::get(vars, pattern, Node{0});
+        if (bound == 0 || Zelph::Impl::is_var(bound)) return GroundResult::Unbound;
+        out = bound;
+        return GroundResult::Grounded;
+    }
+
+    if (!Zelph::Impl::is_hash(pattern))
+    {
+        out = pattern; // plain atom
+        return GroundResult::Grounded;
+    }
+
+    for (Node visited : history)
+        if (visited == pattern) return GroundResult::Unbound; // cyclic structure: be conservative
+    history.push_back(pattern);
+
+    FactStructure fs = get_preferred_structure(n, pattern, depth);
+    if (fs.predicate == 0)
+    {
+        history.pop_back();
+        // Hash node without decomposable structure (e.g. a set node):
+        // concrete iff it contains no variables.
+        std::unordered_set<Node> visited;
+        if (contains_variable_deep(n, pattern, depth, visited)) return GroundResult::Unbound;
+        out = pattern;
+        return GroundResult::Grounded;
+    }
+
+    Node         gs = 0;
+    GroundResult r  = ground_pattern(n, fs.subject, vars, depth, gs, history);
+    if (r != GroundResult::Grounded)
+    {
+        history.pop_back();
+        return r;
+    }
+
+    Node gp = 0;
+    r       = ground_pattern(n, fs.predicate, vars, depth, gp, history);
+    if (r != GroundResult::Grounded)
+    {
+        history.pop_back();
+        return r;
+    }
+
+    adjacency_set gobjs;
+    bool          changed = (gs != fs.subject) || (gp != fs.predicate);
+    for (Node o : fs.objects)
+    {
+        Node go = 0;
+        r       = ground_pattern(n, o, vars, depth, go, history);
+        if (r != GroundResult::Grounded)
+        {
+            history.pop_back();
+            return r;
+        }
+        gobjs.insert(go);
+        if (go != o) changed = true;
+    }
+    history.pop_back();
+
+    if (!changed)
+    {
+        out = pattern; // pattern was fully concrete to begin with
+        return GroundResult::Grounded;
+    }
+
+    const Answer ans = n->check_fact(gs, gp, gobjs);
+    if (!ans.is_known()) return GroundResult::Missing;
+
+    out = ans.relation();
+    return GroundResult::Grounded;
+}
+
 Unification::Unification(
     Zelph*                            n,
     Node                              condition,
@@ -371,6 +480,36 @@ Unification::Unification(
         }
     }
 
+    // --- Bound-pattern grounding ---
+    // A structured subject pattern whose variables are all bound denotes
+    // exactly one concrete fact node. Resolving it via hash lookup turns a
+    // full-relation (or hub-anchored) scan into a direct subject-driven
+    // anchor; if the denoted node does not exist, the condition can never
+    // match and unification terminates immediately.
+    if (!_relation_list.empty() && _subject != 0
+        && Zelph::Impl::is_hash(_subject) && !Zelph::Impl::is_var(_subject))
+    {
+        std::unordered_set<Node> visited;
+        if (contains_variable_deep(_n, _subject, _log_depth, visited))
+        {
+            Node              grounded = 0;
+            std::vector<Node> ground_history;
+            switch (ground_pattern(_n, _subject, *_variables, _log_depth, grounded, ground_history))
+            {
+            case GroundResult::Grounded:
+                _subject_grounded = grounded;
+                U_LOG(_log_depth, "subject pattern grounded to " + U_NODE(grounded));
+                break;
+            case GroundResult::Missing:
+                U_LOG(_log_depth, "subject pattern grounding: denoted fact missing -> condition cannot match");
+                _relation_list.clear();
+                return;
+            case GroundResult::Unbound:
+                break; // unbound variables remain -> scan as before
+            }
+        }
+    }
+
     if (_n->should_log(1) && _n->should_log(_log_depth - (_relation_list.empty() ? 0 : 1)))
     {
         std::string rels_str;
@@ -391,7 +530,13 @@ Unification::Unification(
         //  parallel only with fixed relation
         //  OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
         bool subject_is_bound = false;
-        if (_subject != 0)
+        if (_subject_grounded != 0)
+        {
+            // A grounded subject pattern is as good as a bound atom: the
+            // grounded node is a direct get_right() anchor.
+            subject_is_bound = true;
+        }
+        else if (_subject != 0)
         {
             Node s = _subject;
             if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
@@ -456,17 +601,20 @@ Unification::Unification(
 
             if (snapshot.size() > 0)
             {
+                _use_parallel = true;
+                _snapshot_vec.assign(snapshot.begin(), snapshot.end());
+
                 if (_n->logging_active())
                 {
+                    // NOTE: must run AFTER _snapshot_vec is assigned; the
+                    // previous ordering attributed size 0 to parallel scans,
+                    // hiding them from top_relations_by_scan entirely.
                     _prof.unification_parallel_instances.fetch_add(1, std::memory_order_relaxed);
                     _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
                     _prof.snapshot_full_relation.fetch_add(1, std::memory_order_relaxed);
                     _prof.snapshot_facts_total.fetch_add(_snapshot_vec.size(), std::memory_order_relaxed);
                     if (_current_rel_ctx) _prof.note_relation_scan(_current_rel_ctx, _snapshot_vec.size());
                 }
-
-                _use_parallel = true;
-                _snapshot_vec.assign(snapshot.begin(), snapshot.end());
 
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                 {
@@ -575,6 +723,7 @@ bool Unification::increment_fact_index()
                 // Check if Subject is bound
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
+                if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
                 if (is_concrete_lookup_node(s))
                 {
                     // Strategy: Subject Driven

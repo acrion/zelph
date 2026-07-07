@@ -19,8 +19,9 @@
 # sum 0 / co 1 in base 2). The reasoning engine would match both.
 #
 # Usage after loading this script:
-#   <101> + <11>       (5 + 3 = 8 -> <1000>)
-#   <1111> + <1>       (15 + 1 = 16 -> <10000>)
+#   (<101> + <11>) = X       (5 + 3 = 8 -> <1000>)
+#   (<1111> + <1>) = X       (15 + 1 = 16 -> <10000>)
+#   (&128 + &53) = X         (128 + 53 = 181 -> 10110101)
 
 %
 (defn- half-decimal

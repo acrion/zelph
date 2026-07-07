@@ -75,9 +75,12 @@ namespace zelph::network
         Node                       _subject{};
         adjacency_set              _objects;
         Node                       _subject_pred_hint{};
-        int                        _log_depth{};
-        ReasoningProfiler&         _prof;
-        Node                       _current_rel_ctx{};
+        Node                       _subject_grounded{}; // concrete fact node the subject pattern
+                                                        // resolves to under current bindings
+                                                        // (bound-pattern grounding); 0 = not groundable
+        int                _log_depth{};
+        ReasoningProfiler& _prof;
+        Node               _current_rel_ctx{};
 
         // Parallel mode
         concurrency::ThreadPool*               _pool{nullptr};

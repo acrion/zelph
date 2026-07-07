@@ -101,7 +101,7 @@ The following is an unedited session running one of the disjointness-culprit que
 
 ```
 ❯ build-release/bin/zelph
-zelph 0.9.6
+zelph 0.9.7
 -- REPL mode - type .help for commands, .quit to exit --
 
 zelph> .load /home/stefan/zelph/wikidata-20260309-all.bin
@@ -129,9 +129,9 @@ Languages: 2
 Rules: 0
 ------------------------
 zelph-> .import sparql
-Importing file stdlib/sparql.zph...
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/sparql.zph...
 "SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
--- 32 ms --
+-- 23 ms --
 zelph-> %(set sparql-profile true)
 true
 zelph-> sparql
@@ -150,15 +150,15 @@ SELECT DISTINCT ?class WHERE {
 Building adjacency index over 5166340 relation nodes (24 thread(s))...
 Adjacency index ready: 5166316 edges.
 Saved adjacency index to /home/stefan/zelph/wikidata-20260309-all.bin.pidx.322 (5166316 edges).
-[sparql  58.977s] closure bwd Q215627
+[sparql  57.741s] closure bwd Q215627
 [sparql   0.034s] closure bwd Q43229
-[sparql  59.287s] closure-intersection ?class (2 steps)
-[sparql   0.455s] bgp 1 triple(s) over 143082 sol(s)
-[sparql   0.093s] path-step over 160466 sol(s)
-[sparql   0.095s] path-step over 159063 sol(s)
-[sparql   0.643s] minus inner (143082 seeds)
-[sparql   0.123s] minus-join 143082x152822
-[sparql  60.072s] total eval
+[sparql  58.057s] closure-intersection ?class (2 steps)
+[sparql   0.451s] bgp 1 triple(s) over 143082 sol(s)
+[sparql   0.089s] path-step over 160466 sol(s)
+[sparql   0.092s] path-step over 159063 sol(s)
+[sparql   0.632s] minus inner (143082 seeds)
+[sparql   0.119s] minus-join 143082x152822
+[sparql  58.826s] total eval
 ?class
 Q10870991 (host)
 Q135778122
@@ -302,7 +302,7 @@ Q11424445 (jihon don'ya)
 Q56304483 (magazine and newspaper publisher)
 Q11569980
 -- 141 result(s) --
--- 1m0.090s --
+-- 58.838 s --
 zelph-> sparql
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -316,15 +316,15 @@ SELECT DISTINCT ?class WHERE {
   }
 }
 
-[sparql   0.413s] closure bwd Q215627
+[sparql   0.399s] closure bwd Q215627
 [sparql   0.030s] closure bwd Q43229
-[sparql   0.629s] closure-intersection ?class (2 steps)
-[sparql   0.474s] bgp 1 triple(s) over 143082 sol(s)
-[sparql   0.096s] path-step over 160466 sol(s)
-[sparql   0.097s] path-step over 159063 sol(s)
-[sparql   0.667s] minus inner (143082 seeds)
-[sparql   0.120s] minus-join 143082x152822
-[sparql   1.418s] total eval
+[sparql   0.615s] closure-intersection ?class (2 steps)
+[sparql   0.521s] bgp 1 triple(s) over 143082 sol(s)
+[sparql   0.094s] path-step over 160466 sol(s)
+[sparql   0.094s] path-step over 159063 sol(s)
+[sparql   0.710s] minus inner (143082 seeds)
+[sparql   0.117s] minus-join 143082x152822
+[sparql   1.442s] total eval
 ?class
 Q10870991 (host)
 Q135778122
@@ -468,7 +468,7 @@ Q11424445 (jihon don'ya)
 Q56304483 (magazine and newspaper publisher)
 Q11569980
 -- 141 result(s) --
--- 1.418 s --
+-- 1.442 s --
 zelph-> .quit
 
 

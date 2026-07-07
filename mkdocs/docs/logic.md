@@ -542,7 +542,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 ```
 .import arithmetic
-<12345> + <98765>
+(<12345> + <98765>) = X
 ```
 
 **Trigger (Rule A0):** Seeds the internal addition state with carry-in 0:

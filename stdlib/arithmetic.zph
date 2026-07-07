@@ -7,8 +7,9 @@
 # MSB-first notation.
 #
 # Usage after loading this script:
-#   <42> + <9>
-#   <99> + <1>
+#   (<42> + <9>) = X
+#   (<99> + <1>) = X
+#   (&128 + &53) = X
 
 %
 (defn zelph/number [s] (zelph/list-chars s))

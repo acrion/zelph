@@ -208,6 +208,26 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
     std::vector<Node> pending(conditions.begin(), conditions.end());
     Variables         simulated_vars = current_vars;
 
+    // A term counts as "bound" for scoring purposes if the unification engine
+    // can resolve it to a concrete node without scanning: atoms, bound
+    // variables, and structured patterns whose variables are all
+    // (simulated-)bound -- the latter thanks to bound-pattern grounding in
+    // Unification. A pattern with unbound inner variables is as expensive as
+    // an unbound variable and must not receive the bonus.
+    auto is_bound_term = [&](Node nd) -> bool
+    {
+        if (nd == 0) return false;
+        if (Zelph::Impl::is_var(nd)) return simulated_vars.count(nd) != 0;
+        if (!Zelph::Impl::is_hash(nd)) return true; // plain atom
+
+        std::unordered_set<Node> vars;
+        std::vector<Node>        history;
+        collect_variables(this, nd, vars, depth, history);
+        for (Node v : vars)
+            if (simulated_vars.count(v) == 0) return false;
+        return true;
+    };
+
     while (!pending.empty())
     {
         auto   best_it   = pending.end();
@@ -220,23 +240,32 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
-            bool s_is_var = Zelph::Impl::is_var(subject);
-            bool s_bound  = s_is_var && simulated_vars.count(subject);
-
-            if (!s_is_var || s_bound)
-                score += 100; // Subject is constant or bound variable (Great!)
+            if (is_bound_term(subject))
+                score += 100; // subject resolvable without scanning (atom, bound var, groundable pattern)
             else
-                score -= 10; // Subject is unbound variable (Bad)
+                score -= 10; // subject requires scanning
 
-            // Heuristic for objects (simplified, assumes 1 object usually)
             for (Node obj : objects)
             {
-                bool o_is_var = Zelph::Impl::is_var(obj);
-                bool o_bound  = o_is_var && simulated_vars.count(obj);
-                if (!o_is_var || o_bound)
-                    score += 50; // Object is constant or bound variable (Good)
+                if (is_bound_term(obj))
+                    score += 50;
                 else
-                    score -= 10; // Object is unbound variable (Bad)
+                    score -= 10;
+            }
+
+            // Among otherwise comparable conditions, prefer the one that binds
+            // more still-unbound variables: every variable it binds can turn a
+            // later condition's pattern into a direct lookup (bound-pattern
+            // grounding) instead of a scan. Weight 2 keeps this a tie-breaker
+            // relative to the +/-100, +/-50 and log2 terms.
+            {
+                std::unordered_set<Node> cond_vars;
+                std::vector<Node>        history;
+                collect_variables(this, cond, cond_vars, depth, history);
+                size_t new_vars = 0;
+                for (Node v : cond_vars)
+                    if (simulated_vars.count(v) == 0) ++new_vars;
+                score += 2.0 * static_cast<double>(new_vars);
             }
 
             // Negated conditions must be evaluated last to ensure
@@ -298,13 +327,18 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
             sorted->push_back(best_cond);
 
-            // "Bind" variables for next iteration
-            adjacency_set objects;
-            Node          subject = parse_fact(best_cond, objects);
-            if (Zelph::Impl::is_var(subject)) simulated_vars[subject] = 1; // Dummy bind
-            for (Node obj : objects)
+            // Bind variables for next iteration.
+            // Simulate the bindings this condition will produce: matching a
+            // condition binds ALL variables occurring anywhere in it, at any
+            // structural depth -- the previous shallow parse_fact() binding
+            // never marked variables inside nested patterns as bound, so the
+            // planner could not see that later conditions become groundable.
             {
-                if (Zelph::Impl::is_var(obj)) simulated_vars[obj] = 1; // Dummy bind
+                std::unordered_set<Node> cond_vars;
+                std::vector<Node>        history;
+                collect_variables(this, best_cond, cond_vars, depth, history);
+                for (Node v : cond_vars)
+                    simulated_vars[v] = 1; // dummy bind
             }
 
             pending.erase(best_it);
