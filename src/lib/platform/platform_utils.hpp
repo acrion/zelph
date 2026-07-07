@@ -27,9 +27,24 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <vector>
 
 namespace zelph::platform
 {
     size_t   get_process_memory_usage();
     uint64_t get_process_cpu_time_ns();
+
+    // Absolute, symlink-resolved path of the running executable.
+    // Returns an empty path if it cannot be determined.
+    std::filesystem::path get_executable_path();
+
+    // Candidate directories for the zelph standard library, in search order:
+    //   1. $ZELPH_STDLIB (explicit override, e.g. for development)
+    //   2. <exe dir>/stdlib          (release archives, Homebrew libexec,
+    //                                 Chocolatey tools dir, local build tree)
+    //   3. <exe dir>/../share/zelph  (FHS installs: /usr/bin + /usr/share/zelph)
+    //   4. /usr/local/share/zelph and /usr/share/zelph (non-Windows fallbacks)
+    // Existence is NOT checked here; callers probe the entries in order.
+    std::vector<std::filesystem::path> get_standard_library_paths();
 }

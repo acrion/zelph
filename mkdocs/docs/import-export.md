@@ -2,13 +2,15 @@ This page demonstrates how to use Janet's file I/O and JSON capabilities to impo
 
 For general Janet integration, see [Scripting with Janet](janet.md). For installing external Janet packages (required for JSON support), see [Installing External Packages](janet.md#installing-external-packages).
 
+Note: The following example scripts are also part of the installed standard library (.import examples/import-export/...); note that they read their data files from the current working directory.
+
 ## Importing JSON Data
 
 ### Example: Biological Taxonomy
 
 Taxonomic classifications are a natural fit for semantic networks — they form hierarchies that benefit directly from transitive reasoning. Suppose you have collected species data in a JSON file and want to use zelph to infer ancestor relationships, detect classification conflicts, or cross-reference with other knowledge.
 
-Create a file [taxonomy.json](https://github.com/acrion/zelph/blob/main/sample_scripts/taxonomy.json):
+Create a file [taxonomy.json](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/taxonomy.json):
 
 ```json
 [
@@ -55,7 +57,7 @@ Create a file [taxonomy.json](https://github.com/acrion/zelph/blob/main/sample_s
 
 Janet provides `slurp` (read entire file as string) and `spit` (write string to file) as built-in functions — no external packages needed for file I/O. For JSON parsing and encoding, zelph uses the `spork/json` package (see [Installing External Packages](janet.md#installing-external-packages)).
 
-Create a zelph script [import_taxonomy.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/import_taxonomy.zph):
+Create a zelph script [import_taxonomy.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/import_taxonomy.zph):
 
 ```
 %(use spork/json)
@@ -82,7 +84,7 @@ Create a zelph script [import_taxonomy.zph](https://github.com/acrion/zelph/blob
 Run it:
 
 ```
-zelph> .import import_taxonomy.zph
+zelph> .import examples/import-export/import_taxonomy
 Imported 6 species.
 ```
 
@@ -116,7 +118,7 @@ You can also add contradiction rules to validate the data. For example, to detec
 
 ### A Complete Import Script
 
-Here is a self-contained script [taxonomy.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/taxonomy.zph) that imports the JSON, defines rules, and runs a query:
+Here is a self-contained script [taxonomy.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/taxonomy.zph) that imports the JSON, defines rules, and runs a query:
 
 ```
 %(use spork/json)
@@ -158,7 +160,7 @@ After reasoning, you can extract knowledge from zelph's graph and write it to a 
 
 ### Querying and Collecting Results
 
-Use `zelph/query` to extract bindings, then build a Janet data structure and encode it as JSON ([export_taxonomy.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/export_taxonomy.zph)):
+Use `zelph/query` to extract bindings, then build a Janet data structure and encode it as JSON ([export_taxonomy.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/export_taxonomy.zph)):
 
 ```
 %(use spork/json)
@@ -200,7 +202,7 @@ Note that families and orders appear as well — they were inferred as transitiv
 
 ### Exporting a Filtered Subset
 
-You can combine `zelph/query` with Janet's filtering to export only specific results. For instance, [exporting only species](https://github.com/acrion/zelph/blob/main/sample_scripts/export_taxonomy_filtered.zph) (not families or orders):
+You can combine `zelph/query` with Janet's filtering to export only specific results. For instance, [exporting only species](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/export_taxonomy_filtered.zph) (not families or orders):
 
 ```
 %(use spork/json)
@@ -221,7 +223,7 @@ You can combine `zelph/query` with Janet's filtering to export only specific res
 
 ### Exporting All Deduced Facts
 
-For a broader export, you can iterate over all predicates of interest and collect their facts ([export_taxonomy_all.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/export_taxonomy_all.zph)):
+For a broader export, you can iterate over all predicates of interest and collect their facts ([export_taxonomy_all.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/export_taxonomy_all.zph)):
 
 ```
 %(use spork/json)
@@ -245,7 +247,7 @@ This captures both the original facts and everything zelph inferred through tran
 
 ## Working with CSV Data
 
-For CSV files, Janet's built-in string functions are sufficient — no external package is needed. Here is a minimal pattern for importing tab-separated or [comma-separated data](https://github.com/acrion/zelph/blob/main/sample_scripts/data.csv) ([import_csv.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/import_csv.zph)):
+For CSV files, Janet's built-in string functions are sufficient — no external package is needed. Here is a minimal pattern for importing tab-separated or [comma-separated data](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/data.csv) ([import_csv.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/import-export/import_csv.zph)):
 
 ```
 %

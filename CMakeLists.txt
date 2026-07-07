@@ -34,7 +34,7 @@ if(NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
 endif()
 
 project(zelph VERSION 0.9.7 LANGUAGES C CXX)
-set(ZELPH_VERSION_SUFFIX "-dev" CACHE STRING "Version suffix appended to the reported project version")
+set(ZELPH_VERSION_SUFFIX "" CACHE STRING "Version suffix appended to the reported project version")
 
 include(GNUInstallDirs)
 
@@ -80,4 +80,10 @@ endif()
 if(PROJECT_IS_TOP_LEVEL)
     install(FILES ${CMAKE_SOURCE_DIR}/LICENSE
             DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/${PROJECT_NAME})
+
+    # Install the zelph standard library (everything under stdlib/) into the
+    # platform data directory, e.g. /usr/share/zelph. No file list is
+    # maintained: whatever lives in stdlib/ is part of the standard library.
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/stdlib/
+                    DESTINATION ${CMAKE_INSTALL_DATADIR}/zelph)
 endif()

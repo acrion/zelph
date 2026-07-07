@@ -4,8 +4,8 @@
 #
 # Prerequisites, in this order:
 #   .load wikidata-20260309-all-pruned.bin     (full dump works too)
-#   .import sample_scripts/nn.zph
-#   .import sample_scripts/nn-wikidata-demo.zph
+#   .import nn
+#   .import examples/neural/nn-wikidata-demo
 #
 # The demo trains a net "geo" to predict a country's continent (P30),
 # then uses it in two rules:

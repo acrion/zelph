@@ -515,8 +515,8 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 </div>
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
-The reference implementation lives in [sample_scripts/arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph).
-A second reference implementation, [sample_scripts/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
+The reference implementation lives in [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph).
+A second reference implementation, [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
 
 The algorithm consists of three parts:
 
@@ -541,7 +541,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 #### A Worked Example
 
 ```
-.import sample_scripts/arithmetic.zph
+.import arithmetic
 <12345> + <98765>
 ```
 
@@ -603,7 +603,7 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
 
 1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
 
-2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom.
+2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom.
 
    (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
 

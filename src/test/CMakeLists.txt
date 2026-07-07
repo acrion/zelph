@@ -45,10 +45,16 @@ add_executable(zelph_tests
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main)
 
-# Absolute path to the repository root, used by tests to locate
-# sample_scripts/sparql.zph independently of the working directory.
-target_compile_definitions(zelph_tests PRIVATE
-    ZELPH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+# Mirror the standard library next to the test binary. Same rationale as in
+# src/app; needed independently so tests work when the app target is not
+# built, and so packaged test binaries (Chocolatey, Homebrew) find the
+# stdlib next to themselves. copy_directory is idempotent, so overlapping
+# with the app target's mirror is harmless (same output directory).
+add_custom_command(TARGET zelph_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/stdlib
+            $<TARGET_FILE_DIR:zelph_tests>/stdlib
+    COMMENT "Mirroring zelph standard library next to the test binary")
 
 # suppress doctest specific __COUNTER__ warnings
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

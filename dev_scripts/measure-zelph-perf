@@ -1,0 +1,2 @@
+#!/usr/bin/env elvish
+time { put '.wikidata download/wikidata-20250127-all.json' '.remove-rules' '.list-rules' '.load dev_scripts/wikidata-disjointness-violations.zph' '.list-rules' '.run-md disjointness-violations' '.quit' | each $echo~ | build-release/bin/zelph }

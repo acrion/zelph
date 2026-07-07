@@ -29,6 +29,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::test;
 
+TEST_CASE("import: missing scripts fail with a standard-library hint, wrong extensions are rejected")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process(".import definitely-not-a-zelph-script"),
+                             doctest::Contains("standard library"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".import foo.txt"), std::runtime_error); });
+}
+
 // ---------------------------------------------------------------------------
 // Predicate parsing
 // ---------------------------------------------------------------------------

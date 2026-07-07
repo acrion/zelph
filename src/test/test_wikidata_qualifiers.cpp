@@ -33,10 +33,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::test;
 
-#ifndef ZELPH_SOURCE_DIR
-    #error "ZELPH_SOURCE_DIR must be defined, see src/test/CMakeLists.txt"
-#endif
-
 namespace
 {
     // Minimal but structurally faithful Wikidata dump: one JSON entity per
@@ -60,11 +56,6 @@ namespace
         std::ofstream out(path, std::ios::binary);
         out << kDump;
         return path;
-    }
-
-    std::string sparql_script_path()
-    {
-        return std::string(ZELPH_SOURCE_DIR) + "/sample_scripts/sparql.zph";
     }
 
     void run_sparql(const zelph::console::Interactive& interactive, const std::string& query)
@@ -155,7 +146,7 @@ TEST_CASE("wikidata qualifiers: paper disjointness query runs on imported qualif
     const auto dump = write_dump();
     run_both_modes([&](auto& collector, auto& interactive)
                    {
-        interactive.process_file(sparql_script_path(), {});
+        interactive.process_file("sparql", {});
         interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
 
         // The violation itself: Q300 is a subclass of both listed classes.

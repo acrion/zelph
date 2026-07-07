@@ -2,12 +2,12 @@ zelph includes a SPARQL query interface: you can query any zelph network — not
 
 ## Why an Import Is Required
 
-The SPARQL support is not built into the zelph core. It is implemented entirely in [Janet](janet.md), zelph's embedded scripting language, in the script [sample_scripts/sparql.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/sparql.zph). The script uses Janet's Parsing Expression Grammars to parse SPARQL, translates the query into zelph's native query and closure primitives, and registers the `sparql` keyword in the REPL.
+The SPARQL support is not built into the zelph core. It is implemented entirely in [Janet](janet.md), zelph's embedded scripting language, in the script [stdlib/sparql.zph](https://github.com/acrion/zelph/blob/main/stdlib/sparql.zph). The script uses Janet's Parsing Expression Grammars to parse SPARQL, translates the query into zelph's native query and closure primitives, and registers the `sparql` keyword in the REPL.
 
 To enable SPARQL in a session, import the script once:
 
 ```zelph
-.import sample_scripts/sparql.zph
+.import sparql
 ```
 
 This design is deliberate. The zelph core knows nothing about SPARQL — the entire query language is layered on top of the public Janet API (`zelph/query`, `zelph/closure`, `zelph/register-keyword`, and friends). This demonstrates how far zelph can be extended programmatically without touching the C++ engine, and it means you can read, modify, or extend the SPARQL implementation yourself: it is an ordinary script.
@@ -22,7 +22,7 @@ Load a network, import the script, then type `sparql` and paste your query. An e
 
 ```
 zelph> .load /path/to/wikidata-20260309-all-pruned.bin
-zelph> .import sample_scripts/sparql.zph
+zelph> .import sparql
 "SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
 zelph-> sparql
 SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
@@ -128,8 +128,8 @@ Node-of-Name Entries by language:
 Languages: 2
 Rules: 0
 ------------------------
-zelph-> .import sample_scripts/sparql.zph
-Importing file sample_scripts/sparql.zph...
+zelph-> .import sparql
+Importing file stdlib/sparql.zph...
 "SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
 -- 32 ms --
 zelph-> %(set sparql-profile true)

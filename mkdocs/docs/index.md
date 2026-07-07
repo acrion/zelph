@@ -2,7 +2,7 @@
 
 zelph is an innovative semantic network system that allows inference rules to be defined within the network itself.
 This project provides a powerful foundation for knowledge representation and automated reasoning, with a special focus on efficiency and logical inference capabilities.
-With dedicated import functions and specialized semantic scripts (like [wikidata.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/wikidata.zph)),
+With dedicated import functions and specialized semantic scripts (like [stdlib/examples/wikidata/wikidata.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/wikidata/wikidata.zph)),
 zelph offers powerful analysis capabilities for the complete Wikidata knowledge graph while remaining adaptable for any semantic domain.
 
 For an in-depth exploration of zelph's reasoning capabilities, including deep unification, negation, inequality constraints, and semantic arithmetic, see [Logic and Computation](logic.md).
@@ -260,7 +260,7 @@ The cons-list representation naturally distinguishes between:
 - a **character node** such as `"4"` (a normal named node), and
 - a **single-element list** `( "4" cons nil )` (a different node: a cons cell)
 
-Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [arithmetic.zph](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting). For convenient input, the parser additionally supports `&`-prefixed number literals (e.g. `&42`), which delegate to the redefinable function `zelph/number` — so you can always type decimal even when the loaded arithmetic script uses a different internal base. See [Number Literals](logic.md#number-literals).
+Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting). For convenient input, the parser additionally supports `&`-prefixed number literals (e.g. `&42`), which delegate to the redefinable function `zelph/number` — so you can always type decimal even when the loaded arithmetic script uses a different internal base. See [Number Literals](logic.md#number-literals).
 
 #### The Focus Operator `*`
 
@@ -546,6 +546,20 @@ This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the 
 It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
 For normal interactive or script use, `.run` is the standard command.
 
+## Node Clusters: Transactional Workspaces
+
+When experimenting on a large loaded network — say, a full Wikidata dump — you often want to undo an entire experiment without reloading everything. Clusters provide exactly that:
+
+```
+.cluster my-experiment
+... enter facts and rules, .run ...
+.cluster-drop my-experiment      # roll back everything the experiment created
+```
+
+While a cluster is active, every node created is recorded in it: entities, relation nodes, rule definitions, and facts deduced by `.run`. Facts that already existed beforehand are never recorded, so dropping a cluster can never destroy pre-existing knowledge. `.cluster-merge <from> <to>` commits a cluster's bookkeeping into another one (merging into `default` simply turns its nodes into ordinary nodes), and `.cluster default` deactivates tracking. Clusters are session state and are not persisted by `.save`.
+
+The [neural network demo](neural.md) uses a cluster so that the entire experiment — layers, synapses, rules, and all deductions — can be removed with a single command, leaving the loaded dump untouched.
+
 ### Exporting Deduced Facts to File
 
 The command `.run-file <path>` performs full inference (like `.run`) but additionally writes every deduced fact (positive deductions and contradictions) to the specified file – one per line.
@@ -664,8 +678,8 @@ A "is ancestor of" "pius"
 When executed, the last line is interpreted as a query, because it contains a variable (single uppercase letter) and is no rule. Here are the results:
 
 ```
-zelph> .import sample_scripts/english.zph
-Importing file sample_scripts/english.zph...
+zelph> .import examples/english
+Importing file examples/english.zph...
 [...skipped repetition of parsed commands..]
 Answer: paul is ancestor of pius
 ( peppermint ~ mint ) ⇐ ( peppermint is a mint )
@@ -771,7 +785,7 @@ Test your installation by running the CLI:
 or
 
 ```bash
-./build/bin/zelph sample_scripts/english.zph
+./build/bin/zelph stdlib/examples/english.zph
 ```
 
 ## Licensing

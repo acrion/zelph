@@ -364,7 +364,7 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 ##### Redefinable hooks
 
 - **`(zelph/number str)`**  
-  Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/arithmetic.zph) (decimal) or [`binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
+  Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) (decimal) or [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
 
 ### Referencing Janet Variables in zelph: Unquote `,`
 

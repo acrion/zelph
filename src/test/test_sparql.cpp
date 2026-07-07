@@ -34,10 +34,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::test;
 
-#ifndef ZELPH_SOURCE_DIR
-    #error "ZELPH_SOURCE_DIR must be defined, see src/test/CMakeLists.txt"
-#endif
-
 // The test cases below are modelled on 14 real-world SPARQL queries from the
 // Wikidata Ontology Cleaning Task Force ("example query (N)" in comments).
 // Several of them fail or time out on public SPARQL endpoints (QLever,
@@ -48,14 +44,12 @@ using namespace zelph::test;
 
 namespace
 {
-    std::string sparql_script_path()
-    {
-        return std::string(ZELPH_SOURCE_DIR) + "/sample_scripts/sparql.zph";
-    }
-
     void load_sparql(const zelph::console::Interactive& interactive)
     {
-        interactive.process_file(sparql_script_path(), {});
+        // Resolved via the standard library next to the test binary
+        // (mirrored there by CMake), so the test is hermetic: it works in
+        // the build tree and in packaged installations alike.
+        interactive.process(".import sparql");
     }
 
     // Feed a SPARQL query through the keyword mechanism:

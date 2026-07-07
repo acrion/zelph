@@ -51,4 +51,15 @@ endif ()
 
 target_link_libraries(zelph PRIVATE ${ZELPH_APP_LIBS})
 
+# Mirror the standard library next to the binary so that freshly built
+# binaries resolve `.import <name>` out of the box and the CI zip archives
+# (which package the bin directory) contain it. This copy is refreshed on
+# (re)builds only; for live script editing point ZELPH_STDLIB at the
+# source tree's stdlib directory instead.
+add_custom_command(TARGET zelph POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/stdlib
+            $<TARGET_FILE_DIR:zelph>/stdlib
+    COMMENT "Mirroring zelph standard library next to the binary")
+
 install(TARGETS zelph RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

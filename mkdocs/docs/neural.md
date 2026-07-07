@@ -2,7 +2,7 @@
 
 zelph can embed neural networks directly inside its semantic network. There is no parallel world, no export/import boundary, no separate tensor runtime with its own identifiers: **the neurons are ordinary graph nodes, and the synapses are ordinary graph edges carrying weights**. A sub-graph can be compiled into a feed-forward network on demand, trained, evaluated, and written back — and inference rules can consult such a network as a condition, using the `≈` operator.
 
-This page covers the full stack: the weighted-edge substrate, the compiled-network cache, the Janet API, the `≈` rule condition, the helper library [`nn.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/nn.zph), and a complete proof of concept on real Wikidata data ([`nn-wikidata-demo.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/nn-wikidata-demo.zph)).
+This page covers the full stack: the weighted-edge substrate, the compiled-network cache, the Janet API, the `≈` rule condition, the helper library [`stdlib/nn.zph`](https://github.com/acrion/zelph/blob/main/stdlib/nn.zph), and a complete proof of concept on real Wikidata data ([`stdlib/examples/neural/nn-wikidata-demo.zph`](https://github.com/acrion/zelph/blob/main/stdlib/examples/neural/nn-wikidata-demo.zph)).
 
 The design goal is a form of [neuro-symbolic AI](https://en.wikipedia.org/wiki/Neuro-symbolic_AI): symbolic reasoning (rules, unification, negation) and sub-symbolic learning (weighted connections, gradient descent) operating on the _same_ structures. A prediction made by a network does not need to be translated into the knowledge representation — it already _is_ knowledge representation, and it flows back into the graph as a fact probability.
 
@@ -144,9 +144,9 @@ If the deduced fact already exists, its stored probability is _not_ modified —
 - Subject and predicate must be bound when the condition is evaluated (the automatic ordering normally guarantees this).
 - `≈` conditions are not supported inside `.prune-facts` / `.prune-nodes` patterns.
 
-## The Helper Library: `sample_scripts/nn.zph`
+## The Helper Library: `stdlib/nn.zph`
 
-The raw API is deliberately low-level. `nn.zph` provides idiomatic helpers (import once via `.import sample_scripts/nn.zph`):
+The raw API is deliberately low-level. `nn.zph` provides idiomatic helpers (import once via `.import nn`):
 
 | Function                                                                 | Purpose                                                                                                                             |
 | :----------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
@@ -165,7 +165,7 @@ The raw API is deliberately low-level. `nn.zph` provides idiomatic helpers (impo
 
 ## Proof of Concept: Continent Prediction on Wikidata
 
-[`nn-wikidata-demo.zph`](https://github.com/acrion/zelph/blob/main/sample_scripts/nn-wikidata-demo.zph) demonstrates the full loop on real data. The task: learn which continent (property [P30](https://www.wikidata.org/wiki/Property:P30)) a country belongs to, from the P30 facts already present in a Wikidata dump — then use the network from rules to _verify_ existing facts and _propose_ missing ones.
+[`stdlib/examples/neural/nn-wikidata-demo.zph`](https://github.com/acrion/zelph/blob/main/stdlib/examples/neural/nn-wikidata-demo.zph) demonstrates the full loop on real data. The task: learn which continent (property [P30](https://www.wikidata.org/wiki/Property:P30)) a country belongs to, from the P30 facts already present in a Wikidata dump — then use the network from rules to _verify_ existing facts and _propose_ missing ones.
 
 While this demo uses Wikidata, nothing about the neural machinery is Wikidata-specific; the dump merely provides a large, real-world graph to learn from.
 
@@ -205,7 +205,7 @@ The current implementation is a deliberate foundation, not a finished ML framewo
 
 ## Appendix: Complete Session Log
 
-The following is a complete, unedited session log of `nn-wikidata-demo.zph` running against a pruned Wikidata dump (zelph 0.9.7), including the test-suite run: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph.
+The following is a complete, unedited session log of `stdlib/examples/neural/nn-wikidata-demo.zph` running against a pruned Wikidata dump (zelph 0.9.7), including the test-suite run: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph.
 
 ```text
 ❯ zelph
@@ -224,12 +224,12 @@ String pool size after load: 20389119
 Network loaded.
  Time needed for loading/importing: 0h0m52.905s
 -- 52.906 s --
-zelph-> .import sample_scripts/nn.zph
-Importing file sample_scripts/nn.zph...
+zelph-> .import nn
+Importing file stdlib/nn.zph...
 <function nn/link-predictor>
 -- 16 ms --
-zelph-> .import sample_scripts/nn-wikidata-demo.zph
-Importing file sample_scripts/nn-wikidata-demo.zph...
+zelph-> .import examples/neural/nn-wikidata-demo
+Importing file stdlib/examples/neural/nn-wikidata-demo.zph...
 Active cluster: nn-demo
 countries found: 145
 nn/link-predictor: 118 samples, final mean loss 0.10311

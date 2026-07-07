@@ -27,10 +27,9 @@ To load a `.bin` file in zelph, start zelph in interactive mode and use the comm
 .load /path/to/file.bin
 ```
 
-This loads the entire network into memory. Afterwards, you can execute queries, define rules, or start inference (e.g. with `.run`). For Wikidata-specific work, first load the script `wikidata.zph` (see [Wikidata Integration](wikidata.md)) and adjust the language:
+This loads the entire network into memory. Afterwards, you can execute queries, define rules, or start inference (e.g. with `.run`). For Wikidata-specific work, you need to adjust the language to use Q-item names etc:
 
 ```zelph
-.import sample_scripts/wikidata.zph
 .lang wikidata
 ```
 

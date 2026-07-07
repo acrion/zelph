@@ -201,25 +201,23 @@ A rule is simply a special case of a fact that uses the relation `=>`. In the ap
 
 ## Loading and Processing Wikidata
 
-To download the compressed JSON file, browse to [https://dumps.wikimedia.org/wikidatawiki/entities/](https://dumps.wikimedia.org/wikidatawiki/entities/). You may need to search the subdirectories to find the download link for `wikidata-*-all.json.bz2`. Note that the mirror [https://dumps.wikimedia.your.org/wikidatawiki/entities/](https://dumps.wikimedia.your.org/wikidatawiki/entities/) is often faster.
+You may either download a zelph specific bin file from [Hugging Face](https://huggingface.co/datasets/acrion/zelph), or a compressed JSON file from [https://dumps.wikimedia.org/wikidatawiki/entities/](https://dumps.wikimedia.org/wikidatawiki/entities/). You may need to search the subdirectories to find the download link for `wikidata-*-all.json.bz2`. Note that the mirror [https://dumps.wikimedia.your.org/wikidatawiki/entities/](https://dumps.wikimedia.your.org/wikidatawiki/entities/) is often faster.
 
-After decompression, you can start zelph with the provided `wikidata.zph` script:
+Please note that the automatic conversion from the `.json.bz2` format to zelph's general-purpose `.bin` format is computationally expensive.
 
-```bash
-zelph sample_scripts/wikidata.zph
-```
-
-### Basic Import
-
-To import a Wikidata JSON dump, use the `.load` command:
+To import a Wikidata JSON dump or a zelph bin file, use the `.load` command:
 
 ```zelph
-.load download/wikidata-20250127-all.json
+.load download/wikidata-20250127-all.json.bz2
 ```
 
-This imports the data and automatically creates a `.bin` cache file in the same directory for faster future loads.
+or directly the resuling bin file:
 
-With the same command, you can load a `.bin` file directly
+```zelph
+.load download/wikidata-20250127-all.bin
+```
+
+You can download various zelph `.bin` files directly from [Hugging Face](https://huggingface.co/datasets/acrion/zelph).
 
 ### Advanced Commands
 

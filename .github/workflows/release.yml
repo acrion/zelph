@@ -148,6 +148,9 @@ jobs:
           cp build/bin/libzelph.so "${PKG_DIR}/usr/lib/"
           chmod 644 "${PKG_DIR}/usr/lib/libzelph.so"
 
+          mkdir -p "${PKG_DIR}/usr/share/zelph"
+          cp -a stdlib/. "${PKG_DIR}/usr/share/zelph/"
+
           dpkg-deb --build --root-owner-group "${PKG_DIR}"
 
       - name: Upload Release Asset (Debian)

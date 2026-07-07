@@ -54,6 +54,48 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph;
 
+// Resolve a script reference for .import and command-line scripts.
+// Resolution order:
+//   1. the path as given (absolute, or relative to the current working
+//      directory), with the ".zph" extension being optional
+//   2. the zelph standard library directories (see
+//      platform::get_standard_library_paths), same extension rule
+// Extensions other than ".zph" are rejected.
+static std::string resolve_script_path(const std::string& raw)
+{
+    namespace fs = std::filesystem;
+
+    const std::string ext = fs::path(raw).extension().string();
+    if (!ext.empty() && ext != ".zph")
+        throw std::runtime_error("Script '" + raw + "': only '.zph' scripts can be imported (the extension may be omitted)");
+
+    std::vector<fs::path> variants;
+    variants.emplace_back(raw);
+    if (ext.empty())
+        variants.emplace_back(raw + ".zph");
+
+    for (const auto& v : variants)
+    {
+        std::error_code ec;
+        if (fs::is_regular_file(v, ec)) return v.string();
+    }
+
+    if (!fs::path(raw).is_absolute())
+    {
+        for (const auto& base : platform::get_standard_library_paths())
+        {
+            for (const auto& v : variants)
+            {
+                std::error_code ec;
+                const fs::path  candidate = base / v;
+                if (fs::is_regular_file(candidate, ec)) return candidate.string();
+            }
+        }
+    }
+
+    throw std::runtime_error("Script '" + raw + "' not found (searched the given path and the zelph standard library; see '.help .import')");
+}
+
 class console::CommandExecutor::Impl
 {
 public:
@@ -872,14 +914,21 @@ private:
 public:
     void import_file(const std::string& file, const std::vector<std::string>& args = {}) const
     {
+        // Resolve against the working directory first, then the standard
+        // library ('.zph' extension optional). This also covers scripts
+        // passed on the command line (Interactive::process_file ends up
+        // here), so `zelph examples/english` works like `.import`.
+        const std::string resolved = resolve_script_path(file);
+
         AutoRunSuspender suspend(_repl_state);
 
         if (!args.empty())
             _script_engine->set_script_args(args);
 
-        _n->diagnostic_stream() << "Importing file " << file << "..." << std::endl;
-        std::ifstream stream(file);
-        if (stream.fail()) throw std::runtime_error("Could not open file '" + file + "'");
+        _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
+        std::ifstream stream(resolved);
+        if (stream.fail()) throw std::runtime_error("Could not open file '" + resolved + "'");
+
         for (std::string line_utf8; std::getline(stream, line_utf8);)
         {
             _process_line_callback(line_utf8);
@@ -1109,7 +1158,7 @@ private:
             ".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             ".remove-rules               – Remove all inference rules",
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
-            ".import <file.zph>          – Load and execute a zelph script file",
+            ".import <script>            – Load and execute a zelph script (.zph optional; falls back to the standard library)",
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
             ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
             ".save <file.bin>            – Save the current network to a binary file",
@@ -1285,8 +1334,23 @@ private:
                         "or a numeric node ID.\n"
                         "WARNING: This operation is destructive and irreversible!"},
 
-            {".import", ".import <file.zph>\n"
-                        "Loads and immediately executes a zelph script file."},
+            {".import", ".import <script>\n"
+                        "Loads and immediately executes a zelph script. The '.zph' extension is optional.\n"
+                        "\n"
+                        "Resolution order:\n"
+                        "  1. The path as given (absolute, or relative to the current working directory).\n"
+                        "  2. The zelph standard library. Search locations, in order:\n"
+                        "       - $ZELPH_STDLIB (if set)\n"
+                        "       - 'stdlib' next to the zelph executable (release archives, build tree)\n"
+                        "       - '../share/zelph' relative to the executable (e.g. /usr/share/zelph)\n"
+                        "       - /usr/local/share/zelph and /usr/share/zelph (non-Windows)\n"
+                        "\n"
+                        "Standard library scripts are addressed without path or extension:\n"
+                        "  .import sparql\n"
+                        "  .import arithmetic\n"
+                        "Subdirectories must be given explicitly:\n"
+                        "  .import examples/english\n"
+                        "  .import examples/neural/nn-wikidata-demo"},
 
             {".load", ".load <file>\n"
                       "Loads a previously saved network state.\n"
@@ -2447,9 +2511,7 @@ private:
     {
         require_full_graph_mode(".import");
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
-        const std::string& path = cmd[1];
-        if (!path.ends_with(".zph")) throw std::runtime_error("Command .import: Script must end with .zph");
-        import_file(path);
+        import_file(cmd[1]); // import_file resolves the path (CWD first, then standard library)
     }
     void cmd_auto_run(const std::vector<std::string>&)
     {

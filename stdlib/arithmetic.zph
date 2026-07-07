@@ -1,4 +1,4 @@
-# .import sample_scripts/arithmetic.zph
+# .import arithmetic
 
 # Rule-based multi-digit addition for arbitrarily large positive integers.
 #

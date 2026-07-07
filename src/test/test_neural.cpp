@@ -355,7 +355,7 @@ TEST_CASE("neural: nn.zph link predictor end-to-end with approx rules")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process(".import " + std::string(ZELPH_SOURCE_DIR) + "/sample_scripts/nn.zph");
+        interactive.process(".import nn");
         process_lines(interactive, R"(
 earth haspart crust
 mars haspart core
