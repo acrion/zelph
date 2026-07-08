@@ -64,8 +64,8 @@ zelph ships with a standard library of scripts. When a script given to `.import`
 
 ```
 .import sparql               # SPARQL query interface
-.import arithmetic           # rule-based decimal addition
-.import binary-arithmetic    # rule-based binary addition (full-adder axioms)
+.import arithmetic           # rule-based decimal arithmetic (+, -, cmp)
+.import binary-arithmetic    # the same, base 2 (full-adder/subtractor axioms)
 .import nn                   # neural network helpers
 ```
 

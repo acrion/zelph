@@ -146,10 +146,10 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                      ? string::get(augmented, *relations.begin(), Node{0})
                      : *relations.begin();
 
-        if (!rel)
+        if (!rel || Zelph::Impl::is_var(rel))
         {
             if (should_log(depth))
-                log(depth, "deduce", "Deduction " + format(deduction) + ": relation resolved to null, skipping");
+                log(depth, "deduce", "Deduction " + format(deduction) + ": relation resolved to null or to a variable, skipping");
             continue;
         }
 
@@ -201,6 +201,31 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                     {
                         done = false;
                         break;
+                    }
+                }
+
+                if (done)
+                {
+                    // Ground guard: after instantiation, the deduced fact
+                    // must not contain variables at any depth. A residual
+                    // variable means a rule variable was bound to a graph
+                    // variable (template leak); asserting it would
+                    // materialize partially instantiated junk facts.
+                    // Defense in depth -- the primary fix is the deep
+                    // template reject in extract_bindings.
+                    std::unordered_set<Node> residual;
+                    std::vector<Node>        ground_history;
+                    collect_variables(this, source, residual, depth, ground_history);
+                    for (Node t : targets)
+                    {
+                        ground_history.clear();
+                        collect_variables(this, t, residual, depth, ground_history);
+                    }
+                    if (!residual.empty())
+                    {
+                        done = false;
+                        if (should_log(depth))
+                            log(depth, "deduce", "SKIP: instantiated deduction is not ground (template-leak guard)");
                     }
                 }
 

@@ -542,8 +542,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 > Note: since `arithmetic.zph` registers its digit alphabet, a live session
 > displays these lists as decimal `&`-literals (e.g. `&12345` instead of
-> `<12345>`). The raw `<...>` notation is kept below to make the underlying
-> cons structure visible.
+> `<12345>`).
 
 ```
 .import arithmetic
@@ -553,37 +552,37 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 **Trigger (Rule A0):** Seeds the internal addition state with carry-in 0:
 
 ```
-((<12345>  add  <98765>)  ci   0 )
+((&12345  add  &98765)  ci   0 )
 ```
 
 **Decomposition (Rules D1–D3):** Peels off least-significant digits, propagates carry:
 
 ```
-((<1234>  add  <9876>)  ci   1 )
-((<123>  add  <987>)  ci   1 )
-((<12>  add  <98>)  ci   1 )
-((<1>  add  <9>)  ci   1 )
+((&1234  add  &9876)  ci   1 )
+((&123  add  &987)  ci   1 )
+((&12  add  &98)  ci   1 )
+((&1  add  &9)  ci   1 )
 ```
 
 **Base case:** The recursion ends at `nil + nil` with carry-in 1:
 
 ```
-((( nil   add   nil )  ci   1 )  sum  <1>)
+((( nil   add   nil )  ci   1 )  sum  &1)
 ```
 
 **Assembly (Rules As1–As3):** Constructs the result on the way back up, prepending digits via `cons`:
 
 ```
-(((<1>  add  <9>)  ci   1 )  sum  <11>)
-(((<12>  add  <98>)  ci   1 )  sum  <111>)
+(((&1  add  &9)  ci   1 )  sum  &11)
+(((&12  add  &98)  ci   1 )  sum  &111)
 ...
-(((<12345>  add  <98765>)  ci   0 )  sum  <111110>)
+(((&12345  add  &98765)  ci   0 )  sum  &111110)
 ```
 
 **Connection (Rule C0):** Exposes the result under the user-facing `=` predicate:
 
 ```
-((<12345>  +  <98765>)  =  <111110>)
+((&12345  +  &98765)  =  &111110)
 ```
 
 Nothing in the engine is hard-coded for addition.
@@ -620,6 +619,78 @@ X P31 Q49008
 
 This lists all 10,018 prime numbers recorded in Wikidata — the same nodes that would appear in a cons-list produced by arithmetic rules.
 Knowledge and computation are not separate layers.
+
+### Comparison and Subtraction
+
+The addition pattern generalizes: both arithmetic scripts also define
+comparison and subtraction, and the recursion rules are again **byte-identical**
+between the decimal and binary script — only the digit tables differ
+(100/400 generated facts in base 10, 4/16 hand-written facts in base 2; the
+subtraction table is the truth table of a
+[full subtractor](https://en.wikipedia.org/wiki/Subtractor)).
+
+**Comparison** (`N cmp M`) walks both lists LSB-first and combines a digit
+table (`dcmp`) with a dominance rule: the more significant rest decides
+unless it is `eq`, in which case the current digit pair decides. Missing
+digits are zero-extended, so lists with leading zeros compare correctly by
+value. The results are ordinary **relational facts** — `N < M`, `N > M`,
+`N == M` — and therefore compose with meta-rules like any declared fact:
+
+    (R is transitive, A R B, B R C) => (A R C)
+    > is transitive
+    &30 cmp &20
+    &20 cmp &10
+    (&30 > &10) ⇐ ...
+
+Computed order and declared knowledge feed the same inference engine.
+
+Additionally, the outcome is exposed under = for uniform result queries: (A cmp B) = X answers gt/lt/eq.
+
+**Subtraction** (`N - M`) mirrors addition exactly, with borrow (`bi`/`bo`)
+instead of carry. It is deliberately a **partial function** on the naturals:
+if `M > N`, the borrow chain reaches the base case with borrow-in 1, for
+which no base fact exists — the derivation simply produces no result.
+Undefinedness is encoded as the absence of a fact; no error machinery is
+involved.
+
+**Non-canonical results:** subtraction can yield lists with leading zeros
+(`&105 - &98` produces the list `<007>`). The `&`-display normalizes the
+value (`&7`), and comparison treats such lists as equal by value — but they
+remain distinct nodes. Operands are expected in the canonical form produced
+by `&`-literals.
+
+### Multiplication: Cross-Module Computation
+
+Multiplication completes the picture and introduces a new structural element:
+**rules that delegate to other rule modules**. The recursion runs over the
+first operand's digits — `(A cons R) × M = A×M + base × (R×M)` — and because
+numbers are stored LSB-first, multiplying by the base is a _single cons_:
+`base × X = (0 cons X)`. No shift machinery exists; it falls out of the
+representation.
+
+The digit-times-number products use a third digit table (`dx`, with running
+carry — 1800 generated facts in base 10, 16 hand-written facts in base 2: an
+AND gate plus increment, completing the full-adder/full-subtractor family).
+The accumulation, however, is not implemented in the multiplication module at
+all: rule MA1 _asserts an ordinary `+` fact_, the addition module derives its
+`=` result through its own rules, and rule MA2 consumes it. Computation
+cascades across modules through nothing but shared facts — the same mechanism
+that lets computed comparison facts feed declared meta-rules.
+
+As with the other operations, the recursion rules are byte-identical between
+the decimal and the binary script. Since intermediate states are hash-consed
+graph nodes, partial products that share suffixes are shared automatically —
+memoization is a property of the representation, not a feature.
+
+> A schema note for rule authors: all three digit tables are keyed by dedicated
+> table-carry predicates (`tci` for the addition and multiplication tables,
+> `tbi` for subtraction) while recursion states use `ci`/`bi`/`mci`. Keeping
+> _table space_ and _state space_ on distinct predicates ensures tables are only
+> ever accessed through direct, grounded lookups and never appear in the
+> extensions scanned when a rule's first condition is matched -- those
+> extensions then contain nothing but the small, dynamic recursion states.
+> Sharing `tci` between two tables is deliberately harmless: table-keying
+> predicates are never scanned.
 
 ### Number Literals
 

@@ -22,6 +22,9 @@
 #   (<101> + <11>) = X       (5 + 3 = 8 -> <1000>)
 #   (<1111> + <1>) = X       (15 + 1 = 16 -> <10000>)
 #   (&128 + &53) = X         (128 + 53 = 181 -> 10110101)
+#   (&42 - &9) = X
+#   (&42 cmp &9) = X
+#   (&12 * &34) = X
 
 %
 (defn- half-decimal
@@ -64,30 +67,85 @@
 %
 
 # ---------------------------------------------------------------------------
+# Digit comparison (4 facts)
+# ---------------------------------------------------------------------------
+(0 dcmp 0) res eq
+(0 dcmp 1) res lt
+(1 dcmp 0) res gt
+(1 dcmp 1) res eq
+
+# ---------------------------------------------------------------------------
+# Full-subtractor truth table: 8 input combinations, diff and borrow-out
+# ---------------------------------------------------------------------------
+((0 d- 0) tbi 0) diff 0
+((0 d- 0) tbi 0) bo 0
+((1 d- 0) tbi 0) diff 1
+((1 d- 0) tbi 0) bo 0
+((0 d- 1) tbi 0) diff 1
+((0 d- 1) tbi 0) bo 1
+((1 d- 1) tbi 0) diff 0
+((1 d- 1) tbi 0) bo 0
+((0 d- 0) tbi 1) diff 1
+((0 d- 0) tbi 1) bo 1
+((1 d- 0) tbi 1) diff 0
+((1 d- 0) tbi 1) bo 0
+((0 d- 1) tbi 1) diff 0
+((0 d- 1) tbi 1) bo 1
+((1 d- 1) tbi 1) diff 1
+((1 d- 1) tbi 1) bo 1
+
+# ---------------------------------------------------------------------------
+# Subtraction base case: only borrow-in 0 (bi 1 deliberately absent)
+# ---------------------------------------------------------------------------
+((nil sub nil) bi 0) diff nil
+
+# ---------------------------------------------------------------------------
 # Full-adder truth table: 8 input combinations, each with sum and carry-out
 # ---------------------------------------------------------------------------
-((0 d+ 0) ci 0) sum 0
-((0 d+ 0) ci 0) co 0
-((1 d+ 0) ci 0) sum 1
-((1 d+ 0) ci 0) co 0
-((0 d+ 1) ci 0) sum 1
-((0 d+ 1) ci 0) co 0
-((1 d+ 1) ci 0) sum 0
-((1 d+ 1) ci 0) co 1
-((0 d+ 0) ci 1) sum 1
-((0 d+ 0) ci 1) co 0
-((1 d+ 0) ci 1) sum 0
-((1 d+ 0) ci 1) co 1
-((0 d+ 1) ci 1) sum 0
-((0 d+ 1) ci 1) co 1
-((1 d+ 1) ci 1) sum 1
-((1 d+ 1) ci 1) co 1
+((0 d+ 0) tci 0) sum 0
+((0 d+ 0) tci 0) co 0
+((1 d+ 0) tci 0) sum 1
+((1 d+ 0) tci 0) co 0
+((0 d+ 1) tci 0) sum 1
+((0 d+ 1) tci 0) co 0
+((1 d+ 1) tci 0) sum 0
+((1 d+ 1) tci 0) co 1
+((0 d+ 0) tci 1) sum 1
+((0 d+ 0) tci 1) co 0
+((1 d+ 0) tci 1) sum 0
+((1 d+ 0) tci 1) co 1
+((0 d+ 1) tci 1) sum 0
+((0 d+ 1) tci 1) co 1
+((1 d+ 1) tci 1) sum 1
+((1 d+ 1) tci 1) co 1
 
 # ---------------------------------------------------------------------------
 # Base cases: nil + nil with carry-in 0 and 1
 # ---------------------------------------------------------------------------
 ((nil add nil) ci 0) sum nil
 ((nil add nil) ci 1) sum <1>
+
+# ---------------------------------------------------------------------------
+# Digit multiplication truth table (16 facts): an AND gate plus increment --
+# the third member of the full-adder / full-subtractor family. Carry range
+# {0,1} is closed: mco = floor((1*1+1)/2) = 1.
+# ---------------------------------------------------------------------------
+((0 dx 0) tci 0) pd 0
+((0 dx 0) tci 0) mco 0
+((0 dx 1) tci 0) pd 0
+((0 dx 1) tci 0) mco 0
+((1 dx 0) tci 0) pd 0
+((1 dx 0) tci 0) mco 0
+((1 dx 1) tci 0) pd 1
+((1 dx 1) tci 0) mco 0
+((0 dx 0) tci 1) pd 1
+((0 dx 0) tci 1) mco 0
+((0 dx 1) tci 1) pd 1
+((0 dx 1) tci 1) mco 0
+((1 dx 0) tci 1) pd 1
+((1 dx 0) tci 1) mco 0
+((1 dx 1) tci 1) pd 0
+((1 dx 1) tci 1) mco 1
 
 # ---------------------------------------------------------------------------
 # Rule A0 -- Trigger: seed internal addition with carry-in 0
@@ -98,35 +156,35 @@
 # Rules D1-D3 -- Decompose: propagate carry-out into the recursive subproblem
 # ---------------------------------------------------------------------------
 (((A cons R) add (B cons S)) ci C,
- ((A d+ B) ci C) co E)
+ ((A d+ B) tci C) co E)
 => ((R add S) ci E)
 
 (((A cons R) add nil) ci C,
- ((A d+ 0) ci C) co E)
+ ((A d+ 0) tci C) co E)
 => ((R add nil) ci E)
 
 ((nil add (B cons S)) ci C,
- ((0 d+ B) ci C) co E)
+ ((0 d+ B) tci C) co E)
 => ((nil add S) ci E)
 
 # ---------------------------------------------------------------------------
 # Rules As1-As3 -- Assemble: once the inner sum T is known, prepend digit D
 # ---------------------------------------------------------------------------
 (((A cons R) add (B cons S)) ci C,
- ((A d+ B) ci C) sum D,
- ((A d+ B) ci C) co E,
+ ((A d+ B) tci C) sum D,
+ ((A d+ B) tci C) co E,
  ((R add S) ci E) sum T)
 => ((((A cons R) add (B cons S)) ci C) sum (D cons T))
 
 (((A cons R) add nil) ci C,
- ((A d+ 0) ci C) sum D,
- ((A d+ 0) ci C) co E,
+ ((A d+ 0) tci C) sum D,
+ ((A d+ 0) tci C) co E,
  ((R add nil) ci E) sum T)
 => ((((A cons R) add nil) ci C) sum (D cons T))
 
 ((nil add (B cons S)) ci C,
- ((0 d+ B) ci C) sum D,
- ((0 d+ B) ci C) co E,
+ ((0 d+ B) tci C) sum D,
+ ((0 d+ B) tci C) co E,
  ((nil add S) ci E) sum T)
 => (((nil add (B cons S)) ci C) sum (D cons T))
 
@@ -134,3 +192,214 @@
 # Rule C0 -- Connect: expose the result under the user-facing + predicate
 # ---------------------------------------------------------------------------
 (N + M, ((N add M) ci 0) sum T) => ((N + M) = T)
+
+# ===========================================================================
+# Comparison (N cmp M) -- base-agnostic, mirrors the addition recursion
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Base case: two exhausted lists are equal
+# ---------------------------------------------------------------------------
+(nil lcmp nil) res eq
+
+# ---------------------------------------------------------------------------
+# Rule CT -- Trigger: seed the structural recursion for every cmp fact
+# ---------------------------------------------------------------------------
+(N cmp M) => (N lcmp M)
+
+# ---------------------------------------------------------------------------
+# Rules CD1-CD3 -- Decompose: derive lcmp states for all suffix pairs
+# ---------------------------------------------------------------------------
+((A cons R) lcmp (B cons S)) => (R lcmp S)
+((A cons R) lcmp nil) => (R lcmp nil)
+(nil lcmp (B cons S)) => (nil lcmp S)
+
+# ---------------------------------------------------------------------------
+# Rules CU1-CU6 -- Compute upward: the more significant part (inner rest)
+# dominates; only if it is eq does the current digit pair decide. Missing
+# digits of the shorter operand are treated as 0 (zero extension), so
+# non-canonical lists with leading zeros compare correctly by value.
+# ---------------------------------------------------------------------------
+((A cons R) lcmp (B cons S),
+ (R lcmp S) res eq,
+ (A dcmp B) res X)
+=> (((A cons R) lcmp (B cons S)) res X)
+
+((A cons R) lcmp (B cons S),
+ (R lcmp S) res X,
+ X != eq)
+=> (((A cons R) lcmp (B cons S)) res X)
+
+((A cons R) lcmp nil,
+ (R lcmp nil) res eq,
+ (A dcmp 0) res X)
+=> (((A cons R) lcmp nil) res X)
+
+((A cons R) lcmp nil,
+ (R lcmp nil) res X,
+ X != eq)
+=> (((A cons R) lcmp nil) res X)
+
+(nil lcmp (B cons S),
+ (nil lcmp S) res eq,
+ (0 dcmp B) res X)
+=> ((nil lcmp (B cons S)) res X)
+
+(nil lcmp (B cons S),
+ (nil lcmp S) res X,
+ X != eq)
+=> ((nil lcmp (B cons S)) res X)
+
+# ---------------------------------------------------------------------------
+# Rules CC1-CC3 -- Connect: expose results as ordinary relational facts.
+# These compose with meta-rules like any other fact (e.g. "> is transitive").
+# ---------------------------------------------------------------------------
+(N cmp M, (N lcmp M) res lt) => (N < M)
+(N cmp M, (N lcmp M) res gt) => (N > M)
+(N cmp M, (N lcmp M) res eq) => (N == M)
+
+# ---------------------------------------------------------------------------
+# Rule CC0 -- Result-query bridge: additionally expose the comparison outcome
+# under the user-facing = predicate, so the repeatable query idiom is uniform
+# across operations: (A + B) = X, (A - B) = X, (A cmp B) = X.
+# The relational facts (CC1-CC3) remain the primary, composable output.
+# ---------------------------------------------------------------------------
+(N cmp M, (N lcmp M) res X) => ((N cmp M) = X)
+
+# ===========================================================================
+# Subtraction (N - M) -- base-agnostic, exact mirror of addition with
+# borrow (bi/bo) instead of carry (ci/co)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Rule S0 -- Trigger: seed internal subtraction with borrow-in 0
+# ---------------------------------------------------------------------------
+(N - M) => ((N sub M) bi 0)
+
+# ---------------------------------------------------------------------------
+# Rules SD1-SD3 -- Decompose: propagate borrow-out into the subproblem
+# ---------------------------------------------------------------------------
+(((A cons R) sub (B cons S)) bi C,
+ ((A d- B) tbi C) bo E)
+=> ((R sub S) bi E)
+
+(((A cons R) sub nil) bi C,
+ ((A d- 0) tbi C) bo E)
+=> ((R sub nil) bi E)
+
+((nil sub (B cons S)) bi C,
+ ((0 d- B) tbi C) bo E)
+=> ((nil sub S) bi E)
+
+# ---------------------------------------------------------------------------
+# Rules SA1-SA3 -- Assemble: prepend diff digit D once the inner diff T is
+# known. NOTE: there is deliberately NO base fact for ((nil sub nil) bi 1),
+# so a net borrow (M > N) simply yields no result -- subtraction is a
+# partial function on the naturals; absence of a fact encodes undefinedness.
+# ---------------------------------------------------------------------------
+(((A cons R) sub (B cons S)) bi C,
+ ((A d- B) tbi C) diff D,
+ ((A d- B) tbi C) bo E,
+ ((R sub S) bi E) diff T)
+=> ((((A cons R) sub (B cons S)) bi C) diff (D cons T))
+
+(((A cons R) sub nil) bi C,
+ ((A d- 0) tbi C) diff D,
+ ((A d- 0) tbi C) bo E,
+ ((R sub nil) bi E) diff T)
+=> ((((A cons R) sub nil) bi C) diff (D cons T))
+
+((nil sub (B cons S)) bi C,
+ ((0 d- B) tbi C) diff D,
+ ((0 d- B) tbi C) bo E,
+ ((nil sub S) bi E) diff T)
+=> (((nil sub (B cons S)) bi C) diff (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule SC0 -- Connect: expose the result under the user-facing - predicate.
+# Results may carry leading zeros (105 - 98 = <007>); the &-display
+# normalizes the value, and lcmp treats such lists as equal by value.
+# ---------------------------------------------------------------------------
+(N - M, ((N sub M) bi 0) diff T) => ((N - M) = T)
+
+# ===========================================================================
+# Multiplication (N * M) -- base-agnostic; LSB-first makes the shift free
+# ===========================================================================
+#
+# Schoolbook recursion on the first operand's digits:
+#   (A cons R) * M  =  A*M  +  base * (R * M)
+# where base * X is a single cons in LSB-first representation: (0 cons X).
+#
+# The accumulation deliberately REUSES the addition module: rule MA1 asserts
+# an ordinary + fact, the addition rules derive its = result, and rule MA2
+# consumes it -- computations cascade across rule modules.
+#
+# Schema note: the digit table uses tci (table carry-in) while dmul states
+# use mci. Keeping table space and state space on distinct predicates means
+# the table is only ever accessed through grounded lookups and never appears
+# in the extensions scanned by the recursion rules' first conditions.
+#
+# NOTE: * must be surrounded by whitespace (&12 * &34). Without it, *&34
+# parses as the focus operator applied to a number literal.
+
+# ---------------------------------------------------------------------------
+# Rule M0 -- Trigger
+# ---------------------------------------------------------------------------
+(N * M) => (N mul M)
+
+# ---------------------------------------------------------------------------
+# Rules MD1-MD2 -- Decompose: peel one digit off the first operand and seed
+# its digit-times-number multiplication. MD1 is guarded so that no
+# (nil mul M) state is ever created: nil is the graph's biggest hub (every
+# list ends there), and anchoring a rule condition on it would scan all
+# list-terminating cons cells.
+# ---------------------------------------------------------------------------
+((A cons R) mul M, R != nil) => (R mul M)
+((A cons R) mul M) => ((A dmul M) mci 0)
+
+# ---------------------------------------------------------------------------
+# Rules PD1, PB1-PB2, PA1 -- digit times number (A dmul M), LSB-first with
+# a running carry through the dx digit table
+# ---------------------------------------------------------------------------
+((A dmul (B cons S)) mci C,
+ ((A dx B) tci C) mco E)
+=> ((A dmul S) mci E)
+
+((A dmul nil) mci 0) => (((A dmul nil) mci 0) pprod nil)
+
+((A dmul nil) mci C, C != 0)
+=> (((A dmul nil) mci C) pprod (C cons nil))
+
+((A dmul (B cons S)) mci C,
+ ((A dx B) tci C) pd D,
+ ((A dx B) tci C) mco E,
+ ((A dmul S) mci E) pprod T)
+=> (((A dmul (B cons S)) mci C) pprod (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule MB1 -- Base: a single-digit first operand IS its partial product.
+# Handling the last digit here (instead of a (nil mul M) base case) also
+# avoids one pointless P + <0> addition per multiplication.
+# ---------------------------------------------------------------------------
+((A cons nil) mul M,
+ ((A dmul M) mci 0) pprod P)
+=> (((A cons nil) mul M) prod P)
+
+# ---------------------------------------------------------------------------
+# Rules MA1-MA2 -- Accumulate: P + (0 cons Q), delegated to the + module
+# ---------------------------------------------------------------------------
+((A cons R) mul M, R != nil,
+ ((A dmul M) mci 0) pprod P,
+ (R mul M) prod Q)
+=> (P + (0 cons Q))
+
+((A cons R) mul M, R != nil,
+ ((A dmul M) mci 0) pprod P,
+ (R mul M) prod Q,
+ (P + (0 cons Q)) = T)
+=> (((A cons R) mul M) prod T)
+
+# ---------------------------------------------------------------------------
+# Rule MC0 -- Connect
+# ---------------------------------------------------------------------------
+(N * M, (N mul M) prod T) => ((N * M) = T)

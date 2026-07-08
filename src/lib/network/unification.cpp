@@ -246,28 +246,8 @@ static bool unify_nodes(
     return result;
 }
 
-// Returns true if nd is itself a VAR, or if nd is a hash node whose
-// immediate structural subject or objects contain a VAR node.
-// Used to reject rule-template fact nodes from the unification candidate set.
-static bool contains_variable_shallow(Zelph* n, Node nd, const int depth)
-{
-    if (nd == 0) return false;
-    if (Zelph::Impl::is_var(nd)) return true;
-    if (!Zelph::Impl::is_hash(nd)) return false; // plain atom → no internal structure
-
-    auto structs = get_fact_structures(n, nd, false, depth);
-    for (const auto& fs : structs)
-    {
-        if (Zelph::Impl::is_var(fs.subject)) return true;
-        for (Node o : fs.objects)
-            if (Zelph::Impl::is_var(o)) return true;
-    }
-    return false;
-}
-
-// Deep variant of contains_variable_shallow: returns true if nd is a VAR,
-// or if its structural closure (subject, predicate, objects at any depth)
-// contains a VAR node.
+// Returns true if nd is a VAR, or if its structural closure (subject,
+// predicate, objects at any depth) contains a VAR node.
 //
 // Rationale: the subject/object-driven snapshot anchors on a node and scans
 // only its adjacency. That is correct for concrete nodes (atoms or fully
@@ -971,24 +951,35 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
             return results; // fact contains a variable => it is a rule template, not data
     }
 
-    // Reject rule-template fact nodes. Rule consequences are stored as real
-    // graph nodes (e.g. the consequence (D cons T) of rule As2), but their
-    // immediate substructure contains VAR nodes. Without this check those
-    // templates are matched by unification, producing incorrect bindings and
-    // causing extreme performance degradation because every sum/ci/co query
-    // iterates over them endlessly.
-    if (contains_variable_shallow(_n, subject, depth))
+    // Reject rule-template fact nodes -- at ANY structural depth.
+    //
+    // Rule consequences are stored as real graph nodes (e.g. the consequence
+    // of rule As2), and matching them as data produces variable-to-variable
+    // bindings that instantiate_fact() would then materialize as partially
+    // instantiated junk nodes, cascading into wrong deductions.
+    //
+    // The check must be DEEP, not shallow: a template like
+    //   (((A dmul nil) mci 0) pprod nil)
+    // exposes no variable at depth 1 -- its subject decomposes to a hash
+    // node and the constant 0 -- while the variable A sits at depth 2.
+    // This exact shape slipped through the former shallow check and caused
+    // the multiplication junk-fact regression.
     {
-        if (_n->logging_active())
+        std::unordered_set<Node> visited;
+        if (contains_variable_deep(_n, subject, depth, visited))
         {
-            _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
-            U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
+            if (_n->logging_active())
+            {
+                _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
+                U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
+            }
+            return results;
         }
-        return results;
     }
     for (Node o : objects)
     {
-        if (contains_variable_shallow(_n, o, depth))
+        std::unordered_set<Node> visited;
+        if (contains_variable_deep(_n, o, depth, visited))
         {
             if (_n->logging_active())
             {

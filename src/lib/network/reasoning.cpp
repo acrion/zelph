@@ -210,21 +210,21 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
     // A term counts as "bound" for scoring purposes if the unification engine
     // can resolve it to a concrete node without scanning: atoms, bound
-    // variables, and structured patterns whose variables are all
-    // (simulated-)bound -- the latter thanks to bound-pattern grounding in
+    // variables, and structured patterns whose variables are all bound in
+    // vars_in_scope -- the latter thanks to bound-pattern grounding in
     // Unification. A pattern with unbound inner variables is as expensive as
     // an unbound variable and must not receive the bonus.
-    auto is_bound_term = [&](Node nd) -> bool
+    auto is_bound_term = [&](Node nd, const Variables& vars_in_scope) -> bool
     {
         if (nd == 0) return false;
-        if (Zelph::Impl::is_var(nd)) return simulated_vars.count(nd) != 0;
+        if (Zelph::Impl::is_var(nd)) return vars_in_scope.count(nd) != 0;
         if (!Zelph::Impl::is_hash(nd)) return true; // plain atom
 
         std::unordered_set<Node> vars;
         std::vector<Node>        history;
         collect_variables(this, nd, vars, depth, history);
         for (Node v : vars)
-            if (simulated_vars.count(v) == 0) return false;
+            if (vars_in_scope.count(v) == 0) return false;
         return true;
     };
 
@@ -240,17 +240,38 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
-            if (is_bound_term(subject))
+            // Subjects and objects treat SIMULATED bindings (variables that
+            // earlier conditions of this planned order will bind, as opposed
+            // to constants and pre-existing current_vars entries)
+            // asymmetrically:
+            //
+            //  - A subject whose variables are all simulated-bound still
+            //    scores +100: bound-pattern grounding resolves it to one
+            //    concrete fact node in O(1) at evaluation time, no matter
+            //    WHICH nodes the variables end up bound to.
+            //
+            //  - An object variable that is only simulated-bound scores like
+            //    an unbound one. The planner cannot know which node it will
+            //    be bound to, and in table-driven rules it is systematically
+            //    a small value node (digit, carry) shared by a large fraction
+            //    of the relation's facts; an object-driven anchor on such a
+            //    hub scans hundreds of candidates. This exact miscoring made
+            //    rule PA1 order its mco condition (object E = carry digit;
+            //    the E=0 anchor covers 271 of 900 dx-table facts) before the
+            //    small mci state condition, letting mco dominate every
+            //    profile. Only constants and really-bound variables, whose
+            //    anchor node is known at planning time, earn the +50.
+            if (is_bound_term(subject, simulated_vars))
                 score += 100; // subject resolvable without scanning (atom, bound var, groundable pattern)
             else
                 score -= 10; // subject requires scanning
 
             for (Node obj : objects)
             {
-                if (is_bound_term(obj))
-                    score += 50;
+                if (is_bound_term(obj, current_vars))
+                    score += 50; // anchor node known at planning time (constant or pre-bound variable)
                 else
-                    score -= 10;
+                    score -= 10; // unbound or simulated-only: anchor unknown, potentially a hub
             }
 
             // Among otherwise comparable conditions, prefer the one that binds

@@ -769,3 +769,40 @@ x trigger b1
 )");
         CHECK(any_output_starts_with(collector, "( found b1 e )")); });
 }
+
+// ---------------------------------------------------------------------------
+// Template rejection: variables at depth >= 2
+// ---------------------------------------------------------------------------
+
+TEST_CASE("unification: consequence templates with variables only at depth 2 are not matched as data")
+{
+    // Distilled from the multiplication junk-fact regression: the first
+    // rule's consequence pattern exists in the graph as an out-fact whose
+    // ONLY variable A sits at structural depth 2 -- its subject decomposes
+    // to a hash node plus the constant 0, so a shallow template check sees
+    // nothing. The second rule scans out-facts; before the deep template
+    // reject it matched the template, bound X to a variable-containing
+    // node, and deduced junk.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+((A probe nil) state 0) => (((A probe nil) state 0) out nil)
+(X out P) => (X leaked P)
+)");
+        // IMPORTANT: clear AFTER defining the rules. The REPL echoes rule
+        // definitions, and the echo of rule 2 literally contains the word
+        // "leaked" -- the original version of this test checked the
+        // collector including that echo and failed even though the engine
+        // behaved correctly.
+        collector.clear();
+        interactive.process("seed1 unrelated seed2");
+        interactive.run(true, false, false);
+        CHECK_FALSE(any_output_contains(collector, "leaked"));
+
+        // Positive control: a concrete state fact drives the same pipeline
+        // legitimately -- rule 1 derives a ground out-fact, rule 2 consumes it.
+        collector.clear();
+        interactive.process("(d1 probe nil) state 0");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "leaked")); });
+}
