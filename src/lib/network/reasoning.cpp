@@ -78,20 +78,29 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     if (!silent)
         diagnostic("Starting reasoning with " + std::to_string(_pool->count()) + " worker threads.");
 
-    int iteration = 0;
-    do
-    {
-        _done = false;
-        ++iteration;
-        if (!silent)
-            diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
-        for (Node rule : _pImpl->get_left(core.Causes))
-        {
-            apply_rule(rule, 0);
-        }
+    uint64_t seminaive_violations = 0;
 
-        _pool->wait();
-    } while (_done && !suppress_repetition);
+    if (_seminaive && !suppress_repetition)
+    {
+        seminaive_violations = run_fixpoint_seminaive(silent);
+    }
+    else
+    {
+        int iteration = 0;
+        do
+        {
+            _done = false;
+            ++iteration;
+            if (!silent)
+                diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
+            for (Node rule : _pImpl->get_left(core.Causes))
+            {
+                apply_rule(rule, 0);
+            }
+
+            _pool->wait();
+        } while (_done && !suppress_repetition);
+    }
 
     if (!silent)
         diagnostic_stream() << "Reasoning complete. Total unification matches processed: " << _total_matches
@@ -128,6 +137,19 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         diagnostic_stream() << "Reasoning complete in " << watch.format() << " – "
                             << _total_matches << " matches processed, "
                             << _total_contradictions << " contradictions found." << std::endl;
+
+    if (seminaive_violations > 0)
+    {
+        // The graph itself is complete at this point: the safety net kept
+        // re-applying classic evaluation until quiescence. The throw turns
+        // the incompleteness of delta seeding into a hard failure for tests
+        // and a visible error in the REPL.
+        throw std::runtime_error(
+            "Semi-naive completeness violation: the classic verification pass derived new facts in "
+            + std::to_string(seminaive_violations)
+            + " extra pass(es) after the delta drained. The final graph is complete, but delta "
+              "seeding missed at least one derivation. Please report this rule set at https://github.com/acrion/zelph/issues.");
+    }
 }
 
 void Reasoning::apply_rule(const Node& rule, Node condition)

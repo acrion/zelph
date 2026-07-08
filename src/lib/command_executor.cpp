@@ -221,6 +221,8 @@ private:
         { cmd_export_wikidata(c); };
         _command_map[".parallel"] = [this](auto& c)
         { cmd_parallel(c); };
+        _command_map[".semi-naive"] = [this](auto& c)
+        { cmd_semi_naive(c); };
         _command_map[".cluster"] = [this](auto& c)
         { cmd_cluster(c); };
         _command_map[".cluster-drop"] = [this](auto& c)
@@ -1174,6 +1176,7 @@ private:
             ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
             ".auto-run                   – Toggle automatic execution of .run after each input",
             ".parallel                   – Toggle parallel processing (default: on)",
+            ".semi-naive [on|off|check]  – Show or set the fixpoint evaluation strategy (default: on)",
             ".wikidata-constraints <json> <dir> – Export constraints to a directory",
             ".wikidata-qualifiers <json> [P1 P2 ...] – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
             ".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
@@ -1465,6 +1468,23 @@ private:
             {".parallel", ".parallel\n"
                           "Toggles parallel processing on/off.\n"
                           "Default is on for performance."},
+
+            {".semi-naive", ".semi-naive [on|off|check]\n"
+                            "Controls the fixpoint evaluation strategy of the reasoning engine.\n"
+                            "Without argument: shows the current mode.\n"
+                            "  on    – (default) delta-driven semi-naive evaluation: after a classic\n"
+                            "          first pass, each further iteration evaluates rules only against\n"
+                            "          the facts created in the previous iteration. Results are\n"
+                            "          identical to 'off'; typically much faster on rule-heavy\n"
+                            "          workloads such as the arithmetic modules.\n"
+                            "  off   – classic naive evaluation: every iteration re-evaluates all\n"
+                            "          rules against the whole graph.\n"
+                            "  check – like 'on', but after the delta drains, classic verification\n"
+                            "          passes run until quiescence. If any of them derives a fact the\n"
+                            "          delta path missed, the run completes the fixpoint classically\n"
+                            "          and then fails with a completeness-violation error. Intended\n"
+                            "          for tests and debugging; the test suite always enables it.\n"
+                            "Single-pass runs (.run-once) and queries are unaffected by this setting."},
 
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
@@ -2526,6 +2546,47 @@ private:
         _n->toggle_parallel();
         _n->out("Parallel processing is now " + std::string(_n->use_parallel() ? "enabled" : "disabled") + ".", true);
     }
+
+    void cmd_semi_naive(const std::vector<std::string>& cmd)
+    {
+        auto status = [this]() -> std::string
+        {
+            if (!_n->seminaive()) return "off";
+            return _n->seminaive_check() ? "check" : "on";
+        };
+
+        if (cmd.size() == 1)
+        {
+            _n->out("Semi-naive evaluation: " + status(), true);
+            return;
+        }
+
+        if (cmd.size() != 2)
+            throw std::runtime_error("Usage: .semi-naive [on|off|check]");
+
+        if (cmd[1] == "on")
+        {
+            _n->set_seminaive(true);
+            _n->set_seminaive_check(false);
+        }
+        else if (cmd[1] == "off")
+        {
+            _n->set_seminaive(false);
+            _n->set_seminaive_check(false);
+        }
+        else if (cmd[1] == "check")
+        {
+            _n->set_seminaive(true);
+            _n->set_seminaive_check(true);
+        }
+        else
+        {
+            throw std::runtime_error("Usage: .semi-naive [on|off|check]");
+        }
+
+        _n->out("Semi-naive evaluation: " + status(), true);
+    }
+
     void cmd_cluster(const std::vector<std::string>& cmd)
     {
         if (cmd.size() == 1)

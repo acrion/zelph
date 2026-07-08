@@ -395,8 +395,18 @@ Unification::Unification(
     const std::shared_ptr<Variables>& unequals,
     concurrency::ThreadPool*          pool,
     int                               log_depth,
-    ReasoningProfiler&                profiler)
-    : _n(n), _parent(parent), _variables(variables), _unequals(unequals), _log_depth(log_depth), _prof(profiler), _pool(pool)
+    ReasoningProfiler&                profiler,
+    Node                              seed_fact,
+    Node                              seed_predicate)
+    : _n(n)
+    , _parent(parent)
+    , _variables(variables)
+    , _unequals(unequals)
+    , _seed_fact(seed_fact)
+    , _seed_predicate(seed_predicate)
+    , _log_depth(log_depth)
+    , _prof(profiler)
+    , _pool(pool)
 {
     if (_n->logging_active())
         _prof.unification_instances.fetch_add(1, std::memory_order_relaxed);
@@ -421,12 +431,31 @@ Unification::Unification(
         if (Zelph::Impl::is_var(relation))
         {
             // the relation is a variable, so fill _relation_list with all possible relations (excluding variables)
-            _relation_list     = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+            if (_seed_fact != 0)
+            {
+                // Seed mode: the candidate's relation type is known upfront.
+                // extract_bindings binds the relation variable to it exactly
+                // like the full scan would; the existing bound-variable check
+                // below then works unchanged against this one-element list.
+                _relation_list.insert(_seed_predicate);
+            }
+            else
+            {
+                _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+            }
             _relation_variable = relation;
         }
         else
         {
-            _relation_list.insert(relation); // leaving _relation_variable==0, which denotes that this condition specifies the relation (instead of using a variable for it)
+            _relation_list.insert(relation); // leaving _relation_variable==0, ...
+
+            if (_seed_fact != 0 && relation != _seed_predicate)
+            {
+                // Seed mode with a fixed, different relation: the seeded fact
+                // can never satisfy this condition. The semi-naive index
+                // already filters by predicate; this is defense in depth.
+                _relation_list.clear();
+            }
 
             if (relation == _n->core.Unequal)
             {
@@ -504,7 +533,7 @@ Unification::Unification(
     _relation_index         = _relation_list.begin();
     _fact_index_initialized = false;
 
-    if (_n->use_parallel())
+    if (_seed_fact == 0 && _n->use_parallel())
     {
         // Subject/Object Driven Indexing
         //  parallel only with fixed relation
@@ -662,7 +691,18 @@ bool Unification::increment_fact_index()
             bool optimized_snapshot = false;
             Node current_rel        = *_relation_index;
 
-            if (_n->use_parallel())
+            if (_seed_fact != 0)
+            {
+                // Semi-naive seed mode: the candidate set is exactly the
+                // seeded fact -- no snapshot, no anchor lookup. The generic
+                // bookkeeping below stays active, so note_relation_scan
+                // honestly records a scan of size 1 for this relation and
+                // scans/fact metrics remain comparable across modes.
+                _facts_snapshot.clear();
+                _facts_snapshot.insert(_seed_fact);
+                optimized_snapshot = true;
+            }
+            else if (_n->use_parallel())
             {
                 // Rule-template nodes exist in the graph. The subject/object-
                 // driven shortcut must not anchor on nodes that are themselves

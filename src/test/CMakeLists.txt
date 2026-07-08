@@ -40,6 +40,7 @@ add_executable(zelph_tests
     test_neural.cpp
     test_numbers.cpp
     test_reasoning.cpp
+    test_seminaive.cpp
     test_sparql.cpp
     test_wikidata_qualifiers.cpp
 )

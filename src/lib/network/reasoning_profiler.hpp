@@ -71,6 +71,9 @@ namespace zelph::network
 
         std::atomic<uint64_t> facts_created{0};
 
+        std::atomic<uint64_t> seminaive_seeds{0};
+        std::atomic<uint64_t> seminaive_safety_extra{0};
+
         // --- Unification-level counters ---
         std::atomic<uint64_t> unification_instances{0};
         std::atomic<uint64_t> unification_parallel_instances{0};
@@ -190,6 +193,8 @@ namespace zelph::network
             RZ(unify_object_success);
             RZ(max_reasoning_depth);
             RZ(max_unify_depth);
+            RZ(seminaive_seeds);
+            RZ(seminaive_safety_extra);
 #undef RZ
 
             // maps
@@ -274,7 +279,8 @@ namespace zelph::network
 
             oss << "  rules_applied=" << load(apply_rule_calls)
                 << " deduce_calls=" << load(deduce_calls)
-                << " facts_created=" << load(facts_created) << "\n";
+                << " facts_created=" << load(facts_created)
+                << " seminaive_seeds=" << load(seminaive_seeds) << "\n";
 
             oss << "  unification: instances=" << load(unification_instances)
                 << " parallel=" << load(unification_parallel_instances)

@@ -535,6 +535,8 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             }
         }
         _pImpl->connect(answer.relation(), predicate, probability);
+
+        if (_on_fact_created) _on_fact_created(answer.relation(), predicate);
     }
 
     return answer.relation();
@@ -603,6 +605,11 @@ std::shared_ptr<const std::unordered_map<Node, uint32_t>> Zelph::number_digit_va
 {
     std::shared_lock lock(_smtx_number_digits);
     return _number_digits;
+}
+
+void Zelph::set_fact_creation_observer(FactCreationObserver observer)
+{
+    _on_fact_created = std::move(observer);
 }
 
 /**

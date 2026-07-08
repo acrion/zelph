@@ -173,6 +173,13 @@ namespace zelph::test
 
     // Run a test function in both parallel and single-core mode.
     // The function receives collector and interactive references.
+    //
+    // Both modes run with `.semi-naive check`: after the delta drains,
+    // classic verification passes re-run until quiescence, and run()
+    // throws if delta seeding missed any derivation. Every test therefore
+    // doubles as an equivalence test between semi-naive and classic
+    // evaluation -- permanently, so regressions in either direction fail
+    // loudly instead of silently changing results.
     template <typename F>
     void run_both_modes(F&& test_fn)
     {
@@ -180,6 +187,8 @@ namespace zelph::test
         {
             zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".semi-naive check");
+            collector.clear();
             test_fn(collector, interactive);
         }
         SUBCASE("single-core")
@@ -187,6 +196,7 @@ namespace zelph::test
             zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
             interactive.process(".parallel");
+            interactive.process(".semi-naive check");
             collector.clear();
             test_fn(collector, interactive);
         }
@@ -201,6 +211,7 @@ namespace zelph::test
         {
             zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".semi-naive check");
             interactive.process(".log 1");
             collector.clear();
             test_fn(collector, interactive);
@@ -210,6 +221,7 @@ namespace zelph::test
             zelph::io::OutputCollector  collector;
             zelph::console::Interactive interactive(collector.sink());
             interactive.process(".parallel");
+            interactive.process(".semi-naive check");
             interactive.process(".log 1");
             collector.clear();
             test_fn(collector, interactive);

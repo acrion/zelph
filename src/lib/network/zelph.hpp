@@ -172,6 +172,17 @@ namespace zelph::network
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
 
+        // --- Fact-creation observer (semi-naive evaluation) ---
+        // Invoked from fact() exactly when a NEW fact node is materialized
+        // (never for pre-existing facts). Reasoning::run uses it to capture
+        // the delta of facts created during a reasoning pass -- including
+        // inner facts materialized as side effects of instantiate_fact,
+        // which a deduce()-level hook would miss. Empty by default and
+        // outside of runs. Deliberately NOT invoked by
+        // fact_import_trusted_single_object (bulk import path).
+        using FactCreationObserver = std::function<void(Node relation, Node predicate)>;
+        void set_fact_creation_observer(FactCreationObserver observer);
+
         // --- Implemented in zelph_names.cpp (name management) ---
 
         void                     set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
@@ -245,5 +256,6 @@ namespace zelph::network
         bool                                                      _use_parallel{true};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
+        FactCreationObserver                                      _on_fact_created;
     };
 }

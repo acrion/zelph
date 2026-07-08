@@ -163,6 +163,7 @@ Key commands include:
 - `.log-janet` – Toggle logging of Janet function calls
 - `.auto-run` – Toggle automatic execution of `.run` after each input (default: on)
 - `.parallel` – Toggle parallel processing (default: on)
+- `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts
 - `.wikidata-qualifiers <json> [P...]` – Import statement qualifiers from a Wikidata dump
 - `.export-wikidata <json> <id1> [id2 ...]` – Extracts exact JSON lines for Q-IDs (no import)

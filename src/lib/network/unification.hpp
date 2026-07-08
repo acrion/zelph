@@ -48,7 +48,9 @@ namespace zelph::network
             const std::shared_ptr<Variables>& unequals,
             concurrency::ThreadPool*          pool,
             int                               log_depth,
-            ReasoningProfiler&                profiler);
+            ReasoningProfiler&                profiler,
+            Node                              seed_fact      = 0,
+            Node                              seed_predicate = 0);
         std::shared_ptr<Variables> Next();
         std::shared_ptr<Variables> Unequals();
         bool                       uses_parallel() const { return _use_parallel; }
@@ -76,8 +78,11 @@ namespace zelph::network
         adjacency_set              _objects;
         Node                       _subject_pred_hint{};
         Node                       _subject_grounded{}; // concrete fact node the subject pattern
-                                                        // resolves to under current bindings
-                                                        // (bound-pattern grounding); 0 = not groundable
+        // resolves to under current bindings
+        // (bound-pattern grounding); 0 = not groundable
+
+        Node               _seed_fact{};      // semi-naive seed: the single candidate fact (0 = normal scan mode)
+        Node               _seed_predicate{}; // its relation type, known at creation time
         int                _log_depth{};
         ReasoningProfiler& _prof;
         Node               _current_rel_ctx{};

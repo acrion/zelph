@@ -100,6 +100,13 @@ namespace zelph::network
         void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
         void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
 
+        // --- Implemented in reasoning_seminaive.cpp ---
+
+        void set_seminaive(bool on);
+        bool seminaive() const;
+        void set_seminaive_check(bool on);
+        bool seminaive_check() const;
+
     private:
         // --- Implemented in reasoning.cpp (orchestration) ---
 
@@ -123,6 +130,13 @@ namespace zelph::network
         const NeuralNet* compiled_net(Node net_node, int depth);
         void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
+
+        // --- Implemented in reasoning_seminaive.cpp ---
+
+        // Delta-driven fixpoint loop (semi-naive evaluation). Returns the
+        // number of safety-net violations found (always 0 unless
+        // _seminaive_check is active and delta seeding missed a derivation).
+        uint64_t run_fixpoint_seminaive(bool silent);
 
         // --- Members ---
 
@@ -151,5 +165,8 @@ namespace zelph::network
         Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
         Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
         std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;          // compiled nets, cleared per epoch
+
+        bool _seminaive{true};
+        bool _seminaive_check{false};
     };
 }
