@@ -532,6 +532,13 @@ namespace zelph::network
             return it == _right.end() ? 0 : it->second.size();
         }
 
+        size_t right_count_of(Node b) const
+        {
+            std::shared_lock<std::shared_mutex> lock(_smtx_left);
+            auto                                it = _left.find(b);
+            return it == _left.end() ? 0 : it->second.size();
+        }
+
         // get predecessors / incoming edges
         adjacency_set get_left(const Node b) const
         {

@@ -514,6 +514,8 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
   <img src="../assets/multidigit_addition_pipeline_v2.svg" width="67%">
 </div>
 
+> **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
+
 zelph can perform **arbitrary-precision addition** purely via graph rules.
 The reference implementation lives in [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph).
 A second reference implementation, [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
