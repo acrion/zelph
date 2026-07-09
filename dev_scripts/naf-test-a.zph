@@ -1,0 +1,5 @@
+(A trigger A) => (A step1 A)
+(A step1 A) => (A step2 A)
+(A trigger A, ¬(A step2 A)) => (A racewin A)
+x trigger x
+# x2 trigger x2

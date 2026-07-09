@@ -50,6 +50,7 @@ namespace
         std::shared_ptr<std::unordered_set<Node>> excluded;         // rule topology nodes (conjunction set + elements)
         adjacency_set                             deductions;
         bool                                      delta_unsafe{false}; // must be applied classically every iteration
+        bool                                      deferred{false};     // contains a negated condition -> stratum 2
     };
 }
 
@@ -136,91 +137,82 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
         if (ir.elements.empty()) continue; // malformed; classic evaluation would not fire either
 
-        // Classify elements. A rule is delta-unsafe (and then applied
-        // classically in every iteration) when seeding over its positive
-        // conditions cannot be proven complete:
-        //  - nested conjunction elements (evaluate handles them recursively;
-        //    a flat "remaining" reconstruction would lose that structure)
-        //  - elements without a unique predicate
-        //  - neural (approx) conditions (no fact lookup, epoch-cached nets)
-        //  - a negation whose variables are not all covered by positive
-        //    conditions: its complementary enumeration ranges over the
-        //    pattern relation's DOMAIN, and a new fact can extend that
-        //    domain, making the negation newly succeed without any positive
-        //    condition of this rule matching a new fact
-        //  - no positive leaf at all
-        std::unordered_set<Node> positive_vars;
-        std::vector<Node>        negation_elements;
+        // Rules whose condition contains a negation at ANY depth form the
+        // deferred stratum: excluded from the classic first pass, never
+        // seeded, never applied inside the positive delta loop. They run
+        // only at stratum boundaries (positive delta drained), so every
+        // negation is tested against the saturated positive fact base.
+        // This supersedes the former per-rule negation handling: a rule
+        // whose negation variables were all covered by positive conditions
+        // used to be seeded like a normal rule, which evaluated its
+        // negation against an unsaturated graph and could fire prematurely
+        // (negation race, see test_stratified.cpp).
+        ir.deferred = condition_contains_negation(condition, 1);
 
-        for (Node cond : ir.elements)
+        if (!ir.deferred)
         {
-            if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
+            // Classify elements. A rule is delta-unsafe (and then applied
+            // classically in every iteration) when seeding over its
+            // positive conditions cannot be proven complete:
+            //  - nested conjunction elements (evaluate handles them
+            //    recursively; a flat "remaining" reconstruction would lose
+            //    that structure)
+            //  - elements without a unique predicate
+            //  - neural (approx) conditions (no fact lookup, epoch-cached)
+            //  - no positive leaf at all
+            for (Node cond : ir.elements)
             {
-                ir.delta_unsafe = true;
-                continue;
-            }
-
-            adjacency_set rels = filter(cond, core.IsA, core.RelationTypeCategory);
-            if (rels.size() != 1)
-            {
-                ir.delta_unsafe = true;
-                continue;
-            }
-            const Node rel = *rels.begin();
-
-            if (_nn_pred != 0 && rel == _nn_pred)
-            {
-                ir.delta_unsafe = true;
-                continue;
-            }
-
-            if (is_negated_condition(cond, 1))
-            {
-                negation_elements.push_back(cond);
-                continue;
-            }
-
-            if (!Zelph::Impl::is_var(rel) && rel == core.Unequal)
-                continue; // guard: never a seed, binds no new variables
-
-            ir.leaves.push_back(cond);
-            ir.leaf_preds.push_back(Zelph::Impl::is_var(rel) ? Node{0} : rel);
-
-            std::vector<Node> history;
-            collect_variables(this, cond, positive_vars, 1, history);
-        }
-
-        if (ir.leaves.empty()) ir.delta_unsafe = true;
-
-        for (Node neg : negation_elements)
-        {
-            std::unordered_set<Node> neg_vars;
-            std::vector<Node>        history;
-            collect_variables(this, neg, neg_vars, 1, history);
-            for (Node v : neg_vars)
-            {
-                if (positive_vars.count(v) == 0)
+                if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
                 {
                     ir.delta_unsafe = true;
-                    break;
+                    continue;
                 }
-            }
-            if (ir.delta_unsafe) break;
-        }
 
-        const size_t rule_idx = rules.size();
-        if (!ir.delta_unsafe)
-        {
-            for (size_t li = 0; li < ir.leaves.size(); ++li)
+                adjacency_set rels = filter(cond, core.IsA, core.RelationTypeCategory);
+                if (rels.size() != 1)
+                {
+                    ir.delta_unsafe = true;
+                    continue;
+                }
+                const Node rel = *rels.begin();
+
+                if (_nn_pred != 0 && rel == _nn_pred)
+                {
+                    ir.delta_unsafe = true;
+                    continue;
+                }
+
+                if (!Zelph::Impl::is_var(rel) && rel == core.Unequal)
+                    continue; // guard: never a seed, binds no new variables
+
+                ir.leaves.push_back(cond);
+                ir.leaf_preds.push_back(Zelph::Impl::is_var(rel) ? Node{0} : rel);
+            }
+
+            if (ir.leaves.empty()) ir.delta_unsafe = true;
+
+            const size_t rule_idx = rules.size();
+            if (!ir.delta_unsafe)
             {
-                if (ir.leaf_preds[li] == 0)
-                    wildcard_index.emplace_back(rule_idx, li);
-                else
-                    pred_index[ir.leaf_preds[li]].emplace_back(rule_idx, li);
+                for (size_t li = 0; li < ir.leaves.size(); ++li)
+                {
+                    if (ir.leaf_preds[li] == 0)
+                        wildcard_index.emplace_back(rule_idx, li);
+                    else
+                        pred_index[ir.leaf_preds[li]].emplace_back(rule_idx, li);
+                }
             }
         }
         rules.push_back(std::move(ir));
     }
+
+    bool has_deferred = false;
+    for (const IndexedRule& ir : rules)
+        if (ir.deferred)
+        {
+            has_deferred = true;
+            break;
+        }
 
     // ------------------------------------------------------------------
     // Phase 1: delta capture + classic first iteration
@@ -244,9 +236,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
     int iteration = 1;
     _done         = false;
     if (!silent)
-        diagnostic_stream() << "--- Reasoning iteration 1 (classic) ---" << std::endl;
-    for (Node rule_node : _pImpl->get_left(core.Causes))
-        apply_rule(rule_node, 0);
+        diagnostic_stream() << "--- Reasoning iteration 1 (classic, positive stratum) ---" << std::endl;
+    for (const IndexedRule& ir : rules)
+        if (!ir.deferred) apply_rule(ir.rule, 0);
     _pool->wait();
 
     // ------------------------------------------------------------------
@@ -349,6 +341,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
     // Phase 2: seeded iterations until the delta drains
     // ------------------------------------------------------------------
     uint64_t safety_violations = 0;
+    bool     negation_pending  = has_deferred;
 
     while (true)
     {
@@ -360,6 +353,25 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
         if (current.empty())
         {
+            // ---- Stratum boundary: the positive delta has drained. ----
+            // Deferred rules (negated conditions) are evaluated exactly
+            // here, against the saturated positive fact base. Their
+            // consequences enter the delta via the observer and re-open
+            // the positive stratum; the boundary is then reached again and
+            // the deferred stratum re-runs (duplicates are rejected by
+            // deduce as everywhere else, so this terminates).
+            if (negation_pending)
+            {
+                negation_pending = false;
+                _done            = false;
+                if (!silent)
+                    diagnostic_stream() << "--- Deferred stratum (negation, classic pass) ---" << std::endl;
+                for (const IndexedRule& ir : rules)
+                    if (ir.deferred) apply_rule(ir.rule, 0);
+                _pool->wait();
+                continue; // any new consequences are in the delta now
+            }
+
             if (!_seminaive_check) break;
 
             // Safety net (test/debug mode): verify the fixpoint with one
@@ -378,6 +390,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
             if (!_done) break; // clean fixpoint confirmed
 
             ++safety_violations;
+            negation_pending = has_deferred; // violation facts must re-open the deferred stratum too
+
             if (logging_active())
                 _prof.seminaive_safety_extra.fetch_add(1, std::memory_order_relaxed);
             continue; // the extra facts are in the delta now

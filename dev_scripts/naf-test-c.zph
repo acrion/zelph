@@ -1,0 +1,6 @@
+(A go A) => (A m A)
+(A m A) => (A bad A)
+(A m A) => (A seen A)
+(A seen A) => (A done A)
+(A done A, ¬(A bad A)) => (A verdict A)
+z go z

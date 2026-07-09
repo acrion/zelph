@@ -152,6 +152,65 @@ Where Gödel numbering encodes formulas _as_ numbers to make arithmetic self-ref
 
 The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. With division and canonicalization complete, the roadmap continues with integers, number-theoretic demos such as the primality module, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
 
+## From Arithmetic to Number Theory: Primality
+
+The four operations invite a first genuinely number-theoretic question: is
+N prime? The standard library answers it twice, with two deliberately
+different designs on top of the same arithmetic modules:
+
+- [`stdlib/primes.zph`](https://github.com/acrion/zelph/blob/main/stdlib/primes.zph) — negation-free, via a positive fold
+- [`stdlib/primes-naf.zph`](https://github.com/acrion/zelph/blob/main/stdlib/primes-naf.zph) — the textbook rule, via negation-as-failure
+
+Both load on top of either arithmetic module and expose the same repeatable
+query idiom:
+
+```
+.import arithmetic            # or: .import binary-arithmetic
+.import primes                # or: .import primes-naf
+(&113 testprime &113) = X
+Answer: (&113 testprime &113) = prime
+```
+
+Both perform trial division with the square bound (candidates stop once
+E*E > N), and the primes modules contribute **no arithmetic of their own**:
+candidate successors are asserted as ordinary `+` facts, the bound as `*`
+and `cmp` facts, divisibility as `mod` facts — the arithmetic modules answer
+them all. A single primality test is the deepest cross-module cascade in the
+standard library, with division itself internally cascading through
+multiplication, subtraction, and comparison.
+
+**The negation-free version: the fold is the scheduler.** "N is prime" is a
+universally quantified statement — _all_ candidates leave a remainder —
+which a monotonic engine cannot answer with a single lookup. `primes.zph`
+builds the universal from positive facts: a fold `(N nodivupto D)` grows one
+verified non-divisor at a time, and the next candidate E = D+1 only comes
+into existence after D has been verified. The chain that constitutes the
+proof simultaneously throttles the search: for composite N the recursion
+halts at the smallest divisor — no work is performed past the verdict, and
+`hasdivisor` names exactly one witness, which is necessarily the smallest
+prime factor.
+
+**The NAF version: the definition itself, executable.** Under
+[stratified evaluation](logic.md#stratified-evaluation) the textbook
+formulation is sound as written:
+
+```
+(N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
+```
+
+The rule is deferred until the positive rules — the full candidate scan —
+have reached quiescence, so the negation tests absence against the complete
+scan. The trade-offs mirror the fold version: enumeration is eager
+(composites pay the full scan, no early exit), and in return `hasdivisor`
+lists _all_ divisors up to the square bound.
+
+Shared properties: 0 and 1 receive no verdict at all — neither prime nor
+composite, partiality by absence as everywhere in the stdlib. And the
+verdicts are ordinary relational facts (`N isprime N`, `N hasdivisor D`)
+plus a result bridge under `=`, so they compose with meta-rules and further
+computations like any declared knowledge — a computed `isprime` fact can,
+for instance, feed a rule that cross-checks Wikidata's prime-number claims.
+
 ## Making It Fast
 
 Naively, "arithmetic as rules" sounds hopeless: a fixpoint engine re-evaluates rules until nothing new appears, and a single multiplication spawns hundreds of intermediate facts. Three engine mechanisms make it practical — none of them arithmetic-specific.

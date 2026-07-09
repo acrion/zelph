@@ -117,6 +117,7 @@ namespace zelph::network
 
         void evaluate(RulePos rule, ReasoningContext& ctx, int depth);
         bool is_negated_condition(Node condition, int depth);
+        bool condition_contains_negation(Node condition, int depth);
 
         // --- Implemented in reasoning_deduce.cpp ---
 

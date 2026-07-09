@@ -1,0 +1,32 @@
+# Trial-division primality test using NEGATION-AS-FAILURE -- the textbook
+# formulation: N is prime iff no candidate divides it.
+#
+# Requires stratified rule evaluation (zelph >= 0.9.8): the ¬-rule below is
+# deferred until the positive rules -- candidate enumeration and all mod
+# computations -- have reached quiescence, so the negation tests absence
+# against the complete divisor scan.
+# 
+# Companion script: primes.zph solves
+# the same problem WITHOUT negation via a positive fold, which doubles as
+# a lazy scheduler (early exit at the smallest divisor). This script scans
+# eagerly up to sqrt(N) -- the negation needs the full scan -- and in
+# return finds ALL divisors <= sqrt(N), not just the smallest.
+
+(N testprime N) => (&2 cmp N)
+(N testprime N, &2 == N) => (N isprime N)
+(N testprime N, &2 < N) => (&2 divisorcand N)
+
+(D divisorcand N) => (D + &1)
+(D divisorcand N, (D + &1) = E) => (E * E)
+(D divisorcand N, (D + &1) = E, (E * E) = P) => (P cmp N)
+(D divisorcand N, (D + &1) = E, (E * E) = P, P < N) => (E divisorcand N)
+(D divisorcand N, (D + &1) = E, (E * E) = P, P == N) => (E divisorcand N)
+
+(D divisorcand N) => (N mod D)
+(D divisorcand N, (N mod D) = &0) => (N hasdivisor D)
+
+# The textbook rule -- sound under stratified evaluation:
+(N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
+
+(N testprime N, N isprime N) => ((N testprime N) = prime)
+(N testprime N, N hasdivisor D) => ((N testprime N) = composite)

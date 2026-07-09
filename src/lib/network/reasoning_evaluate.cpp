@@ -818,3 +818,30 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
 
     return result;
 }
+
+// Recursively checks whether a rule condition contains a negated condition
+// at any depth: the condition itself, or -- for conjunction sets -- any
+// element, including nested conjunctions. Rules for which this holds form
+// the DEFERRED STRATUM: they are evaluated only when the positive rules
+// have reached quiescence, so that negation-as-failure tests absence
+// against the saturated positive fact base (stratified semantics) instead
+// of racing against in-flight derivations. Soundness rests on monotonicity:
+// facts only accumulate, so later derivations can make a negation FAIL but
+// never make it newly SUCCEED -- a negation that succeeds at a stratum
+// boundary is final with respect to the positive stratum.
+bool Reasoning::condition_contains_negation(Node condition, int depth)
+{
+    if (!_pImpl->exists(condition)) return false;
+    if (is_negated_condition(condition, depth)) return true;
+    if (!check_fact(condition, core.IsA, {core.Conjunction}).is_known()) return false;
+
+    for (Node rel : _pImpl->get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        Node          element = parse_fact(rel, objs);
+        if (element && objs.count(condition) == 1 && condition_contains_negation(element, depth))
+            return true;
+    }
+    return false;
+}

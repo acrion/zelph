@@ -1,0 +1,6 @@
+(A s0 A) => (A s1 A)
+(A s1 A) => (A s2 A)
+(A s2 A) => (A s3 A)
+(A s3 A) => (A s4 A)
+(A s0 A, ¬(A s4 A)) => (A racewin A)
+y s0 y

@@ -324,6 +324,52 @@ The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->`
 
 The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
 
+#### Stratified Evaluation
+
+A negated condition asks about _absence_ — but absence _when_? During a
+reasoning run, facts are still being derived; a negation evaluated mid-run
+could succeed merely because the matching fact had not been derived _yet_,
+and by monotonicity the resulting deduction could never be retracted. zelph
+therefore evaluates rules in **strata**:
+
+1. **Positive stratum:** all rules without negated conditions run to
+   quiescence (fixpoint).
+2. **Deferred stratum:** rules whose conditions contain a negation at any
+   nesting depth are evaluated against that saturated state.
+
+Consequences of deferred rules may feed positive rules, so the two phases
+alternate until neither derives anything. This schedule is what makes
+negation-as-failure sound in a forward chainer: facts only accumulate, so a
+later derivation can make a negation _fail_ but never make it newly
+_succeed_ — a negation that succeeds at a stratum boundary is final.
+Both evaluation strategies (classic and semi-naive) implement the same
+schedule, and the `.semi-naive check` mode verifies their equivalence.
+
+The payoff is that universally quantified conditions can be written the way
+a textbook would state them. The primality rule
+
+```
+(N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
+```
+
+is sound as written: it is deferred until every divisor candidate has been
+tested, so the negation quantifies over the _complete_ scan. See
+[Semantic Arithmetic](arithmetic.md#from-arithmetic-to-number-theory-primality)
+for the full module.
+
+Two boundaries are worth knowing:
+
+- **One negation stratum.** If a deferred rule's consequences can
+  (transitively) grow the extension of a pattern negated by _another_
+  deferred rule, the program is not stratifiable in a single layer, and
+  results within the deferred phase may depend on rule order.
+  Contradiction rules (consequence `!`) are always safe here: they derive
+  no facts.
+- **Stratification orders _derived_ facts, not your input.** Negation is
+  evaluated per run, against asserted facts as they stand. If a negated
+  pattern should be blocked by base facts, assert those facts _before_ the
+  triggering fact.
+
 ### Inequality Constraints
 
 <a href="#" onclick="jumpTo(859); return false;">🎬 Watch this section</a>
@@ -445,7 +491,7 @@ The comma-separated condition syntax `(cond1, cond2, cond3)` is a conjunction: a
 
 `¬(Pattern)` corresponds to **negation-as-failure** (NAF) — the same semantics as in Datalog with stratified negation or Prolog's `\+`.
 It tests the _absence of evidence_ in the current graph state, not the _evidence of absence_ in the model-theoretic sense.
-Readers familiar with Answer Set Programming (ASP) or well-founded semantics will recognize this as a form of default negation operating over the graph's Herbrand base.
+Readers familiar with Answer Set Programming (ASP) or well-founded semantics will recognize this as a form of default negation operating over the graph's Herbrand base. zelph enforces these semantics operationally by deferring rules with negated conditions until the positive rules reach their fixpoint (see [Stratified Evaluation](#stratified-evaluation)).
 
 ### Inequality
 

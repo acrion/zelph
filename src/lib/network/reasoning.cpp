@@ -84,22 +84,80 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     {
         seminaive_violations = run_fixpoint_seminaive(silent);
     }
+    else if (suppress_repetition)
+    {
+        // Single-pass mode never reaches a fixpoint, so the stratified
+        // two-phase schedule does not apply; keep the historic behaviour
+        // (one classic pass over all rules). The "suppressed" warning
+        // below still reports pending work via _done.
+        _done = false;
+        if (!silent)
+            diagnostic_stream() << "--- Reasoning iteration 1 (single pass) ---" << std::endl;
+        for (Node rule : _pImpl->get_left(core.Causes))
+            apply_rule(rule, 0);
+        _pool->wait();
+    }
     else
     {
-        int iteration = 0;
+        // Classic (naive) evaluation with stratified negation. Rules whose
+        // conditions contain a negation form a deferred stratum:
+        //   Phase 1 saturates the positive rules (fixpoint);
+        //   Phase 2 evaluates the deferred rules once against that state.
+        // A negation succeeding in phase 2 is final (monotonicity: new
+        // facts can make a negation fail, never newly succeed). Phase-2
+        // consequences may feed positive rules, so the cycle repeats until
+        // neither phase derives anything.
+        //
+        // NOTE: this implements ONE negation stratum. If a deferred rule's
+        // consequences can (transitively) grow the extension of a pattern
+        // negated by another deferred rule, results within phase 2 depend
+        // on rule order -- the classic limitation of non-stratifiable
+        // programs. Contradiction-only deferred rules (consequence !) are
+        // always safe: they produce no facts.
+        std::vector<Node> positive_rules;
+        std::vector<Node> deferred_rules;
+        for (Node rule : _pImpl->get_left(core.Causes))
+        {
+            adjacency_set deductions;
+            Node          condition = parse_fact(rule, deductions);
+            const bool    deferred  = condition && condition != core.Causes
+                                   && condition_contains_negation(condition, 1);
+            (deferred ? deferred_rules : positive_rules).push_back(rule);
+        }
+
+        if (!silent && !deferred_rules.empty())
+            diagnostic_stream() << "Stratified schedule: " << deferred_rules.size()
+                                << " rule(s) with negated conditions deferred until positive quiescence."
+                                << std::endl;
+
+        int  iteration = 0;
+        bool deferred_derived;
         do
         {
-            _done = false;
-            ++iteration;
-            if (!silent)
-                diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
-            for (Node rule : _pImpl->get_left(core.Causes))
+            do
             {
-                apply_rule(rule, 0);
-            }
+                _done = false;
+                ++iteration;
+                if (!silent)
+                    diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
+                for (Node rule : positive_rules)
+                    apply_rule(rule, 0);
+                _pool->wait();
+            } while (_done);
 
-            _pool->wait();
-        } while (_done && !suppress_repetition);
+            deferred_derived = false;
+            if (!deferred_rules.empty())
+            {
+                _done = false;
+                if (!silent)
+                    diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
+                for (Node rule : deferred_rules)
+                    apply_rule(rule, 0);
+                _pool->wait();
+                deferred_derived = _done;
+            }
+        } while (deferred_derived);
+        _done = false;
     }
 
     if (!silent)

@@ -44,6 +44,10 @@
 # comparisons compare NODES via the comparison module's relational
 # facts. This is sound because all involved numbers are canonical and
 # canonical numbers are hash-consed -- one value, one node.
+#
+# Companion script: primes-naf.zph solves the same problem via
+# negation-as-failure (stratified evaluation), scanning eagerly and
+# finding ALL divisors up to the square bound.
 
 # ---------------------------------------------------------------------------
 # Rule PT1 -- Trigger: classify N against 2 (the smallest prime)
