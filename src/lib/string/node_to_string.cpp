@@ -238,6 +238,48 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
                 current = cdr;
             }
 
+            // Terminated chains (ending at nil) render as lists below.
+            // A chain ending anywhere else -- a variable (rule patterns
+            // like (A cons R)), an atom, or a fact node -- is NOT a proper
+            // list: rendering only the collected cars would silently drop
+            // the tail (the historical behavior turned the rule pattern
+            // (A cons R) into <A>). Such chains render in explicit cons
+            // input syntax instead, which round-trips through the parser
+            // and shows rule patterns exactly as their author wrote them.
+            const bool proper_list = (current == z->core.Nil);
+
+            if (!list_elements.empty() && !proper_list)
+            {
+                auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
+                child_history->insert(resolved);
+
+                // Render right-associatively: (a cons (b cons tail)).
+                std::string tail_str;
+                node_to_string(z, tail_str, lang, current, max_objects, variables, resolved, child_history);
+                if (tail_str.empty()) tail_str = string::mark_identifier("?");
+
+                const std::string cons_name = string::mark_identifier(z->get_formatted_name(z->core.Cons, lang));
+
+                for (auto it = list_elements.rbegin(); it != list_elements.rend(); ++it)
+                {
+                    std::string car_str;
+                    node_to_string(z, car_str, lang, *it, max_objects, variables, resolved, child_history);
+                    if (car_str.empty()) car_str = string::mark_identifier("?");
+
+                    tail_str = "(" + car_str + " " + cons_name + " " + tail_str + ")";
+                }
+
+                result = tail_str;
+
+                // The outermost wrap is already provided by the loop above;
+                // strip it when this node is NOT embedded in a parent, to
+                // match the top-level convention of the S-P-O formatter.
+                if (parent == 0 && result.size() >= 2 && result.front() == '(' && result.back() == ')')
+                    result = result.substr(1, result.size() - 2);
+
+                return;
+            }
+
             if (!list_elements.empty())
             {
                 // Number display: if a digit alphabet is registered via

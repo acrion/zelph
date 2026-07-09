@@ -25,6 +25,8 @@
 #   (&42 - &9) = X
 #   (&42 cmp &9) = X
 #   (&12 * &34) = X
+#   (&17 / &5) = X
+#   (&17 mod &5) = X
 
 %
 (defn- half-decimal
@@ -146,6 +148,13 @@
 ((1 dx 0) tci 1) mco 0
 ((1 dx 1) tci 1) pd 0
 ((1 dx 1) tci 1) mco 1
+
+# ---------------------------------------------------------------------------
+# Digit alphabet as facts (2 facts): the only base-specific data the
+# division module needs -- it enumerates quotient-digit candidates.
+# ---------------------------------------------------------------------------
+0 isdigit true
+1 isdigit true
 
 # ---------------------------------------------------------------------------
 # Rule A0 -- Trigger: seed internal addition with carry-in 0
@@ -403,3 +412,127 @@
 # Rule MC0 -- Connect
 # ---------------------------------------------------------------------------
 (N * M, (N mul M) prod T) => ((N * M) = T)
+
+# ===========================================================================
+# Division (N / M) and remainder (N mod M) -- Euclidean division on the
+# naturals; the deepest cross-module cascade so far: candidate products
+# come from the multiplication module's digit-times-number engine (dmul),
+# candidate differences from the subtraction module (-), and quotient-digit
+# selection from the comparison module (cmp). Division contributes NO digit
+# table of its own -- its only base-specific data is the digit alphabet
+# (isdigit facts).
+#
+# Long division on LSB-first lists: N = (A cons R) means N = A + base*R.
+# With R = T*M + S from the recursion, N = (base*T + q)*M + r, where q
+# and r solve t = q*M + r with 0 <= r < M for t = A + base*S. In LSB-first
+# representation t IS the cons cell (A cons S): the "bring down the next
+# digit" step of schoolbook long division is a single cons -- the same
+# representational gift as the free shift in multiplication.
+#
+# The quotient digit is selected without backtracking and without any
+# digit-ordering knowledge: ALL candidate products q*M are derived up
+# front, ALL candidate differences t - q*M are asserted (subtraction is
+# partial, so candidates with q*M > t silently die), and the single
+# candidate with t - q*M < M is selected. Uniqueness: 0 <= t - q*M < M has
+# exactly one digit solution q, because the recursion maintains the
+# invariant rem < M and hence t = A + base*rem < base*M.
+#
+# Division by zero needs no dedicated rule: every candidate difference
+# equals t by value and t < 0 is unsatisfiable, so no quotient digit is
+# ever selected -- partiality by absence, exactly like net-borrow
+# subtraction.
+#
+# NOTE: / must be surrounded by whitespace, like *.
+
+# ---------------------------------------------------------------------------
+# Rules VT1-VT2 -- Triggers: / and mod share the internal dvd recursion,
+# but each exposes only its own result (guard philosophy of C0/SC0/MC0).
+# ---------------------------------------------------------------------------
+(N / M) => (N dvd M)
+(N mod M) => (N dvd M)
+
+# ---------------------------------------------------------------------------
+# Rules VC1-VC2 -- Candidate products: seed q*M for every digit q via the
+# multiplication module's dmul engine (rules PD1/PB1/PB2/PA1 derive pprod).
+# The products depend only on M, so they are shared by all recursion steps
+# -- and, thanks to hash-consing, by every computation involving M.
+# ---------------------------------------------------------------------------
+(N / M, Q isdigit true) => ((Q dmul M) mci 0)
+(N mod M, Q isdigit true) => ((Q dmul M) mci 0)
+
+# ---------------------------------------------------------------------------
+# Rule VD1 -- Decompose: recurse on the more significant part. Guarded like
+# MD1 so that no (nil dvd M) state exists (nil is the graph's biggest hub);
+# the single-digit case is handled by the base rules below, like MB1.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil) => (R dvd M)
+
+# ---------------------------------------------------------------------------
+# Rules VS1-VS2 -- Candidate differences: assert t - q*M as ordinary
+# user-facing subtractions (cross-module cascade, exactly like MA1 asserts
+# +). t is the single cons (A cons S); in the base step (single-digit
+# first operand) t is the operand itself. Candidates with q*M > t produce
+# no difference at all: subtraction is partial.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P)
+=> ((A cons S) - P)
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P)
+=> ((A cons nil) - P)
+
+# ---------------------------------------------------------------------------
+# Rule VP1 -- Probe: compare every candidate difference with the divisor.
+# Deliberately keyed on the pprod structure alone, not on a division step:
+# any subtraction whose subtrahend happens to be a candidate product gets
+# its difference compared -- at worst a few extra cmp facts, which persist
+# as reusable knowledge like all derived facts.
+# ---------------------------------------------------------------------------
+(((Q dmul M) mci 0) pprod P,
+ (T - P) = D)
+=> (D cmp M)
+
+# ---------------------------------------------------------------------------
+# Rules VA1-VA4 -- Select and assemble: the unique candidate whose
+# difference is smaller than the divisor yields the quotient digit Q and
+# the running remainder D. The current step contributes the LEAST
+# significant quotient digit produced so far, so (Q cons T) grows the
+# quotient in lockstep with the operand recursion.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil,
+ (R dvd M) quot T,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons S) - P) = D,
+ D < M)
+=> (((A cons R) dvd M) quot (Q cons T))
+
+((A cons R) dvd M, R != nil,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons S) - P) = D,
+ D < M)
+=> (((A cons R) dvd M) rem D)
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons nil) - P) = D,
+ D < M)
+=> (((A cons nil) dvd M) quot (Q cons nil))
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons nil) - P) = D,
+ D < M)
+=> (((A cons nil) dvd M) rem D)
+
+# ---------------------------------------------------------------------------
+# Rules VC0/VM0 -- Connect. Results may carry leading zeros (the quotient
+# has exactly one digit per dividend digit, e.g. 123/456 yields the list
+# <000>); the &-display normalizes the value, and cmp treats such lists as
+# equal by value -- same caveat as subtraction results.
+# ---------------------------------------------------------------------------
+(N / M, (N dvd M) quot Q) => ((N / M) = Q)
+(N mod M, (N dvd M) rem R) => ((N mod M) = R)

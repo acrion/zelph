@@ -1,0 +1,3 @@
+.import binary-arithmetic
+(&3495734893 * &92348793847) = X
+# takes around 3.4 s

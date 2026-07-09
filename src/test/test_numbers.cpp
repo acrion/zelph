@@ -591,3 +591,118 @@ TEST_CASE("numbers: multiplication cascades into comparison")
         CHECK(any_output_starts_with(collector, "((&6 * &7) = &42)"));
         CHECK(any_output_starts_with(collector, "(&42 > &6)")); });
 }
+
+// ---------------------------------------------------------------------------
+// Division via rules
+// ---------------------------------------------------------------------------
+
+TEST_CASE("numbers: division via rules (decimal)")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import arithmetic");
+
+        SUBCASE("408 / 12 = 34 (exact division, inverse of the multiplication test)")
+        {
+            collector.clear();
+            interactive.process("(&408 / &12) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&408 / &12) = &34)"));
+        }
+        SUBCASE("123 / 4 = 30 remainder 3")
+        {
+            collector.clear();
+            interactive.process("(&123 / &4) = X");
+            interactive.process("(&123 mod &4) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&123 / &4) = &30)"));
+            CHECK(any_output_contains(collector, "((&123 mod &4) = &3)"));
+        }
+        SUBCASE("1000 / 7 = 142 remainder 6 (zero digits, long borrow chains)")
+        {
+            collector.clear();
+            interactive.process("(&1000 / &7) = X");
+            interactive.process("(&1000 mod &7) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&1000 / &7) = &142)"));
+            CHECK(any_output_contains(collector, "((&1000 mod &7) = &6)"));
+        }
+        SUBCASE("3 / 12 = 0 remainder 3 (dividend smaller than divisor)")
+        {
+            collector.clear();
+            interactive.process("(&3 / &12) = X");
+            interactive.process("(&3 mod &12) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&3 / &12) = &0)"));
+            CHECK(any_output_contains(collector, "((&3 mod &12) = &3)"));
+        }
+        SUBCASE("7 / 7 = 1 remainder 0")
+        {
+            collector.clear();
+            interactive.process("(&7 / &7) = X");
+            interactive.process("(&7 mod &7) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&7 / &7) = &1)"));
+            CHECK(any_output_contains(collector, "((&7 mod &7) = &0)"));
+        }
+        SUBCASE("5 / 0 yields no result (partiality by absence, no dedicated rule)")
+        {
+            collector.clear();
+            interactive.process("&5 / &0");
+            interactive.run(true, false, false);
+            CHECK_FALSE(any_output_contains(collector, "(&5 / &0) ="));
+        } });
+}
+
+TEST_CASE("numbers: division via rules (binary, identical rules)")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import binary-arithmetic");
+
+        SUBCASE("408 / 12 = 34 remainder 0")
+        {
+            collector.clear();
+            interactive.process("(&408 / &12) = X");
+            interactive.process("(&408 mod &12) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&408 / &12) = &34)"));
+            CHECK(any_output_contains(collector, "((&408 mod &12) = &0)"));
+        }
+        SUBCASE("5 / 3 = 1 remainder 2")
+        {
+            collector.clear();
+            interactive.process("(&5 / &3) = X");
+            interactive.process("(&5 mod &3) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((&5 / &3) = &1)"));
+            CHECK(any_output_contains(collector, "((&5 mod &3) = &2)"));
+        }
+        SUBCASE("5 / 0 yields no result")
+        {
+            collector.clear();
+            interactive.process("&5 / &0");
+            interactive.run(true, false, false);
+            CHECK_FALSE(any_output_contains(collector, "(&5 / &0) ="));
+        } });
+}
+
+TEST_CASE("numbers: result query (A / B) = X is repeatable")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import arithmetic");
+
+        collector.clear();
+        interactive.process("(&17 / &5) = X");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "((&17 / &5) = &3)"));
+
+        collector.clear();
+        interactive.process("(&17 / &5) = X");
+        CHECK(answers_contain(collector, "(&17 / &5) = &3"));
+
+        collector.clear();
+        interactive.process("(&17 / &5) = X");
+        CHECK(answers_contain(collector, "(&17 / &5) = &3")); });
+}

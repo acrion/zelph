@@ -806,3 +806,33 @@ TEST_CASE("unification: consequence templates with variables only at depth 2 are
         interactive.run(true, false, false);
         CHECK(any_output_contains(collector, "leaked")); });
 }
+
+// ---------------------------------------------------------------------------
+// Self-referential facts: subject == object reconstruction
+// ---------------------------------------------------------------------------
+
+TEST_CASE("parse_fact: self-referential fact keeps its object once it becomes the subject of further facts")
+{
+    // fact() draws no separate object edge when object == subject; the
+    // subject IS the object, and parse_fact repairs the reconstructed
+    // object set accordingly. The repair existed only in the
+    // single-candidate branch: as soon as the self-referential fact became
+    // the SUBJECT of other facts (their backlinks add bidirectional
+    // neighbors), the disambiguation path dropped the implicit object --
+    // rendering ((x foo ?) ...) and handing an empty object set to every
+    // parse_fact consumer (node_to_string, deduce, != guard, negation).
+    // Division X/X surfaced this systematically.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x foo x
+(x foo x) bar a
+)");
+        // This third statement's echo renders the inner (x foo x) while a
+        // second consumer (the bar fact) already exists -- the exact
+        // constellation that forced the disambiguation path.
+        collector.clear();
+        interactive.process("(x foo x) baz b");
+        CHECK(any_output_contains(collector, "x foo x"));
+        CHECK_FALSE(any_output_contains(collector, "foo ?")); });
+}

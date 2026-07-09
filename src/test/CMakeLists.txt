@@ -38,6 +38,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(zelph_tests
     test_clusters.cpp
     test_neural.cpp
+    test_node_display.cpp
     test_numbers.cpp
     test_reasoning.cpp
     test_seminaive.cpp

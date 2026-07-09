@@ -844,6 +844,28 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
         }
     }
 
+    // --- Self-referential repair (disambiguation path) ---------------------
+    // Mirrors the single-candidate branch above: a fact node whose
+    // reconstructed object set is empty is a fact with subject == object --
+    // fact() draws no separate object edge in that case, so the subject IS
+    // the object. The disambiguation path is reached precisely when the
+    // fact node is ALSO the subject of further facts (their backlinks are
+    // additional bidirectional neighbors); those extra facts land in
+    // `candidates`, get filtered as child-facts, and previously left
+    // `deductions` empty -- silently dropping the implicit object.
+    // Symptom: ((X op X) ...) reconstructed and rendered as ((X op ?) ...)
+    // as soon as the inner fact acquired a second consumer. Division X/X
+    // triggers this systematically (candidate q=1 makes P == M == N).
+    auto selfref_repair = [&deductions](Node subj) -> Node
+    {
+        if (subj != 0 && deductions.empty())
+            deductions.insert(subj);
+        return subj;
+    };
+
+    if (valid.size() == 1) return selfref_repair(valid[0]);
+    if (valid.empty()) return 0;
+
     if (valid.size() == 1) return valid[0];
     if (valid.empty()) return 0;
 
@@ -863,7 +885,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
             var_pick = cand;
         }
     }
-    if (var_pick != 0) return var_pick;
+    if (var_pick != 0) return selfref_repair(var_pick);
 
     // 2) Prefer Atomic (Non-Hash)
     Node atom_pick = 0;
@@ -879,7 +901,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
             atom_pick = cand;
         }
     }
-    if (atom_pick != 0) return atom_pick;
+    if (atom_pick != 0) return selfref_repair(atom_pick);
 
     // 3) Prefer Cons Cell (List/Number)
     Node cons_pick = 0;
@@ -895,7 +917,7 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
             cons_pick = cand;
         }
     }
-    if (cons_pick != 0) return cons_pick;
+    if (cons_pick != 0) return selfref_repair(cons_pick);
 
     return 0; // Still ambiguous
 }

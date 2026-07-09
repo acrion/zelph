@@ -45,6 +45,3 @@ echo
 echo "--- Measured reasoning pass ---"
 grep "Reasoning complete in" "$LOG_FILE" | tail -1 || echo "(no timing found -- did .run-once execute?)"
 grep -m1 "matches processed" "$LOG_FILE" || true
-echo
-echo "--- Contradiction count (sanity: must be large and stable across engine changes) ---"
-grep -cE '^«?!' "$LOG_FILE" || true
