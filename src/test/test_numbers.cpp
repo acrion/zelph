@@ -706,3 +706,50 @@ TEST_CASE("numbers: result query (A / B) = X is repeatable")
         interactive.process("(&17 / &5) = X");
         CHECK(answers_contain(collector, "(&17 / &5) = &3")); });
 }
+
+TEST_CASE("numbers: subtraction and division results are canonical (no leading zeros)")
+{
+    // Pins the canonicalization bridge: the = results of the two
+    // non-canonical producers are the canonical node, verified WITHOUT
+    // the &-display (which value-normalizes and would mask the
+    // distinction) by disabling the digit alphabet first.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import arithmetic");
+        interactive.process("%(zelph/set-number-digits [])");
+
+        SUBCASE("105 - 98 = 7 yields no leading zeros")
+        {
+            collector.clear();
+            interactive.process("(&105 - &98) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "= <7>"));
+            CHECK_FALSE(any_output_contains(collector, "= <007>"));
+        }
+
+        SUBCASE("123 / 456 = 0 yields no leading zeros")
+        {
+            collector.clear();
+            interactive.process("(&123 / &456) = X");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "= <0>")); // NOT <000>, NOT nil
+            interactive.process("%(zelph/set-number-digits (map string (range 10)))");
+        } 
+
+        SUBCASE("equal results from different computations are the identical node")
+        {
+            // The core motivation for canonicalizing ALL producers: without it,
+            // (&105 - &98) and (&10 - &3) would yield <007> vs <7> -- two nodes
+            // for one value, and any rule matching = results structurally would
+            // silently miss one of them.
+            collector.clear();
+            interactive.process("((N - M) = T) => (T seen T)");
+            interactive.process("&105 - &98");
+            interactive.process("&10 - &3");
+            interactive.run(true, false, false);
+            // Both subtractions must connect to the same canonical <7>; the
+            // seen-marker fires for it, and no <007> variant appears.
+            CHECK(any_output_contains(collector, "((<105> - <98>) = <7>)"));
+            CHECK(any_output_contains(collector, "((<10> - <3>) = <7>)"));
+        } });
+}

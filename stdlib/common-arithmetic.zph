@@ -1,0 +1,470 @@
+# ---------------------------------------------------------------------------
+# Rule A0 — Trigger: seed internal addition with carry-in 0 for every + fact
+# ---------------------------------------------------------------------------
+(N + M) => ((N add M) ci 0)
+
+# ---------------------------------------------------------------------------
+# Rules D1–D3 — Decompose: propagate carry-out into the recursive subproblem
+# ---------------------------------------------------------------------------
+
+# D1: both operands non-nil
+# Match the head digits A (from left) and B (from right), look up the
+# carry-out E, then assert the recursive add for the tails R and S.
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) tci C) co E)
+=> ((R add S) ci E)
+
+# D2: left non-nil, right exhausted — treat missing right digit as 0
+(((A cons R) add nil) ci C,
+ ((A d+ 0) tci C) co E)
+=> ((R add nil) ci E)
+
+# D3: left exhausted, right non-nil — treat missing left digit as 0
+((nil add (B cons S)) ci C,
+ ((0 d+ B) tci C) co E)
+=> ((nil add S) ci E)
+
+# ---------------------------------------------------------------------------
+# Rules As1–As3 — Assemble: once the inner sum T is known, prepend digit D
+#
+# The consequence (D cons T) creates or retrieves the cons cell via the
+# idempotent fact() operation, reusing the node if it already exists.
+# ---------------------------------------------------------------------------
+
+# As1: both operands non-nil
+(((A cons R) add (B cons S)) ci C,
+ ((A d+ B) tci C) sum D,
+ ((A d+ B) tci C) co E,
+ ((R add S) ci E) sum T)
+=> ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+
+# As2: left non-nil, right nil
+(((A cons R) add nil) ci C,
+ ((A d+ 0) tci C) sum D,
+ ((A d+ 0) tci C) co E,
+ ((R add nil) ci E) sum T)
+=> ((((A cons R) add nil) ci C) sum (D cons T))
+
+# As3: left nil, right non-nil
+((nil add (B cons S)) ci C,
+ ((0 d+ B) tci C) sum D,
+ ((0 d+ B) tci C) co E,
+ ((nil add S) ci E) sum T)
+=> (((nil add (B cons S)) ci C) sum (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule C0 — Connect: expose the result under the user-facing + predicate
+#
+# The guard (N + M) ensures that only pairs with an explicit + fact get a
+# result, preventing internal (nil add nil) states from being connected.
+# ---------------------------------------------------------------------------
+(N + M, ((N add M) ci 0) sum T) => ((N + M) = T)
+
+# ===========================================================================
+# Comparison (N cmp M) -- base-agnostic, mirrors the addition recursion
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Base case: two exhausted lists are equal
+# ---------------------------------------------------------------------------
+(nil lcmp nil) res eq
+
+# ---------------------------------------------------------------------------
+# Rule CT -- Trigger: seed the structural recursion for every cmp fact
+# ---------------------------------------------------------------------------
+(N cmp M) => (N lcmp M)
+
+# ---------------------------------------------------------------------------
+# Rules CD1-CD3 -- Decompose: derive lcmp states for all suffix pairs
+# ---------------------------------------------------------------------------
+((A cons R) lcmp (B cons S)) => (R lcmp S)
+((A cons R) lcmp nil) => (R lcmp nil)
+(nil lcmp (B cons S)) => (nil lcmp S)
+
+# ---------------------------------------------------------------------------
+# Rules CU1-CU6 -- Compute upward: the more significant part (inner rest)
+# dominates; only if it is eq does the current digit pair decide. Missing
+# digits of the shorter operand are treated as 0 (zero extension), so
+# non-canonical lists with leading zeros compare correctly by value.
+# ---------------------------------------------------------------------------
+((A cons R) lcmp (B cons S),
+ (R lcmp S) res eq,
+ (A dcmp B) res X)
+=> (((A cons R) lcmp (B cons S)) res X)
+
+((A cons R) lcmp (B cons S),
+ (R lcmp S) res X,
+ X != eq)
+=> (((A cons R) lcmp (B cons S)) res X)
+
+((A cons R) lcmp nil,
+ (R lcmp nil) res eq,
+ (A dcmp 0) res X)
+=> (((A cons R) lcmp nil) res X)
+
+((A cons R) lcmp nil,
+ (R lcmp nil) res X,
+ X != eq)
+=> (((A cons R) lcmp nil) res X)
+
+(nil lcmp (B cons S),
+ (nil lcmp S) res eq,
+ (0 dcmp B) res X)
+=> ((nil lcmp (B cons S)) res X)
+
+(nil lcmp (B cons S),
+ (nil lcmp S) res X,
+ X != eq)
+=> ((nil lcmp (B cons S)) res X)
+
+# ---------------------------------------------------------------------------
+# Rules CC1-CC3 -- Connect: expose results as ordinary relational facts.
+# These compose with meta-rules like any other fact (e.g. "> is transitive").
+# ---------------------------------------------------------------------------
+(N cmp M, (N lcmp M) res lt) => (N < M)
+(N cmp M, (N lcmp M) res gt) => (N > M)
+(N cmp M, (N lcmp M) res eq) => (N == M)
+
+# ---------------------------------------------------------------------------
+# Rule CC0 -- Result-query bridge: additionally expose the comparison outcome
+# under the user-facing = predicate, so the repeatable query idiom is uniform
+# across operations: (A + B) = X, (A - B) = X, (A cmp B) = X.
+# The relational facts (CC1-CC3) remain the primary, composable output.
+# ---------------------------------------------------------------------------
+(N cmp M, (N lcmp M) res X) => ((N cmp M) = X)
+
+# ===========================================================================
+# Subtraction (N - M) -- base-agnostic, exact mirror of addition with
+# borrow (bi/bo) instead of carry (ci/co)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Rule S0 -- Trigger: seed internal subtraction with borrow-in 0
+# ---------------------------------------------------------------------------
+(N - M) => ((N sub M) bi 0)
+
+# ---------------------------------------------------------------------------
+# Rules SD1-SD3 -- Decompose: propagate borrow-out into the subproblem
+# ---------------------------------------------------------------------------
+(((A cons R) sub (B cons S)) bi C,
+ ((A d- B) tbi C) bo E)
+=> ((R sub S) bi E)
+
+(((A cons R) sub nil) bi C,
+ ((A d- 0) tbi C) bo E)
+=> ((R sub nil) bi E)
+
+((nil sub (B cons S)) bi C,
+ ((0 d- B) tbi C) bo E)
+=> ((nil sub S) bi E)
+
+# ---------------------------------------------------------------------------
+# Rules SA1-SA3 -- Assemble: prepend diff digit D once the inner diff T is
+# known. NOTE: there is deliberately NO base fact for ((nil sub nil) bi 1),
+# so a net borrow (M > N) simply yields no result -- subtraction is a
+# partial function on the naturals; absence of a fact encodes undefinedness.
+# ---------------------------------------------------------------------------
+(((A cons R) sub (B cons S)) bi C,
+ ((A d- B) tbi C) diff D,
+ ((A d- B) tbi C) bo E,
+ ((R sub S) bi E) diff T)
+=> ((((A cons R) sub (B cons S)) bi C) diff (D cons T))
+
+(((A cons R) sub nil) bi C,
+ ((A d- 0) tbi C) diff D,
+ ((A d- 0) tbi C) bo E,
+ ((R sub nil) bi E) diff T)
+=> ((((A cons R) sub nil) bi C) diff (D cons T))
+
+((nil sub (B cons S)) bi C,
+ ((0 d- B) tbi C) diff D,
+ ((0 d- B) tbi C) bo E,
+ ((nil sub S) bi E) diff T)
+=> (((nil sub (B cons S)) bi C) diff (D cons T))
+
+# SC0 -- Connect: expose the CANONICAL result under the user-facing -
+# predicate. The raw diff list may carry leading zeros (&105 - &98
+# internally yields <007>); the canonicalization bridge connects it to <7>,
+# and the = fact carries that canonical node -- the same number is always
+# the same node, so downstream rules never see two nodes for one value.
+(N - M, ((N sub M) bi 0) diff T, T canonnum S) => ((N - M) = S)
+
+# ===========================================================================
+# Multiplication (N * M) -- base-agnostic; LSB-first makes the shift free
+# ===========================================================================
+#
+# Schoolbook recursion on the first operand's digits:
+#   (A cons R) * M  =  A*M  +  base * (R * M)
+# where base * X is a single cons in LSB-first representation: (0 cons X).
+#
+# The accumulation deliberately REUSES the addition module: rule MA1 asserts
+# an ordinary + fact, the addition rules derive its = result, and rule MA2
+# consumes it -- computations cascade across rule modules.
+#
+# Schema note: the digit table uses tci (table carry-in) while dmul states
+# use mci. Keeping table space and state space on distinct predicates means
+# the table is only ever accessed through grounded lookups and never appears
+# in the extensions scanned by the recursion rules' first conditions.
+#
+# NOTE: * must be surrounded by whitespace (&12 * &34). Without it, *&34
+# parses as the focus operator applied to a number literal.
+
+# ---------------------------------------------------------------------------
+# Rule M0 -- Trigger
+# ---------------------------------------------------------------------------
+(N * M) => (N mul M)
+
+# ---------------------------------------------------------------------------
+# Rules MD1-MD2 -- Decompose: peel one digit off the first operand and seed
+# its digit-times-number multiplication. MD1 is guarded so that no
+# (nil mul M) state is ever created: nil is the graph's biggest hub (every
+# list ends there), and anchoring a rule condition on it would scan all
+# list-terminating cons cells.
+# ---------------------------------------------------------------------------
+((A cons R) mul M, R != nil) => (R mul M)
+((A cons R) mul M) => ((A dmul M) mci 0)
+
+# ---------------------------------------------------------------------------
+# Rules PD1, PB1-PB2, PA1 -- digit times number (A dmul M), LSB-first with
+# a running carry through the dx digit table
+# ---------------------------------------------------------------------------
+((A dmul (B cons S)) mci C,
+ ((A dx B) tci C) mco E)
+=> ((A dmul S) mci E)
+
+((A dmul nil) mci 0) => (((A dmul nil) mci 0) pprod nil)
+
+((A dmul nil) mci C, C != 0)
+=> (((A dmul nil) mci C) pprod (C cons nil))
+
+((A dmul (B cons S)) mci C,
+ ((A dx B) tci C) pd D,
+ ((A dx B) tci C) mco E,
+ ((A dmul S) mci E) pprod T)
+=> (((A dmul (B cons S)) mci C) pprod (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rule MB1 -- Base: a single-digit first operand IS its partial product.
+# Handling the last digit here (instead of a (nil mul M) base case) also
+# avoids one pointless P + <0> addition per multiplication.
+# ---------------------------------------------------------------------------
+((A cons nil) mul M,
+ ((A dmul M) mci 0) pprod P)
+=> (((A cons nil) mul M) prod P)
+
+# ---------------------------------------------------------------------------
+# Rules MA1-MA2 -- Accumulate: P + (0 cons Q), delegated to the + module
+# ---------------------------------------------------------------------------
+((A cons R) mul M, R != nil,
+ ((A dmul M) mci 0) pprod P,
+ (R mul M) prod Q)
+=> (P + (0 cons Q))
+
+((A cons R) mul M, R != nil,
+ ((A dmul M) mci 0) pprod P,
+ (R mul M) prod Q,
+ (P + (0 cons Q)) = T)
+=> (((A cons R) mul M) prod T)
+
+# ---------------------------------------------------------------------------
+# Rule MC0 -- Connect
+# ---------------------------------------------------------------------------
+(N * M, (N mul M) prod T) => ((N * M) = T)
+
+# ===========================================================================
+# Division (N / M) and remainder (N mod M) -- Euclidean division on the
+# naturals; the deepest cross-module cascade so far: candidate products
+# come from the multiplication module's digit-times-number engine (dmul),
+# candidate differences from the subtraction module (-), and quotient-digit
+# selection from the comparison module (cmp). Division contributes NO digit
+# table of its own -- its only base-specific data is the digit alphabet
+# (isdigit facts).
+#
+# Long division on LSB-first lists: N = (A cons R) means N = A + base*R.
+# With R = T*M + S from the recursion, N = (base*T + q)*M + r, where q
+# and r solve t = q*M + r with 0 <= r < M for t = A + base*S. In LSB-first
+# representation t IS the cons cell (A cons S): the "bring down the next
+# digit" step of schoolbook long division is a single cons -- the same
+# representational gift as the free shift in multiplication.
+#
+# The quotient digit is selected without backtracking and without any
+# digit-ordering knowledge: ALL candidate products q*M are derived up
+# front, ALL candidate differences t - q*M are asserted (subtraction is
+# partial, so candidates with q*M > t silently die), and the single
+# candidate with t - q*M < M is selected. Uniqueness: 0 <= t - q*M < M has
+# exactly one digit solution q, because the recursion maintains the
+# invariant rem < M and hence t = A + base*rem < base*M.
+#
+# Division by zero needs no dedicated rule: every candidate difference
+# equals t by value and t < 0 is unsatisfiable, so no quotient digit is
+# ever selected -- partiality by absence, exactly like net-borrow
+# subtraction.
+#
+# NOTE: / must be surrounded by whitespace, like *.
+
+# ---------------------------------------------------------------------------
+# Rules VT1-VT2 -- Triggers: / and mod share the internal dvd recursion,
+# but each exposes only its own result (guard philosophy of C0/SC0/MC0).
+# ---------------------------------------------------------------------------
+(N / M) => (N dvd M)
+(N mod M) => (N dvd M)
+
+# ---------------------------------------------------------------------------
+# Rules VC1-VC2 -- Candidate products: seed q*M for every digit q via the
+# multiplication module's dmul engine (rules PD1/PB1/PB2/PA1 derive pprod).
+# The products depend only on M, so they are shared by all recursion steps
+# -- and, thanks to hash-consing, by every computation involving M.
+# ---------------------------------------------------------------------------
+(N / M, Q isdigit true) => ((Q dmul M) mci 0)
+(N mod M, Q isdigit true) => ((Q dmul M) mci 0)
+
+# ---------------------------------------------------------------------------
+# Rule VD1 -- Decompose: recurse on the more significant part. Guarded like
+# MD1 so that no (nil dvd M) state exists (nil is the graph's biggest hub);
+# the single-digit case is handled by the base rules below, like MB1.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil) => (R dvd M)
+
+# ---------------------------------------------------------------------------
+# Rules VS1-VS2 -- Candidate differences: assert t - q*M as ordinary
+# user-facing subtractions (cross-module cascade, exactly like MA1 asserts
+# +). t is the single cons (A cons S); in the base step (single-digit
+# first operand) t is the operand itself. Candidates with q*M > t produce
+# no difference at all: subtraction is partial.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P)
+=> ((A cons S) - P)
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P)
+=> ((A cons nil) - P)
+
+# ---------------------------------------------------------------------------
+# Rule VP1 -- Probe: compare every candidate difference with the divisor.
+# Deliberately keyed on the pprod structure alone, not on a division step:
+# any subtraction whose subtrahend happens to be a candidate product gets
+# its difference compared -- at worst a few extra cmp facts, which persist
+# as reusable knowledge like all derived facts.
+# ---------------------------------------------------------------------------
+(((Q dmul M) mci 0) pprod P,
+ (T - P) = D)
+=> (D cmp M)
+
+# ---------------------------------------------------------------------------
+# Rules VA1-VA4 -- Select and assemble: the unique candidate whose
+# difference is smaller than the divisor yields the quotient digit Q and
+# the running remainder D. The current step contributes the LEAST
+# significant quotient digit produced so far, so (Q cons T) grows the
+# quotient in lockstep with the operand recursion.
+# ---------------------------------------------------------------------------
+((A cons R) dvd M, R != nil,
+ (R dvd M) quot T,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons S) - P) = D,
+ D < M)
+=> (((A cons R) dvd M) quot (Q cons T))
+
+((A cons R) dvd M, R != nil,
+ (R dvd M) rem S,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons S) - P) = D,
+ D < M)
+=> (((A cons R) dvd M) rem D)
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons nil) - P) = D,
+ D < M)
+=> (((A cons nil) dvd M) quot (Q cons nil))
+
+((A cons nil) dvd M,
+ ((Q dmul M) mci 0) pprod P,
+ ((A cons nil) - P) = D,
+ D < M)
+=> (((A cons nil) dvd M) rem D)
+
+# ---------------------------------------------------------------------------
+# Rules VC0/VM0 -- Connect. The raw quot list has one digit per dividend
+# digit (123/456 yields <000>); the canonicalization bridge exposes <0>.
+# ---------------------------------------------------------------------------
+
+(N / M, (N dvd M) quot Q, Q canonnum S) => ((N / M) = S)
+(N mod M, (N dvd M) rem R, R canonnum S) => ((N mod M) = S)
+
+# ===========================================================================
+# Canonicalization -- connect derived number lists with their canonical
+# form (no leading zeros in the displayed number; in LSB-first storage
+# those are the INNERMOST cells, so canonicalization is plain structural
+# recursion). Nothing is rewritten or reinterpreted: <007> keeps existing
+# as a node; canon merely CONNECTS it to <7>. Cons lists stay
+# general-purpose -- there is deliberately NO universal (A cons R) trigger;
+# only lists arriving as results of the non-canonical producers
+# (subtraction, division) enter the recursion.
+#
+# Base-agnostic and table-free: the only digit knowledge is the zero atom,
+# which the rule blocks reference anyway (D2, CU3, MD1, ...).
+#
+# Two-predicate design:
+#   canon     -- TAIL semantics: the canonical form of a list viewed as a
+#                suffix; stripping may reach nil (<00> canon nil).
+#   canonnum  -- NUMBER semantics: like canon, except that the number zero
+#                is (0 cons nil), never nil -- pinning the foundational
+#                invariant that <0> must not collapse to nil.
+# Only canonnum is consumed by the producers' connect rules.
+#
+# Markers are self-facts (T needscanon T): zelph has no unary facts, and a
+# self-fact marks a node without introducing pseudo-atoms like "true".
+
+# ---------------------------------------------------------------------------
+# Rules KT1-KT3 -- Triggers: mark producer results as numbers to be
+# canonicalized. (Addition and multiplication of canonical operands are
+# canonical; cmp is value-based and needs nothing.)
+# ---------------------------------------------------------------------------
+(((N sub M) bi 0) diff T) => (T needscanon T)
+((N dvd M) quot T) => (T needscanon T)
+((N dvd M) rem T) => (T needscanon T)
+
+# ---------------------------------------------------------------------------
+# Rule KD1 -- Decompose: the tail recursion walks into the list. Guarded
+# like MD1/VD1 so no (nil needscanon nil) state is created (nil hub).
+# ---------------------------------------------------------------------------
+((A cons R) needscanon (A cons R), R != nil) => (R needscanon R)
+
+# ---------------------------------------------------------------------------
+# Rules KA1-KA4 -- Assemble tail-canonical forms bottom-up:
+#   KA1: a cell with nil tail keeps a nonzero digit ...
+#   KA2: ... but drops a zero digit (this is the stripping step; iterated
+#        stripping emerges from KA4 -> KA2 chains bottom-up)
+#   KA3: a nonzero cell is kept over its tail's canonical form
+#   KA4: a zero cell over a NONEMPTY canonical tail is kept -- inner
+#        zeros are value-relevant (<70> stays <70>)
+# The nil base case is inlined into KA1/KA2 (tail nil), avoiding any
+# (nil canon nil) fact and keeping nil out of rule anchors.
+# ---------------------------------------------------------------------------
+((A cons nil) needscanon (A cons nil), A != 0)
+=> ((A cons nil) canon (A cons nil))
+
+((0 cons nil) needscanon (0 cons nil))
+=> ((0 cons nil) canon nil)
+
+((A cons R) needscanon (A cons R), A != 0, R != nil,
+ R canon S)
+=> ((A cons R) canon (A cons S))
+
+((0 cons R) needscanon (0 cons R), R != nil,
+ R canon S, S != nil)
+=> ((0 cons R) canon (0 cons S))
+
+((0 cons R) needscanon (0 cons R), R != nil,
+ R canon nil)
+=> ((0 cons R) canon nil)
+
+# ---------------------------------------------------------------------------
+# Rules KN1-KN2 -- Number semantics on top of tail semantics: identical,
+# except that a fully stripped number is zero, not nothing.
+# ---------------------------------------------------------------------------
+(T needscanon T, T canon S, S != nil) => (T canonnum S)
+(T needscanon T, T canon nil) => (T canonnum (0 cons nil))

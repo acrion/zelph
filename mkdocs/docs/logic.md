@@ -694,6 +694,8 @@ memoization is a property of the representation, not a feature.
 > Sharing `tci` between two tables is deliberately harmless: table-keying
 > predicates are never scanned.
 
+Division and remainder complete the four operations; see [Semantic Arithmetic](arithmetic.md) for the candidate-selection design.
+
 ### Number Literals
 
 Cons-lists are a general-purpose structure — numbers are merely one _use_ of them, and zelph deliberately does not hard-code any numeric representation. Which base is used, or whether digits are decimal characters at all, is decided entirely by the loaded rule scripts. The parser, however, offers two pieces of syntax sugar that make the numeric use case pleasant without constraining it:

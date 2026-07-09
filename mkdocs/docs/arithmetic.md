@@ -1,4 +1,4 @@
-zelph performs arithmetic — addition, subtraction, comparison, and multiplication of arbitrarily large natural numbers — purely inside its reasoning engine. There is no arithmetic code in the C++ core: digits are ordinary named nodes, numbers are ordinary cons-lists, digit tables are ordinary facts, and the algorithms are ordinary forward-chaining rules. When you type `&12 * &34`, the engine does not call a multiplication routine; it _derives_ the fact `((&12 * &34) = &408)` the same way it derives `Berlin is located in Europe` from a transitivity rule.
+zelph performs arithmetic — addition, subtraction, comparison, multiplication and division with remainder of arbitrarily large natural numbers — purely inside its reasoning engine. There is no arithmetic code in the C++ core: digits are ordinary named nodes, numbers are ordinary cons-lists, digit tables are ordinary facts, and the algorithms are ordinary forward-chaining rules. When you type `&12 * &34`, the engine does not call a multiplication routine; it _derives_ the fact `((&12 * &34) = &408)` the same way it derives `Berlin is located in Europe` from a transitivity rule.
 
 This page describes the complete arithmetic system: the number representation, the shared architecture of the four rule modules, the base-independence property, and the engine machinery — bound-pattern grounding, cost-based condition ordering, semi-naive evaluation — that makes rule-based computation fast enough to be practical. It complements [Logic and Computation](logic.md#semantic-math-computation-as-graph-rewriting), which builds up the addition module step by step.
 
@@ -19,6 +19,10 @@ zelph> (&105 - &98) = X
 ((&105  -  &98)  =  &7) ⇐ ...
 zelph> (&12 * &34) = X
 ((&12  *  &34)  =  &408) ⇐ ...
+zelph> (&17 / &5) = X
+((&17 / &5) = &3) ⇐ ...
+zelph> (&17 mod &5) = X
+((&17 mod &5) = &2 ⇐ ...
 ```
 
 Every result arrives with its derivation (`⇐`). A computation in zelph is not a black box returning a value — it is a set of ordinary facts, each carrying the conditions that produced it.
@@ -77,6 +81,39 @@ The derived `&30 > &10` was never computed digit-wise; it follows from the trans
 
 **Multiplication** is schoolbook recursion on the first operand's digits: `(A cons R) * M = A*M + base * (R * M)`, where the base-shift is a free cons. The digit-times-number stage threads a running carry through the `dx` table. The accumulation stage does something worth pausing on: one rule _asserts an ordinary `+` fact_, the addition module derives its `=` result, and a follow-up rule consumes it. The modules know nothing about each other — they communicate exclusively through the shared fact space. This cross-module cascade is the pattern the whole system scales by: any rule, including user-defined ones, can consume computed results and trigger further computations.
 
+**Division** (`N / M`) and **remainder** (`N mod M`) complete Euclidean
+division on the naturals -- and they are the deepest cross-module cascade in
+the system. The module contributes no digit table of its own: candidate
+products come from the multiplication module's digit-times-number engine
+(`dmul`), candidate differences from the subtraction module, and
+quotient-digit selection from the comparison module. Its only base-specific
+data is the digit alphabet itself, stated as facts (`0 isdigit true`, ...).
+
+Long division looks like the wrong fit for LSB-first lists -- it works on the
+most significant digit first -- but the representation pays off a third time.
+For `N = (A cons R)`, i.e. `N = A + base*R`, the recursion descends into the
+more significant part `R` first. If `R = QR*M + RR` with `RR < M`, then the
+current step must solve `t = q*M + r` for `t = A + base*RR` -- and in
+LSB-first representation, `t` **is** the cons cell `(A cons RR)`. The "bring
+down the next digit" step of schoolbook long division is a single cons, just
+as the base-shift of multiplication was.
+
+The quotient digit is selected without backtracking and without any
+digit-ordering knowledge, exploiting the fixpoint engine's natural
+parallelism over candidates: all products `q*M` are derived up front (shared
+across all recursion steps -- and, by hash-consing, across every computation
+involving `M`), all differences `t - q*M` are asserted as ordinary `-` facts,
+and the unique candidate with `t - q*M < M` is selected via `cmp`. Uniqueness
+is an arithmetic theorem the rules simply inherit: the invariant `rem < M`
+bounds `t` below `base*M`, so exactly one digit satisfies the constraint.
+Candidates with `q*M > t` need no handling at all -- subtraction is partial,
+their difference facts simply never come into existence.
+
+Partiality composes: division by zero requires no dedicated rule. Every
+candidate difference equals `t` by value, `t < 0` is unsatisfiable, no
+quotient digit is ever selected -- `&5 / &0` derives nothing, exactly as
+`&5 - &7` derives nothing. Undefinedness remains encoded as absence.
+
 ## One Rule Set, Any Base
 
 The rule blocks of the decimal and the binary script are byte-identical; only the digit tables (and the input conversion) differ. This is a checked property of the code base, and it makes a satisfying point: the recursion rules are base-agnostic theorems about digit sequences, and the tables are the only place where "ten" or "two" appears. Loading the binary module gives you full adders, full subtractors, and AND gates as facts, with the identical algorithms running on top — a semantic network computing like digital hardware, while reading and writing decimal at the boundary.
@@ -113,7 +150,7 @@ In [Lean](logic.md#lean-and-curry-howard), numbers, proofs, and the inference ma
 
 Where Gödel numbering encodes formulas _as_ numbers to make arithmetic self-referential, zelph runs the arrow in the other direction and makes numbers _structural_: no encoding, no decoding — the digit list _is_ the number, and it participates in statements directly. And against Datalog: computed facts are indistinguishable from declared ones, predicates are first-class, and therefore arithmetic results feed meta-rules (`> is transitive`) that standard Datalog cannot even express.
 
-The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. The roadmap continues with division (long division composing the comparison and subtraction modules — another partial function), canonicalization rules for leading zeros, integers, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
+The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. With division complete, the roadmap continues with canonicalization rules for leading zeros, integers, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
 
 ## Making It Fast
 
