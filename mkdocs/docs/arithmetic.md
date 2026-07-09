@@ -150,7 +150,7 @@ In [Lean](logic.md#lean-and-curry-howard), numbers, proofs, and the inference ma
 
 Where Gödel numbering encodes formulas _as_ numbers to make arithmetic self-referential, zelph runs the arrow in the other direction and makes numbers _structural_: no encoding, no decoding — the digit list _is_ the number, and it participates in statements directly. And against Datalog: computed facts are indistinguishable from declared ones, predicates are first-class, and therefore arithmetic results feed meta-rules (`> is transitive`) that standard Datalog cannot even express.
 
-The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. With division complete, the roadmap continues with canonicalization rules for leading zeros, integers, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
+The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. With division and canonicalization complete, the roadmap continues with integers, number-theoretic demos such as the primality module, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
 
 ## Making It Fast
 

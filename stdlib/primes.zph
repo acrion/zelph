@@ -1,0 +1,118 @@
+# Trial-division primality test on top of the arithmetic modules.
+#
+# Requires one arithmetic module to be loaded first (the rules are
+# base-agnostic, both work):
+#
+#   .import arithmetic            # or: .import binary-arithmetic
+#   .import primes
+#
+# Usage (repeatable result queries, uniform with the arithmetic idiom):
+#
+#   (&13 testprime &13) = X       # answers: prime
+#   (&15 testprime &15) = X       # answers: composite
+#   &15 hasdivisor X              # answers: the smallest divisor >= 2
+#                                 # (which is necessarily prime)
+#   X isprime X                   # answers: every number proven prime so far
+#
+# The trigger is a self-fact (N testprime N), following the stdlib marker
+# convention. Entering the query form directly suffices: parsing it
+# materializes the inner testprime fact as a side effect, which seeds the
+# whole computation -- exactly like (&12 + &34) = X.
+#
+# 0 and 1 are neither prime nor composite; the test derives nothing for
+# them -- partiality by absence, as everywhere in the arithmetic stdlib.
+#
+# Design note -- no negation: "N is prime" is universally quantified
+# ("ALL candidates leave a remainder"), which naively suggests
+# negation-as-failure over hasdivisor. But NAF tests absence in the
+# CURRENT graph state while hasdivisor facts are still being derived over
+# many fixpoint iterations, and forward chaining is monotonic -- a
+# prematurely derived isprime fact could never be retracted. Primality is
+# therefore built from POSITIVE facts only: a fold (N nodivupto D) grows
+# one verified non-divisor at a time.
+#
+# Design note -- the fold IS the scheduler: candidate E = D+1 only comes
+# into existence after D has been VERIFIED as a non-divisor. Two
+# consequences: (1) for composite N the search halts at the smallest
+# divisor -- no work is performed past the verdict, and hasdivisor names
+# exactly one witness, the smallest prime factor; (2) candidates stop at
+# E*E > N (trial division bound), so the scan is O(sqrt N) divisions.
+# The P == N boundary rule is essential: without it, perfect squares
+# like &9 would pass as prime because candidate 3 would never be created.
+#
+# Node-identity guards: R != &0, &2 == N, P == N and the bound
+# comparisons compare NODES via the comparison module's relational
+# facts. This is sound because all involved numbers are canonical and
+# canonical numbers are hash-consed -- one value, one node.
+
+# ---------------------------------------------------------------------------
+# Rule PT1 -- Trigger: classify N against 2 (the smallest prime)
+# ---------------------------------------------------------------------------
+(N testprime N) => (&2 cmp N)
+
+# ---------------------------------------------------------------------------
+# Rule PT2 -- Base: 2 is prime
+# ---------------------------------------------------------------------------
+(N testprime N, &2 == N) => (N isprime N)
+
+# ---------------------------------------------------------------------------
+# Rule PC1 -- First candidate
+# ---------------------------------------------------------------------------
+(N testprime N, &2 < N) => (&2 divisorcand N)
+
+# ---------------------------------------------------------------------------
+# Rule PM1 -- Check: assert the mod fact; the division module answers it
+# ---------------------------------------------------------------------------
+(D divisorcand N) => (N mod D)
+
+# ---------------------------------------------------------------------------
+# Rule PH1 -- Witness: a zero remainder is a divisor; the fold below never
+# extends past D, so the search halts here
+# ---------------------------------------------------------------------------
+(D divisorcand N, (N mod D) = &0) => (N hasdivisor D)
+
+# ---------------------------------------------------------------------------
+# Rule PF1 -- Fold base: 2 verified as non-divisor
+# ---------------------------------------------------------------------------
+(N testprime N, &2 divisorcand N, (N mod &2) = R, R != &0)
+=> (N nodivupto &2)
+
+# ---------------------------------------------------------------------------
+# Rules PN1-PN3 -- Next candidate, lazily: successor, square, bound probe.
+# These assert ordinary +, * and cmp facts -- the arithmetic modules
+# answer them (cross-module cascade).
+# ---------------------------------------------------------------------------
+(N nodivupto D) => (D + &1)
+
+(N nodivupto D, (D + &1) = E) => (E * E)
+
+(N nodivupto D, (D + &1) = E, (E * E) = P) => (P cmp N)
+
+# ---------------------------------------------------------------------------
+# Rules PC2-PC3 -- Bound: E is a candidate iff E*E <= N
+# (disjunction as two rules, as everywhere in zelph)
+# ---------------------------------------------------------------------------
+(N nodivupto D, (D + &1) = E, (E * E) = P, P < N) => (E divisorcand N)
+
+(N nodivupto D, (D + &1) = E, (E * E) = P, P == N) => (E divisorcand N)
+
+# ---------------------------------------------------------------------------
+# Rule PF2 -- Fold step: extend the chain past a verified non-divisor
+# ---------------------------------------------------------------------------
+(N nodivupto D, (D + &1) = E, E divisorcand N, (N mod E) = R, R != &0)
+=> (N nodivupto E)
+
+# ---------------------------------------------------------------------------
+# Rule PI1 -- Complete: the next candidate's square exceeds N, so every
+# divisor candidate up to sqrt(N) left a remainder
+# ---------------------------------------------------------------------------
+(N nodivupto D, (D + &1) = E, (E * E) = P, P > N) => (N isprime N)
+
+# ---------------------------------------------------------------------------
+# Rules PB1-PB2 -- Result bridge: expose the outcome under the user-facing
+# = predicate, uniform with (A + B) = X. The relational facts (isprime,
+# hasdivisor) remain the primary, composable output.
+# ---------------------------------------------------------------------------
+(N testprime N, N isprime N) => ((N testprime N) = prime)
+
+(N testprime N, N hasdivisor D) => ((N testprime N) = composite)
