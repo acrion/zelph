@@ -67,39 +67,67 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(janet)
 
-set(OLD_ENV_CC $ENV{CC})
-set(OLD_ENV_CXX $ENV{CXX})
-set(OLD_ENV_PATH $ENV{PATH})
+if(EMSCRIPTEN)
+    # The Meson/ninja subprocess build cannot produce wasm objects. Instead,
+    # generate Janet's amalgamated source with the HOST toolchain (the
+    # bootstrap only emits a C file and must run on the build machine) and
+    # compile that single file with emcc. This is the officially recommended
+    # way to build Janet for Emscripten. CC=cc on the command line overrides
+    # any CC set in the environment by the emsdk.
+    if(NOT EXISTS ${janet_SOURCE_DIR}/build/c/janet.c)
+        execute_process(
+            COMMAND make CC=cc build/c/janet.c
+            WORKING_DIRECTORY ${janet_SOURCE_DIR}
+            RESULT_VARIABLE result
+        )
+        if(result)
+            message(FATAL_ERROR "Janet amalgam generation failed: ${result}")
+        endif()
+    endif()
 
-if (MSVC)
-    set(MESON_OPTIONS "--vsenv")
+    add_library(janet_lib STATIC ${janet_SOURCE_DIR}/build/c/janet.c)
+    target_include_directories(janet_lib PUBLIC
+        ${janet_SOURCE_DIR}/src/include
+        ${janet_SOURCE_DIR}/src/conf
+    )
 
-    set(CLEAN_PATH_LIST "")
-    file(TO_CMAKE_PATH "$ENV{PATH}" PATH_LIST)
-    foreach (P IN LISTS PATH_LIST)
-        if (NOT "${P}" MATCHES "Strawberry")
-            list(APPEND CLEAN_PATH_LIST "${P}")
-        endif ()
-    endforeach ()
-    list(JOIN CLEAN_PATH_LIST ";" NEW_PATH_STR)
-    file(TO_NATIVE_PATH "${NEW_PATH_STR}" NEW_NATIVE_PATH)
-    set(ENV{PATH} "${NEW_NATIVE_PATH}")
+    # setjmp/longjmp mode (used by the Janet VM) must match the C++ EH mode
+    # of every other object in the final link.
+    target_compile_options(janet_lib PRIVATE -fwasm-exceptions)
+else()
+    set(OLD_ENV_CC $ENV{CC})
+    set(OLD_ENV_CXX $ENV{CXX})
+    set(OLD_ENV_PATH $ENV{PATH})
 
-    set(BUILD_COMMAND meson compile -C build --verbose)
-else ()
-    set(JANET_LIB_NAME "libjanet.a")
-    set(MESON_OPTIONS "")
+    if (MSVC)
+        set(MESON_OPTIONS "--vsenv")
 
-    set(ENV{CC} "${CMAKE_C_COMPILER}")
-    set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
+        set(CLEAN_PATH_LIST "")
+        file(TO_CMAKE_PATH "$ENV{PATH}" PATH_LIST)
+        foreach (P IN LISTS PATH_LIST)
+            if (NOT "${P}" MATCHES "Strawberry")
+                list(APPEND CLEAN_PATH_LIST "${P}")
+            endif ()
+        endforeach ()
+        list(JOIN CLEAN_PATH_LIST ";" NEW_PATH_STR)
+        file(TO_NATIVE_PATH "${NEW_PATH_STR}" NEW_NATIVE_PATH)
+        set(ENV{PATH} "${NEW_NATIVE_PATH}")
 
-    set(BUILD_COMMAND ninja -C build)
-endif ()
+        set(BUILD_COMMAND meson compile -C build --verbose)
+    else ()
+        set(JANET_LIB_NAME "libjanet.a")
+        set(MESON_OPTIONS "")
 
-if(CMAKE_C_COMPILER_TARGET)
-    # Generate a Meson cross file for cross-compilation
-    set(MESON_CROSS_FILE "${janet_SOURCE_DIR}/cross_file.ini")
-    file(WRITE ${MESON_CROSS_FILE}
+        set(ENV{CC} "${CMAKE_C_COMPILER}")
+        set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
+
+        set(BUILD_COMMAND ninja -C build)
+    endif ()
+
+    if(CMAKE_C_COMPILER_TARGET)
+        # Generate a Meson cross file for cross-compilation
+        set(MESON_CROSS_FILE "${janet_SOURCE_DIR}/cross_file.ini")
+        file(WRITE ${MESON_CROSS_FILE}
 "[binaries]\n\
 c = ['${CMAKE_C_COMPILER}', '--target=${CMAKE_C_COMPILER_TARGET}']\n\
 cpp = ['${CMAKE_CXX_COMPILER}', '--target=${CMAKE_CXX_COMPILER_TARGET}']\n\
@@ -112,61 +140,62 @@ cpu_family = 'aarch64'\n\
 cpu = 'aarch64'\n\
 endian = 'little'\n"
     )
-    set(MESON_CROSS_ARGS "--cross-file" "${MESON_CROSS_FILE}")
-else()
-    set(MESON_CROSS_ARGS "")
-endif()
+        set(MESON_CROSS_ARGS "--cross-file" "${MESON_CROSS_FILE}")
+    else()
+        set(MESON_CROSS_ARGS "")
+    endif()
 
-execute_process(
+    execute_process(
     COMMAND meson setup build --buildtype=release ${MESON_OPTIONS} ${MESON_CROSS_ARGS}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
-if (result)
-    message(FATAL_ERROR "Janet Meson setup failed: ${result}")
-endif ()
+    if (result)
+        message(FATAL_ERROR "Janet Meson setup failed: ${result}")
+    endif ()
 
-execute_process(
+    execute_process(
     COMMAND ${BUILD_COMMAND}
     WORKING_DIRECTORY ${janet_SOURCE_DIR}
     RESULT_VARIABLE result
 )
-if (result)
-    message(FATAL_ERROR "Janet build failed: ${result}")
-endif ()
-
-set(ENV{CC} "${OLD_ENV_CC}")
-set(ENV{CXX} "${OLD_ENV_CXX}")
-set(ENV{PATH} "${OLD_ENV_PATH}")
-
-if (MSVC)
-    file(GLOB JANET_RUNTIME_DLLS "${janet_SOURCE_DIR}/build/janet-*.dll")
-    list(LENGTH JANET_RUNTIME_DLLS JANET_RUNTIME_DLL_COUNT)
-    if (JANET_RUNTIME_DLL_COUNT EQUAL 0)
-        message(FATAL_ERROR "Janet runtime DLL not found in ${janet_SOURCE_DIR}/build")
+    if (result)
+        message(FATAL_ERROR "Janet build failed: ${result}")
     endif ()
-    list(GET JANET_RUNTIME_DLLS 0 JANET_RUNTIME_DLL)
 
-    add_library(janet_lib SHARED IMPORTED)
+    set(ENV{CC} "${OLD_ENV_CC}")
+    set(ENV{CXX} "${OLD_ENV_CXX}")
+    set(ENV{PATH} "${OLD_ENV_PATH}")
 
-    set_target_properties(janet_lib PROPERTIES
+    if (MSVC)
+        file(GLOB JANET_RUNTIME_DLLS "${janet_SOURCE_DIR}/build/janet-*.dll")
+        list(LENGTH JANET_RUNTIME_DLLS JANET_RUNTIME_DLL_COUNT)
+        if (JANET_RUNTIME_DLL_COUNT EQUAL 0)
+            message(FATAL_ERROR "Janet runtime DLL not found in ${janet_SOURCE_DIR}/build")
+        endif ()
+        list(GET JANET_RUNTIME_DLLS 0 JANET_RUNTIME_DLL)
+
+        add_library(janet_lib SHARED IMPORTED)
+
+        set_target_properties(janet_lib PROPERTIES
         IMPORTED_IMPLIB "${janet_SOURCE_DIR}/build/janet.lib"
         IMPORTED_LOCATION "${JANET_RUNTIME_DLL}"
         INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
     )
-else ()
-    add_library(janet_lib STATIC IMPORTED)
+    else ()
+        add_library(janet_lib STATIC IMPORTED)
 
-    set_target_properties(janet_lib PROPERTIES
+        set_target_properties(janet_lib PROPERTIES
         IMPORTED_LOCATION ${janet_SOURCE_DIR}/build/${JANET_LIB_NAME}
         INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
     )
-endif ()
+    endif ()
 
-target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
+    target_compile_definitions(janet_lib INTERFACE JANET_BUILD="amalgam")
 
-if (NOT WIN32)
-    target_compile_options(janet_lib INTERFACE -pthread)
+    if (NOT WIN32)
+        target_compile_options(janet_lib INTERFACE -pthread)
+    endif ()
 endif ()
 
 FetchContent_Declare(
@@ -176,56 +205,20 @@ FetchContent_Declare(
     SYSTEM
 )
 
-FetchContent_Declare(
-    CapnProto
-    GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG v1.4.0
-    SYSTEM
-)
+FetchContent_MakeAvailable(unordered_dense)
 
-set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(unordered_dense CapnProto)
-
-# Suppress all warnings from Cap'n Proto targets (third-party), including LTO
-set(CAPNP_TARGETS
-    kj
-    kj-async
-    kj-http
-    kj-gzip
-    kj-test
-    capnp
-    capnp-json
-    capnp-rpc
-    capnpc
-    capnp_tool
-    capnpc_cpp
-    capnpc_capnp)
-
-foreach (target IN LISTS CAPNP_TARGETS)
-    if (TARGET ${target})
-        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(${target} PRIVATE -w)
-            target_link_options(${target} PRIVATE -w)
-        elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-            target_compile_options(${target} PRIVATE /w)
-        endif ()
-    endif ()
-endforeach ()
-
-FetchContent_Declare(
+if(NOT ZELPH_WASM)
+    FetchContent_Declare(
     bzip2
     GIT_REPOSITORY https://gitlab.com/bzip2/bzip2.git
     GIT_TAG bzip2-1.0.8
     SYSTEM
 )
 
-FetchContent_GetProperties(bzip2)
-if (NOT bzip2_POPULATED)
-    FetchContent_Populate(bzip2)
-    add_library(bz2 STATIC
+    FetchContent_GetProperties(bzip2)
+    if (NOT bzip2_POPULATED)
+        FetchContent_Populate(bzip2)
+        add_library(bz2 STATIC
         ${bzip2_SOURCE_DIR}/blocksort.c
         ${bzip2_SOURCE_DIR}/bzlib.c
         ${bzip2_SOURCE_DIR}/compress.c
@@ -234,16 +227,72 @@ if (NOT bzip2_POPULATED)
         ${bzip2_SOURCE_DIR}/huffman.c
         ${bzip2_SOURCE_DIR}/randtable.c
     )
-    target_include_directories(bz2 PUBLIC ${bzip2_SOURCE_DIR})
-    if (MSVC)
-        target_compile_definitions(bz2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_include_directories(bz2 PUBLIC ${bzip2_SOURCE_DIR})
+        if (MSVC)
+            target_compile_definitions(bz2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif ()
+        set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif ()
-    set_target_properties(bz2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endif ()
 
-capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS io/zelph.capnp)
+    FetchContent_Declare(
+        CapnProto
+        GIT_REPOSITORY https://github.com/capnproto/capnproto.git
+        GIT_TAG v1.4.0
+        SYSTEM
+    )
 
-add_library(zelph_lib SHARED
+    set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+
+    FetchContent_MakeAvailable(CapnProto)
+
+    # Suppress all warnings from Cap'n Proto targets (third-party), including LTO
+    set(CAPNP_TARGETS
+        kj
+        kj-async
+        kj-http
+        kj-gzip
+        kj-test
+        capnp
+        capnp-json
+        capnp-rpc
+        capnpc
+        capnp_tool
+        capnpc_cpp
+        capnpc_capnp)
+
+    foreach (target IN LISTS CAPNP_TARGETS)
+        if (TARGET ${target})
+            set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(${target} PRIVATE -w)
+                target_link_options(${target} PRIVATE -w)
+            elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+                target_compile_options(${target} PRIVATE /w)
+            endif ()
+        endif ()
+    endforeach ()
+
+    capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS io/zelph.capnp)
+endif()
+
+if(ZELPH_WASM)
+    # The playground links everything statically into one wasm module.
+    set(ZELPH_LIB_TYPE STATIC)
+    # Cap'n Proto based persistence (.bin load/save) and the Wikidata
+    # importer are not part of the wasm build.
+    set(ZELPH_PERSISTENCE_SOURCES "")
+else()
+    set(ZELPH_LIB_TYPE SHARED)
+    set(ZELPH_PERSISTENCE_SOURCES
+        io/data_manager.cpp
+        io/read_async.cpp
+        wikidata/wikidata.cpp
+        ${CAPNP_SRCS}
+    )
+endif()
+
+add_library(zelph_lib ${ZELPH_LIB_TYPE}
     command_executor.cpp
     command_executor.hpp
     interactive.cpp
@@ -260,14 +309,12 @@ add_library(zelph_lib SHARED
     concurrency/thread_pool.hpp
 
     io/data_manager.hpp
-    io/data_manager.cpp
     io/markdown.cpp
     io/markdown.hpp
     io/mermaid.cpp
     io/mermaid.hpp
     io/output.cpp
     io/output.hpp
-    io/read_async.cpp
     io/read_async.hpp
 
     network/adjacency_set.hpp
@@ -307,18 +354,28 @@ add_library(zelph_lib SHARED
     wikidata/import_diagnostics.hpp
     wikidata/wikidata_text_compressor.hpp
     wikidata/wikidata_token_encoder.hpp
-    wikidata/wikidata.cpp
     wikidata/wikidata.hpp
 
-    ${CAPNP_SRCS}
+    ${ZELPH_PERSISTENCE_SOURCES}
 )
 
 target_link_libraries(zelph_lib PUBLIC project_options)
 
+if(ZELPH_WASM)
+    # zelph_export.h (GenerateExportHeader) must resolve ZELPH_EXPORT to
+    # nothing for a static library.
+    target_compile_definitions(zelph_lib PUBLIC ZELPH_STATIC_DEFINE)
+endif()
+
 set(ZELPH_OPT_FLAGS "")
 check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if (EMSCRIPTEN)
+    # Keep the first wasm build simple and debuggable; LTO and unrolling are
+    # (re)evaluated against real timings in M5. -march=native is meaningless
+    # for wasm32.
+    list(APPEND ZELPH_OPT_FLAGS "-O3")
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     list(APPEND ZELPH_OPT_FLAGS "-O3")
     if (COMPILER_SUPPORTS_MARCH_NATIVE)
         list(APPEND ZELPH_OPT_FLAGS "-march=native")
@@ -348,7 +405,11 @@ endif ()
 
 target_compile_options(zelph_lib PRIVATE $<$<CONFIG:Release>:${ZELPH_OPT_FLAGS}>)
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense CapnProto::capnp bz2 janet_lib)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense janet_lib)
+if(NOT ZELPH_WASM)
+    target_link_libraries(zelph_lib PRIVATE CapnProto::capnp bz2)
+endif()
+
 if (WIN32)
     # ws2_32 and Mswsock are required by Janet
     target_link_libraries(zelph_lib PRIVATE ws2_32 Mswsock)
@@ -357,22 +418,26 @@ elseif(NOT APPLE)
     target_link_libraries(zelph_lib PRIVATE dl)
 endif()
 
-# Promote Cap'n Proto includes to SYSTEM to suppress their warnings
-get_target_property(_capnp_includes CapnProto::capnp INTERFACE_INCLUDE_DIRECTORIES)
-if(_capnp_includes)
-    target_include_directories(zelph_lib SYSTEM PRIVATE ${_capnp_includes})
+if(NOT ZELPH_WASM)
+    # Promote Cap'n Proto includes to SYSTEM to suppress their warnings
+    get_target_property(_capnp_includes CapnProto::capnp INTERFACE_INCLUDE_DIRECTORIES)
+    if(_capnp_includes)
+        target_include_directories(zelph_lib SYSTEM PRIVATE ${_capnp_includes})
+    endif()
 endif()
 
 set_source_files_properties(${CAPNP_SRCS} PROPERTIES COMPILE_OPTIONS "-w")
 
-# Enable IPO/LTO if available
-check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_OUTPUT)
-if (IPO_SUPPORTED)
-    message(STATUS "IPO/LTO enabled")
-    set_property(TARGET zelph_lib PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-else ()
-    message(STATUS "IPO/LTO not supported: ${IPO_OUTPUT}")
-endif ()
+if(NOT EMSCRIPTEN)
+    # Enable IPO/LTO if available
+    check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_OUTPUT)
+    if (IPO_SUPPORTED)
+        message(STATUS "IPO/LTO enabled")
+        set_property(TARGET zelph_lib PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else ()
+        message(STATUS "IPO/LTO not supported: ${IPO_OUTPUT}")
+    endif()
+endif()
 
 generate_export_header(zelph_lib
     BASE_NAME ZELPH

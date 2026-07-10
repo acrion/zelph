@@ -111,9 +111,6 @@ namespace zelph::network
             uint64_t pair_count;
         };
 
-        using IndexPair = std::pair<Node, Node>; // (subject, object)
-        static_assert(sizeof(IndexPair) == 2 * sizeof(Node), "IndexPair must be tightly packed");
-
         inline size_t skip_json_ws(std::string_view s, size_t pos)
         {
             while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos])))

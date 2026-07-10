@@ -432,8 +432,22 @@ namespace zelph::network
             note_created(a);
         }
 
-        static inline uint64_t mix_bits(uint64_t seed, uint64_t value)
+        static inline Node mix_bits(Node seed, Node value)
         {
+#ifdef __EMSCRIPTEN__
+            // 32-bit analog of the 64-bit path below.
+            // Scramble value to avoid collisions of sequential IDs
+            // (MurmurHash3 32-bit finalizer, "fmix32")
+            value ^= value >> 16;
+            value *= 0x85ebca6bu;
+            value ^= value >> 13;
+            value *= 0xc2b2ae35u;
+            value ^= value >> 16;
+
+            // Boost hash_combine 32-bit (using standard shifts 6 and 2)
+            seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+            return seed;
+#else
             // Scramble value to avoid collisions of sequential IDs
             // (MurmurHash3 64-bit finalizer)
             value ^= value >> 33;
@@ -445,25 +459,26 @@ namespace zelph::network
             // Boost hash_combine 64-bit (using standard shifts 6 and 2)
             seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
             return seed;
+#endif
         }
 
         static Node create_hash(const Node a, const Node b)
         {
-            uint64_t h = 0;
-            h          = mix_bits(h, mod(a));
-            h          = mix_bits(h, mod(b));
+            Node h = 0;
+            h      = mix_bits(h, mod(a));
+            h      = mix_bits(h, mod(b));
 
             return (h & mask_node) | mark_hash;
         }
 
         static Node create_hash(const Node predicate, const Node subject, const Node object)
         {
-            uint64_t h = 0;
-            h          = mix_bits(h, 1);              // size of object set
-            h          = mix_bits(h, mod(object));    // only object
-            h          = (h & mask_node) | mark_hash; // match create_hash(adjacency_set) return value
-            h          = mix_bits(h, mod(predicate)); // head1
-            h          = mix_bits(h, mod(subject));   // head2
+            Node h = 0;
+            h      = mix_bits(h, 1);              // size of object set
+            h      = mix_bits(h, mod(object));    // only object
+            h      = (h & mask_node) | mark_hash; // match create_hash(adjacency_set) return value
+            h      = mix_bits(h, mod(predicate)); // head1
+            h      = mix_bits(h, mod(subject));   // head2
             return (h & mask_node) | mark_hash;
         }
 
@@ -472,8 +487,8 @@ namespace zelph::network
             std::vector<Node> sorted_vec(vec.begin(), vec.end());
             std::sort(sorted_vec.begin(), sorted_vec.end());
 
-            uint64_t h = 0;
-            h          = mix_bits(h, sorted_vec.size());
+            Node h = 0;
+            h      = mix_bits(h, sorted_vec.size());
 
             for (Node node : sorted_vec)
             {
@@ -484,8 +499,8 @@ namespace zelph::network
 
         static Node create_hash(const Node head, const adjacency_set& vec)
         {
-            Node     vec_hash = create_hash(vec);
-            uint64_t h        = mix_bits(vec_hash, mod(head));
+            Node vec_hash = create_hash(vec);
+            Node h        = mix_bits(vec_hash, mod(head));
 
             return (h & mask_node) | mark_hash;
         }
@@ -705,10 +720,16 @@ namespace zelph::network
 #ifdef NDEBUG
     private:
 #endif
-        static constexpr Node shift_inc           = 5;
+        static constexpr Node shift_inc = 5;
+#ifdef __EMSCRIPTEN__
+        static constexpr Node mark_hash           = 0x40000000u;
+        static constexpr Node mask_node           = 0x7FFFFFFFu; // mask highest bit
+        static constexpr Node mask_highest_2_bits = 0x3fffffffu;
+#else
         static constexpr Node mark_hash           = 0x4000000000000000ull;
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
+#endif
 
         // Called from all three node-materialization paths. Lock order is
         // always adjacency locks -> _mtx_clusters, never the reverse.
@@ -729,18 +750,21 @@ namespace zelph::network
     #pragma warning(push)
     #pragma warning(disable : 4146)
 #endif
-        static inline uint64_t rol(const uint64_t n, uint64_t c = 1)
+        static inline Node rol(const Node n, Node c = 1)
         {
-            constexpr uint64_t mask = 8 * sizeof(n) - 1;
+            constexpr Node mask = 8 * sizeof(n) - 1;
             c &= mask;
-            // uint64_t wrapped = n >> ((-c)&mask);
-            uint64_t wrapped = (n & mask_highest_2_bits) >> (((-c) & mask) - 2); // we want to wrap already at bit 61 (not 63), since mask_node clears bit 63 (which marks vars) and we use bit 62 to denote hashes (mark_hash)
+            // Node wrapped = n >> ((-c)&mask);
+            // Wrap below the two reserved top bits (mask_node clears the var
+            // bit, mark_hash occupies the bit below): the rotation wraps at
+            // bit 61 on 64-bit and at bit 29 on the 32-bit wasm build.
+            Node wrapped = (n & mask_highest_2_bits) >> (((-c) & mask) - 2);
             return ((n << c) | wrapped) & mask_highest_2_bits;
         }
 
-        static inline uint64_t ror(const uint64_t n, uint64_t c = 1)
+        static inline Node ror(const Node n, Node c = 1)
         {
-            constexpr uint64_t mask = 8 * sizeof(n) - 1;
+            constexpr Node mask = 8 * sizeof(n) - 1;
             c &= mask;
             return (n >> c) | (n << ((-c) & mask));
         }
@@ -748,11 +772,12 @@ namespace zelph::network
     #pragma warning(pop)
 #endif
 
-        static uint64_t mod(uint64_t n)
+        static Node mod(Node n)
         {
             // We generate nodes both by counting up and down (for vars) from 0, which increases probability of hash collisions.
             // So, make a clear difference between those two categories.
-            return n > mask_node ? ror(n, 32) : n;
+            // Rotate by half the node width: 32 on 64-bit, 16 on the wasm32 build.
+            return n > mask_node ? ror(n, 4 * sizeof(Node)) : n;
         }
     };
 }

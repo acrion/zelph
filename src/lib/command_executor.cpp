@@ -35,14 +35,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "versions.hpp"
-#include "wikidata/wikidata.hpp"
-#include "wikidata/wikidata_text_compressor.hpp"
 
-#include "zelph.capnp.h"
+#ifndef __EMSCRIPTEN__
+    #include "wikidata/wikidata.hpp"
+    #include "wikidata/wikidata_text_compressor.hpp"
 
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
-#include <kj/io.h>
+    #include "zelph.capnp.h"
+
+    #include <capnp/message.h>
+    #include <capnp/serialize-packed.h>
+    #include <kj/io.h>
+#endif
 
 #include <cstdio>
 #include <filesystem>
@@ -169,6 +172,7 @@ private:
         { cmd_run(c); };
         _command_map[".run-once"] = [this](auto& c)
         { cmd_run_once(c); };
+#ifndef __EMSCRIPTEN__
         _command_map[".run-md"] = [this](auto& c)
         { cmd_run_md(c); };
         _command_map[".run-file"] = [this](auto& c)
@@ -183,6 +187,7 @@ private:
         { cmd_wikidata_constraints(c); };
         _command_map[".wikidata-qualifiers"] = [this](auto& c)
         { cmd_wikidata_qualifiers(c); };
+#endif
         _command_map[".list-rules"] = [this](auto& c)
         { cmd_list_rules(c); };
         _command_map[".list-predicate-usage"] = [this](auto& c)
@@ -201,24 +206,30 @@ private:
         { cmd_new(c); };
         _command_map[".stat"] = [this](auto& c)
         { cmd_stat(c); };
+#ifndef __EMSCRIPTEN__
         _command_map[".stat-file"] = [this](auto& c)
         { cmd_stat_file(c); };
         _command_map[".index-file"] = [this](auto& c)
         { cmd_index_file(c); };
+#endif
         _command_map[".licenses"] = [this](auto& c)
         { cmd_licenses(c); };
         _command_map[".log"] = [this](auto& c)
         { cmd_log(c); };
         _command_map[".log-janet"] = [this](auto& c)
         { cmd_log_janet(c); };
+#ifndef __EMSCRIPTEN__
         _command_map[".save"] = [this](auto& c)
         { cmd_save(c); };
+#endif
         _command_map[".import"] = [this](auto& c)
         { cmd_import(c); };
         _command_map[".auto-run"] = [this](auto& c)
         { cmd_auto_run(c); };
+#ifndef __EMSCRIPTEN__
         _command_map[".export-wikidata"] = [this](auto& c)
         { cmd_export_wikidata(c); };
+#endif
         _command_map[".parallel"] = [this](auto& c)
         { cmd_parallel(c); };
         _command_map[".semi-naive"] = [this](auto& c)
@@ -231,8 +242,8 @@ private:
         { cmd_cluster_merge(c); };
     }
 
-    // --- Helpers ---
-
+// --- Helpers ---
+#ifndef __EMSCRIPTEN__
     class CountingInputStream : public kj::InputStream
     {
     public:
@@ -690,9 +701,11 @@ private:
 
         return ids;
     }
+#endif
 
     void require_full_graph_mode(const char* command_name) const
     {
+#ifndef __EMSCRIPTEN__
         if (_repl_state && _repl_state->partial_load_mode)
         {
             throw std::runtime_error("Blocked in partial load mode; full graph required for "
@@ -700,6 +713,7 @@ private:
                                      + ". Loaded source: "
                                      + (_repl_state->partial_load_source.empty() ? "<unknown>" : _repl_state->partial_load_source));
         }
+#endif
     }
 
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}
@@ -1152,34 +1166,42 @@ private:
             ".mermaid <node_name> [max_depth]   – Generate Mermaid HTML file for a node",
             ".run                        – Run full inference",
             ".run-once                   – Run a single inference pass",
+#ifndef __EMSCRIPTEN__
             ".run-md <subdir>            – Run inference and export results as Markdown",
             ".run-file <file>            – Run inference, write deduced facts (reversed order) to <file> (encoded if lang=wikidata)",
             ".decode <file>              – Decode an encoded/plain file and print readable facts",
+#endif
             ".list-rules                 – List all defined inference rules",
             ".list-predicate-usage [max] – Show predicate usage statistics (top N most frequent predicates)",
             ".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             ".remove-rules               – Remove all inference rules",
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
             ".import <script>            – Load and execute a zelph script (.zph optional; falls back to the standard library)",
+#ifndef __EMSCRIPTEN__
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
             ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
             ".save <file.bin>            – Save the current network to a binary file",
+#endif
             ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
             ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
             ".cleanup                    – Remove isolated nodes and clean name mappings",
             ".new                        – Clear the complete network and re-initialize the core nodes",
             ".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+#ifndef __EMSCRIPTEN__
             ".stat-file <file.bin>       – Show serialized-file chunk statistics without loading the network",
             ".index-file <file.bin> <json> – Emit a JSON byte-offset index for a serialized .bin file",
+#endif
             ".licenses                   – Show third-party libraries and licenses",
             ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
             ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
             ".auto-run                   – Toggle automatic execution of .run after each input",
             ".parallel                   – Toggle parallel processing (default: on)",
             ".semi-naive [on|off|check]  – Show or set the fixpoint evaluation strategy (default: on)",
+#ifndef __EMSCRIPTEN__
             ".wikidata-constraints <json> <dir> – Export constraints to a directory",
             ".wikidata-qualifiers <json> [P1 P2 ...] – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
             ".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
+#endif
             ".cluster [name]             – Show clusters, or activate one ('default' = no cluster)",
             ".cluster-drop <name>        – Remove a cluster INCLUDING all nodes created in it",
             ".cluster-merge <from> <to>  – Move a cluster's membership into another ('default' = keep nodes, forget cluster)",
@@ -1302,7 +1324,7 @@ private:
             {".run-md", ".run-md <subdir>\n"
                         "Runs full inference and exports all deductions and contradictions as Markdown files\n"
                         "in the directory mkdocs/docs/<subdir> for use with MkDocs."},
-
+#ifndef __EMSCRIPTEN__
             {".run-file", ".run-file <file>\n"
                           "Performs full inference. Deduced facts (positive conclusions and contradictions) are written to <file>\n"
                           "in reversed order (reasons first, then ⇒ conclusion), without any brackets or markup.\n"
@@ -1313,7 +1335,7 @@ private:
             {".decode", ".decode <file>\n"
                         "Reads a file created by .run-file (encoded or plain) and prints the decoded facts\n"
                         "in readable form to standard output."},
-
+#endif
             {".list-rules", ".list-rules\n"
                             "Lists all currently defined inference rules in readable format."},
 
@@ -1354,7 +1376,7 @@ private:
                         "Subdirectories must be given explicitly:\n"
                         "  .import examples/english\n"
                         "  .import examples/neural/nn-wikidata-demo"},
-
+#ifndef __EMSCRIPTEN__
             {".load", ".load <file>\n"
                       "Loads a previously saved network state.\n"
                       "- If <file> ends with '.bin': loads the serialized network directly (fast).\n"
@@ -1408,7 +1430,7 @@ private:
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
                       "The filename must end with '.bin'."},
-
+#endif
             {".prune-facts", ".prune-facts <pattern>\n"
                              "Removes only the matching facts (statement nodes).\n"
                              "The pattern may contain variables in any position.\n"
@@ -1438,7 +1460,7 @@ private:
                       "- Total entries in node-of-name mappings\n"
                       "- Number of languages\n"
                       "- Number of rules"},
-
+#ifndef __EMSCRIPTEN__
             {".stat-file", ".stat-file <file.bin>\n"
                            "Reads only the serialized zelph header from the given .bin file and prints\n"
                            "file size and chunk counts for left/right adjacency and name maps.\n"
@@ -1448,7 +1470,7 @@ private:
                             "Scans a serialized zelph .bin file sequentially and emits a JSON sidecar\n"
                             "containing byte offsets and lengths for the header and each chunk section.\n"
                             "Does not load the graph into the live network."},
-
+#endif
             {".licenses", ".licenses\n"
                           "Lists all third-party software embedded in zelph, including their versions and licenses."},
 
@@ -1485,7 +1507,7 @@ private:
                             "          and then fails with a completeness-violation error. Intended\n"
                             "          for tests and debugging; the test suite always enables it.\n"
                             "Single-pass runs (.run-once) and queries are unaffected by this setting."},
-
+#ifndef __EMSCRIPTEN__
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
                                       "to the specified output directory."},
@@ -1533,7 +1555,7 @@ private:
                          "already existed before are never recorded.\n"
                          "'.cluster default' deactivates cluster tracking.\n"
                          "Note: clusters are session state and are not persisted by .save."},
-
+#endif
             {".cluster-drop", ".cluster-drop <name>\n"
                               "Removes every node recorded in the cluster, including all edges and names\n"
                               "(rollback semantics). Pre-existing knowledge is untouched, but facts created\n"
@@ -1857,6 +1879,7 @@ private:
         _n->run(true, false, true);
         _n->diagnostic("Ready.", true);
     }
+#ifndef __EMSCRIPTEN__
     void cmd_run_md(const std::vector<std::string>& cmd)
     {
         require_full_graph_mode(".run-md");
@@ -2216,6 +2239,7 @@ private:
         watch.stop();
         _n->diagnostic(" Time needed for qualifier import: " + watch.format(), true);
     }
+
     void cmd_export_wikidata(const std::vector<std::string>& cmd)
     {
         if (cmd.size() < 3)
@@ -2233,6 +2257,7 @@ private:
         wikidata->export_entities(ids);
         _n->diagnostic("Export finished. *.json files are in the current directory.", true);
     }
+#endif
     void cmd_list_rules(const std::vector<std::string>&)
     {
         // Get all nodes that are subjects of a core.Causes() relation
@@ -2445,6 +2470,7 @@ private:
 
         _n->out_stream() << "------------------------" << std::endl;
     }
+#ifndef __EMSCRIPTEN__
     void cmd_stat_file(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 2) throw std::runtime_error("Command .stat-file requires exactly one argument: the input .bin file");
@@ -2475,6 +2501,7 @@ private:
         write_bin_index_json(data, cmd[2]);
         _n->out("Wrote byte-offset index to " + cmd[2], true);
     }
+#endif
     void cmd_licenses(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .licenses takes no arguments");
@@ -2514,6 +2541,7 @@ private:
         _script_engine->toggle_janet_logging();
         _n->out("Janet function logging is now " + _script_engine->get_janet_logging_status() + ".", true);
     }
+#ifndef __EMSCRIPTEN__
     void cmd_save(const std::vector<std::string>& cmd)
     {
         require_full_graph_mode(".save");
@@ -2527,6 +2555,7 @@ private:
         _n->save_to_file(file);
         _n->diagnostic("Saved network to " + file, true);
     }
+#endif
     void cmd_import(const std::vector<std::string>& cmd) const
     {
         require_full_graph_mode(".import");

@@ -34,7 +34,7 @@ struct JanetAbstractType;
 struct JanetBuffer;
 
 // This condition replicates defined(JANET_NANBOX_64), see _deps/janet-src/src/include/janet.h
-#if !(defined(_M_ARM64) || defined(_M_ARM) || defined(__aarch64__)) && (defined(__x86_64__) || defined(_WIN64) || defined(__riscv))
+#if !(defined(_M_ARM64) || defined(_M_ARM) || defined(__aarch64__)) && (defined(__x86_64__) || defined(_WIN64) || defined(__riscv) || defined(__EMSCRIPTEN__))
 union Janet;
 #else
 struct Janet;

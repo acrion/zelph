@@ -25,17 +25,19 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "manifest_loader.hpp"
+#ifndef __EMSCRIPTEN__
+    #include "io/zelph.capnp.h"
+    #include "manifest_loader.hpp"
+
+    #include <capnp/message.h>
+    #include <capnp/serialize-packed.h>
+    #include <kj/io.h>
+#endif
+
 #include "network.hpp"
 #include "zelph.hpp"
 
-#include "io/zelph.capnp.h"
-
 #include <ankerl/unordered_dense.h>
-
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
-#include <kj/io.h>
 
 #include <atomic>
 #include <cstdint>
@@ -101,6 +103,9 @@ namespace zelph::network
         adjacency backward; // object  -> subjects
     };
 
+    using IndexPair = std::pair<Node, Node>; // (subject, object)
+    static_assert(sizeof(IndexPair) == 2 * sizeof(Node), "IndexPair must be tightly packed");
+
     class ZELPH_EXPORT Zelph::Impl : public Network
     {
         friend class Zelph;
@@ -109,13 +114,13 @@ namespace zelph::network
             : _output(output)
         {
         }
-
+#ifndef __EMSCRIPTEN__
         std::string pidx_path(const Node predicate) const
         {
             return _pidx_base + ".pidx." + std::to_string(predicate);
         }
 
-        bool try_load_pidx(const Node predicate, std::vector<detail::IndexPair>& out) const
+        bool try_load_pidx(const Node predicate, std::vector<IndexPair>& out) const
         {
             if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
                 return false;
@@ -138,7 +143,7 @@ namespace zelph::network
                 {
                     out.resize(h.pair_count);
                     ok = h.pair_count == 0
-                      || fread(out.data(), sizeof(detail::IndexPair), h.pair_count, file) == h.pair_count;
+                      || fread(out.data(), sizeof(IndexPair), h.pair_count, file) == h.pair_count;
                 }
             }
             catch (...)
@@ -159,7 +164,7 @@ namespace zelph::network
             return ok;
         }
 
-        void try_save_pidx(const Node predicate, const std::vector<detail::IndexPair>& pairs) const
+        void try_save_pidx(const Node predicate, const std::vector<IndexPair>& pairs) const
         {
             if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
                 return;
@@ -183,7 +188,7 @@ namespace zelph::network
 
             const bool ok = fwrite(&h, sizeof(h), 1, file) == 1
                          && (pairs.empty()
-                             || fwrite(pairs.data(), sizeof(detail::IndexPair), pairs.size(), file) == pairs.size());
+                             || fwrite(pairs.data(), sizeof(IndexPair), pairs.size(), file) == pairs.size());
             fclose(file);
 
             if (ok)
@@ -235,9 +240,9 @@ namespace zelph::network
 
         void loadSmallData(const ZelphImpl::Reader& impl)
         {
-#ifdef CLEAR_ON_LOAD
+    #ifdef CLEAR_ON_LOAD
             _weights.clear();
-#endif
+    #endif
             for (auto p : impl.getProbabilities())
             {
                 _weights[p.getHash()] = static_cast<long double>(p.getProb());
@@ -253,9 +258,9 @@ namespace zelph::network
                                  const detail::chunk_selector*   leftSelection  = nullptr,
                                  const detail::chunk_selector*   rightSelection = nullptr)
         {
-#ifdef CLEAR_ON_LOAD
+    #ifdef CLEAR_ON_LOAD
             _left.clear();
-#endif
+    #endif
             for (uint32_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
             {
                 ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
@@ -277,19 +282,19 @@ namespace zelph::network
                         _left[pair.getNode()] = std::move(adj);
                     }
                 }
-#ifndef NDEBUG
+    #ifndef NDEBUG
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size();
-#else
+    #else
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
+    #endif
             }
-#ifdef NDEBUG
+    #ifdef NDEBUG
             io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
-#endif
+    #endif
 
-#ifdef CLEAR_ON_LOAD
+    #ifdef CLEAR_ON_LOAD
             _right.clear();
-#endif
+    #endif
             for (uint32_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
             {
                 ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
@@ -311,15 +316,15 @@ namespace zelph::network
                         _right[pair.getNode()] = std::move(adj);
                     }
                 }
-#ifndef NDEBUG
+    #ifndef NDEBUG
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size();
-#else
+    #else
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
+    #endif
             }
-#ifdef NDEBUG
+    #ifdef NDEBUG
             io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
-#endif
+    #endif
         }
 
         void loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput,
@@ -327,10 +332,10 @@ namespace zelph::network
                                   uint32_t                        nameOfNodeChunkCount,
                                   const detail::chunk_selector*   selection = nullptr)
         {
-#ifdef CLEAR_ON_LOAD
+    #ifdef CLEAR_ON_LOAD
             _name_of_node.clear();
             _string_pool.clear();
-#endif
+    #endif
             for (uint32_t i = 0; i < nameOfNodeChunkCount; ++i)
             {
                 ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
@@ -355,15 +360,15 @@ namespace zelph::network
                         }
                     }
                 }
-#ifndef NDEBUG
+    #ifndef NDEBUG
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded name_of_node chunk " << i + 1 << "/" << nameOfNodeChunkCount;
-#else
+    #else
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
+    #endif
             }
-#ifdef NDEBUG
+    #ifdef NDEBUG
             io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
-#endif
+    #endif
         }
 
         void loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput,
@@ -371,9 +376,9 @@ namespace zelph::network
                                   uint32_t                        nodeOfNameChunkCount,
                                   const detail::chunk_selector*   selection = nullptr)
         {
-#ifdef CLEAR_ON_LOAD
+    #ifdef CLEAR_ON_LOAD
             _node_of_name.clear();
-#endif
+    #endif
             for (uint32_t i = 0; i < nodeOfNameChunkCount; ++i)
             {
                 ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
@@ -398,15 +403,15 @@ namespace zelph::network
                         }
                     }
                 }
-#ifndef NDEBUG
+    #ifndef NDEBUG
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded node_of_name chunk " << i + 1 << "/" << nodeOfNameChunkCount;
-#else
+    #else
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
+    #endif
             }
-#ifdef NDEBUG
+    #ifdef NDEBUG
             io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
-#endif
+    #endif
         }
 
         void loadLeftRightChunkFromPath(const std::string&            source_path,
@@ -459,13 +464,13 @@ namespace zelph::network
                     }
                 }
 
-#ifndef NDEBUG
+    #ifndef NDEBUG
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
                     << "Loaded " << which_name << " chunk " << chunk_index + 1 << "/" << section_count
                     << ", current size=" << (std::string_view(which_name) == "left" ? _left.size() : _right.size());
-#else
+    #else
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
-#endif
+    #endif
 
                 fclose(file);
             }
@@ -1005,9 +1010,9 @@ namespace zelph::network
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: string pool size=" << _string_pool.size();
 
-#ifdef _WIN32
-    #define fileno _fileno
-#endif
+    #ifdef _WIN32
+        #define fileno _fileno
+    #endif
             FILE* file = fopen(filename.c_str(), "wb");
             if (!file)
             {
@@ -1185,9 +1190,9 @@ namespace zelph::network
 
         void loadFromFile(const std::string& filename)
         {
-#ifdef _WIN32
-    #define fileno _fileno
-#endif
+    #ifdef _WIN32
+        #define fileno _fileno
+    #endif
             FILE* file = fopen(filename.c_str(), "rb");
             if (!file)
             {
@@ -1234,9 +1239,9 @@ namespace zelph::network
                           const Zelph::BinChunkSelection& selection,
                           const bool                      skip_payload)
         {
-#ifdef _WIN32
-    #define fileno _fileno
-#endif
+    #ifdef _WIN32
+        #define fileno _fileno
+    #endif
             FILE* file = fopen(filename.c_str(), "rb");
             if (!file)
             {
@@ -1326,6 +1331,7 @@ namespace zelph::network
                 throw;
             }
         }
+#endif // __EMSCRIPTEN__
 
         void transfer_names_locked(const Node from, const Node into)
         {
@@ -1621,20 +1627,24 @@ namespace zelph::network
 
         static unsigned int index_build_threads()
         {
+#ifdef __EMSCRIPTEN__
+            return 1u; // single-threaded wasm build: forces the serial path below
+#else
             const unsigned int hw = std::thread::hardware_concurrency();
             return hw == 0 ? 4u : hw;
+#endif
         }
 
         // Phase 1: extract (subject, object) pairs from the predicate's
         // relation nodes (parallel; see previous comments on locking and
         // swap-bound random access). Returns the unsorted forward pairs.
-        std::vector<detail::IndexPair> extract_predicate_pairs(const Node predicate) const
+        std::vector<IndexPair> extract_predicate_pairs(const Node predicate) const
         {
             // Same lock order as writers (connect): left before right.
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
             std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            std::vector<detail::IndexPair> fw;
+            std::vector<IndexPair> fw;
 
             const auto rels_it = _right.find(predicate);
             if (rels_it == _right.end()) return fw;
@@ -1651,10 +1661,10 @@ namespace zelph::network
                  "Building adjacency index over " + std::to_string(rels.size())
                      + " relation nodes (" + std::to_string(n_threads) + " thread(s))...");
 
-            std::vector<std::vector<detail::IndexPair>> partial(n_threads);
-            std::atomic<bool>                           failed{false};
+            std::vector<std::vector<IndexPair>> partial(n_threads);
+            std::atomic<bool>                   failed{false};
 
-            auto extract_chunk = [&](const size_t begin, const size_t end, std::vector<detail::IndexPair>& out_pairs)
+            auto extract_chunk = [&](const size_t begin, const size_t end, std::vector<IndexPair>& out_pairs)
             {
                 try
                 {
@@ -1743,18 +1753,18 @@ namespace zelph::network
 
         // Phase 2: sort each direction and fill the maps with exact-size
         // vectors. fw is sorted in place (and stays valid for persisting).
-        static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<detail::IndexPair>& fw)
+        static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw)
         {
             auto idx = std::make_shared<PredicateIndex>();
 
-            std::vector<detail::IndexPair> bw;
+            std::vector<IndexPair> bw;
             bw.reserve(fw.size());
             for (const auto& [s, o] : fw)
                 bw.emplace_back(o, s);
 
             std::atomic<bool> failed{false};
 
-            auto fill = [&failed](std::vector<detail::IndexPair>& pairs, PredicateIndex::adjacency& out)
+            auto fill = [&failed](std::vector<IndexPair>& pairs, PredicateIndex::adjacency& out)
             {
                 try
                 {
@@ -1783,10 +1793,15 @@ namespace zelph::network
                 }
             };
 
+#ifdef __EMSCRIPTEN__
+            fill(bw, idx->backward);
+            fill(fw, idx->forward);
+#else
             std::thread bw_thread([&]
                                   { fill(bw, idx->backward); });
             fill(fw, idx->forward);
             bw_thread.join();
+#endif
 
             if (failed.load(std::memory_order_relaxed))
             {
@@ -1804,24 +1819,30 @@ namespace zelph::network
                 if (it != _pred_idx_cache.end()) return it->second;
             }
 
-            std::vector<detail::IndexPair> fw;
-            bool                           fresh = false;
+            std::vector<IndexPair> fw;
+#ifdef __EMSCRIPTEN__
+            fw = extract_predicate_pairs(predicate);
+#else
+            bool fresh = false;
 
             if (!try_load_pidx(predicate, fw))
             {
                 fw    = extract_predicate_pairs(predicate);
                 fresh = true;
             }
+#endif
 
             auto idx = index_from_pairs(fw); // sorts fw in place
 
             emit(io::OutputChannel::Diagnostic,
                  "Adjacency index ready: " + std::to_string(fw.size()) + " edges.");
 
+#ifndef __EMSCRIPTEN__
             if (fresh)
             {
                 try_save_pidx(predicate, fw);
             }
+#endif
 
             std::unique_lock lock(_pred_idx_mtx);
             const auto [it, inserted] = _pred_idx_cache.try_emplace(predicate, std::move(idx));

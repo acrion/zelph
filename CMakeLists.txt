@@ -23,7 +23,7 @@
 
 cmake_minimum_required(VERSION 3.25.2)
 
-if(NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
+if(NOT CMAKE_TOOLCHAIN_FILE AND NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
     find_program(CLANG_EXE clang)
     find_program(CLANGXX_EXE clang++)
     if(CLANG_EXE AND CLANGXX_EXE)
@@ -51,15 +51,39 @@ add_library(project_options INTERFACE)
 option(ZELPH_BUILD_APP   "Build the zelph REPL executable" ${PROJECT_IS_TOP_LEVEL})
 option(ZELPH_BUILD_TESTS "Build zelph tests"               ${PROJECT_IS_TOP_LEVEL})
 
+# WebAssembly playground build. Implies: static lib, no Cap'n Proto
+# persistence, no native app, no test suite. Use via: emcmake cmake ...
+option(ZELPH_WASM "Build the WebAssembly playground" ${EMSCRIPTEN})
+
+if(ZELPH_WASM)
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR "ZELPH_WASM requires the Emscripten toolchain (emcmake cmake ...)")
+    endif()
+    set(ZELPH_BUILD_APP OFF)
+    set(ZELPH_BUILD_TESTS OFF)
+endif()
+
 if(MSVC)
     target_compile_options(project_options INTERFACE
         /W4 /wd4251 /wd4275 /utf-8
         $<$<CONFIG:Debug>:-D_DEBUG>
     )
 else()
-    target_compile_options(project_options INTERFACE
-        -fexceptions -Wall -pedantic
-    )
+    if(EMSCRIPTEN)
+        # Wasm exception handling: must be enabled at compile AND link time.
+        # zelph relies on C++ exceptions (contradiction_error, REPL error
+        # paths). -fwasm-exceptions uses native wasm EH instructions (near
+        # zero cost on non-throwing paths) and also selects the matching
+        # wasm-EH based setjmp/longjmp mode that the Janet VM relies on.
+        target_compile_options(project_options INTERFACE
+                -fwasm-exceptions -Wall -pedantic
+            )
+        target_link_options(project_options INTERFACE -fwasm-exceptions)
+    else()
+        target_compile_options(project_options INTERFACE
+                -fexceptions -Wall -pedantic
+            )
+    endif()
 
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_compile_options(project_options INTERFACE -g)
@@ -67,6 +91,10 @@ else()
 endif()
 
 add_subdirectory(src/lib)
+
+if(ZELPH_WASM)
+    add_subdirectory(src/wasm)
+endif()
 
 if(ZELPH_BUILD_APP)
     add_subdirectory(src/app)

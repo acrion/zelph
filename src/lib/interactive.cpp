@@ -81,8 +81,10 @@ public:
         auto output = _n->get_output_handler(); // save what's needed
         _n.reset();                             // destroy last
 
+#ifndef __EMSCRIPTEN__
         _repl_state->partial_load_mode = false;
         _repl_state->partial_load_source.clear();
+#endif
         _repl_state->janet_buffer.clear();
         _repl_state->zelph_buffer.clear();
         _repl_state->accumulating_inline_janet = false;

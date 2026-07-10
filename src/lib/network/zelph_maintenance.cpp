@@ -116,6 +116,7 @@ size_t Zelph::rule_count() const
     return get_rules().size();
 }
 
+#ifndef __EMSCRIPTEN__
 void Zelph::save_to_file(const std::string& filename) const
 {
     _pImpl->saveToFile(filename);
@@ -145,6 +146,7 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
 
     _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
 }
+#endif
 
 void        Zelph::set_active_cluster(const std::string& name) const { _pImpl->set_active_cluster(name); }
 void        Zelph::deactivate_cluster() const { _pImpl->deactivate_cluster(); }

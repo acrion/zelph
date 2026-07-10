@@ -29,8 +29,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script_engine.hpp"
 
 #include <ankerl/unordered_dense.h>
-#include <bzlib.h>
-#include <capnp/common.h>
+
+#ifndef __EMSCRIPTEN__
+    #include <bzlib.h>
+    #include <capnp/common.h>
+#endif
 
 #if __has_include(<mimalloc.h>)
     #include <mimalloc.h>
@@ -60,6 +63,7 @@ namespace zelph
             << ANKERL_UNORDERED_DENSE_VERSION_MINOR << "."
             << ANKERL_UNORDERED_DENSE_VERSION_PATCH << ") - MIT License\n";
 
+#ifndef __EMSCRIPTEN__
         // Cap'n Proto
         oss << "Cap'n Proto (v"
             << CAPNP_VERSION_MAJOR << "."
@@ -71,6 +75,7 @@ namespace zelph
         size_t      bz2_comma_pos = bz2_full.find(',');
         std::string bz2_version   = (bz2_comma_pos != std::string::npos) ? bz2_full.substr(0, bz2_comma_pos) : bz2_full;
         oss << "bzip2 (v" << bz2_version << ") - bzip2 License (BSD-style)\n";
+#endif
 
         // mimalloc
 #if defined(MI_MALLOC_VERSION)
