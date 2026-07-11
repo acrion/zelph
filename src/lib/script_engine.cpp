@@ -148,12 +148,15 @@ public:
                                                                                                                "predicate backward (object to subject). include-target true gives the reflexive closure.");
 
         janet_def(_janet_env, "zelph/nn-connect", wrap((JanetCFunction)janet_cfun_zelph_nn_connect), "(zelph/nn-connect from to &opt weight)\nCreate a raw weighted edge (synapse) from -> to, creating nodes as needed. "
-                                                                                                     "Raw edges carry no predicate and are invisible to the reasoning engine. weight defaults to 1.");
+                                                                                                     "Synapses live solely in the weight store and never appear in the graph's adjacency, so they are invisible to the reasoning engine by construction; any node is a safe neuron, including fact nodes and structural numbers.");
 
-        janet_def(_janet_env, "zelph/weight", wrap((JanetCFunction)janet_cfun_zelph_weight), "(zelph/weight from to)\nWeight of the raw edge from -> to, or nil if the edge does not exist. "
-                                                                                             "An existing edge without a stored weight yields 1.");
+        janet_def(_janet_env, "zelph/weight", wrap((JanetCFunction)janet_cfun_zelph_weight), "(zelph/weight from to)\n"
+                                                                                             "Weight of the directed node pair from -> to. Returns the stored value if a "
+                                                                                             "synapse (or an explicitly stored fact probability) exists for the pair; "
+                                                                                             "1 if the pair is a real graph edge without a stored entry (the canonical "
+                                                                                             "default, e.g. for facts asserted with probability 1); nil if neither exists.");
 
-        janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)janet_cfun_zelph_set_weight), "(zelph/set-weight from to w)\nSet the weight of an existing raw edge.");
+        janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)janet_cfun_zelph_set_weight), "(zelph/set-weight from to w)\nSet the weight of an existing synapse or edge.");
 
         janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
                                                                                                      "input first, output last. Neurons are the subjects of (neuron in layer) facts, ordered by node id. "
@@ -639,7 +642,7 @@ public:
 
         const double w = argc >= 3 ? janet_getnumber(argv, 2) : 1.0;
 
-        s_instance->_n->connect_weighted(from, to, w);
+        s_instance->_n->set_synapse(from, to, w);
         return janet_wrap_nil();
     }
 
@@ -651,9 +654,16 @@ public:
 
         network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
-        if (!a || !b || !s_instance->_n->has_right_edge(a, b)) return janet_wrap_nil();
+        if (!a || !b) return janet_wrap_nil();
 
-        return janet_wrap_number(s_instance->_n->edge_weight(a, b, 1.0));
+        // Synapse entry (or explicitly stored fact probability): its value.
+        // Real edge without stored entry: canonical weight 1.
+        // Neither: nil.
+        if (s_instance->_n->has_synapse(a, b))
+            return janet_wrap_number(s_instance->_n->edge_weight(a, b, 1.0));
+        if (s_instance->_n->has_right_edge(a, b))
+            return janet_wrap_number(1.0);
+        return janet_wrap_nil();
     }
 
     // Set the weight of an existing raw edge.
@@ -665,11 +675,19 @@ public:
         network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
         if (!a || !b) janet_panicf("zelph/set-weight: could not resolve nodes");
-        if (!s_instance->_n->has_right_edge(a, b))
-            janet_panicf("zelph/set-weight: edge does not exist (use zelph/nn-connect to create it)");
 
-        s_instance->_n->set_edge_weight(a, b, janet_getnumber(argv, 2));
-        return janet_wrap_nil();
+        std::string err;
+        try
+        {
+            s_instance->_n->set_edge_weight(a, b, janet_getnumber(argv, 2));
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/set-weight: %s (use zelph/nn-connect to create a synapse)", err.c_str());
+        return janet_wrap_nil(); // unreachable
     }
 
     // Compile a feed-forward view of a sub-graph. Argument: indexed collection
@@ -866,10 +884,10 @@ public:
         {
             for (const network::Node b : post)
             {
-                if (s_instance->_n->has_right_edge(a, b)) continue; // preserve existing synapses and their weights
+                if (s_instance->_n->has_synapse(a, b)) continue; // preserve existing synapses and their weights
 
                 const double w = scale == 0.0 ? 0.0 : dist(rng);
-                s_instance->_n->connect_weighted(a, b, w);
+                s_instance->_n->set_synapse(a, b, w);
                 ++created;
             }
         }

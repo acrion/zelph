@@ -578,25 +578,89 @@ namespace zelph::network
             return it->second;
         }
 
-        // --- Raw edge weights (neural substrate) ---
+        // --- Synapses (neural substrate) ---
+        // A synapse is an entry in the weight store for a directed node
+        // pair -- and nothing else. Creating one inserts NOTHING into the
+        // adjacency maps. This makes synapses invisible to the reasoning
+        // engine by construction rather than by filtering: the adjacency
+        // of relation nodes (fact nodes, including every cons cell of a
+        // structural number) IS their fact structure -- an edge into a
+        // relation node carries the signature of an additional object, an
+        // edge out of it the signature of a predicate link -- so an
+        // extraneous adjacency entry on such a node corrupts its structure
+        // and breaks the hash-consing identity guarantee (check_fact).
+        // With synapses confined to the weight store, any node is a safe
+        // neuron, including fact nodes and structural numbers.
+        //
+        // Shared-store caveat (deliberate): a synapse on a node pair that
+        // also carries a real edge occupies the same store entry as that
+        // edge's probability. The case that matters is a synapse from a
+        // fact node to that fact's own predicate node, which aliases the
+        // fact's probability.
 
-        // Set the weight of the directed edge a -> b. The edge must already exist.
-        // No range constraints and no contradiction checks apply here; fact
-        // probabilities are a constrained view of this same store, this is the
-        // raw access path.
-        void set_edge_weight(Node a, Node b, double w)
+        // True if a synapse (or an explicitly stored edge probability)
+        // exists for the directed pair a -> b.
+        bool has_synapse(Node a, Node b) const
+        {
+            std::shared_lock lock(_mtx_weights);
+            return _weights.find(create_hash(a, b)) != _weights.end();
+        }
+
+        // Create or overwrite the synapse a -> b. Both nodes must exist.
+        void set_synapse(Node a, Node b, double w)
         {
             {
-                std::shared_lock<std::shared_mutex> lock(_smtx_left);
-                auto                                it = _left.find(a);
-                if (it == _left.end() || it->second.count(b) == 0)
+                std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+                if (_left.find(a) == _left.end())
                 {
-                    throw std::runtime_error("Network::set_edge_weight: edge " + std::to_string(a) + " -> " + std::to_string(b) + " does not exist");
+                    throw std::runtime_error("Network::set_synapse: node " + std::to_string(a) + " does not exist");
+                }
+            }
+            {
+                std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
+                if (_right.find(b) == _right.end())
+                {
+                    throw std::runtime_error("Network::set_synapse: node " + std::to_string(b) + " does not exist");
                 }
             }
 
             std::unique_lock lock(_mtx_weights);
             _weights[create_hash(a, b)] = w;
+        }
+
+        // --- Raw edge weights (neural substrate) ---
+
+        // Set the weight of the directed pair a -> b. Accepts existing
+        // synapse entries (weight store) as well as real adjacency edges
+        // (fact probabilities); rejects pairs that are neither.
+        void set_edge_weight(Node a, Node b, double w)
+        {
+            const Node hash = create_hash(a, b);
+
+            {
+                std::unique_lock lock(_mtx_weights);
+                auto             it = _weights.find(hash);
+                if (it != _weights.end())
+                {
+                    it->second = w;
+                    return;
+                }
+            }
+
+            {
+                std::shared_lock<std::shared_mutex> lock(_smtx_left);
+                auto                                it = _left.find(a);
+                if (it == _left.end() || it->second.count(b) == 0)
+                {
+                    throw std::runtime_error("Network::set_edge_weight: no synapse and no edge " + std::to_string(a) + " -> " + std::to_string(b));
+                }
+            }
+
+            // Benign race between the two lock scopes: a concurrent
+            // disconnect could remove the edge here; the write below then
+            // creates a value-only entry, which nothing ever reads.
+            std::unique_lock lock(_mtx_weights);
+            _weights[hash] = w;
         }
 
         // Weight of the directed edge a -> b; `fallback` if no entry exists.

@@ -1,0 +1,32 @@
+.import binary-arithmetic
+.import primes-naf
+%(loop [n :range [2 21]]  (def num (zelph/number (string n)))  (zelph/fact num "testprime" num))
+.run
+(X testprime Y) = prime
+(X testprime Y) = composite
+
+.import sparql
+sparql
+SELECT ?n WHERE { ?n isprime ?n . }
+
+sparql
+SELECT DISTINCT ?n WHERE { ?n testprime ?n . MINUS { ?n isprime ?n . } }
+
+sparql
+SELECT ?n (COUNT(?d) AS ?c) WHERE { ?n hasdivisor ?d . } GROUP BY ?n
+
+.import nn
+%
+(def hd (zelph/resolve "hasdivisor"))
+(def tested @[])
+(each row (zelph/query (zelph/fact '_N "testprime" '_N))
+  (array/push tested (get row '_N)))
+(def divnet (nn/link-predictor "divnet" tested [hd] :epochs 200 :lr 0.2))
+%
+
+(A testprime A, A hasdivisor X, ≈divnet(A hasdivisor X)) => (A verifiedDivisor X)
+(A testprime A, ≈divnet(A hasdivisor X), ¬(A hasdivisor X)) => (A candidateDivisor X)
+.run
+
+sparql
+SELECT ?n ?d WHERE { ?n candidateDivisor ?d . }

@@ -22,7 +22,24 @@ Internally, zelph stores edge weights in a sparse side table keyed by a hash of 
 
 This weight store is _shared_ with an older zelph concept: **fact probabilities**. A fact's probability has always been stored on the edge from the fact node to its predicate node (range `[0, 1]`, absent entry = 1). Synapse weights use the same store on neuron-to-neuron edges, without the range constraint. In other words, fact probabilities are a _constrained view_ of the general weight store — this unification is what later allows a network's confidence to become a deduced fact's probability with no translation step.
 
-Raw weighted edges are created without any predicate. They therefore have none of the topological signature of a fact (see [Internal Representation of facts](index.md#internal-representation-of-facts)) and are **completely invisible to the reasoning engine**:
+Synapses are stored exclusively in this weight table, keyed by the
+directed node pair. Creating a synapse inserts **nothing** into the
+graph's adjacency structure — this is what makes synapses invisible to
+the reasoning engine _by construction_, not merely by filtering. The
+distinction matters: the adjacency of relation nodes (fact nodes,
+including every cons cell of a structural number) _is_ their fact
+structure — an edge into a relation node carries the signature of an
+additional object, an edge out of it the signature of a predicate link.
+An extraneous adjacency entry on such a node would therefore corrupt its
+structure and break the hash-consing identity guarantee. Since synapses
+never touch adjacency, **any node is a safe neuron**: an entity, a
+predicate, a digit, a fact node, or a structural number.
+
+One deliberate consequence of the shared weight store: a synapse from a
+fact node to that fact's own predicate node occupies the same store
+entry as the fact's probability — the two are indistinguishable by
+design. In practice this only arises when a fact node and its own
+predicate are neurons in consecutive layers, a wiring worth avoiding.
 
 ```
 n1 ~ neuron

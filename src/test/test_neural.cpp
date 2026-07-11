@@ -375,3 +375,120 @@ mars haspart core
         CHECK(any_output_starts_with(collector, "( mars verifiedW core )"));
         CHECK_FALSE(any_output_starts_with(collector, "( earth verifiedW core )")); });
 }
+
+// ---------------------------------------------------------------------------
+// Synapses create no adjacency: relation nodes are safe neurons
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: synapses never corrupt the fact structure of relation-node neurons")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s relF o
+)");
+        // Wire synapses into and out of the fact node itself. Before the
+        // synapse-store fix, the edge into the fact node carried the
+        // signature of an additional object and the edge out of it the
+        // signature of a predicate link.
+        process_lines(interactive, R"(
+%(def f (zelph/fact "s" "relF" "o"))
+%(zelph/nn-connect "probe" f 0.5)
+%(zelph/nn-connect f "probe2" 0.25)
+)");
+        // The fact must still decompose exactly as before; probe/probe2
+        // must not surface anywhere in its components.
+        collector.clear();
+        interactive.process("s _P _O");
+        CHECK(answers_contain(collector, "s relF o"));
+        CHECK_FALSE(any_output_contains(collector, "probe"));
+
+        // Hash-consing identity: re-deriving the same fact must yield the
+        // identical node (this used to trip the corrupt-database assert
+        // in check_fact).
+        collector.clear();
+        interactive.process(R"(%(if (= (zelph/fact "s" "relF" "o") f) "identity-ok" "identity-broken"))");
+        CHECK(any_output_contains(collector, "identity-ok")); });
+}
+
+TEST_CASE("neural: structural cons lists survive being wired as neurons")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // l2 is the cdr of l4 (suffix sharing), mirroring the number case
+        // where &2 is the cdr of &4. A synapse l4 -> l2 runs opposite to
+        // the real structural edge l2 -> l4 and used to mimic a predicate
+        // link on l4 plus an extra object on l2.
+        process_lines(interactive, R"(
+%(def l2 (zelph/list "x"))
+%(def l4 (zelph/list "y" "x"))
+%(zelph/nn-connect "probe" l2 0.5)
+%(zelph/nn-connect l4 l2 0.75)
+)");
+        collector.clear();
+        interactive.process(R"(%(if (and (= (zelph/list "x") l2) (= (zelph/list "y" "x") l4)) "identity-ok" "identity-broken"))");
+        CHECK(any_output_contains(collector, "identity-ok")); });
+}
+
+// ---------------------------------------------------------------------------
+// Compile masks come from the synapse store, not from fact topology
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: structural fact edges never enter compiled masks as phantom synapses")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // The structural object edge l2 -> l4 exists in the adjacency maps.
+        // With l2 as input and l4 as output neuron (the "&2 divides &4"
+        // constellation), the old has_right_edge probing turned it into a
+        // trainable weight-1 phantom synapse.
+        process_lines(interactive, R"(
+%(def l2 (zelph/list "x"))
+%(def l4 (zelph/list "y" "x"))
+%(zelph/fact l2 "in" (zelph/resolve "QIn"))
+%(zelph/fact l4 "in" (zelph/resolve "QOut"))
+%(def net (zelph/nn-compile [(zelph/resolve "QIn") (zelph/resolve "QOut")]))
+)");
+        collector.clear();
+        interactive.process(R"(%(string "out:" (get (zelph/nn-eval net [1]) 0)))");
+        CHECK(any_output_contains(collector, "out:0"));
+        CHECK_FALSE(any_output_contains(collector, "out:0.5"));
+
+        // A real synapse on the same pair must be visible after recompiling.
+        process_lines(interactive, R"(
+%(zelph/nn-connect l2 l4 0.5)
+%(def net2 (zelph/nn-compile [(zelph/resolve "QIn") (zelph/resolve "QOut")]))
+)");
+        collector.clear();
+        interactive.process(R"(%(string "out:" (get (zelph/nn-eval net2 [1]) 0)))");
+        CHECK(any_output_contains(collector, "out:0.5")); });
+}
+
+// ---------------------------------------------------------------------------
+// zelph/weight three-way semantics
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: zelph/weight distinguishes synapse entries, plain edges, and absence")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s relW o
+%(zelph/nn-connect "n1" "n2" 0.25)
+)");
+        // Synapse entry: stored value.
+        collector.clear();
+        interactive.process(R"(%(string "w:" (zelph/weight "n1" "n2")))");
+        CHECK(any_output_contains(collector, "w:0.25"));
+
+        // Real edge without a stored entry (fact asserted with probability
+        // 1): canonical weight 1.
+        collector.clear();
+        interactive.process(R"(%(string "w:" (zelph/weight (zelph/fact "s" "relW" "o") "relW")))");
+        CHECK(any_output_contains(collector, "w:1"));
+
+        // Neither synapse nor edge: nil.
+        collector.clear();
+        interactive.process(R"(%(if (nil? (zelph/weight "n1" "nowhere")) "no-pair" "pair"))");
+        CHECK(any_output_contains(collector, "no-pair")); });
+}

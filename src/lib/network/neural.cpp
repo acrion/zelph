@@ -115,9 +115,16 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
         nn->_nodes.push_back(std::move(sorted));
     }
 
-    // NOTE: this per-edge probing (has_right_edge / edge_weight) acquires a
-    // lock per call. Fine for the foundation; the optimization path for very
-    // large nets is a lock-once scan like extract_predicate_pairs.
+    // Mask and weights come exclusively from the synapse store. Real
+    // adjacency edges (fact structure) are deliberately NOT included:
+    // with the former has_right_edge probing, structural edges between
+    // neurons -- e.g. the object edge from a number to a longer number
+    // sharing it as suffix -- silently entered the mask as trainable
+    // weight-1 synapses.
+    //
+    // NOTE: per-edge probing acquires a lock per call. Fine for the
+    // foundation; the optimization path for very large nets is a
+    // lock-once scan over the weight store.
     for (size_t k = 0; k + 1 < nn->_nodes.size(); ++k)
     {
         const auto& pre  = nn->_nodes[k];
@@ -130,7 +137,7 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
         {
             for (size_t i = 0; i < pre.size(); ++i)
             {
-                if (z.has_right_edge(pre[i], post[j]))
+                if (z.has_synapse(pre[i], post[j]))
                 {
                     w[j * pre.size() + i] = z.edge_weight(pre[i], post[j], 1.0);
                     m[j * pre.size() + i] = 1;

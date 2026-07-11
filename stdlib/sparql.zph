@@ -155,7 +155,9 @@
 
     # Path element: iri/pname optionally followed by + or *
     :path-mod (capture (set "+*"))
-    :path-elem (group (* (constant :pelem) (choice :iri-ref :pname) (? :path-mod)))
+    :path-elem (group (* (constant :pelem)
+                         (choice :iri-ref :pname :literal :bareword)
+                         (? :path-mod)))
     :path (group (* (constant :path) :path-elem (any (* "/" :path-elem))))
 
     # Keywords (accept upper- and lowercase)
@@ -183,7 +185,7 @@
                            ":" :s* "<" (capture (some (if-not ">" 1))) ">"))
 
     # Terms usable in subject/object position
-    :term (choice :var :iri-ref :pname :literal :number)
+    :term (choice :var :iri-ref :pname :literal :number :bareword)
 
     # Predicate position: variable or path (a path covers a single iri too)
     :verb (choice :var :path)
@@ -203,7 +205,7 @@
                          (capture (choice "str" "STR" "lang" "LANG"))
                          :s* "(" :s* :var :s* ")"))
     :cmp-op (capture (choice "<=" ">=" "!=" "=" "<" ">"))
-    :filter-operand (choice :func-call :var :literal :number :iri-ref :pname)
+    :filter-operand (choice :func-call :var :literal :number :iri-ref :pname :bareword)
     :filter-expr (group (* (constant :cmp) :filter-operand :s* :cmp-op
                            :s* :filter-operand))
     # Opening and closing parens may be nested, e.g. FILTER ( ( a < b ) ).
@@ -246,6 +248,16 @@
                           (group (* (constant :ord) (constant "ASC") :var)))))
     :limit (group (* (constant :limit) :kw-limit :s+
                      (capture (some (range "09")))))
+
+    # Bare node names (no prefix, no quotes): resolved in the current
+    # language, so the engine is usable on arbitrary zelph graphs, not
+    # only Wikidata imports. Tried after :pname, so tokens containing a
+    # colon never end up here. Names with spaces or other special
+    # characters can be written as quoted literals instead.
+    :bareword (group (* (constant :bare)
+                        (capture (* (choice (range "az") (range "AZ") "_")
+                                    (any (choice (range "az") (range "AZ")
+                                                 (range "09") (set "_-")))))))
 
     :select-query (group (* (constant :select)
                             :kw-select
@@ -312,6 +324,12 @@
                (string pfx ":" local)))
     :literal (node 1)
     :number (node 1)
+    # Bare name: resolved (and created if absent) in the current
+    # language - same semantics as bare names in native zelph input.
+    # Resolving to a node here (instead of passing a string through)
+    # matters because the adjacency and closure APIs, unlike zelph/fact,
+    # do not resolve strings themselves.
+    :bare (zelph/resolve (node 1))
     (error (string "Unsupported term: " (string/format "%q" node)))))
 
 (defn parse-count-spec
@@ -331,8 +349,10 @@
   (def modifier (when (> (length pelem) 2) (pelem 2)))
   (when (= (tag pred) :var)
     (error "Variables are not allowed inside property paths"))
-  [pred modifier])
-
+  # Literals and unknown prefixed names are still plain strings at this
+  # point; closures require node arguments.
+  [(as-node pred) modifier])
+  
 # ============================================================
 # 5. Binding-set utilities (solution sequences)
 # ============================================================
@@ -373,14 +393,23 @@
       (when (nil? (get s k)) (set ok false))))
   ok)
 
+(defn node->plain-string
+  "zelph/node's tostring renders as \"<zelph/node &7>\"; strip the
+   wrapper for user-facing output and stable keys."
+  [v]
+  (def s (string v))
+  (if (and (string/has-prefix? "<zelph/node " s) (string/has-suffix? ">" s))
+    (string/slice s 12 -2)
+    s))
+
 (defn node-key
   "Stable comparison/dedup key: wikidata ID if available, else any name,
-   else the value's printed form."
+   else the node's canonical printed form (e.g. &7 for unnamed numbers)."
   [v]
   (cond
     (nil? v) ""
     (string? v) v
-    (or (zelph/name v "wikidata") (zelph/name v) (string/format "%q" v))))
+    (or (zelph/name v "wikidata") (zelph/name v) (node->plain-string v))))
 
 (defn- sol-key-fn
   "Returns a function mapping a solution to a hashable join key over the
@@ -508,8 +537,16 @@
 (defn distinct-solutions [sols vars]
   (def seen @{})
   (def out @[])
+  (def single (when (= 1 (length vars)) (first vars)))
   (each s sols
-    (def key (string/join (map (fn [v] (node-key (get s v))) vars) "\x01"))
+    # Single-variable projections are keyed by the node value itself:
+    # zelph/node hashes and compares by node id, which stays stable for
+    # unnamed structural nodes (cons-list numbers) where name-based keys
+    # are unavailable. Multi-variable projections keep the string key.
+    (def key
+      (if single
+        (or (get s single) "")
+        (string/join (map (fn [v] (node-key (get s v))) vars) "\x01")))
     (unless (get seen key)
       (put seen key true)
       (array/push out s)))
@@ -596,9 +633,9 @@
             (if fast
               (let [[s p o] (first args-per-triple)]
                 (if (symbol? o)
-                  (each tgt (zelph/targets s p)
+                  (each tgt (zelph/targets (as-node s) (as-node p))
                     (push-binding sol var-syms tgt))
-                  (each src (zelph/sources p o)
+                  (each src (zelph/sources (as-node p) (as-node o))
                     (push-binding sol var-syms src))))
               (run-unification sol args-per-triple var-syms)))))
       out)))
@@ -793,6 +830,7 @@
     :number (op 1)
     :iri (node-key (resolve-term op prefixes))
     :pname (node-key (resolve-term op prefixes))
+    :bare (node-key (resolve-term op prefixes))
     (error "Unsupported FILTER operand")))
 
 (defn numeric? [s]
@@ -1020,7 +1058,10 @@
     (when (or group-by (not (empty? count-specs)))
       (def groups @{})
       (each s sols
-        (def key (if group-by (node-key (get s group-by)) :all))
+        # Key by node value (id-based hash), not by name: unnamed
+        # structural nodes would otherwise all collapse onto - or
+        # scatter across - string fallbacks.
+        (def key (if group-by (or (get s group-by) :unbound) :all))
         (def bucket (or (get groups key) @[]))
         (array/push bucket s)
         (put groups key bucket))
@@ -1114,7 +1155,7 @@
       (def label (or (zelph/name v "en") (zelph/name v)))
       (cond
         (and id label (not= id label)) (string id " (" label ")")
-        (or id label (string/format "%q" v))))))
+        (or id label (node->plain-string v))))))
 
 (defn format-results
   "Build the result text. Returned (not printed) so that the C++ keyword
@@ -1142,11 +1183,22 @@
 (def unsupported-keywords
   ["BIND" "VALUES" "SERVICE" "CONSTRUCT" "DESCRIBE" "GRAPH" "HAVING"])
 
+(defn word-char? [s i]
+  (if (or (< i 0) (>= i (length s)))
+    false
+    (do
+      (def c (get s i))
+      (or (<= 65 c 90) (<= 48 c 57) (= c 95) (= c 45)))))
+
 (defn check-unsupported [text]
   (def upper (string/ascii-upper text))
   (each kw unsupported-keywords
-    (when (string/find kw upper)
-      (error (string "SPARQL feature not supported by this subset: " kw)))))
+    (var pos (string/find kw upper))
+    (while (not (nil? pos))
+      (when (and (not (word-char? upper (dec pos)))
+                 (not (word-char? upper (+ pos (length kw)))))
+        (error (string "SPARQL feature not supported by this subset: " kw)))
+      (set pos (string/find kw upper (inc pos))))))
 
 (defn sparql-incomplete?
   "Completeness check for the keyword dispatcher's veto protocol. A single
