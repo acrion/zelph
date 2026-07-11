@@ -66,6 +66,11 @@ namespace zelph::string
     {
         return _last_node_to_string_node.load(std::memory_order_relaxed);
     }
+
+    void reset_last_node()
+    {
+        _last_node_to_string_node.store(network::Node{}, std::memory_order_relaxed);
+    }
 }
 
 namespace

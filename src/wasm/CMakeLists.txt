@@ -42,7 +42,13 @@ target_link_options(zelph_playground PRIVATE
     -sENVIRONMENT=web,worker,node
     -sALLOW_MEMORY_GROWTH=1
     -sSTACK_SIZE=8388608          # parser/reasoner/Janet recursion: be generous
-    -sEXPORTED_RUNTIME_METHODS=ccall,cwrap
+    -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,FS
+
+    # emcc 6.x can grow the heap via resizable ArrayBuffers
+    # (GROWABLE_ARRAYBUFFERS), but Chrome's TextDecoder rejects views on
+    # resizable buffers, which breaks the --embed-file loader at startup.
+    # Force the classic growth mechanism (replace buffer + recreate views).
+    -sGROWABLE_ARRAYBUFFERS=0
 
     # Package the zelph standard library directly into the module (MEMFS at
     # /stdlib). Unlike --preload-file this produces no separate zelph.data
@@ -55,3 +61,13 @@ target_link_options(zelph_playground PRIVATE
 # go stale silently.
 file(GLOB_RECURSE ZELPH_STDLIB_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/stdlib/*)
 set_target_properties(zelph_playground PROPERTIES LINK_DEPENDS "${ZELPH_STDLIB_FILES}")
+
+# Mirror the playground web assets next to zelph.mjs on every build. (A
+# POST_BUILD command would only run when the wasm target itself relinks,
+# so pure web-asset edits would silently not be picked up.)
+add_custom_target(zelph_playground_web ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/web
+            $<TARGET_FILE_DIR:zelph_playground>
+    COMMENT "Mirroring playground web assets next to zelph.mjs")
+add_dependencies(zelph_playground_web zelph_playground)

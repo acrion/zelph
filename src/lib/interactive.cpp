@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 #include "repl_state.hpp"
 #include "script_engine.hpp"
+#include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
 #include <memory>
@@ -94,6 +95,8 @@ public:
         _repl_state->accumulating_keyword      = false;
         _repl_state->active_keyword.clear();
         _repl_state->keyword_buffer.clear();
+
+        zelph::string::reset_last_node();
 
         init(output);
         _n->out("Cleared network and re-initialized core nodes.");

@@ -39,6 +39,7 @@ namespace zelph::string
     static constexpr int default_display_max_neighbors{5};
 
     network::Node last_node_to_string_node();
+    void          reset_last_node();
     void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr);
     bool          is_inside_node_to_wstring();
     bool          is_var(std::string token);
