@@ -7,6 +7,16 @@ zelph offers powerful analysis capabilities for the complete Wikidata knowledge 
 
 For an in-depth exploration of zelph's reasoning capabilities, including deep unification, negation, inequality constraints, and semantic arithmetic, see [Logic and Computation](logic.md).
 
+### Try It Live 🕹️
+
+<p>
+  <strong><a href="play/" target="_blank">Open the zelph playground</a></strong> —
+  the complete reasoning engine compiled to WebAssembly, running entirely in your
+  browser. Nothing is installed and nothing is sent to a server. Guided demos cover
+  rule-based big-number arithmetic, a primality test via negation as failure,
+  SPARQL over derived facts, and neural networks inside the graph.
+</p>
+
 ### Video: Logic and Computation
 
 Watch this video walkthrough of zelph's reasoning capabilities — including live demonstrations of rules, meta-reasoning, semantic arithmetic, and Wikidata analysis. For section navigation and the full technical reference, visit [Logic and Computation](logic.md).

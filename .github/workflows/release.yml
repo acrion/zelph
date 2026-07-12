@@ -169,3 +169,43 @@ jobs:
           fi
 
           gh release upload ${{ github.event.release.tag_name }} "zelph_${VERSION}_${DEB_ARCH}.deb" --clobber
+
+  release-wasm:
+    name: WebAssembly Playground
+    runs-on: ubuntu-latest
+    # Only needed if your workflow does not already grant this at top level:
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure (Emscripten)
+        run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-wasm -j$(nproc)
+
+      - name: Regression tests (Node)
+        run: |
+          node src/wasm/node_smoke_test.mjs build-wasm/bin/zelph.mjs
+          node src/wasm/node_binary_arithmetic_test.mjs build-wasm/bin/zelph.mjs
+
+      - name: Package playground
+        run: |
+          cd build-wasm/bin
+          zip -r ../../zelph-playground.zip .
+
+      - name: Upload release asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" zelph-playground.zip --clobber

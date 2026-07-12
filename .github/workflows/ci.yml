@@ -166,9 +166,46 @@ jobs:
           name: zelph-deb-${{ matrix.name }}
           path: zelph_*.deb
 
+  wasm:
+    name: WebAssembly Playground
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          # For reproducible builds, consider pinning this to the version
+          # your local `emcc --version` reports (e.g. "4.0.10").
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure (Emscripten)
+        run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-wasm -j$(nproc)
+
+      - name: Regression tests (Node)
+        run: |
+          node src/wasm/node_smoke_test.mjs build-wasm/bin/zelph.mjs
+          node src/wasm/node_binary_arithmetic_test.mjs build-wasm/bin/zelph.mjs
+
+      - name: Upload playground artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zelph-playground
+          path: build-wasm/bin/
+          if-no-files-found: error
+
   docs:
     name: Build MkDocs site
     runs-on: ubuntu-latest
+    needs: wasm
 
     steps:
       - name: Checkout repository with submodules
@@ -189,6 +226,12 @@ jobs:
       - name: Build documentation
         working-directory: mkdocs
         run: mkdocs build --strict
+
+      - name: Add WebAssembly playground under /play
+        uses: actions/download-artifact@v4
+        with:
+          name: zelph-playground
+          path: mkdocs/site/play
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch

@@ -16,6 +16,7 @@ The complete documentation, including tutorials, language references, and the ar
 
 ### Quick Links
 
+- 🕹️ **[Try zelph in your browser](https://zelph.org/play/)** – the complete reasoning engine as WebAssembly, no installation required. (Bleeding edge from `main`: [GitHub Pages playground](https://acrion.github.io/zelph/play/).)
 - 🚀 **[Installation & Quick Start Guide](https://acrion.github.io/zelph/quickstart)** – Get started immediately with pre-compiled binaries for all major platforms (no build required).
 - 🧠 [Core Concepts & Homoiconicity](https://acrion.github.io/zelph/#homoiconicity-the-executable-graph)
 - 🧮 [Semantic Math & Rule-based Addition](https://acrion.github.io/zelph/logic/#semantic-math-computation-as-graph-rewriting)
