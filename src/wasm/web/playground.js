@@ -105,6 +105,22 @@ const history = [];
 let histPos = 0;
 let pendingDemo = null; // demo awaiting prerequisite confirmation
 
+// Whether to re-focus the input after a command is decided behavior-based,
+// not capability-based: media queries like (hover)/(pointer) are
+// self-reported device claims and are wrong on some mobile browsers
+// (notably Firefox on Android). The pointerType of the user's most recent
+// interaction is ground truth: after a touch tap we must never call
+// focus() (it pops up the soft keyboard); after a mouse click - or at page
+// load, before any interaction - we may.
+let lastPointerType = "mouse";
+addEventListener(
+  "pointerdown",
+  (e) => {
+    lastPointerType = e.pointerType || "mouse";
+  },
+  { capture: true, passive: true },
+);
+
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -176,12 +192,11 @@ function refreshPrompt() {
 function setBusy(b) {
   busy = b;
   document.body.classList.toggle("busy", b);
-  inputEl.disabled = b;
   // Note: stopBtn is deliberately never disabled - it is the escape hatch
   // for long computations AND for being stuck in multi-line accumulation.
   updateButtons();
   refreshPrompt();
-  if (!b) inputEl.focus({ preventScroll: true });
+  if (!b && lastPointerType === "mouse") inputEl.focus({ preventScroll: true });
 }
 
 // --- worker lifecycle -----------------------------------------------------------------
@@ -278,6 +293,7 @@ function autosize() {
 inputEl.addEventListener("input", autosize);
 
 function submit() {
+  if (!ready || busy) return; // ignore submits while running; keep the typed text
   const raw = inputEl.value;
   inputEl.value = "";
   autosize();

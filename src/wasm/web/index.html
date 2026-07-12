@@ -254,29 +254,38 @@
                 main {
                     flex-direction: column;
                 }
-                /* Fixed share of the screen: the button area must not shrink when the
-       info panel below grows. */
+                /* Layout priorities on phones, highest to lowest:
+                   1. #info always shows its FULL content (no inner scrollbar),
+                   2. the terminal keeps at least ~8 rows (two more than before),
+                   3. the sidebar may shrink from its 38% default (42% minus the two
+                      extra terminal rows) down to 25% of the layout height (= 60% of
+                      the former 42% default),
+                   4. only when all minima are reached does the page itself scroll. */
                 #sidebar {
                     width: auto;
-                    flex: 0 0 42%;
+                    flex: 0 1 38%;
+                    min-height: 25%;
                     order: -1;
                     overflow-y: auto;
                     border-left: none;
                     border-bottom: 1px solid var(--border);
                 }
+                /* basis:auto makes #left demand its real content height - that is what
+                   forces the sidebar (the only shrinkable sibling) to give up space
+                   instead of the page silently growing past the viewport. */
+                #left {
+                    flex: 1 1 auto;
+                }
                 #graph {
                     flex: 0 0 24vh;
                 }
-                /* The terminal has the lowest layout priority: it may collapse down to
-       roughly five rows so that buttons, info, input and graph stay usable
-       without page scrolling. */
                 #terminal {
-                    min-height: 7em;
-                }
+                    min-height: 9.4em;
+                } /* ~8 rows at fontSize 15 */
                 #info {
-                    flex-shrink: 1;
-                    min-height: 3.2em;
-                    max-height: 7.5em;
+                    flex-shrink: 0;
+                    max-height: none;
+                    overflow-y: visible;
                 }
             }
         </style>
