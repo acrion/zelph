@@ -32,9 +32,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <janetconf.h>
 #include <map>
+#include <mutex>
 #include <random>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -59,12 +62,43 @@ public:
 
     network::NeuralNet* get_net(int32_t handle)
     {
+        // The returned pointer stays valid after unlocking: the vector owns
+        // the nets via unique_ptr and entries are never removed during a
+        // session, so only the vector itself needs protection (push_back may
+        // reallocate the vector's buffer concurrently).
+        std::lock_guard<std::mutex> lock(_state_mutex);
         if (handle < 0 || static_cast<size_t>(handle) >= _neural_nets.size()) return nullptr;
         return _neural_nets[static_cast<size_t>(handle)].get();
     }
 
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
+
+    // Guards the script engine's own bookkeeping (_scoped_variables,
+    // _neural_nets) against concurrent access from Janet threads
+    // (ev/spawn-thread). Calls INTO the reasoning engine are synchronized
+    // by zelph itself and are not covered here.
+    std::mutex _state_mutex;
+
+    // Set by Interactive; backs the Janet function zelph/import.
+    ImportHandler _import_handler;
+
+    // The thread that owns _janet_env. zelph/import must run here: the REPL
+    // pipeline it delegates to executes Janet code in the main VM, which is
+    // not usable from other Janet threads (each has its own VM).
+    std::thread::id _main_thread_id;
+
+    void clear_scoped_variables()
+    {
+        std::lock_guard<std::mutex> lock(_state_mutex);
+        _scoped_variables.clear();
+    }
+
+    bool has_scoped_variables()
+    {
+        std::lock_guard<std::mutex> lock(_state_mutex);
+        return !_scoped_variables.empty();
+    }
 
     explicit Impl(network::Reasoning* n)
         : _n(n)
@@ -87,10 +121,12 @@ public:
 
     void init()
     {
+        _main_thread_id = std::this_thread::get_id();
         janet_init();
         _janet_env = janet_core_env(nullptr);
         register_zelph_functions();
         setup_module_paths();
+        setup_script_runner();
         setup_peg();
         setup_numbers();
     }
@@ -116,6 +152,11 @@ public:
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                "lang defaults to the current language (as set by .lang).");
+
+        janet_def(_janet_env, "zelph/import", wrap((JanetCFunction)janet_cfun_zelph_import), "(zelph/import path & args)\nLoad and execute a script through the same machinery as the .import "
+                                                                                             "command: the path is resolved against the working directory first, then the zelph standard library; "
+                                                                                             "the .zph extension is optional. args are passed to the script as strings, available via (dyn :args). "
+                                                                                             ".janet files are rejected (use Janet's import/use/dofile). Main thread only.");
 
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
@@ -208,6 +249,38 @@ public:
         )janet";
         Janet       out;
         janet_dostring(_janet_env, code, "module-paths", &out);
+    }
+
+    void setup_script_runner() const
+    {
+        // janet-CLI-compatible script runner: evaluate the file in a fresh
+        // environment (inheriting the zelph bindings via the core env
+        // prototype chain), then call its main function - if defined - with
+        // the script path followed by the arguments.
+        const char* code = R"janet(
+                (defn zelph/run-script
+                  `Run a Janet source file the way the janet CLI would: evaluate it in a fresh environment and call its main function (if defined) with the script path and arguments. Relative imports such as (use ./foo) resolve against the script's directory.`
+                  [path & args]
+                  # Fresh-process semantics per run: require caches modules
+                  # process-wide, so without this, edits to files pulled in via
+                  # (use ./foo) would be invisible to a repeated .import within
+                  # the same session.
+                  (loop [k :in (keys module/cache)]
+                    (put module/cache k nil))
+                  (def env (make-env))
+                  (def subargs [path ;args])
+                  (put env *args* subargs)
+                  (dofile path :env env)
+                  (when-let [entry (get env 'main)
+                             main (or (get entry :value) (get (get entry :ref) 0))]
+                    (when (function? main)
+                      (main ;subargs)))
+                  nil)
+            )janet";
+
+        Janet out;
+        int   status = janet_dostring(_janet_env, code, "script-runner", &out);
+        if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
     }
 
     void setup_peg()
@@ -401,6 +474,8 @@ public:
             // It's a Variable
             const uint8_t* sym   = janet_unwrap_symbol(arg);
             std::string    s_sym = reinterpret_cast<const char*>(sym);
+
+            std::lock_guard<std::mutex> lock(_state_mutex);
             if (_scoped_variables.count(s_sym)) return _scoped_variables[s_sym];
 
             network::Node v = _n->var();
@@ -715,6 +790,8 @@ public:
         try
         {
             auto net = network::NeuralNet::compile(*s_instance->_n, layers);
+
+            std::lock_guard<std::mutex> lock(s_instance->_state_mutex);
             s_instance->_neural_nets.push_back(std::move(net));
             return janet_wrap_integer(static_cast<int32_t>(s_instance->_neural_nets.size() - 1));
         }
@@ -1330,6 +1407,52 @@ public:
         return res;
     }
 
+    // Load and execute a script via the .import machinery. This is the way
+    // to pull .zph files (facts, rules, arithmetic definitions) into the
+    // network from Janet code.
+    //
+    // .janet files are rejected: run_janet_script drives janet_loop, and a
+    // nested janet_loop (script importing a script) is not supported by
+    // Janet - and Janet's own module system is the right tool for that job.
+    //
+    // Main thread only: the import pipeline executes Janet code in the main
+    // VM (_janet_env), which must not be entered from other Janet threads.
+    static Janet janet_cfun_zelph_import(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/import", argc, argv, true);
+
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+            janet_panicf("zelph/import: must be called from the main thread, not from ev/spawn-thread (the import pipeline is bound to the main Janet VM)");
+
+        if (!s_instance->_import_handler)
+            janet_panicf("zelph/import: no import handler registered (script engine not fully initialized)");
+
+        const std::string path = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+
+        if (std::filesystem::path(path).extension() == ".janet")
+            janet_panicf("zelph/import: .janet files are not importable this way - use Janet's own (import ...), (use ...) or (dofile ...) instead");
+
+        std::vector<std::string> args;
+        args.reserve(static_cast<size_t>(argc) - 1);
+        for (int32_t i = 1; i < argc; ++i)
+            args.emplace_back(reinterpret_cast<const char*>(janet_getstring(argv, i)));
+
+        std::string err;
+        try
+        {
+            s_instance->_import_handler(path, args);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/import: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
     // Execute a query: print the pattern and trigger matching via apply_rule.
     // This is the Janet equivalent of entering a zelph statement that contains
     // variables (e.g. "X ~ human"). Takes a single zelph/node argument
@@ -1351,15 +1474,18 @@ public:
         // Build inverse mapping: variable Node -> symbol name
         // (must be done before apply_rule clears anything)
         std::map<network::Node, std::string> var_to_name;
-        for (const auto& [name, node] : s_instance->_scoped_variables)
         {
-            var_to_name[node] = name;
+            std::lock_guard<std::mutex> lock(s_instance->_state_mutex);
+            for (const auto& [name, node] : s_instance->_scoped_variables)
+            {
+                var_to_name[node] = name;
+            }
         }
 
         // Collect results instead of printing them
         std::vector<std::shared_ptr<network::Variables>> results;
 
-        if (!s_instance->_scoped_variables.empty())
+        if (!var_to_name.empty())
         {
             s_instance->_n->set_query_collector(&results);
             s_instance->_n->apply_rule(0, n);
@@ -1367,7 +1493,7 @@ public:
         }
 
         // Reset variable scope for the next query/statement
-        s_instance->_scoped_variables.clear();
+        s_instance->clear_scoped_variables();
 
         // Convert results to Janet array of tables:
         // @[@{X <zelph/node ...> Y <zelph/node ...>} ...]
@@ -1858,7 +1984,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                 string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
                 if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
 
-                if (!_pImpl->_scoped_variables.empty())
+                if (_pImpl->has_scoped_variables())
                 {
                     _pImpl->_n->apply_rule(0, n);
                 }
@@ -1872,6 +1998,96 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             }
         }
     }
+}
+
+void ScriptEngine::run_janet_script(const std::string& path, const std::vector<std::string>& args)
+{
+    _pImpl->clear_scoped_variables();
+
+    Janet runner;
+    if (janet_resolve(_pImpl->_janet_env, janet_csymbol("zelph/run-script"), &runner) != JANET_BINDING_DEF
+        || !janet_checktype(runner, JANET_FUNCTION))
+    {
+        throw std::runtime_error("Internal error: zelph/run-script is not initialized");
+    }
+    JanetFunction* fn = janet_unwrap_function(runner);
+
+    // Block the GC while assembling the call: neither the freshly created
+    // strings nor the fiber are rooted yet, and any janet allocation could
+    // otherwise trigger a collection.
+    const int gc_handle = janet_gclock();
+
+    std::vector<Janet> jargs;
+    jargs.reserve(args.size() + 1);
+    jargs.push_back(janet_cstringv(path.c_str()));
+    for (const auto& a : args)
+        jargs.push_back(janet_cstringv(a.c_str()));
+
+    JanetFiber* fiber = janet_fiber(fn, 64, static_cast<int32_t>(jargs.size()), jargs.data());
+    if (!fiber)
+    {
+        janet_gcunlock(gc_handle);
+        throw std::runtime_error("Internal error: could not create fiber for zelph/run-script");
+    }
+    fiber->env = _pImpl->_janet_env;
+    janet_gcroot(janet_wrap_fiber(fiber));
+    janet_gcunlock(gc_handle);
+
+    bool  failed = false;
+    Janet out    = janet_wrap_nil();
+
+#ifdef JANET_EV
+    // Run the script as the root task of the Janet event loop - the same way
+    // the janet CLI runs scripts (see janet's shell.c). This is what makes
+    // ev/... usable: ev/spawn-thread, thread channels, timers. janet_loop
+    // returns once the loop has drained, i.e. the root fiber has finished
+    // AND all spawned threads/tasks are done.
+    janet_schedule(fiber, janet_wrap_nil());
+    janet_loop();
+
+    if (janet_fiber_status(fiber) == JANET_STATUS_ERROR)
+    {
+        // The event loop has already printed the stacktrace to stderr;
+        // propagate a concise error to the REPL/import chain. last_value is
+        // the public JanetFiber field backing the fiber/last-value builtin:
+        // after completion it holds the return value or the error payload.
+        failed = true;
+        out    = fiber->last_value;
+    }
+#else
+    // No Janet event loop on this platform (e.g. Emscripten): run the script
+    // synchronously; ev/... is not available here.
+    JanetSignal sig = janet_continue(fiber, janet_wrap_nil(), &out);
+    if (sig != JANET_SIGNAL_OK)
+    {
+        janet_stacktrace(fiber, out);
+        failed = true;
+    }
+#endif
+
+    // Extract the error text BEFORE unrooting the fiber: 'out' is only
+    // reachable through the rooted fiber (last_value).
+    std::string err;
+    if (failed)
+    {
+        err = "Janet error";
+        if (janet_checktype(out, JANET_STRING))
+            err = reinterpret_cast<const char*>(janet_unwrap_string(out));
+        else if (janet_checktype(out, JANET_BUFFER))
+        {
+            JanetBuffer* b = janet_unwrap_buffer(out);
+            err            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+        }
+        else
+        {
+            err = Impl::format_janet(out);
+        }
+    }
+
+    janet_gcunroot(janet_wrap_fiber(fiber));
+
+    if (failed)
+        throw std::runtime_error("Script '" + path + "' failed: " + err);
 }
 
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
@@ -1903,6 +2119,11 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
         janet_array_push(jargs, janet_cstringv(arg.c_str()));
     }
     janet_table_put(_pImpl->_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
+}
+
+void ScriptEngine::set_import_handler(ImportHandler handler)
+{
+    _pImpl->_import_handler = std::move(handler);
 }
 
 bool ScriptEngine::has_keyword(const std::string& keyword) const

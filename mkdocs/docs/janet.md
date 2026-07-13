@@ -344,6 +344,13 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/cdr cell)`**  
   Return the cdr (rest of list) of a cons cell. Returns the `nil` list terminator node for the last cell; returns `nil` if `cell` is not a cons cell.
 
+##### Script import
+
+- **`(zelph/import path & args)`**  
+  Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
+  This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
+  Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+
 ##### Neural network functions
 
 zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can consult via the `≈` operator. The full documentation — including semantics, training workflow, and a Wikidata proof of concept — is on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:

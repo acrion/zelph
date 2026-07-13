@@ -73,6 +73,13 @@ public:
             _repl_state,
             [this](const std::string& line)
             { _interactive->process(line); });
+
+        // zelph/import delegates to the same implementation as the .import
+        // command (path resolution including the standard library, argument
+        // passing, auto-run handling).
+        _script_engine->set_import_handler(
+            [this](const std::string& path, const std::vector<std::string>& args)
+            { _command_executor->import_file(path, args); });
     }
 
     void reset_reasoning()

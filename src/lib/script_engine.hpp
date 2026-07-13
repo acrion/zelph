@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/network_types.hpp" // For network::Node
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -66,11 +67,27 @@ namespace zelph
         // is_zelph_ast determines how the output is handled/printed
         void process_janet(const std::string& code, bool is_zelph_ast);
 
+        // Execute a Janet source file as a whole program, mirroring the janet
+        // CLI: the file is evaluated in a fresh environment (which inherits
+        // all zelph/... bindings), then its main function - if defined - is
+        // called with the script path followed by args. Runs as the root
+        // task of the Janet event loop, so ev/... (spawn-thread, channels,
+        // timers) works. Relative imports like (use ./foo) resolve against
+        // the script's directory.
+        void run_janet_script(const std::string& path, const std::vector<std::string>& args = {});
+
         // Evaluate an expression and return a single Node (used for patterns/pruning)
         network::Node evaluate_expression(const std::string& janet_code);
 
         // Inject arguments into the script environment (for script files with args)
         void set_script_args(const std::vector<std::string>& args);
+
+        // Handler backing the Janet function zelph/import. It delegates to
+        // the REPL's .import implementation (path resolution including the
+        // standard library, .zph line processing, argument passing). Set by
+        // Interactive once the CommandExecutor exists.
+        using ImportHandler = std::function<void(const std::string& path, const std::vector<std::string>& args)>;
+        void set_import_handler(ImportHandler handler);
 
         void toggle_janet_logging();
 

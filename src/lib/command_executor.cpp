@@ -63,14 +63,17 @@ using namespace zelph;
 //      directory), with the ".zph" extension being optional
 //   2. the zelph standard library directories (see
 //      platform::get_standard_library_paths), same extension rule
-// Extensions other than ".zph" are rejected.
+// ".zph" scripts are fed line by line through the REPL pipeline; ".janet"
+// scripts are executed as whole Janet programs (see
+// ScriptEngine::run_janet_script). The ".janet" extension must be spelled
+// out; a bare name still resolves to ".zph". Other extensions are rejected.
 static std::string resolve_script_path(const std::string& raw)
 {
     namespace fs = std::filesystem;
 
     const std::string ext = fs::path(raw).extension().string();
-    if (!ext.empty() && ext != ".zph")
-        throw std::runtime_error("Script '" + raw + "': only '.zph' scripts can be imported (the extension may be omitted)");
+    if (!ext.empty() && ext != ".zph" && ext != ".janet")
+        throw std::runtime_error("Script '" + raw + "': only '.zph' and '.janet' scripts can be imported (the '.zph' extension may be omitted)");
 
     std::vector<fs::path> variants;
     variants.emplace_back(raw);
@@ -938,51 +941,65 @@ public:
 
         AutoRunSuspender suspend(_repl_state);
 
-        if (!args.empty())
+        _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
+
+        if (std::filesystem::path(resolved).extension() == ".janet")
+        {
+            // Janet scripts are executed as whole programs with janet CLI
+            // semantics: fresh environment, relative imports like (use ./foo)
+            // resolve against the script's directory, and a main function -
+            // if defined - is called with the script path followed by args.
+            // Runs inside the Janet event loop, so ev/... (threads, channels,
+            // timers) is fully supported. set_script_args is not needed here:
+            // the runner injects the args into the script's environment.
+            _script_engine->run_janet_script(resolved, args);
+        }
+        else
+        {
             _script_engine->set_script_args(args);
 
-        _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
-        std::ifstream stream(resolved);
-        if (stream.fail()) throw std::runtime_error("Could not open file '" + resolved + "'");
+            std::ifstream stream(resolved);
+            if (stream.fail()) throw std::runtime_error("Could not open file '" + resolved + "'");
 
-        for (std::string line_utf8; std::getline(stream, line_utf8);)
-        {
-            _process_line_callback(line_utf8);
-        }
+            for (std::string line_utf8; std::getline(stream, line_utf8);)
+            {
+                _process_line_callback(line_utf8);
+            }
 
-        // Flush an unterminated keyword block. EOF forces dispatch: the
-        // handler's :incomplete veto does not apply here - a script that
-        // ends inside a keyword block is a script bug, which invoke_keyword
-        // reports as an error under force.
-        if (_repl_state->accumulating_keyword)
-        {
-            std::string keyword               = _repl_state->active_keyword;
-            std::string text                  = _repl_state->keyword_buffer;
-            _repl_state->accumulating_keyword = false;
-            _repl_state->active_keyword.clear();
-            _repl_state->keyword_buffer.clear();
-            _repl_state->keyword_prev_blank = false;
-            _script_engine->invoke_keyword(keyword, text, /*force*/ true);
-        }
+            // Flush an unterminated keyword block. EOF forces dispatch: the
+            // handler's :incomplete veto does not apply here - a script that
+            // ends inside a keyword block is a script bug, which invoke_keyword
+            // reports as an error under force.
+            if (_repl_state->accumulating_keyword)
+            {
+                std::string keyword               = _repl_state->active_keyword;
+                std::string text                  = _repl_state->keyword_buffer;
+                _repl_state->accumulating_keyword = false;
+                _repl_state->active_keyword.clear();
+                _repl_state->keyword_buffer.clear();
+                _repl_state->keyword_prev_blank = false;
+                _script_engine->invoke_keyword(keyword, text, /*force*/ true);
+            }
 
-        // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)
-        if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
-        {
-            std::string transformed = _script_engine->parse_zelph_to_janet(_repl_state->zelph_buffer);
-            if (!transformed.empty())
-                _script_engine->process_janet(transformed, true);
-            _repl_state->zelph_buffer.clear();
-        }
-        _repl_state->accumulating_zelph = false;
+            // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)
+            if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
+            {
+                std::string transformed = _script_engine->parse_zelph_to_janet(_repl_state->zelph_buffer);
+                if (!transformed.empty())
+                    _script_engine->process_janet(transformed, true);
+                _repl_state->zelph_buffer.clear();
+            }
+            _repl_state->accumulating_zelph = false;
 
-        // Flush any remaining accumulated Janet code
-        if (!_repl_state->janet_buffer.empty())
-        {
-            _script_engine->process_janet(_repl_state->janet_buffer, false);
-            _repl_state->janet_buffer.clear();
+            // Flush any remaining accumulated Janet code
+            if (!_repl_state->janet_buffer.empty())
+            {
+                _script_engine->process_janet(_repl_state->janet_buffer, false);
+                _repl_state->janet_buffer.clear();
+            }
+            _repl_state->accumulating_inline_janet = false;
+            _repl_state->script_mode               = ScriptMode::Zelph;
         }
-        _repl_state->accumulating_inline_janet = false;
-        _repl_state->script_mode               = ScriptMode::Zelph;
 
         if (suspend.was_active())
         {
@@ -1176,7 +1193,7 @@ private:
             ".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             ".remove-rules               – Remove all inference rules",
             ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
-            ".import <script>            – Load and execute a zelph script (.zph optional; falls back to the standard library)",
+            ".import <script> [args...]  – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library",
 #ifndef __EMSCRIPTEN__
             ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
             ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
@@ -1359,8 +1376,19 @@ private:
                         "or a numeric node ID.\n"
                         "WARNING: This operation is destructive and irreversible!"},
 
-            {".import", ".import <script>\n"
-                        "Loads and immediately executes a zelph script. The '.zph' extension is optional.\n"
+            {".import", ".import <script> [args...]\n"
+                        "Loads and immediately executes a script. Two script types are supported:\n"
+                        "  .zph   – zelph scripts, processed line by line. The extension is optional.\n"
+                        "  .janet – Janet programs, run like the janet CLI would: fresh environment\n"
+                        "           with the zelph/... API available, relative imports such as\n"
+                        "           (use ./foo) resolve against the script's directory, ev/... (threads,\n"
+                        "           channels) works, and a main function - if defined - is called.\n"
+                        "           The '.janet' extension must be spelled out.\n"
+                        "\n"
+                        "Anything after the script path is passed to the script as arguments:\n"
+                        "  Janet scripts receive them as parameters of main (preceded by the script\n"
+                        "  path, CLI convention) and via (dyn :args).\n"
+                        "  zelph scripts can read them from Janet code via (dyn :args).\n"
                         "\n"
                         "Resolution order:\n"
                         "  1. The path as given (absolute, or relative to the current working directory).\n"
@@ -2560,7 +2588,8 @@ private:
     {
         require_full_graph_mode(".import");
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
-        import_file(cmd[1]); // import_file resolves the path (CWD first, then standard library)
+        // Tokens after the script path are passed to the script as arguments.
+        import_file(cmd[1], std::vector<std::string>(cmd.begin() + 2, cmd.end()));
     }
     void cmd_auto_run(const std::vector<std::string>&)
     {
