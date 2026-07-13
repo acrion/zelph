@@ -219,6 +219,8 @@ This writes an upload-ready artifact tree under `/tmp/file/`, mirroring the layo
 
 Shard filenames follow `chunk-<index>.capnp-packed` for the adjacency sections and `chunk-<index>-<lang>.capnp-packed` for the name sections. Because the local tree mirrors the advertised layout, uploading `/tmp/file/` to the repo as `file` publishes exactly the paths referenced by the manifest; the tool prints the matching `hf upload` command. Overriding `--shard-root` breaks this mirror and requires manual path mapping at upload time (the tool warns in that case).
 
+The manifest's `source.binPath` is advertised as `<hf-root>/<bin filename>` by default (override with `--bin-object-path`), so that pure-remote loads can fetch the `.bin` header without passing `source-bin=`. This assumes the source `.bin` is published at the repository root. For fully local use, pass `source-bin=<local .bin>` to `.load-partial`.
+
 ### Using a Manifest
 
 Pass the manifest JSON as the first argument to `.load-partial`. All selectors and `meta-only` work exactly as for direct `.bin` loading:

@@ -22,6 +22,12 @@ Uploading `<output-dir>` to the repo as `<artifact-name>` therefore publishes
 exactly the layout the manifest advertises; the tool prints the matching
 `hf upload` command on success.
 
+`source.binPath` is advertised as `<hf-root>/<bin filename>` by default, so
+that pure-remote loads can fetch the .bin header without passing `source-bin=`.
+This assumes the source `.bin` is published at the repo root; override with
+`--bin-object-path` if it lives elsewhere. Fully local loads can always pass
+`source-bin=<local .bin>` instead.
+
 It depends only on the Python standard library so it can be used without the
 rest of the ITIR tooling surface.
 """
@@ -68,6 +74,15 @@ def parse_args() -> argparse.Namespace:
         "--artifact-name",
         default=None,
         help="Artifact name used under the HF root. Defaults to the .bin stem.",
+    )
+    parser.add_argument(
+        "--bin-object-path",
+        default=None,
+        help=(
+            "Logical path advertised as source.binPath in the manifest; pure-remote consumers "
+            "fetch the .bin header from this location. Defaults to '<hf-root>/<bin filename>', "
+            "matching a source .bin published at the repo root."
+        ),
     )
     parser.add_argument(
         "--shard-root",
@@ -208,6 +223,7 @@ def build_manifest(
     output_path: Path,
     hf_root: str,
     artifact_name: str,
+    bin_object_path: str,
     node_route_path: Path | None,
     node_route_object_path: str | None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -260,7 +276,7 @@ def build_manifest(
             "fallback": "local-file",
         },
         "source": {
-            "binPath": str(bin_path),
+            "binPath": bin_object_path,
             "indexPath": str(index_path),
             "binSizeBytes": bin_path.stat().st_size,
             "headerLengthBytes": int(index["header"]["length"]),
@@ -345,6 +361,9 @@ def main() -> int:
     index_path = Path(args.index).resolve()
     output_path = Path(args.output).resolve()
     artifact_name = args.artifact_name or bin_path.stem
+    bin_object_path = (
+        args.bin_object_path or f"{args.hf_root.rstrip('/')}/{bin_path.name}"
+    )
     node_route_path = Path(args.node_route).resolve() if args.node_route else None
 
     manifest, sections = build_manifest(
@@ -353,6 +372,7 @@ def main() -> int:
         output_path=output_path,
         hf_root=args.hf_root,
         artifact_name=artifact_name,
+        bin_object_path=bin_object_path,
         node_route_path=node_route_path,
         node_route_object_path=args.node_route_object_path,
     )
@@ -404,6 +424,7 @@ def main() -> int:
     print(f"  manifest: {output_path.name}")
     print(f"  index:    {index_copy.name}")
     print(f"  shards:   {shard_root}")
+    print(f"  header:   source.binPath = {bin_object_path}")
     upload_command = hf_upload_command(args.hf_root, artifact_name, artifact_dir)
     if upload_command is not None:
         print("Publish with:")
