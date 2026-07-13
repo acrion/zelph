@@ -199,13 +199,25 @@ The helper script `tools/emit_zelph_hf_v2.py` (Python standard library only) con
 python tools/emit_zelph_hf_v2.py \
   --bin /path/to/file.bin \
   --index /tmp/index.json \
-  --output /tmp/file.hf-v2.json \
+  --output /tmp/file/file.hf-v2.json \
   --artifact-name file \
-  --hf-root hf://datasets/<owner>/<dataset> \
-  --shard-root /tmp/file-shards
+  --hf-root hf://datasets/<owner>/<dataset>
 ```
 
-This writes the manifest at `/tmp/file.hf-v2.json` and one shard object per section-local chunk under `/tmp/file-shards/`. Shard filenames follow `chunk-<index>.capnp-packed` for the adjacency sections and `chunk-<index>-<lang>.capnp-packed` for the name sections, e.g. `shards/left/chunk-000000.capnp-packed` and `shards/nameOfNode/chunk-000000-wikidata.capnp-packed`.
+This writes an upload-ready artifact tree under `/tmp/file/`, mirroring the layout the manifest advertises below `<hf-root>/<artifact-name>/`:
+
+```
+/tmp/file/
+  file.hf-v2.json          # the manifest
+  artifact.index.json      # copy of the offset index, under its advertised name
+  shards/
+    left/chunk-000000.capnp-packed ...
+    right/chunk-000000.capnp-packed ...
+    nameOfNode/chunk-000000-wikidata.capnp-packed ...
+    nodeOfName/chunk-000000-wikidata.capnp-packed ...
+```
+
+Shard filenames follow `chunk-<index>.capnp-packed` for the adjacency sections and `chunk-<index>-<lang>.capnp-packed` for the name sections. Because the local tree mirrors the advertised layout, uploading `/tmp/file/` to the repo as `file` publishes exactly the paths referenced by the manifest; the tool prints the matching `hf upload` command. Overriding `--shard-root` breaks this mirror and requires manual path mapping at upload time (the tool warns in that case).
 
 ### Using a Manifest
 
@@ -287,18 +299,20 @@ zelph> .save /path/to/wikidata-20260309-all.bin
 # 2. Build the byte-offset index.
 zelph> .index-file /path/to/wikidata-20260309-all.bin /tmp/index.json
 
-# 3. Emit the manifest and the shard tree.
+# 3. Emit the upload-ready artifact tree (manifest, index copy, shards).
 python tools/emit_zelph_hf_v2.py \
   --bin /path/to/wikidata-20260309-all.bin \
   --index /tmp/index.json \
-  --output /path/to/wikidata-20260309-all.hf-v2.json \
+  --output /path/to/wikidata-20260309-all/wikidata-20260309-all.hf-v2.json \
   --artifact-name wikidata-20260309-all \
-  --hf-root hf://datasets/acrion/zelph \
-  --shard-root /path/to/wikidata-20260309-all-shards
+  --hf-root hf://datasets/acrion/zelph
 
-# 4. Upload the manifest and shard tree to the Hugging Face dataset repo,
-#    e.g. with huggingface-cli upload or git-lfs against acrion/zelph.
+# 4. Upload the artifact tree so that the repo paths match the manifest.
+#    The local directory maps to the artifact name in the repo:
+hf upload acrion/zelph /path/to/wikidata-20260309-all wikidata-20260309-all --repo-type dataset
 ```
+
+The repository paths must match the `objectPath` values inside the manifest exactly; uploading the tree under a different repo prefix breaks every advertised URL. The tool prints the correct `hf upload` command after emitting the tree.
 
 Because chunk indices are file-local, the manifest and shards belong together as one immutable artifact: a manifest is only valid for the exact `.bin` it was generated from.
 
