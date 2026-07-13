@@ -2030,8 +2030,6 @@ private:
             _n->out("Auto-run has been disabled due to loading a large dataset.", true);
         }
 
-        std::ofstream log("load.log");
-
         if (cmd.size() == 2)
         {
             chrono::StopWatch watch;

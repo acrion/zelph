@@ -83,6 +83,9 @@ public:
     // Set by Interactive; backs the Janet function zelph/import.
     ImportHandler _import_handler;
 
+    // Set by Interactive; backs zelph/save and zelph/load.
+    CommandHandler _command_handler;
+
     // The thread that owns _janet_env. zelph/import must run here: the REPL
     // pipeline it delegates to executes Janet code in the main VM, which is
     // not usable from other Janet threads (each has its own VM).
@@ -157,6 +160,12 @@ public:
                                                                                              "command: the path is resolved against the working directory first, then the zelph standard library; "
                                                                                              "the .zph extension is optional. args are passed to the script as strings, available via (dyn :args). "
                                                                                              ".janet files are rejected (use Janet's import/use/dofile). Main thread only.");
+
+        janet_def(_janet_env, "zelph/save", wrap((JanetCFunction)janet_cfun_zelph_save), "(zelph/save file)\nSave the current network to a binary file, like the .save command. "
+                                                                                         "The filename must end with '.bin'. Main thread only.");
+
+        janet_def(_janet_env, "zelph/load", wrap((JanetCFunction)janet_cfun_zelph_load), "(zelph/load file)\nLoad a saved network (.bin) or import a Wikidata JSON dump "
+                                                                                         "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. Main thread only.");
 
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
@@ -1453,6 +1462,54 @@ public:
         return janet_wrap_nil(); // unreachable
     }
 
+    // Shared implementation for zelph/save and zelph/load. Both delegate to
+    // the corresponding REPL command (".save"/".load") via the command
+    // handler, so they share every check and side effect with the
+    // interactive commands: extension validation, partial-load guard,
+    // auto-run handling, format detection (.bin vs. Wikidata JSON), and
+    // timing diagnostics.
+    //
+    // Main thread only: the commands manipulate REPL state (auto_run,
+    // partial_load_mode), which is owned by the main thread and not
+    // synchronized.
+    static Janet command_impl(int32_t argc, Janet* argv, const char* name, const char* command)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
+
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+
+        if (!s_instance->_command_handler)
+            janet_panicf("%s: no command handler registered (script engine not fully initialized)", name);
+
+        const std::string file = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+
+        std::string err;
+        try
+        {
+            s_instance->_command_handler({command, file});
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("%s: %s", name, err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    static Janet janet_cfun_zelph_save(int32_t argc, Janet* argv)
+    {
+        return command_impl(argc, argv, "zelph/save", ".save");
+    }
+
+    static Janet janet_cfun_zelph_load(int32_t argc, Janet* argv)
+    {
+        return command_impl(argc, argv, "zelph/load", ".load");
+    }
+
     // Execute a query: print the pattern and trigger matching via apply_rule.
     // This is the Janet equivalent of entering a zelph statement that contains
     // variables (e.g. "X ~ human"). Takes a single zelph/node argument
@@ -2124,6 +2181,11 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
 void ScriptEngine::set_import_handler(ImportHandler handler)
 {
     _pImpl->_import_handler = std::move(handler);
+}
+
+void ScriptEngine::set_command_handler(CommandHandler handler)
+{
+    _pImpl->_command_handler = std::move(handler);
 }
 
 bool ScriptEngine::has_keyword(const std::string& keyword) const

@@ -89,6 +89,14 @@ namespace zelph
         using ImportHandler = std::function<void(const std::string& path, const std::vector<std::string>& args)>;
         void set_import_handler(ImportHandler handler);
 
+        // Handler backing zelph/save and zelph/load. Receives a full REPL
+        // command vector (e.g. {".save", "file.bin"}) and delegates to
+        // CommandExecutor::execute, so the Janet functions share every check
+        // and side effect with the interactive commands. Set by Interactive
+        // once the CommandExecutor exists.
+        using CommandHandler = std::function<void(const std::vector<std::string>& cmd)>;
+        void set_command_handler(CommandHandler handler);
+
         void toggle_janet_logging();
 
         std::string get_janet_logging_status() const;
