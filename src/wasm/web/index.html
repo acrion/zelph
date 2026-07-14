@@ -50,25 +50,28 @@
                 flex-direction: column;
                 min-width: 0;
             }
-            /* overflow:hidden: the xterm canvas keeps its pixel size until the next
-     fit(); it must never paint over the panels below. */
+            /* Lowest layout priority on all form factors: the terminal flexes, but
+                 never below ~8 rows. overflow:hidden because the xterm canvas keeps
+                 its pixel size until the next fit(). */
             #terminal {
                 flex: 1 1 0;
-                min-height: 0;
+                min-height: 9.4em;
                 overflow: hidden;
                 padding: 4px 4px 0 8px;
             }
 
-            /* flex-shrink:0: the info panel must always get its full content height
-     (up to max-height); the terminal is the flexible element. */
+            /* The info panel takes its full content height for as long as the
+                 terminal is above its minimum; only beyond that point does it scroll
+                 internally (desktop last resort - the mobile media query below
+                 overrides this to page scrolling instead). */
             #info {
-                flex: 0 0 auto;
+                flex: 0 1 auto;
+                min-height: 3.2em;
                 padding: 6px 10px;
                 border-top: 1px solid var(--border);
                 background: var(--panel);
                 font-size: 13px;
                 color: #aaa;
-                max-height: 9.5em;
                 overflow-y: auto;
             }
             #info strong {
