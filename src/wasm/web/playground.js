@@ -252,6 +252,10 @@ function runLines(lines, { echo = true, doc = null } = {}) {
       term.writeln((i === 0 && !accumulating ? prompt : "") + l),
     );
   }
+  // xterm only follows new output while the viewport is at the bottom.
+  // If the user has scrolled up, a command would otherwise run invisibly;
+  // jumping down re-engages live scrolling (our implicit progress bar).
+  term.scrollToBottom();
   setBusy(true);
   worker.postMessage({ type: "process", lines });
 }
