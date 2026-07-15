@@ -58,6 +58,11 @@ namespace zelph::console
         void log(const std::string& text, bool newline = true) const;
         void prompt(const std::string& text, bool newline = false) const;
 
+        // Returns the path of the most recently generated Mermaid HTML file
+        // and clears it (take semantics), or an empty string if none was
+        // generated since the last call. Used by the wasm playground.
+        std::string take_last_graph_html() const;
+
         Interactive(const Interactive&)            = delete;
         Interactive& operator=(const Interactive&) = delete;
 

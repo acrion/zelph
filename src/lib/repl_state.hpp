@@ -53,6 +53,12 @@ namespace zelph::console
         std::string active_keyword;
         std::string keyword_buffer;
         bool        keyword_prev_blank = false;
+
+        // Absolute path of the most recently generated Mermaid HTML file
+        // (graph of an output node). Consumed via Interactive::take_last_graph_html();
+        // the wasm playground polls it after every command batch instead of
+        // parsing file:// links out of the terminal output.
+        std::string last_graph_html_path;
     };
 
     // Helper RAII struct to temporarily suspend auto-run

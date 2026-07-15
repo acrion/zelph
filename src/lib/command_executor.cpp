@@ -859,14 +859,21 @@ private:
                              horizontal_layout,
                              use_subgraphs);
 
-        std::string abs_path = html_path.string();
-        std::string file_url = "file://" + abs_path;
+        _repl_state->last_graph_html_path = html_path.string();
+
+#ifndef __EMSCRIPTEN__
+        // In a real terminal the OSC 8 link is clickable. In the wasm
+        // playground the graph panel fetches the file from MEMFS via
+        // take_last_graph_html() instead, and a dead file:// link in the
+        // browser terminal would only mislead - so print nothing there.
+        std::string file_url = "file://" + html_path.string();
 
         const std::string OSC_START = "\033]8;;";
         const char        OSC_SEP   = '\a';
         const std::string OSC_END   = "\033]8;;\a";
 
         _n->out_stream() << "  Mermaid HTML: " << OSC_START << file_url << OSC_SEP << file_url << OSC_END << std::endl;
+#endif
     }
 
     network::Node resolve_node(const std::string& arg, const std::string& lang) const

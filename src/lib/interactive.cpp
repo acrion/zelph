@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <memory>
+#include <utility>
 
 using namespace zelph;
 
@@ -95,6 +96,7 @@ public:
         _repl_state->accumulating_keyword      = false;
         _repl_state->active_keyword.clear();
         _repl_state->keyword_buffer.clear();
+        _repl_state->last_graph_html_path.clear();
 
         zelph::string::reset_last_node();
 
@@ -427,6 +429,11 @@ void console::Interactive::log(const std::string& text, bool newline) const
 void console::Interactive::prompt(const std::string& text, bool newline) const
 {
     _pImpl->_n->emit(io::OutputChannel::Prompt, text, newline);
+}
+
+std::string console::Interactive::take_last_graph_html() const
+{
+    return std::exchange(_pImpl->_repl_state->last_graph_html_path, std::string{});
 }
 
 #ifdef PROVIDE_C_INTERFACE

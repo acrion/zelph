@@ -67,3 +67,4 @@ dev_scripts/all_membership.json
 dev_scripts/mammal_species.json
 dev_scripts/mammals.json
 .aider*
+/paper
