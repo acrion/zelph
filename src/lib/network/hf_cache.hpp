@@ -77,9 +77,10 @@ namespace zelph::network::detail::hf_cache
         }
         // A failed HEAD/resolve must not make an otherwise usable manifest
         // unavailable. Callers must emit a diagnostic when taking this path.
+        // A body without a valid sidecar is not an offline fallback candidate.
         if (!observed)
         {
-            return ReuseDecision::reuse_offline;
+            return cached ? ReuseDecision::reuse_offline : ReuseDecision::refetch;
         }
         return ReuseDecision::refetch;
     }

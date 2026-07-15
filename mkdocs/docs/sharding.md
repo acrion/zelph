@@ -270,14 +270,17 @@ resolved object's ETag/repository revision before reuse. Shard and binary-range
 entries are keyed by the same remote identity plus their byte range, so a
 regenerated artifact cannot silently reuse ranges from an older dump. Set
 `ZELPH_HF_CACHE_DIR` to choose another cache root. If metadata validation is
-temporarily unavailable, an existing manifest may be reused with a diagnostic;
-payload objects require a validated remote identity before reuse.
+temporarily unavailable, zelph may reuse the most recently cached manifest for
+that exact source URI and emits a warning. Payload objects require a validated
+remote identity before reuse; use `shard-root=` for deliberate fully local or
+offline loading.
 
 The offline decision logic is covered by `src/test/test_hf_cache.cpp`. The
 network regression helper
-`dev_scripts/test_hf_cache_revalidation.sh` populates a cache, tampers with a
-cached manifest and its ETag, and verifies that the next remote load refetches
-the manifest.
+`dev_scripts/test_hf_cache_revalidation.sh [manifest-uri] [zelph-binary]
+[cache-root]` populates a disposable cache, tampers with a cached manifest and
+its ETag, and requires the next remote load to refetch the manifest and finish
+successfully. It does not modify the Hub.
 
 If you have already downloaded the shards (for example via `huggingface-cli download`), point `shard-root` at the local copy to skip network access:
 

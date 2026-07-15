@@ -22,6 +22,7 @@ TEST_CASE("HF manifest cache revalidates identities")
     CHECK(decide_manifest(true, cached, current) == ReuseDecision::refetch);
     CHECK(decide_manifest(true, cached, cached) == ReuseDecision::reuse);
     CHECK(decide_manifest(true, cached, std::nullopt) == ReuseDecision::reuse_offline);
+    CHECK(decide_manifest(true, std::nullopt, std::nullopt) == ReuseDecision::refetch);
     CHECK(decide_manifest(false, cached, cached) == ReuseDecision::refetch);
 }
 

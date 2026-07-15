@@ -1151,7 +1151,7 @@ namespace zelph::network
                     continue;
                 }
                 const auto metadata = hf_cache::read_sidecar(entry.path().string() + ".meta");
-                if (metadata && metadata->retrieved_at >= best_time)
+                if (metadata && metadata->source_uri == source && metadata->retrieved_at >= best_time)
                 {
                     best_time = metadata->retrieved_at;
                     best = entry.path();
@@ -1172,11 +1172,16 @@ namespace zelph::network
                 throw std::runtime_error("Expected remote source for cached fetch: " + source);
             }
 
-            auto observed = probe_remote(source);
-            if (!observed && section_hint == "manifest")
+            const bool manifest_request = section_hint == "manifest";
+            auto       observed         = probe_remote(source);
+            if (!observed && manifest_request)
             {
                 const auto offline = offline_manifest_candidate(source);
-                if (!offline.empty())
+                const auto cached  = offline.empty()
+                                   ? std::optional<hf_cache::RemoteMetadata>{}
+                                   : hf_cache::read_sidecar(offline.string() + ".meta");
+                if (hf_cache::decide_manifest(!offline.empty(), cached, std::nullopt)
+                    == hf_cache::ReuseDecision::reuse_offline)
                 {
                     std::fprintf(stderr, "zelph: warning: using cached manifest while remote metadata is unavailable: %s\n", source.c_str());
                     return offline;
@@ -1190,12 +1195,18 @@ namespace zelph::network
 
             const std::string identity = source + "\n" + observed->revision + "\n" + observed->etag;
             const std::string token = sanitize_cache_token(section_hint);
-            const std::string key = cache_hash(identity);
-            fs::path cache_file = ensure_cache_dir() / fs::path(token + "_" + key + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".body");
+            const std::string source_key = cache_hash(source);
+            const std::string identity_key = cache_hash(identity);
+            fs::path cache_file = ensure_cache_dir()
+                                / fs::path(token + "_" + source_key + "_" + identity_key + "_"
+                                           + std::to_string(offset) + "_" + std::to_string(length) + ".body");
             const auto sidecar = cache_file.string() + ".meta";
             const auto cached = hf_cache::read_sidecar(sidecar);
             hf_cache::ObjectCoordinates coordinates{source, observed->revision, observed->etag, offset, length};
-            if (hf_cache::decide_object(fs::exists(cache_file), cached, coordinates) == hf_cache::ReuseDecision::reuse
+            const auto decision = manifest_request
+                                ? hf_cache::decide_manifest(fs::exists(cache_file), cached, observed)
+                                : hf_cache::decide_object(fs::exists(cache_file), cached, coordinates);
+            if (decision == hf_cache::ReuseDecision::reuse
                 && (length == 0 || fs::file_size(cache_file) == length))
             {
                 return cache_file;
