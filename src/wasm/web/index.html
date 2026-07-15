@@ -90,6 +90,19 @@
                 white-space: pre-wrap;
                 color: #e8e8e8;
             }
+            /* While the engine is busy, the "Last command" block in the info panel
+               breathes gently toward the accent color - a subtle "working" indicator
+               for runs that take several seconds. Starts from the resting style, so
+               instant commands cause no visible flash. */
+            body.busy #info pre {
+                animation: busy-breathe 1.6s ease-in-out infinite;
+            }
+            @keyframes busy-breathe {
+                50% {
+                    border-color: var(--accent);
+                    background: #16202e;
+                }
+            }
             .info-head {
                 color: #777;
                 font-size: 11px;
