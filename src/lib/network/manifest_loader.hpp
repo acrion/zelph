@@ -31,12 +31,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <chrono>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "zelph.hpp"
+#include "hf_cache.hpp"
 
 namespace zelph::network
 {
@@ -1018,7 +1021,10 @@ namespace zelph::network
         inline std::filesystem::path ensure_cache_dir()
         {
             namespace fs        = std::filesystem;
-            fs::path cache_root = fs::temp_directory_path() / "zelph-hf-cache";
+            const char* configured_root = std::getenv("ZELPH_HF_CACHE_DIR");
+            fs::path cache_root = (configured_root && *configured_root)
+                                ? fs::path(configured_root) / hf_cache::cache_version
+                                : fs::temp_directory_path() / "zelph-hf-cache" / hf_cache::cache_version;
             if (!fs::exists(cache_root))
             {
                 fs::create_directories(cache_root);
@@ -1044,6 +1050,116 @@ namespace zelph::network
             return token;
         }
 
+        inline std::string cache_hash(const std::string& value)
+        {
+            // Stable across processes and platforms; this is a cache token,
+            // not a cryptographic content digest.
+            uint64_t hash = 1469598103934665603ULL;
+            for (unsigned char byte : value)
+            {
+                hash ^= byte;
+                hash *= 1099511628211ULL;
+            }
+            return std::to_string(hash);
+        }
+
+        inline int64_t cache_now()
+        {
+            return std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        }
+
+        inline std::optional<hf_cache::RemoteMetadata> probe_remote(const std::string& source)
+        {
+            namespace fs = std::filesystem;
+            const auto root = ensure_cache_dir();
+            const auto header_path = root / ("probe_" + cache_hash(source) + ".headers");
+            const auto url = hf_path_to_http_url(source);
+            const auto command = "curl -fsSLI --retry 2 " + quote_shell_token(url) + " -o /dev/null -D "
+                               + quote_shell_token(header_path.string());
+            try
+            {
+                run_shell_command(command);
+            }
+            catch (...)
+            {
+                std::error_code ignored;
+                fs::remove(header_path, ignored);
+                return std::nullopt;
+            }
+
+            std::ifstream headers(header_path);
+            if (!headers)
+            {
+                return std::nullopt;
+            }
+
+            hf_cache::RemoteMetadata metadata;
+            metadata.source_uri = source;
+            std::string line;
+            while (std::getline(headers, line))
+            {
+                if (line.rfind("HTTP/", 0) == 0)
+                {
+                    // Redirects can produce multiple header blocks; the last
+                    // block is the resolved object.
+                    metadata.revision.clear();
+                    metadata.etag.clear();
+                    metadata.content_length = 0;
+                    continue;
+                }
+                const auto colon = line.find(':');
+                if (colon == std::string::npos)
+                {
+                    continue;
+                }
+                std::string key = line.substr(0, colon);
+                for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                std::string value = line.substr(colon + 1);
+                while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+                while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
+                if (key == "etag") metadata.etag = value;
+                else if (key == "x-repo-commit") metadata.revision = value;
+                else if (key == "content-length")
+                {
+                    try { metadata.content_length = std::stoull(value); } catch (...) { metadata.content_length = 0; }
+                }
+            }
+            metadata.retrieved_at = cache_now();
+            std::error_code ignored;
+            fs::remove(header_path, ignored);
+            if (!hf_cache::has_identity(metadata))
+            {
+                return std::nullopt;
+            }
+            return metadata;
+        }
+
+        inline std::filesystem::path offline_manifest_candidate(const std::string& source)
+        {
+            namespace fs = std::filesystem;
+            const auto root = ensure_cache_dir();
+            const auto prefix = "manifest_" + cache_hash(source) + "_";
+            fs::path best;
+            int64_t best_time = -1;
+            for (const auto& entry : fs::directory_iterator(root))
+            {
+                const auto name = entry.path().filename().string();
+                if (name.rfind(prefix, 0) != 0 || name.find(".body") == std::string::npos)
+                {
+                    continue;
+                }
+                const auto metadata = hf_cache::read_sidecar(entry.path().string() + ".meta");
+                if (metadata && metadata->retrieved_at >= best_time)
+                {
+                    best_time = metadata->retrieved_at;
+                    best = entry.path();
+                }
+            }
+            return best;
+        }
+
         inline std::filesystem::path fetch_chunk_to_cache(const std::string& source,
                                                           const uint64_t     offset,
                                                           const uint64_t     length,
@@ -1051,21 +1167,38 @@ namespace zelph::network
         {
             namespace fs = std::filesystem;
 
-            std::string token      = sanitize_cache_token(section_hint);
-            std::string src_token  = sanitize_cache_token(source);
-            fs::path    cache_file = ensure_cache_dir() / fs::path(token + "_" + src_token + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".capnp-packed");
-
-            if (fs::exists(cache_file))
-            {
-                if (length == 0 || fs::file_size(cache_file) == length)
-                {
-                    return cache_file;
-                }
-            }
-
             if (!is_hf_uri(source) && !source.empty() && source.rfind("file://", 0) != 0)
             {
                 throw std::runtime_error("Expected remote source for cached fetch: " + source);
+            }
+
+            auto observed = probe_remote(source);
+            if (!observed && section_hint == "manifest")
+            {
+                const auto offline = offline_manifest_candidate(source);
+                if (!offline.empty())
+                {
+                    std::fprintf(stderr, "zelph: warning: using cached manifest while remote metadata is unavailable: %s\n", source.c_str());
+                    return offline;
+                }
+            }
+
+            if (!observed)
+            {
+                throw std::runtime_error("Unable to validate remote cache identity for " + source);
+            }
+
+            const std::string identity = source + "\n" + observed->revision + "\n" + observed->etag;
+            const std::string token = sanitize_cache_token(section_hint);
+            const std::string key = cache_hash(identity);
+            fs::path cache_file = ensure_cache_dir() / fs::path(token + "_" + key + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".body");
+            const auto sidecar = cache_file.string() + ".meta";
+            const auto cached = hf_cache::read_sidecar(sidecar);
+            hf_cache::ObjectCoordinates coordinates{source, observed->revision, observed->etag, offset, length};
+            if (hf_cache::decide_object(fs::exists(cache_file), cached, coordinates) == hf_cache::ReuseDecision::reuse
+                && (length == 0 || fs::file_size(cache_file) == length))
+            {
+                return cache_file;
             }
 
             const std::string url = hf_path_to_http_url(source);
@@ -1082,6 +1215,12 @@ namespace zelph::network
             {
                 throw std::runtime_error("Downloaded chunk size mismatch for " + source + ", expected " + std::to_string(length)
                                          + ", got " + std::to_string(fs::file_size(cache_file)));
+            }
+
+            observed->retrieved_at = cache_now();
+            if (!hf_cache::write_sidecar(sidecar, *observed))
+            {
+                std::fprintf(stderr, "zelph: warning: could not write cache metadata: %s\n", sidecar.c_str());
             }
 
             return cache_file;
