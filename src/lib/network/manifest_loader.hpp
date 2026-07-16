@@ -40,6 +40,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 #include "hf_cache.hpp"
+#include "hf_transfer.hpp"
 
 namespace zelph::network
 {
@@ -300,24 +301,6 @@ namespace zelph::network
         inline bool is_hf_uri(const std::string& source)
         {
             return source.rfind("hf://", 0) == 0 || source.rfind("http://", 0) == 0 || source.rfind("https://", 0) == 0;
-        }
-
-        inline std::string quote_shell_token(const std::string& value)
-        {
-            std::string out = "'";
-            for (char c : value)
-            {
-                if (c == '\'')
-                {
-                    out += "'\"'\"'";
-                }
-                else
-                {
-                    out.push_back(c);
-                }
-            }
-            out += "'";
-            return out;
         }
 
         inline std::string hf_path_to_http_url(const std::string& hf_path)
@@ -1070,22 +1053,96 @@ namespace zelph::network
                 .count();
         }
 
+        inline hf_transfer::Metrics run_bounded_remote_transfer(
+            const hf_transfer::Operation operation,
+            const std::string&           source,
+            const std::string&           url,
+            const std::string&           output_path,
+            const std::string&           header_path,
+            const uint64_t               offset,
+            const uint64_t               planned_bytes,
+            const std::string&           revision,
+            const std::string&           etag,
+            const std::string&           cache_state)
+        {
+            namespace fs                            = std::filesystem;
+            const auto                 root         = ensure_cache_dir();
+            const auto                 metrics_path = root / ("transfer_" + cache_hash(source + "\n" + std::to_string(offset) + "\n" + std::to_string(planned_bytes)) + ".json");
+            const auto                 limits       = hf_transfer::limits_from_environment();
+            const auto                 host         = hf_transfer::host_from_url(url);
+            const auto                 stats        = hf_transfer::read_host_stats(hf_transfer::host_stats_path(root, host));
+            const auto                 rate         = hf_transfer::conservative_rate(stats, limits);
+            const hf_transfer::Request request{operation, source, url, output_path, header_path, metrics_path.string(), revision, etag, offset, planned_bytes};
+            const auto                 command = hf_transfer::build_curl_command(request, limits, rate);
+
+            std::string command_error;
+            try
+            {
+                run_shell_command(command);
+            }
+            catch (const std::exception& error)
+            {
+                command_error = error.what();
+            }
+
+            auto            metrics = hf_transfer::read_metrics(metrics_path);
+            std::error_code ignored;
+            fs::remove(metrics_path, ignored);
+            if (!metrics)
+            {
+                throw std::runtime_error("HF " + std::string(hf_transfer::operation_name(operation))
+                                         + " produced no transfer metrics for " + source
+                                         + (command_error.empty() ? "" : ": " + command_error));
+            }
+            if (!command_error.empty() && metrics->curl_exit == 0)
+            {
+                // Older curl versions may omit exitcode from %{json}; the
+                // shell status remains authoritative in that case.
+                metrics->curl_exit = 1;
+            }
+
+            const auto outcome = hf_transfer::classify(request, *metrics, rate);
+            hf_transfer::append_diagnostic(request, *metrics, outcome, cache_state);
+            hf_transfer::update_host_stats(root, host, planned_bytes, *metrics);
+            if (outcome == hf_transfer::Outcome::completed)
+            {
+                return *metrics;
+            }
+            if (outcome == hf_transfer::Outcome::slow_completed)
+            {
+                std::fprintf(stderr,
+                             "zelph: warning: HF fetch completed slowly: %s (%llu bytes in %llums, %llu B/s)\n",
+                             source.c_str(),
+                             static_cast<unsigned long long>(metrics->received_bytes),
+                             static_cast<unsigned long long>(metrics->total_milliseconds),
+                             static_cast<unsigned long long>(metrics->average_bytes_per_second));
+                return *metrics;
+            }
+
+            throw std::runtime_error("HF " + std::string(hf_transfer::operation_name(operation)) + " "
+                                     + hf_transfer::outcome_name(outcome) + " for " + source
+                                     + " (planned=" + std::to_string(planned_bytes)
+                                     + " bytes, received=" + std::to_string(metrics->received_bytes)
+                                     + " bytes, elapsed=" + std::to_string(metrics->total_milliseconds)
+                                     + "ms, curl_exit=" + std::to_string(metrics->curl_exit) + ")"
+                                     + (command_error.empty() ? "" : ": " + command_error));
+        }
+
         inline std::optional<hf_cache::RemoteMetadata> probe_remote(const std::string& source)
         {
             namespace fs = std::filesystem;
             const auto root = ensure_cache_dir();
             const auto header_path = root / ("probe_" + cache_hash(source) + ".headers");
             const auto url = hf_path_to_http_url(source);
-            const auto command = "curl -fsSLI --retry 2 " + quote_shell_token(url) + " -o /dev/null -D "
-                               + quote_shell_token(header_path.string());
             try
             {
-                run_shell_command(command);
+                run_bounded_remote_transfer(hf_transfer::Operation::probe, source, url, {}, header_path.string(), 0, 0, {}, {}, "revalidate");
             }
-            catch (...)
+            catch (const std::exception& error)
             {
                 std::error_code ignored;
                 fs::remove(header_path, ignored);
+                std::fprintf(stderr, "zelph: warning: HF probe unavailable for %s: %s\n", source.c_str(), error.what());
                 return std::nullopt;
             }
 
@@ -1214,13 +1271,7 @@ namespace zelph::network
 
             const std::string url = hf_path_to_http_url(source);
 
-            std::string range_arg;
-            if (length > 0)
-            {
-                range_arg = " --range " + std::to_string(offset) + "-" + std::to_string(offset + length - 1);
-            }
-            const std::string cmd = "curl -fsSL" + range_arg + " " + quote_shell_token(url) + " -o " + quote_shell_token(cache_file.string());
-            run_shell_command(cmd);
+            run_bounded_remote_transfer(hf_transfer::Operation::fetch, source, url, cache_file.string(), {}, offset, length, observed->revision, observed->etag, "refetch");
 
             if (length > 0 && fs::file_size(cache_file) != length)
             {

@@ -27,14 +27,14 @@ rm -rf "${CACHE}"
 mkdir -p "${CACHE}"
 
 run_load() {
-    printf '.load-partial %s left=0 right=0 nameOfNode=0 nodeOfName=0\n.quit\n' "${MANIFEST}" \
+    printf '.load-partial %s meta-only\n.quit\n' "${MANIFEST}" \
         | ZELPH_HF_CACHE_DIR="${CACHE}" "${ZELPH}" 2>&1
 }
 
 require_successful_load() {
     local output="$1"
     local phase="$2"
-    if ! grep -Fq 'String pool size after partial load' <<<"${output}"; then
+    if ! grep -Fq 'Header-only manifest load complete.' <<<"${output}"; then
         echo "${phase} did not complete a partial load:" >&2
         printf '%s\n' "${output}" >&2
         exit 1
