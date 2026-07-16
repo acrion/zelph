@@ -264,6 +264,61 @@ zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all/wikidata-2
 
 zelph resolves the `hf://` paths to their HTTPS download URLs, fetches the manifest, fetches each requested shard, and caches everything locally so repeated loads are fast. For remote loading, the header is fetched from the source `.bin` using `source.headerLengthBytes`, so that field must be present in the manifest.
 
+Remote cache entries are stored under a versioned `v2` directory (by default
+`$TMPDIR/zelph-hf-cache/v2`). Manifest entries are revalidated through the
+resolved object's ETag/repository revision before reuse. Shard and binary-range
+entries are keyed by the same remote identity plus their byte range, so a
+regenerated artifact cannot silently reuse ranges from an older dump. Set
+`ZELPH_HF_CACHE_DIR` to choose another cache root. If metadata validation is
+temporarily unavailable, zelph may reuse the most recently cached manifest for
+that exact source URI and emits a warning. Payload objects require a validated
+remote identity before reuse; use `shard-root=` for deliberate fully local or
+offline loading.
+
+The offline decision logic is covered by `src/test/test_hf_cache.cpp`. The
+network regression helper
+`dev_scripts/test_hf_cache_revalidation.sh [manifest-uri] [zelph-binary]
+[cache-root]` populates a disposable cache, tampers with a cached manifest and
+its ETag, and requires the next remote header-only load to refetch the manifest
+and finish successfully. It does not modify the Hub or download a shard
+payload. The offline diagnostic helper
+`dev_scripts/test_hf_transfer_diagnostics.sh [zelph-binary] [cache-root]`
+uses a fake curl timeout and requires a URI-specific probe diagnostic.
+
+### Remote transfer limits and diagnostics
+
+Remote metadata probes and payload downloads use bounded `curl` calls. A
+probe has a connection deadline and a short total/retry budget. A payload has
+the same connection deadline, a no-progress deadline, and a byte-aware overall
+budget. The latter starts from a conservative per-host throughput estimate, so
+larger requested ranges receive more time without allowing a stuck process to
+wait indefinitely.
+
+Zelph records the completed call's operation, range, planned and received
+bytes, cache state, remote identity, DNS/connect/TLS/first-byte/total timings,
+average throughput, and outcome. A normal run prints only failures and slow
+successful transfers. Set `ZELPH_HF_TRANSFER_LOG` to a file path to retain one
+JSON-lines diagnostic record per call. The cache root retains a compact
+per-host throughput estimate from meaningful payloads for future byte-aware
+budgets.
+
+The defaults can be tuned for unusual networks:
+
+| Variable | Default | Meaning |
+| --- | ---: | --- |
+| `ZELPH_HF_CONNECT_TIMEOUT_SECONDS` | `15` | Maximum connection setup time per curl attempt. |
+| `ZELPH_HF_PROBE_TIMEOUT_SECONDS` | `45` | Total retry budget for a metadata probe. |
+| `ZELPH_HF_STALL_WINDOW_SECONDS` | `90` | Time below the minimum transfer rate before a payload is stalled. |
+| `ZELPH_HF_MIN_PROGRESS_BYTES_PER_SECOND` | `1024` | Minimum sustained payload rate used for the stall check. |
+| `ZELPH_HF_INITIAL_THROUGHPUT_BYTES_PER_SECOND` | `262144` | Initial per-host estimate before successful history exists. |
+
+The first implementation uses curl's end-of-call metrics and its native
+low-speed abort. It can classify a completed slow transfer and a curl-detected
+stall, but it does not yet sample live byte progress. A monitored-subprocess
+transport layer is the later extension for instantaneous throughput and exact
+last-progress timestamps; its measurements will also inform shard sizing and
+the planned progressive query/join executor.
+
 If you have already downloaded the shards (for example via `huggingface-cli download`), point `shard-root` at the local copy to skip network access:
 
 ```

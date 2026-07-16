@@ -31,12 +31,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <chrono>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "zelph.hpp"
+#include "hf_cache.hpp"
+#include "hf_transfer.hpp"
 
 namespace zelph::network
 {
@@ -297,24 +301,6 @@ namespace zelph::network
         inline bool is_hf_uri(const std::string& source)
         {
             return source.rfind("hf://", 0) == 0 || source.rfind("http://", 0) == 0 || source.rfind("https://", 0) == 0;
-        }
-
-        inline std::string quote_shell_token(const std::string& value)
-        {
-            std::string out = "'";
-            for (char c : value)
-            {
-                if (c == '\'')
-                {
-                    out += "'\"'\"'";
-                }
-                else
-                {
-                    out.push_back(c);
-                }
-            }
-            out += "'";
-            return out;
         }
 
         inline std::string hf_path_to_http_url(const std::string& hf_path)
@@ -1018,7 +1004,10 @@ namespace zelph::network
         inline std::filesystem::path ensure_cache_dir()
         {
             namespace fs        = std::filesystem;
-            fs::path cache_root = fs::temp_directory_path() / "zelph-hf-cache";
+            const char* configured_root = std::getenv("ZELPH_HF_CACHE_DIR");
+            fs::path cache_root = (configured_root && *configured_root)
+                                ? fs::path(configured_root) / hf_cache::cache_version
+                                : fs::temp_directory_path() / "zelph-hf-cache" / hf_cache::cache_version;
             if (!fs::exists(cache_root))
             {
                 fs::create_directories(cache_root);
@@ -1044,6 +1033,190 @@ namespace zelph::network
             return token;
         }
 
+        inline std::string cache_hash(const std::string& value)
+        {
+            // Stable across processes and platforms; this is a cache token,
+            // not a cryptographic content digest.
+            uint64_t hash = 1469598103934665603ULL;
+            for (unsigned char byte : value)
+            {
+                hash ^= byte;
+                hash *= 1099511628211ULL;
+            }
+            return std::to_string(hash);
+        }
+
+        inline int64_t cache_now()
+        {
+            return std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        }
+
+        inline hf_transfer::Metrics run_bounded_remote_transfer(
+            const hf_transfer::Operation operation,
+            const std::string&           source,
+            const std::string&           url,
+            const std::string&           output_path,
+            const std::string&           header_path,
+            const uint64_t               offset,
+            const uint64_t               planned_bytes,
+            const std::string&           revision,
+            const std::string&           etag,
+            const std::string&           cache_state)
+        {
+            namespace fs                            = std::filesystem;
+            const auto                 root         = ensure_cache_dir();
+            const auto                 metrics_path = root / ("transfer_" + cache_hash(source + "\n" + std::to_string(offset) + "\n" + std::to_string(planned_bytes)) + ".json");
+            const auto                 limits       = hf_transfer::limits_from_environment();
+            const auto                 host         = hf_transfer::host_from_url(url);
+            const auto                 stats        = hf_transfer::read_host_stats(hf_transfer::host_stats_path(root, host));
+            const auto                 rate         = hf_transfer::conservative_rate(stats, limits);
+            const hf_transfer::Request request{operation, source, url, output_path, header_path, metrics_path.string(), revision, etag, offset, planned_bytes};
+            const auto                 command = hf_transfer::build_curl_command(request, limits, rate);
+
+            std::string command_error;
+            try
+            {
+                run_shell_command(command);
+            }
+            catch (const std::exception& error)
+            {
+                command_error = error.what();
+            }
+
+            auto            metrics = hf_transfer::read_metrics(metrics_path);
+            std::error_code ignored;
+            fs::remove(metrics_path, ignored);
+            if (!metrics)
+            {
+                throw std::runtime_error("HF " + std::string(hf_transfer::operation_name(operation))
+                                         + " produced no transfer metrics for " + source
+                                         + (command_error.empty() ? "" : ": " + command_error));
+            }
+            if (!command_error.empty() && metrics->curl_exit == 0)
+            {
+                // Older curl versions may omit exitcode from %{json}; the
+                // shell status remains authoritative in that case.
+                metrics->curl_exit = 1;
+            }
+
+            const auto outcome = hf_transfer::classify(request, *metrics, rate);
+            hf_transfer::append_diagnostic(request, *metrics, outcome, cache_state);
+            hf_transfer::update_host_stats(root, host, planned_bytes, *metrics);
+            if (outcome == hf_transfer::Outcome::completed)
+            {
+                return *metrics;
+            }
+            if (outcome == hf_transfer::Outcome::slow_completed)
+            {
+                std::fprintf(stderr,
+                             "zelph: warning: HF fetch completed slowly: %s (%llu bytes in %llums, %llu B/s)\n",
+                             source.c_str(),
+                             static_cast<unsigned long long>(metrics->received_bytes),
+                             static_cast<unsigned long long>(metrics->total_milliseconds),
+                             static_cast<unsigned long long>(metrics->average_bytes_per_second));
+                return *metrics;
+            }
+
+            throw std::runtime_error("HF " + std::string(hf_transfer::operation_name(operation)) + " "
+                                     + hf_transfer::outcome_name(outcome) + " for " + source
+                                     + " (planned=" + std::to_string(planned_bytes)
+                                     + " bytes, received=" + std::to_string(metrics->received_bytes)
+                                     + " bytes, elapsed=" + std::to_string(metrics->total_milliseconds)
+                                     + "ms, curl_exit=" + std::to_string(metrics->curl_exit) + ")"
+                                     + (command_error.empty() ? "" : ": " + command_error));
+        }
+
+        inline std::optional<hf_cache::RemoteMetadata> probe_remote(const std::string& source)
+        {
+            namespace fs = std::filesystem;
+            const auto root = ensure_cache_dir();
+            const auto header_path = root / ("probe_" + cache_hash(source) + ".headers");
+            const auto url = hf_path_to_http_url(source);
+            try
+            {
+                run_bounded_remote_transfer(hf_transfer::Operation::probe, source, url, {}, header_path.string(), 0, 0, {}, {}, "revalidate");
+            }
+            catch (const std::exception& error)
+            {
+                std::error_code ignored;
+                fs::remove(header_path, ignored);
+                std::fprintf(stderr, "zelph: warning: HF probe unavailable for %s: %s\n", source.c_str(), error.what());
+                return std::nullopt;
+            }
+
+            std::ifstream headers(header_path);
+            if (!headers)
+            {
+                return std::nullopt;
+            }
+
+            hf_cache::RemoteMetadata metadata;
+            metadata.source_uri = source;
+            std::string line;
+            while (std::getline(headers, line))
+            {
+                if (line.rfind("HTTP/", 0) == 0)
+                {
+                    // Redirects can produce multiple header blocks; the last
+                    // block is the resolved object.
+                    metadata.revision.clear();
+                    metadata.etag.clear();
+                    metadata.content_length = 0;
+                    continue;
+                }
+                const auto colon = line.find(':');
+                if (colon == std::string::npos)
+                {
+                    continue;
+                }
+                std::string key = line.substr(0, colon);
+                for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                std::string value = line.substr(colon + 1);
+                while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+                while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
+                if (key == "etag") metadata.etag = value;
+                else if (key == "x-repo-commit") metadata.revision = value;
+                else if (key == "content-length")
+                {
+                    try { metadata.content_length = std::stoull(value); } catch (...) { metadata.content_length = 0; }
+                }
+            }
+            metadata.retrieved_at = cache_now();
+            std::error_code ignored;
+            fs::remove(header_path, ignored);
+            if (!hf_cache::has_identity(metadata))
+            {
+                return std::nullopt;
+            }
+            return metadata;
+        }
+
+        inline std::filesystem::path offline_manifest_candidate(const std::string& source)
+        {
+            namespace fs = std::filesystem;
+            const auto root = ensure_cache_dir();
+            const auto prefix = "manifest_" + cache_hash(source) + "_";
+            fs::path best;
+            int64_t best_time = -1;
+            for (const auto& entry : fs::directory_iterator(root))
+            {
+                const auto name = entry.path().filename().string();
+                if (name.rfind(prefix, 0) != 0 || name.find(".body") == std::string::npos)
+                {
+                    continue;
+                }
+                const auto metadata = hf_cache::read_sidecar(entry.path().string() + ".meta");
+                if (metadata && metadata->source_uri == source && metadata->retrieved_at >= best_time)
+                {
+                    best_time = metadata->retrieved_at;
+                    best = entry.path();
+                }
+            }
+            return best;
+        }
+
         inline std::filesystem::path fetch_chunk_to_cache(const std::string& source,
                                                           const uint64_t     offset,
                                                           const uint64_t     length,
@@ -1051,37 +1224,65 @@ namespace zelph::network
         {
             namespace fs = std::filesystem;
 
-            std::string token      = sanitize_cache_token(section_hint);
-            std::string src_token  = sanitize_cache_token(source);
-            fs::path    cache_file = ensure_cache_dir() / fs::path(token + "_" + src_token + "_" + std::to_string(offset) + "_" + std::to_string(length) + ".capnp-packed");
-
-            if (fs::exists(cache_file))
-            {
-                if (length == 0 || fs::file_size(cache_file) == length)
-                {
-                    return cache_file;
-                }
-            }
-
             if (!is_hf_uri(source) && !source.empty() && source.rfind("file://", 0) != 0)
             {
                 throw std::runtime_error("Expected remote source for cached fetch: " + source);
             }
 
+            const bool manifest_request = section_hint == "manifest";
+            auto       observed         = probe_remote(source);
+            if (!observed && manifest_request)
+            {
+                const auto offline = offline_manifest_candidate(source);
+                const auto cached  = offline.empty()
+                                   ? std::optional<hf_cache::RemoteMetadata>{}
+                                   : hf_cache::read_sidecar(offline.string() + ".meta");
+                if (hf_cache::decide_manifest(!offline.empty(), cached, std::nullopt)
+                    == hf_cache::ReuseDecision::reuse_offline)
+                {
+                    std::fprintf(stderr, "zelph: warning: using cached manifest while remote metadata is unavailable: %s\n", source.c_str());
+                    return offline;
+                }
+            }
+
+            if (!observed)
+            {
+                throw std::runtime_error("Unable to validate remote cache identity for " + source);
+            }
+
+            const std::string identity = source + "\n" + observed->revision + "\n" + observed->etag;
+            const std::string token = sanitize_cache_token(section_hint);
+            const std::string source_key = cache_hash(source);
+            const std::string identity_key = cache_hash(identity);
+            fs::path cache_file = ensure_cache_dir()
+                                / fs::path(token + "_" + source_key + "_" + identity_key + "_"
+                                           + std::to_string(offset) + "_" + std::to_string(length) + ".body");
+            const auto sidecar = cache_file.string() + ".meta";
+            const auto cached = hf_cache::read_sidecar(sidecar);
+            hf_cache::ObjectCoordinates coordinates{source, observed->revision, observed->etag, offset, length};
+            const auto decision = manifest_request
+                                ? hf_cache::decide_manifest(fs::exists(cache_file), cached, observed)
+                                : hf_cache::decide_object(fs::exists(cache_file), cached, coordinates);
+            if (decision == hf_cache::ReuseDecision::reuse
+                && (length == 0 || fs::file_size(cache_file) == length))
+            {
+                return cache_file;
+            }
+
             const std::string url = hf_path_to_http_url(source);
 
-            std::string range_arg;
-            if (length > 0)
-            {
-                range_arg = " --range " + std::to_string(offset) + "-" + std::to_string(offset + length - 1);
-            }
-            const std::string cmd = "curl -fsSL" + range_arg + " " + quote_shell_token(url) + " -o " + quote_shell_token(cache_file.string());
-            run_shell_command(cmd);
+            run_bounded_remote_transfer(hf_transfer::Operation::fetch, source, url, cache_file.string(), {}, offset, length, observed->revision, observed->etag, "refetch");
 
             if (length > 0 && fs::file_size(cache_file) != length)
             {
                 throw std::runtime_error("Downloaded chunk size mismatch for " + source + ", expected " + std::to_string(length)
                                          + ", got " + std::to_string(fs::file_size(cache_file)));
+            }
+
+            observed->retrieved_at = cache_now();
+            if (!hf_cache::write_sidecar(sidecar, *observed))
+            {
+                std::fprintf(stderr, "zelph: warning: could not write cache metadata: %s\n", sidecar.c_str());
             }
 
             return cache_file;
