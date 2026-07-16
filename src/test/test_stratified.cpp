@@ -218,6 +218,42 @@ x trigger x
     }
 }
 
+TEST_CASE("stratified: the deferred stratum re-runs until the alternation reaches its fixpoint")
+{
+    // Two deferred rounds are required: the first deferred pass derives
+    // (w q w), the positive rule turns it into (w r w), and only then can
+    // the second deferred rule fire at the NEXT stratum boundary.
+    // Distilled from the symbolic-math regression where simplifying a
+    // compiled EML tree needed the identity fallback on two nesting
+    // levels of one term: the semi-naive scheduler used to run the
+    // deferred stratum exactly once, so the final fact was only derived
+    // by the check-mode safety pass -- a completeness violation.
+    static const std::string script = R"(
+(A start A) => (A p A)
+(A p A, ¬(A blockp A)) => (A q A)
+(A q A) => (A r A)
+(A r A, ¬(A blockr A)) => (A s A)
+w start w
+)";
+
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, script);
+        CHECK(any_output_contains(collector, "w q w"));
+        CHECK(any_output_contains(collector, "w r w"));
+        CHECK(any_output_contains(collector, "w s w")); });
+
+    SUBCASE("classic (naive) evaluation alternates too")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive off");
+        collector.clear();
+        process_lines(interactive, script);
+        CHECK(any_output_contains(collector, "w s w"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The payoff: the textbook primality rule, sound under stratification
 // ---------------------------------------------------------------------------

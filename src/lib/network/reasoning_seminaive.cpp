@@ -362,13 +362,23 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
             // deduce as everywhere else, so this terminates).
             if (negation_pending)
             {
-                negation_pending = false;
-                _done            = false;
+                _done = false;
                 if (!silent)
                     diagnostic_stream() << "--- Deferred stratum (negation, classic pass) ---" << std::endl;
                 for (const IndexedRule& ir : rules)
                     if (ir.deferred) apply_rule(ir.rule, 0);
                 _pool->wait();
+                // Mirror the classic loop's `while (deferred_derived)`:
+                // a deferred pass that derived anything may enable
+                // further deferred derivations once the positive
+                // stratum has consumed its consequences (e.g. the
+                // identity fallback of symbolic-core, needed on two
+                // nesting levels of one term), so the next boundary
+                // must run the deferred stratum again. A pass that
+                // derives nothing is the fixpoint of the alternation
+                // and disarms the boundary -- facts only accumulate,
+                // so this terminates.
+                negation_pending = _done;
                 continue; // any new consequences are in the delta now
             }
 
