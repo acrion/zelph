@@ -46,6 +46,7 @@ add_executable(zelph_tests
     test_sparql.cpp
     test_stratified.cpp
     test_wikidata_qualifiers.cpp
+    test_hf_cache.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main)
 
