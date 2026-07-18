@@ -202,6 +202,40 @@ namespace zelph::test
         }
     }
 
+    // Run a test against every arithmetic stdlib module, nested into
+    // run_both_modes: 3 modules x 2 parallelism modes per leaf subcase,
+    // each in `.semi-naive check` mode. All three modules expose the
+    // identical decimal &-literal interface on identical predicates, so
+    // tests written against that interface are representation-agnostic
+    // and should use this helper. For binary-nand-arithmetic every run
+    // additionally exercises the stratified NAF gate bootstrap, and
+    // check mode extends the delta/classic equivalence guarantee to that
+    // module's deferred stratum.
+    //
+    // NOT suitable for tests that inspect the internal digit
+    // representation (raw <...> lists differ per module, e.g. after
+    // (zelph/set-number-digits [])) or that pin module-specific behavior.
+    //
+    // The collector is cleared after the import, so module-dependent
+    // load-time echoes (rule definitions, derived gate tables) cannot
+    // leak into positive or negative output checks.
+    template <typename F>
+    void run_arithmetic_modules(F&& test_fn)
+    {
+        auto with_module = [&](const char* module)
+        {
+            run_both_modes([&](auto& collector, auto& interactive)
+                           {
+                    interactive.process(std::string(".import ") + module);
+                    collector.clear();
+                    test_fn(collector, interactive); });
+        };
+
+        SUBCASE("arithmetic") { with_module("arithmetic"); }
+        SUBCASE("binary-arithmetic") { with_module("binary-arithmetic"); }
+        SUBCASE("binary-nand-arithmetic") { with_module("binary-nand-arithmetic"); }
+    }
+
     // Helper: run test with logging enabled at depth 1 for diagnostics.
     // Usage:  run_both_modes_logged([](auto& collector, auto& interactive) { ... });
     template <typename F>

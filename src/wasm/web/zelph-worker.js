@@ -29,24 +29,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 //
 // After every visible command batch the worker silently runs `.node`, which
 // makes zelph regenerate the Mermaid HTML for the last output node (written
-// to MEMFS under /tmp). The worker scans all output - visible and
-// suppressed - for `file://...html` links, keeps only the LAST one (some
-// commands print several), reads the file content and ships it to the main
-// thread for display in the graph panel.
+// to MEMFS under /tmp). The worker calls zelph_take_graph_html_path, reads
+// the file content and ships it to the main thread for display in the graph panel.
 
 import createZelphModule from "./zelph.mjs";
 
 let suppress = false; // true while running the internal .node
-let lastMermaidPath = null; // last file://...html seen in the current batch
-
-const MERMAID_RE = /file:\/\/([^\x07\x1b]*?\.html)/g; // stop at ESC/BEL of the OSC 8 link
-
-function scanForMermaid(text) {
-  for (const m of text.matchAll(MERMAID_RE)) lastMermaidPath = m[1];
-}
 
 function emit(channel, text, newline) {
-  scanForMermaid(text);
   if (!suppress) postMessage({ type: "output", channel, text, newline });
 }
 
@@ -59,6 +49,7 @@ const Module = await createZelphModule({
 
 const processLine = Module.cwrap("zelph_process", null, ["string"]);
 const promptStr = Module.cwrap("zelph_prompt", "string", []);
+const takeGraphPath = Module.cwrap("zelph_take_graph_html_path", "string", []);
 const isAccumulating = () =>
   Module.ccall("zelph_is_accumulating", "number", [], []) !== 0;
 
@@ -78,20 +69,18 @@ function autoNode() {
 }
 
 function publishMermaid() {
-  if (!lastMermaidPath) return;
+  const path = takeGraphPath();
+  if (!path) return;
   try {
-    const html = Module.FS.readFile(lastMermaidPath, { encoding: "utf8" });
+    const html = Module.FS.readFile(path, { encoding: "utf8" });
     const label = decodeURIComponent(
-      lastMermaidPath
+      path
         .split("/")
         .pop()
         .replace(/\.html$/, ""),
     );
-    Module.FS.unlink(lastMermaidPath); // content delivered; keep MEMFS tidy
+    Module.FS.unlink(path); // content delivered; keep MEMFS tidy
     if (html.includes("Syntax error in text")) {
-      // Defensive: a generator hiccup (e.g. special characters in node
-      // names) must never leave a broken graph on screen. No error message
-      // by design; the main thread additionally checks the rendered result.
       postMessage({ type: "mermaid-clear" });
     } else {
       postMessage({ type: "mermaid", html, label });
@@ -105,7 +94,6 @@ self.onmessage = (e) => {
   const msg = e.data;
 
   if (msg.type === "process") {
-    lastMermaidPath = null;
     const t0 = performance.now();
     try {
       for (const line of msg.lines) processLine(line);

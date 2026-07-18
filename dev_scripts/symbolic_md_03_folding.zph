@@ -1,0 +1,7 @@
+# Validates "Knowledge Folding" (cascaded fold)
+.import arithmetic
+.import symbolic-core
+((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))
+(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X
+(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X
+

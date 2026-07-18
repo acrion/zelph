@@ -218,15 +218,50 @@ x trigger x
     }
 }
 
+TEST_CASE("stratified: the deferred stratum re-runs until the alternation reaches its fixpoint")
+{
+    // Two deferred rounds are required: the first deferred pass derives
+    // (w q w), the positive rule turns it into (w r w), and only then can
+    // the second deferred rule fire at the NEXT stratum boundary.
+    // Distilled from the symbolic-math regression where simplifying a
+    // compiled EML tree needed the identity fallback on two nesting
+    // levels of one term: the semi-naive scheduler used to run the
+    // deferred stratum exactly once, so the final fact was only derived
+    // by the check-mode safety pass -- a completeness violation.
+    static const std::string script = R"(
+(A start A) => (A p A)
+(A p A, ¬(A blockp A)) => (A q A)
+(A q A) => (A r A)
+(A r A, ¬(A blockr A)) => (A s A)
+w start w
+)";
+
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, script);
+        CHECK(any_output_contains(collector, "w q w"));
+        CHECK(any_output_contains(collector, "w r w"));
+        CHECK(any_output_contains(collector, "w s w")); });
+
+    SUBCASE("classic (naive) evaluation alternates too")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive off");
+        collector.clear();
+        process_lines(interactive, script);
+        CHECK(any_output_contains(collector, "w s w"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The payoff: the textbook primality rule, sound under stratification
 // ---------------------------------------------------------------------------
 
-TEST_CASE("primes-naf: textbook negation rule on the arithmetic module")
+TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
         interactive.process(".import primes-naf");
 
         SUBCASE("2 is prime (base case)")
@@ -276,29 +311,5 @@ TEST_CASE("primes-naf: textbook negation rule on the arithmetic module")
             CHECK_FALSE(any_output_contains(collector, "(&1 testprime &1) = composite"));
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = prime"));
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = composite"));
-        } });
-}
-
-TEST_CASE("primes-naf: identical rules on the binary arithmetic module")
-{
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import binary-arithmetic");
-        interactive.process(".import primes-naf");
-
-        SUBCASE("13 is prime")
-        {
-            collector.clear();
-            interactive.process("(&13 testprime &13) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&13 testprime &13) = prime"));
-        }
-        SUBCASE("15 is composite")
-        {
-            collector.clear();
-            interactive.process("(&15 testprime &15) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&15 testprime &15) = composite"));
-            CHECK_FALSE(any_output_contains(collector, "&15 isprime"));
         } });
 }
