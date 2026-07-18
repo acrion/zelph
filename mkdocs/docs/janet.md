@@ -344,6 +344,24 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/cdr cell)`**  
   Return the cdr (rest of list) of a cons cell. Returns the `nil` list terminator node for the last cell; returns `nil` if `cell` is not a cons cell.
 
+##### Script import
+
+- **`(zelph/import path & args)`**  
+  Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
+  This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
+  Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+
+##### Persistence
+
+- **`(zelph/save file)`**  
+  Save the current network to a binary file, exactly like the `.save` command. The filename must end with `.bin`. Returns `nil`. Main thread only.
+
+- **`(zelph/load file)`**  
+  Load a previously saved network state, exactly like the `.load` command:
+  - If `file` ends with `.bin`, the serialized network is loaded directly (fast).
+  - If `file` ends with `.json` or `.json.bz2` (Wikidata dump), the data is imported and a `.bin` cache file is created in the same directory for faster future loads.  
+    In the interactive REPL, loading disables auto-run (large datasets). Inside a script run, auto-run is already suspended for the duration of the import and restored afterwards — the same behavior as `.load` inside a `.zph` script. Returns `nil`. Main thread only.
+
 ##### Neural network functions
 
 zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can consult via the `≈` operator. The full documentation — including semantics, training workflow, and a Wikidata proof of concept — is on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:

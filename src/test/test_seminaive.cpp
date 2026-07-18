@@ -68,19 +68,27 @@ TEST_CASE("semi-naive: .semi-naive command reports and switches modes")
         CHECK_THROWS_AS(interactive.process(".semi-naive banana"), std::runtime_error); });
 }
 
-TEST_CASE("semi-naive: classic mode (off) still computes full results")
+TEST_CASE("semi-naive: classic mode (off) still computes full results (all arithmetic modules)")
 {
     // Pins that .semi-naive off remains a fully functional evaluation
-    // strategy (fresh variables, termination guard, cross-module cascade),
-    // not just a dead code path behind the default.
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".semi-naive off");
-        interactive.process(".import arithmetic");
-        collector.clear();
-        interactive.process("&12 * &34");
-        interactive.run(true, false, false);
-        CHECK(any_output_starts_with(collector, "((&12 * &34) = &408)")); });
+    // strategy. The switch happens BEFORE the import on purpose (hence no
+    // run_arithmetic_modules): for binary-nand-arithmetic this puts the
+    // stratified NAF gate bootstrap itself on the pure classic path.
+    auto classic_mode_with = [](const char* module)
+    {
+        run_both_modes([&](auto& collector, auto& interactive)
+                       {
+            interactive.process(".semi-naive off");
+            interactive.process(std::string(".import ") + module);
+            collector.clear();
+            interactive.process("&12 * &34");
+            interactive.run(true, false, false);
+            CHECK(any_output_starts_with(collector, "((&12 * &34) = &408)")); });
+    };
+
+    SUBCASE("arithmetic") { classic_mode_with("arithmetic"); }
+    SUBCASE("binary-arithmetic") { classic_mode_with("binary-arithmetic"); }
+    SUBCASE("binary-nand-arithmetic") { classic_mode_with("binary-nand-arithmetic"); }
 }
 
 TEST_CASE("semi-naive: negation over a growing domain stays complete across iterations")

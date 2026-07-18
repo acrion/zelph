@@ -184,18 +184,18 @@ To generate a ready-to-use `zelph-hf-layout/v2` manifest plus individual shard f
 python tools/emit_zelph_hf_v2.py \
   --bin /path/to/file.bin \
   --index /tmp/index.json \
-  --output /tmp/file.hf-v2.json \
+  --output /tmp/file/file.hf-v2.json \
   --artifact-name file \
-  --hf-root hf://datasets/<owner>/<dataset> \
-  --shard-root /tmp/file-shards
+  --hf-root hf://datasets/<owner>/<dataset>
 ```
 
-This writes:
+This writes an upload-ready artifact tree under `/tmp/file/`:
 
-- a manifest at `/tmp/file.hf-v2.json`
-- one shard object per section-local chunk under `/tmp/file-shards/`
+- the manifest `file.hf-v2.json`
+- a copy of the offset index under its advertised name `artifact.index.json`
+- one shard object per section-local chunk under `shards/`
 
-These outputs can then be uploaded to Hugging Face and consumed via `.load-partial manifest.json ...`.
+The tree mirrors the layout advertised in the manifest, so uploading `/tmp/file/` to the repo as `file` (the tool prints the matching `hf upload` command) makes it consumable via `.load-partial manifest.json ...`.
 
 The `headerLengthBytes` value comes from the `header.length` field in the index output. Each chunk entry needs at minimum `chunkIndex`, `offset` (byte offset into the source `.bin`), and `length`.
 

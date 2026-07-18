@@ -37,6 +37,7 @@ FetchContent_MakeAvailable(doctest)
 
 add_executable(zelph_tests
     test_clusters.cpp
+    test_nand_arithmetic.cpp
     test_neural.cpp
     test_node_display.cpp
     test_numbers.cpp
@@ -45,6 +46,7 @@ add_executable(zelph_tests
     test_seminaive.cpp
     test_sparql.cpp
     test_stratified.cpp
+    test_symbolic.cpp
     test_wikidata_qualifiers.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main)

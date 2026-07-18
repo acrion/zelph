@@ -1,0 +1,160 @@
+# The EML tie-in (Odrzywolek 2026, arXiv:2603.21852). eml is an
+# ordinary symbolic binary operator, eml(x, y) = exp(x) - ln(y), wired
+# into the simplifier via the operator extension protocol, plus a
+# small compiler into pure EML form.
+#
+# PREREQUISITES:
+#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
+#   .import symbolic-core
+#   .import eml
+#
+# OPERATOR EXTENSION PROTOCOL (how any new operator joins the
+# simplifier): contribute (1) decompose rules for needssimp, (2) a
+# congruence rule producing the red form, (3) rewrite rules on red
+# forms. symbolic-core's connect stage and identity fallback then work
+# unchanged.
+#
+# IDENTITY TABLE (reduction direction, eml-elimination): the paper's
+# identities, stated over BOTTOM-UP NORMALIZED forms -- inner patterns
+# are rewritten before an outer pattern is matched. Eq. (5),
+# ln z = eml(1, eml(eml(1, z), 1)), must therefore be recognized as
+# (&1 eml (exp of (&1 eml Z))): by the time the outer red form is
+# built, its inner (... eml &1) has already been reduced by the exp
+# rule. Deep unification matches the whole shape as one condition.
+#
+# SINGLE-PASS CAVEAT: rw right-hand sides are not re-processed within a
+# request. (X eml &1) with X = (ln of u) therefore answers
+# (exp of (ln of u)) -- semantically correct and eml-free, but one more
+# simplify request on the RESULT is needed for the inverse collapse
+# (then handled by symbolic-core's inverseof rule). simp stays
+# single-valued throughout; one-shot full normalization is the future
+# iterated/e-graph design. The same layering makes e = eml(1, 1) a
+# two-request reduction, pinned in test_symbolic.cpp.
+#
+# COMPILER (expansion direction): (T emlcompile T) builds the pure-EML
+# form bottom-up under the emlform relation; repeatable query
+# ((T emlcompile T) = F). Coverage follows the macro chain of the paper's
+# reference compiler (eml_compiler_v4.py / SI Sect. 2.1): exp, ln, -, +,
+# neg, inv, *, /, eml itself, and leaves. Composite operators DELEGATE to
+# their defining term -- e.g. (U + V) materializes (U - (neg of V)) as a
+# graph node, marks it, and harvests its emlform -- so the reference
+# compiler's recursion becomes ordinary fact flow, and the output trees
+# are structurally identical to eml_compiler_v4.py's emit primitives.
+# One deliberate deviation: numerals stay opaque leaves (no eml_int
+# double-and-add expansion, which would be representation-dependent);
+# output is strictly pure EML whenever &1 is the input's only numeral.
+# Unknown function symbols still yield NO emlform (partiality by absence).
+# The new operators (-, neg, inv) join only the compiler, not the
+# simplifier; simplification support for them (with numeric folding via
+# the subtraction module) is a natural follow-up.
+#
+# Identities are FORMAL (principal-branch and domain caveats as in
+# symbolic-core.zph).
+
+# ---------------------------------------------------------------------------
+# The constant e (paper bootstrap step 1: e = eml(1, 1))
+# ---------------------------------------------------------------------------
+e ~ symconst
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (1): decompose
+# ---------------------------------------------------------------------------
+((U eml V) needssimp (U eml V)) => (U needssimp U)
+((U eml V) needssimp (U eml V)) => (V needssimp V)
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (2): congruence
+# ---------------------------------------------------------------------------
+((U eml V) needssimp (U eml V), U simp P, V simp Q) => ((U eml V) red (P eml Q))
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (3): rewrites -- the identity table.
+# Conflict-free: the three patterns are mutually exclusive on any red
+# form (second argument &1 vs. exp-application; of vs. eml predicate).
+# ---------------------------------------------------------------------------
+
+# exp(x) = eml(x, 1)                                   [paper, depth 1]
+(T red (X eml &1)) => (T rw (exp of X))
+
+# ln(z) = eml(1, eml(eml(1, z), 1))                    [paper Eq. (5)]
+(T red (&1 eml (exp of (&1 eml X)))) => (T rw (ln of X))
+
+# e = eml(1, 1) -- recognized at the (exp of &1) stage
+(T red (exp of &1)) => (T rw e)
+
+# ---------------------------------------------------------------------------
+# Compiler: Trigger / Decompose / Base / Assemble / Connect
+# ---------------------------------------------------------------------------
+(T emlcompile T) => (T needseml T)
+
+((F of U) needseml (F of U)) => (U needseml U)
+((U eml V) needseml (U eml V)) => (U needseml U)
+((U eml V) needseml (U eml V)) => (V needseml V)
+
+(X needseml X, X ~ symvar) => (X emlform X)
+(X needseml X, X ~ symconst) => (X emlform X)
+((A cons R) needseml (A cons R)) => ((A cons R) emlform (A cons R))
+
+((exp of U) needseml (exp of U), U emlform P)
+=> ((exp of U) emlform (P eml &1))
+
+((ln of U) needseml (ln of U), U emlform P)
+=> ((ln of U) emlform (&1 eml ((&1 eml P) eml &1)))
+
+((U eml V) needseml (U eml V), U emlform P, V emlform Q)
+=> ((U eml V) emlform (P eml Q))
+
+# ---------------------------------------------------------------------------
+# Macro chain (SI Sect. 2.1). Foundation: subtraction, assembled directly:
+#   x - y  ->  eml(ln x, exp y)  =  eml(eml(1, eml(eml(1, x), 1)), eml(y, 1))
+# ---------------------------------------------------------------------------
+((U - V) needseml (U - V)) => (U needseml U)
+((U - V) needseml (U - V)) => (V needseml V)
+
+((U - V) needseml (U - V), U emlform P, V emlform Q)
+=> ((U - V) emlform ((&1 eml ((&1 eml P) eml &1)) eml (Q eml &1)))
+
+# ---------------------------------------------------------------------------
+# Delegating operators: each seeds its defining term and harvests its
+# emlform. The delegation DAG is acyclic (+ -> {-, neg}, neg -> {-, ln},
+# * -> {exp, +, ln}, / -> {*, inv}, inv -> {exp, neg, ln}), so the
+# cascade terminates; child markers are reached through the auxiliary
+# terms' own decompose rules.
+# ---------------------------------------------------------------------------
+
+# Negation: -z = ln(1) - z
+((neg of V) needseml (neg of V))
+=> (((ln of &1) - V) needseml ((ln of &1) - V))
+
+((neg of V) needseml (neg of V), ((ln of &1) - V) emlform F)
+=> ((neg of V) emlform F)
+
+# Addition: x + y = x - (-y)
+((U + V) needseml (U + V))
+=> ((U - (neg of V)) needseml (U - (neg of V)))
+
+((U + V) needseml (U + V), (U - (neg of V)) emlform F)
+=> ((U + V) emlform F)
+
+# Reciprocal: 1/z = exp(-ln z)
+((inv of V) needseml (inv of V))
+=> ((exp of (neg of (ln of V))) needseml (exp of (neg of (ln of V))))
+
+((inv of V) needseml (inv of V), (exp of (neg of (ln of V))) emlform F)
+=> ((inv of V) emlform F)
+
+# Multiplication: x * y = exp(ln x + ln y)
+((U * V) needseml (U * V))
+=> ((exp of ((ln of U) + (ln of V))) needseml (exp of ((ln of U) + (ln of V))))
+
+((U * V) needseml (U * V), (exp of ((ln of U) + (ln of V))) emlform F)
+=> ((U * V) emlform F)
+
+# Division: x / y = x * (1/y)
+((U / V) needseml (U / V))
+=> ((U * (inv of V)) needseml (U * (inv of V)))
+
+((U / V) needseml (U / V), (U * (inv of V)) emlform F)
+=> ((U / V) emlform F)
+
+(T emlcompile T, T emlform F) => ((T emlcompile T) = F)

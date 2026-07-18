@@ -1,0 +1,9 @@
+# Validates the compiler example (ln round trip, compile direction)
+.import arithmetic
+.import symbolic-core
+.import eml
+x ~ symvar
+(ln of x) emlcompile (ln of x)
+((ln of x) emlcompile (ln of x)) = F
+((ln of x) emlcompile (ln of x)) = F
+

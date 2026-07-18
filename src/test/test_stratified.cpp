@@ -258,11 +258,10 @@ w start w
 // The payoff: the textbook primality rule, sound under stratification
 // ---------------------------------------------------------------------------
 
-TEST_CASE("primes-naf: textbook negation rule on the arithmetic module")
+TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
         interactive.process(".import primes-naf");
 
         SUBCASE("2 is prime (base case)")
@@ -312,29 +311,5 @@ TEST_CASE("primes-naf: textbook negation rule on the arithmetic module")
             CHECK_FALSE(any_output_contains(collector, "(&1 testprime &1) = composite"));
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = prime"));
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = composite"));
-        } });
-}
-
-TEST_CASE("primes-naf: identical rules on the binary arithmetic module")
-{
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import binary-arithmetic");
-        interactive.process(".import primes-naf");
-
-        SUBCASE("13 is prime")
-        {
-            collector.clear();
-            interactive.process("(&13 testprime &13) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&13 testprime &13) = prime"));
-        }
-        SUBCASE("15 is composite")
-        {
-            collector.clear();
-            interactive.process("(&15 testprime &15) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&15 testprime &15) = composite"));
-            CHECK_FALSE(any_output_contains(collector, "&15 isprime"));
         } });
 }

@@ -73,37 +73,6 @@ int main(int argc, char** argv)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
-#elif defined(NDEBUG)
-    if (getenv("ZELPH_NO_RLWRAP") == nullptr)
-    {
-        FILE* pipe = popen("command -v rlwrap", "r");
-        if (pipe)
-        {
-            char        buffer[128];
-            std::string rlwrap_path;
-            while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
-            {
-                rlwrap_path += buffer;
-            }
-            int status = pclose(pipe);
-            if (status == 0 && !rlwrap_path.empty())
-            {
-                setenv("ZELPH_NO_RLWRAP", "1", 1);
-                std::vector<char*> exec_args;
-                exec_args.push_back(const_cast<char*>("rlwrap"));
-                exec_args.push_back(const_cast<char*>("-m"));
-                exec_args.push_back(argv[0]);
-                for (int i = 1; i < argc; ++i)
-                {
-                    exec_args.push_back(argv[i]);
-                }
-                exec_args.push_back(nullptr);
-                execvp("rlwrap", exec_args.data());
-                perror("execvp failed");
-                return 1;
-            }
-        }
-    }
 #endif
     try
     {
@@ -128,6 +97,44 @@ int main(int argc, char** argv)
                 script_args.push_back(arg);
             }
         }
+
+#if !defined(_WIN32) && defined(NDEBUG)
+        // rlwrap exists solely for the interactive REPL (line editing,
+        // history). Skip it for script runs (zelph <script>), for --version,
+        // and when stdin is not a terminal - e.g. when another program (a
+        // chess GUI speaking UCI, a test driver) controls zelph via pipes.
+        if (script_files.empty() && !show_version && isatty(STDIN_FILENO)
+            && getenv("ZELPH_NO_RLWRAP") == nullptr)
+        {
+            FILE* pipe = popen("command -v rlwrap", "r");
+            if (pipe)
+            {
+                char        buffer[128];
+                std::string rlwrap_path;
+                while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+                {
+                    rlwrap_path += buffer;
+                }
+                int status = pclose(pipe);
+                if (status == 0 && !rlwrap_path.empty())
+                {
+                    setenv("ZELPH_NO_RLWRAP", "1", 1);
+                    std::vector<char*> exec_args;
+                    exec_args.push_back(const_cast<char*>("rlwrap"));
+                    exec_args.push_back(const_cast<char*>("-m"));
+                    exec_args.push_back(argv[0]);
+                    for (int i = 1; i < argc; ++i)
+                    {
+                        exec_args.push_back(argv[i]);
+                    }
+                    exec_args.push_back(nullptr);
+                    execvp("rlwrap", exec_args.data());
+                    perror("execvp failed");
+                    return 1;
+                }
+            }
+        }
+#endif
 
         if (show_version)
         {

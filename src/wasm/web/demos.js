@@ -257,4 +257,88 @@ export const DEMO_GROUPS = [
       },
     ],
   },
+  {
+    // Publish together with the paper release: this group imports stdlib
+    // modules (binary-nand-arithmetic, symbolic-core, diff, eml) that are
+    // pushed only with the paper. If the WASM build embeds the stdlib via
+    // an explicit file list rather than a glob, add these four modules
+    // there as well -- otherwise the buttons fail in the playground while
+    // working locally.
+    title: "From NAND to EML",
+    buttons: [
+      {
+        id: "5.1",
+        label: "Arithmetic from one NAND gate",
+        command: ".import binary-nand-arithmetic",
+        info: `Loads a base-2 arithmetic module whose only gate datum is the single axiom <code>(1 nand 1) out 0</code>. One negation-as-failure rule completes the truth table, five rules build the classical gate library (NOT, AND, OR, XOR, majority) from NAND alone, and nine synthesis rules derive all 52 digit-table facts that the module from button 1.1 states by hand &mdash; on the same predicates, so the shared recursion layer sees no difference. Self-contained: group 1 is not required. For the full provenance show below, best start from a freshly loaded playground &mdash; if the hand-written tables are already present, the derived facts coincide with existing nodes.`,
+      },
+      {
+        id: "5.2",
+        label: "Peek inside: the gate table",
+        requires: ["5.1"],
+        command: "(A nand B) out X",
+        info: `The complete NAND truth table: one asserted axiom and three rows derived by negation-as-failure &mdash; every digit pair that is not the zero row outputs 1. Note the derivation markers (⇐) on the derived rows.`,
+      },
+      {
+        id: "5.3",
+        label: "Multiply on the NAND substrate",
+        requires: ["5.1"],
+        command: "(&12 * &34) = X",
+        info: `The same digit-by-digit inference as in group 1 &mdash; but every gate-table lookup in the cascade now carries its own derivation, bottoming out, transitively, in the single NAND axiom. A provenance chain from 12&times;34&nbsp;=&nbsp;408 down to one gate fact.`,
+      },
+      {
+        id: "5.4",
+        label: "Load symbolic layer",
+        requires: ["5.1"],
+        command: ".import symbolic-core",
+        info: `Loads the symbolic layer: simplification as forward chaining. Symbolic terms use the <em>same</em> <code>+</code>/<code>*</code> predicates as the numeric modules; atoms declare a sort (<code>~ symvar</code>, <code>~ symconst</code>), and a marker-gated rule cascade computes normal forms bottom-up in a single pass. Works on top of any of the three arithmetic modules &mdash; here, on the NAND substrate.`,
+      },
+      {
+        id: "5.5",
+        label: "Constant folding for free",
+        requires: ["5.4"],
+        command:
+          "((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))\n(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X",
+        info: `The simplifier has no folding code. Its reduced forms are ordinary arithmetic facts, so the arithmetic module computes their <code>=</code> results, and one bridge rule <code>(T red C, C = R) =&gt; (T rw R)</code> adopts them. Watch <code>(&5 * &10)</code> being materialized and computed mid-simplification &mdash; and on this substrate, even the folded 50 traces back to the NAND axiom.`,
+      },
+      {
+        id: "5.6",
+        label: "Declared knowledge simplifies",
+        requires: ["5.4"],
+        command:
+          "a ~ symconst\nb ~ symconst\nc ~ symconst\n(a + b) = c\n(a + b) simplify (a + b)\n((a + b) simplify (a + b)) = X",
+        info: `The same bridge rule consumes <em>declared</em> equations: stating <code>(a + b) = c</code> over opaque constants makes simplification answer <code>c</code>. An equation imported from a knowledge graph drives rewriting exactly like a computed one &mdash; computation and knowledge share one fact space.`,
+      },
+      {
+        id: "5.7",
+        label: "Load differentiation",
+        requires: ["5.4"],
+        command: ".import diff",
+        info: `Symbolic differentiation in the same architecture. Derivatives of function symbols are facts (<code>exp hasderivative exp</code>) consumed by one generic chain rule, and constancy is the textbook definition made executable: T is constant w.r.t. x if T does not contain x &mdash; a containment recursion plus negation-as-failure.`,
+      },
+      {
+        id: "5.8",
+        label: "Differentiate",
+        requires: ["5.7"],
+        command:
+          "x ~ symvar\nc ~ symconst\n(x + c) diffby x\n(x * x) diffby x\n((x + c) diffby x) = D\n((x * x) diffby x) = D",
+        info: `d(x+c)/dx answers 1: the constant vanishes via negation-as-failure, and the raw 1&nbsp;+&nbsp;0 is folded away because every derivative is pushed through the simplifier. The product rule assembles d(x&middot;x)/dx, whose neutral factors simplify to (x&nbsp;+&nbsp;x). Every step is an ordinary deduction with provenance.`,
+      },
+      {
+        id: "5.9",
+        label: "Load EML",
+        requires: ["5.4"],
+        command: ".import eml",
+        info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). This module wires eml into the simplifier as an ordinary binary operator with a three-rule identity table.`,
+      },
+      {
+        id: "5.10",
+        label: "Derive Eq. (5)",
+        requires: ["5.9"],
+        command:
+          "x ~ symvar\n(&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))\n((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X",
+        info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier. The engine derives <code>(ln of x)</code> as a chain of ordinary deductions &mdash; across two strata of the negation schedule &mdash; with the full provenance attached. The identity is not checked numerically and not assumed: it is derived.`,
+      },
+    ],
+  },
 ];

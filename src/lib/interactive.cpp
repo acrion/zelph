@@ -74,6 +74,21 @@ public:
             _repl_state,
             [this](const std::string& line)
             { _interactive->process(line); });
+
+        // zelph/import delegates to the same implementation as the .import
+        // command (path resolution including the standard library, argument
+        // passing, auto-run handling).
+        _script_engine->set_import_handler(
+            [this](const std::string& path, const std::vector<std::string>& args)
+            { _command_executor->import_file(path, args); });
+
+        // zelph/save and zelph/load delegate to the same implementation as
+        // the .save/.load commands (including all checks and side effects).
+        // Passing a pre-tokenized command vector (instead of a raw line
+        // through process) keeps filenames with spaces intact.
+        _script_engine->set_command_handler(
+            [this](const std::vector<std::string>& cmd)
+            { _command_executor->execute(cmd); });
     }
 
     void reset_reasoning()

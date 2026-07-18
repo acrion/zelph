@@ -1,0 +1,108 @@
+# Symbolic differentiation as forward-chaining rules, following the
+# Trigger / Decompose / Assemble / Connect architecture.
+#
+# PREREQUISITES (import order, like the primes modules):
+#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
+#   .import symbolic-core
+#   .import diff
+#
+# Usage:
+#   x ~ symvar
+#   (x * x) diffby x
+#   ((x * x) diffby x) = D    # repeatable result query; answers (x + x)
+#
+# The raw derivative is deliberately NOT the exposed result: the connect
+# stage asserts an ordinary (D simplify D) request, symbolic-core
+# answers it, and the simplified form is exposed under = -- the same
+# cross-module cascade as MA1/MA2 in the arithmetic modules.
+#
+# Constant subterms are recognized via a positive containment recursion
+# plus negation-as-failure (the primes-naf pattern). Numerals need no
+# special rule: nothing derives (&n contains X), so they are constants
+# by absence. The structural rules redundantly differentiate constant
+# composites too; both paths simplify to the same &0, so = stays
+# single-valued -- confluence through the simplifier, pinned in
+# test_symbolic.cpp.
+#
+# Undeclared sorts yield NO answer, never a wrong one: the constancy
+# rule is guarded by X ~ symvar, so a forgotten declaration results in
+# silence instead of everything counting as constant. Operators outside
+# {+, *, of} get no derivative -- partiality by absence.
+
+# ---------------------------------------------------------------------------
+# Function-symbol derivatives: F hasderivative G means d F(u)/du = G(u).
+# ln has a dedicated rule below -- its derivative 1/u is not of the form
+# G(u) for a named symbol G.
+# ---------------------------------------------------------------------------
+exp hasderivative exp
+
+# ---------------------------------------------------------------------------
+# Rule DT0 -- Trigger
+# ---------------------------------------------------------------------------
+(T diffby X) => (T dstate X)
+
+# ---------------------------------------------------------------------------
+# Rules DD -- Decompose
+# ---------------------------------------------------------------------------
+((U + V) dstate X) => (U dstate X)
+((U + V) dstate X) => (V dstate X)
+((U * V) dstate X) => (U dstate X)
+((U * V) dstate X) => (V dstate X)
+((F of U) dstate X) => (U dstate X)
+
+# ---------------------------------------------------------------------------
+# Rules DO -- Occurrence: positive containment recursion, anchored on
+# dstate so only relevant composites are ever considered.
+# ---------------------------------------------------------------------------
+(X ~ symvar) => (X contains X)
+
+((U + V) dstate X, U contains X) => ((U + V) contains X)
+((U + V) dstate X, V contains X) => ((U + V) contains X)
+((U * V) dstate X, U contains X) => ((U * V) contains X)
+((U * V) dstate X, V contains X) => ((U * V) contains X)
+((F of U) dstate X, U contains X) => ((F of U) contains X)
+
+# ---------------------------------------------------------------------------
+# Rules DB -- Base cases
+# ---------------------------------------------------------------------------
+(X dstate X, X ~ symvar) => ((X wrt X) deriv &1)
+
+# Anything not containing X is constant with respect to X. Deferred by
+# stratification until the containment recursion is saturated -- the
+# textbook rule, sound as written (see primes-naf).
+(T dstate X, X ~ symvar, ¬(T contains X)) => ((T wrt X) deriv &0)
+
+# ---------------------------------------------------------------------------
+# Rules DA -- Assemble: sum, product, chain. Consequences build the
+# derivative terms as ordinary graph structure via fact().
+# ---------------------------------------------------------------------------
+((U + V) dstate X,
+ (U wrt X) deriv P,
+ (V wrt X) deriv Q)
+=> (((U + V) wrt X) deriv (P + Q))
+
+((U * V) dstate X,
+ (U wrt X) deriv P,
+ (V wrt X) deriv Q)
+=> (((U * V) wrt X) deriv ((P * V) + (U * Q)))
+
+((F of U) dstate X,
+ F hasderivative G,
+ (U wrt X) deriv P)
+=> (((F of U) wrt X) deriv ((G of U) * P))
+
+((ln of U) dstate X,
+ (U wrt X) deriv P)
+=> (((ln of U) wrt X) deriv (P / U))
+
+# ---------------------------------------------------------------------------
+# Rules DC -- Connect: pipe the raw derivative through the simplifier
+# (cross-module cascade), then expose the simplified form under =.
+# Repeatable query: (T diffby X) = D
+# ---------------------------------------------------------------------------
+(T diffby X, (T wrt X) deriv D) => (D simplify D)
+
+(T diffby X,
+ (T wrt X) deriv D,
+ (D simplify D) = S)
+=> ((T diffby X) = S)
