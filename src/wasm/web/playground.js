@@ -269,6 +269,10 @@ stopBtn.addEventListener("click", () => {
   );
   clicked.clear();
   clearGraph();
+  // Unlike Reset, no command runs here, so there is no meaningful "last
+  // command" anymore - fall back to the idle hint.
+  persistedInfo = INFO_IDLE;
+  setInfoHTML(persistedInfo);
   ready = false;
   accumulating = false;
   prompt = "zelph> ";

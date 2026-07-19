@@ -1,0 +1,148 @@
+# Term representation and a
+# directed, terminating simplification core -- pure forward-chaining
+# rules, no C++ involvement.
+#
+# PREREQUISITE: import one of the arithmetic modules first (arithmetic,
+# binary-arithmetic or binary-nand-arithmetic); the &-literals below are
+# parsed via zelph/number at import time. The module is representation-
+# agnostic: &0/&1 resolve to whatever the loaded module builds, so
+# symbolic results share their numeral nodes with numeric computation.
+#
+# TERMS are ordinary graph structure:
+#   - symbolic atoms: named nodes with declared sorts
+#       x ~ symvar        (variables)
+#       c ~ symconst      (opaque base constants)
+#   - binary operators: the SAME predicates as the numeric modules
+#     (+, *, /) -- a symbolic (x + y) and a numeric (&2 + &3) are
+#     knowledge about the same + node
+#   - unary application: (F of U) with the function symbol F as a
+#     first-class node; properties of function symbols are ordinary
+#     facts (inverseof below), consumed by ONE generic meta-rule --
+#     arbitrary undeclared function symbols work out of the box and
+#     simply have no rewrites
+#   - numerals: cons lists from the arithmetic module, opaque leaves here
+#
+# GATING: nothing fires spontaneously. Work is seeded by the request
+# self-fact (T simplify T) -- the testprime idiom -- and recursion is
+# confined to marked terms (T needssimp T), the needscanon pattern.
+# Numeric facts are never touched. (Conversely, the numeric triggers DO
+# fire on symbolic +, *, / facts and create dead internal states such as
+# ((x add y) ci 0); these are harmless -- digit recursion cannot
+# decompose atoms -- and are the price of the shared predicates that
+# make constant folding (M3) possible.)
+#
+# TERMINATION/CONFLUENCE CONTRACT for rewrite authors: every rw
+# right-hand side must already be a normal form -- a leaf or a simp
+# result of a subterm of the reduced form. All rules below satisfy this;
+# hence one bottom-up pass suffices and simp is single-valued. Rules
+# violating the contract (e.g. distributivity) need an iterated design
+# and must NOT be added here casually.
+#
+# NEGATION: the single deferred rule (identity fallback) negates rw. Its
+# consequences can, via congruence, grow rw for OTHER terms -- but only
+# through the positive stratum, and the fallback for a term T is only
+# evaluable once (T red C) exists, which is created in the same positive
+# saturation that also derives T's rw (if any). The alternating
+# stratified schedule therefore evaluates every negation against the
+# complete relevant state; test_symbolic.cpp pins this with chains that
+# force multiple stratum alternations.
+#
+# DOMAIN CAVEAT: identities are FORMAL. exp inverseof ln (exp(ln u) = u)
+# assumes u > 0 over the reals; &0 / X ignores division by zero. Side
+# conditions are not tracked yet -- declare only directions you accept.
+
+# ---------------------------------------------------------------------------
+# Function-symbol properties: F inverseof G means F(G(u)) = u
+# ---------------------------------------------------------------------------
+exp inverseof ln
+ln inverseof exp
+
+# ---------------------------------------------------------------------------
+# Rule ST0 -- Trigger: (T simplify T) is the user-facing request
+# ---------------------------------------------------------------------------
+(T simplify T) => (T needssimp T)
+
+# ---------------------------------------------------------------------------
+# Rules SD -- Decompose: mark all subterms (closed operator set)
+# ---------------------------------------------------------------------------
+((U + V) needssimp (U + V)) => (U needssimp U)
+((U + V) needssimp (U + V)) => (V needssimp V)
+((U * V) needssimp (U * V)) => (U needssimp U)
+((U * V) needssimp (U * V)) => (V needssimp V)
+((U / V) needssimp (U / V)) => (U needssimp U)
+((U / V) needssimp (U / V)) => (V needssimp V)
+((F of U) needssimp (F of U)) => (U needssimp U)
+
+# ---------------------------------------------------------------------------
+# Rules SB -- Base cases: leaves are their own normal form. Undeclared
+# atoms get no simp at all -- partiality by absence: declare your sorts,
+# or the request stays silently unanswered (never wrongly answered).
+# ---------------------------------------------------------------------------
+(X needssimp X, X ~ symvar) => (X simp X)
+(X needssimp X, X ~ symconst) => (X simp X)
+((A cons R) needssimp (A cons R)) => ((A cons R) simp (A cons R))
+
+# ---------------------------------------------------------------------------
+# Rules SC -- Congruence: once the children are normal, build the
+# context-reduced form. fact() is hash-consed, so a term whose children
+# were already normal reduces to ITSELF (T red T) -- a self-fact.
+# ---------------------------------------------------------------------------
+((U + V) needssimp (U + V), U simp P, V simp Q) => ((U + V) red (P + Q))
+((U * V) needssimp (U * V), U simp P, V simp Q) => ((U * V) red (P * Q))
+((U / V) needssimp (U / V), U simp P, V simp Q) => ((U / V) red (P / Q))
+((F of U) needssimp (F of U), U simp P) => ((F of U) red (F of P))
+
+# ---------------------------------------------------------------------------
+# Rules SR -- Top-level rewrites on reduced forms. Commutativity is
+# deliberately NOT a rule (a monotonic engine never deletes; free
+# commutativity would double every term) -- both orientations are
+# spelled out instead. The rule set is conflict-free: whenever two rules
+# match one reduced form, they yield the same result node.
+# ---------------------------------------------------------------------------
+(T red (X + &0)) => (T rw X)
+(T red (&0 + X)) => (T rw X)
+(T red (X * &1)) => (T rw X)
+(T red (&1 * X)) => (T rw X)
+(T red (X * &0)) => (T rw &0)
+(T red (&0 * X)) => (T rw &0)
+(T red (X / &1)) => (T rw X)
+(T red (&0 / X)) => (T rw &0)
+
+# Generic inverse-pair rule -- one rule for ALL declared pairs. U is a
+# child of a reduced form and therefore already normal, so the RHS
+# satisfies the normal-form contract.
+(F inverseof G, T red (F of (G of U))) => (T rw U)
+
+# ---------------------------------------------------------------------------
+# Rule SN -- Knowledge folding (M3). If the graph knows an equational
+# result for the reduced form, adopt it as the rewrite. For numeral
+# operands this is constant folding without any dedicated machinery: the
+# red fact IS an ordinary +/*// fact, so the arithmetic module's triggers
+# fire on it and derive (C = R) in the same positive stratum -- entirely
+# before the deferred identity fallback is evaluated. The rule is
+# deliberately more general: ANY = fact about the reduced form is
+# consumed, computed or declared. Declared equations must respect the
+# normal-form contract on their right-hand side; conflicting declared
+# equations would break simp's single-valuedness.
+#
+# Confluence with the SR rules: on every overlap (e.g. red (&2 + &0),
+# matched by SR and computed numerically) both paths yield the SAME
+# node, because numeric results of canonical operands are canonical --
+# addition/multiplication by construction, division via canonnum.
+# Partiality composes: (&5 / &0) gets no = fact, no rw, and falls back
+# to itself as its own normal form.
+# ---------------------------------------------------------------------------
+(T red C, C = R) => (T rw R)
+
+# ---------------------------------------------------------------------------
+# Rules SS -- Connect simp: the rewrite result if one exists, otherwise
+# the reduced form itself. The fallback is the module's only negation.
+# ---------------------------------------------------------------------------
+(T red C, T rw S) => (T simp S)
+(T red C, ¬(T rw S)) => (T simp C)
+
+# ---------------------------------------------------------------------------
+# Rule SQ0 -- Connect: expose the result under =, testprime-style.
+# Repeatable query idiom: (T simplify T) = X
+# ---------------------------------------------------------------------------
+(T simplify T, T simp S) => ((T simplify T) = S)

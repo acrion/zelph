@@ -1,0 +1,13 @@
+# Validates "Symbolic Differentiation"
+.import arithmetic
+.import symbolic-core
+.import diff
+x ~ symvar
+c ~ symconst
+(x + c) diffby x
+((x + c) diffby x) = D
+((x + c) diffby x) = D
+(ln of x) diffby x
+((ln of x) diffby x) = D
+((ln of x) diffby x) = D
+

@@ -1,0 +1,8 @@
+# Validates "The Simplification Core"
+.import arithmetic
+.import symbolic-core
+x ~ symvar
+(x + &0) simplify (x + &0)
+((x + &0) simplify (x + &0)) = X
+((x + &0) simplify (x + &0)) = X
+

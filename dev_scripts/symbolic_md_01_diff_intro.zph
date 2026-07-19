@@ -1,0 +1,12 @@
+# Validates the intro example of mkdocs/docs/symbolic.md
+.import arithmetic
+.import symbolic-core
+.import diff
+.run
+%(pp "--- 01 ---")
+x ~ symvar
+(x * x) diffby x
+((x * x) diffby x) = D
+# repeated: first entry may answer via deduction, second via "Answer:"
+((x * x) diffby x) = D
+

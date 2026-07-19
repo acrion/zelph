@@ -65,7 +65,7 @@ EM_JS(int, zelph_try_js_output, (int channel, const char* text, int newline), {
     return 1;
 });
 // clang-format on
-//
+
 namespace
 {
     void output_bridge(const zelph::io::OutputEvent& e)
@@ -163,5 +163,16 @@ extern "C"
     {
         static const std::string version = zelph::console::Interactive::get_version();
         return version.c_str();
+    }
+
+    // Path of the most recently generated Mermaid HTML file in MEMFS, with
+    // take semantics (cleared on read; empty string = nothing new). The
+    // worker calls this after each command batch to feed the graph panel;
+    // file:// links are never printed in the wasm build.
+    EMSCRIPTEN_KEEPALIVE const char* zelph_take_graph_html_path()
+    {
+        static std::string path;
+        path = instance().take_last_graph_html();
+        return path.c_str();
     }
 }

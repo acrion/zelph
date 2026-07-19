@@ -1,0 +1,214 @@
+# Base-2 arithmetic from a SINGLE digit-level primitive: the NAND gate.
+#
+# This module is the discrete transposition of the "single sufficient
+# operator" idea (Odrzywolek 2026, arXiv:2603.21852: eml(x,y) =
+# exp(x) - ln(y) as the Sheffer stroke of continuous elementary
+# functions). eml itself cannot serve here -- its values are
+# transcendental/complex and have no finite cons-list representation --
+# but its Boolean ancestor can: NAND is the classic Sheffer stroke.
+# This script derives ALL digit knowledge of binary-arithmetic.zph
+# (full adder, full subtractor, AND-with-increment, digit comparison)
+# from ONE nand fact, via ordinary forward-chaining rules plus one
+# negation-as-failure completion rule. The recursion layer is untouched:
+# the shared common-arithmetic module runs on top, on identical facts.
+#
+# Digit-level table data in binary-arithmetic.zph: 52 facts.
+# Digit-level table data here: 1 gate fact (plus the digit alphabet).
+%
+(defn- half-decimal
+  "Halve a decimal digit string. Returns [quotient remainder-bit]."
+  [s]
+  (var carry 0)
+  (def buf @"")
+  (each c s
+    (def d (+ (* carry 10) (- c (chr "0"))))
+    (buffer/push-string buf (string (math/floor (/ d 2))))
+    (set carry (% d 2)))
+  (def q (string/triml (string buf) "0"))
+  [(if (= q "") "0" q) carry])
+
+(defn zelph/number
+  "Decimal literal -> LSB-first binary cons list. Pure string arithmetic,
+  so arbitrarily large literals work. Runs at the parsing/I-O layer, not
+  inside the reasoning engine."
+  [s]
+  (when (or (= s "")
+            (some (fn [c] (or (< c (chr "0")) (> c (chr "9")))) s))
+    (error (string "invalid decimal literal $" s)))
+  (if (= s "0")
+    (zelph/list-chars "0")
+    (do
+      (def bits @"")
+      (var cur s)
+      (while (not= cur "0")
+        (def [q r] (half-decimal cur))
+        (buffer/push-string bits (string r))
+        (set cur q))
+      # bits is LSB-first; zelph/list-chars expects printed (MSB-first)
+      # order and reverses internally, so reverse here.
+      (zelph/list-chars (string/reverse (string bits))))))
+
+# Register the binary digit alphabet (ascending order of value).
+(zelph/set-number-digits ["0" "1"])
+%
+
+# ---------------------------------------------------------------------------
+# Digit alphabet as facts (2 facts): quotient-digit candidates for the
+# division module -- and the quantification domain for every gate rule
+# below.
+# ---------------------------------------------------------------------------
+0 isdigit true
+1 isdigit true
+
+# ---------------------------------------------------------------------------
+# The single gate axiom (1 fact): the only NAND row whose output is 0.
+#
+# ORDER MATTERS: this fact and the isdigit alphabet must be asserted
+# BEFORE rule G0 below is defined. Stratification orders DERIVED facts,
+# not input (see logic.md, "Stratified Evaluation"): a negated pattern
+# that should be blocked by a base fact requires that base fact to be
+# present in the run that evaluates the negation. Defining G0 first
+# would let an intermediate auto-run derive ((1 nand 1) out 1), which
+# monotonicity could never retract.
+# ---------------------------------------------------------------------------
+(1 nand 1) out 0
+
+# ---------------------------------------------------------------------------
+# Rule G0 -- NAND completion via negation-as-failure: every digit pair
+# that is not the 0-row outputs 1. The rule is deferred to the negation
+# stratum; its consequences (out-1 facts) feed the positive gate rules,
+# and the strata alternate until quiescence. Sound in a single stratum:
+# no rule in this module or in common-arithmetic ever derives an "out 0"
+# fact, so the negated pattern's extension never grows.
+# ---------------------------------------------------------------------------
+(A isdigit true, B isdigit true, ¬((A nand B) out 0)) => ((A nand B) out 1)
+
+# ===========================================================================
+# Gate library -- NOT, AND, OR, XOR, MAJ, each composed from NAND alone.
+# Every rule quantifies over the digit alphabet and then performs grounded
+# lookups into the (tiny) nand table; the derived gates are themselves
+# ordinary lookup tables for the synthesis rules below.
+#
+# Schema note: the gate tables live on their own predicates (nand, xor,
+# and, or, maj/mj3 keyed by out), disjoint from both the arithmetic table
+# space (tci/tbi) and the recursion state space (ci/bi/mci) -- so they are
+# only ever reached through grounded lookups during computation.
+# ===========================================================================
+
+# NOT: neg(a) = nand(a, a)
+(A isdigit true,
+ (A nand A) out N)
+=> (A neg N)
+
+# AND: and(a, b) = neg(nand(a, b))
+(A isdigit true, B isdigit true,
+ (A nand B) out N,
+ (N nand N) out V)
+=> ((A and B) out V)
+
+# OR: or(a, b) = nand(neg(a), neg(b))   (De Morgan)
+(A isdigit true, B isdigit true,
+ A neg N,
+ B neg M,
+ (N nand M) out V)
+=> ((A or B) out V)
+
+# XOR: the classic 4-NAND construction
+(A isdigit true, B isdigit true,
+ (A nand B) out N,
+ (A nand N) out P,
+ (B nand N) out Q,
+ (P nand Q) out X)
+=> ((A xor B) out X)
+
+# MAJ (3-input majority): maj(a,b,c) = (a AND b) OR (a AND c) OR (b AND c).
+# One table serves both carry-out and borrow-out below.
+(A isdigit true, B isdigit true, C isdigit true,
+ (A and B) out P,
+ (A and C) out Q,
+ (B and C) out R,
+ (P or Q) out T,
+ (T or R) out M)
+=> (((A maj B) mj3 C) out M)
+
+# ===========================================================================
+# Digit-table synthesis -- derive EXACTLY the facts that
+# binary-arithmetic.zph states by hand, on the same predicates.
+# common-arithmetic sees no difference; only the provenance changes:
+# every table entry now carries a derivation that bottoms out in the
+# single NAND axiom.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Full adder (replaces the 16-fact d+ table):
+#   sum = a XOR b XOR c,   carry-out = maj(a, b, c)
+# ---------------------------------------------------------------------------
+(A isdigit true, B isdigit true, C isdigit true,
+ (A xor B) out X,
+ (X xor C) out S)
+=> (((A d+ B) tci C) sum S)
+
+(A isdigit true, B isdigit true, C isdigit true,
+ ((A maj B) mj3 C) out E)
+=> (((A d+ B) tci C) co E)
+
+# ---------------------------------------------------------------------------
+# Full subtractor (replaces the 16-fact d- table):
+#   diff = a XOR b XOR c -- the SAME XOR cascade as the sum --
+#   borrow-out = maj(NOT a, b, c): the same majority gate with the
+#   minuend digit inverted. Adder and subtractor differ in one neg.
+# ---------------------------------------------------------------------------
+(A isdigit true, B isdigit true, C isdigit true,
+ (A xor B) out X,
+ (X xor C) out D)
+=> (((A d- B) tbi C) diff D)
+
+(A isdigit true, B isdigit true, C isdigit true,
+ A neg N,
+ ((N maj B) mj3 C) out E)
+=> (((A d- B) tbi C) bo E)
+
+# ---------------------------------------------------------------------------
+# Digit multiplication (replaces the 16-fact dx table):
+#   p = a AND b, then a half adder on (p, c):
+#   pd = p XOR c,   mco = p AND c
+# ---------------------------------------------------------------------------
+(A isdigit true, B isdigit true, C isdigit true,
+ (A and B) out P,
+ (P xor C) out D)
+=> (((A dx B) tci C) pd D)
+
+(A isdigit true, B isdigit true, C isdigit true,
+ (A and B) out P,
+ (P and C) out E)
+=> (((A dx B) tci C) mco E)
+
+# ---------------------------------------------------------------------------
+# Digit comparison (replaces the 4-fact dcmp table):
+#   eq needs no gate at all -- digits are hash-consed nodes, so equality
+#   is node identity (the same variable binds the same node);
+#   gt = a AND NOT b,   lt = NOT a AND b
+# ---------------------------------------------------------------------------
+(A isdigit true) => ((A dcmp A) res eq)
+
+(A isdigit true, B isdigit true,
+ B neg N,
+ (A and N) out 1)
+=> ((A dcmp B) res gt)
+
+(A isdigit true, B isdigit true,
+ A neg N,
+ (N and B) out 1)
+=> ((A dcmp B) res lt)
+
+# ---------------------------------------------------------------------------
+# Structural base cases -- recursion endpoints, not digit knowledge:
+# identical to binary-arithmetic.zph.
+# ---------------------------------------------------------------------------
+((nil add nil) ci 0) sum nil
+((nil add nil) ci 1) sum <1>
+
+# Subtraction base case: only borrow-in 0 (bi 1 deliberately absent)
+((nil sub nil) bi 0) diff nil
+
+.import common-arithmetic

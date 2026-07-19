@@ -33,7 +33,7 @@ if(NOT CMAKE_TOOLCHAIN_FILE AND NOT CMAKE_C_COMPILER AND NOT CMAKE_CXX_COMPILER)
     endif()
 endif()
 
-project(zelph VERSION 0.9.9 LANGUAGES C CXX)
+project(zelph VERSION 1.0.0 LANGUAGES C CXX)
 set(ZELPH_VERSION_SUFFIX "-dev" CACHE STRING "Version suffix appended to the reported project version")
 
 include(GNUInstallDirs)

@@ -294,11 +294,10 @@ TEST_CASE("number display: registered digits render lists as decimal &-literals"
 // Comparison via rules (stdlib scripts, base-agnostic)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: comparison via rules (decimal)")
+TEST_CASE("numbers: comparison via rules (all arithmetic modules)")
 {
-    run_both_modes([](auto& collector, const auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         SUBCASE("123 > 45 (longer canonical number wins)")
         {
@@ -336,11 +335,10 @@ TEST_CASE("numbers: comparison via rules (decimal)")
 // Subtraction via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: subtraction via rules (decimal)")
+TEST_CASE("numbers: subtraction via rules (all arithmetic modules)")
 {
-    run_both_modes([](auto& collector, const auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         SUBCASE("123456 - 54321 = 69135")
         {
@@ -413,9 +411,8 @@ TEST_CASE("numbers: computed comparison facts compose with meta-rules")
 {
     // Comparison results are relational facts (N > M), so they feed the same
     // meta-rules as declared knowledge -- here the generic transitivity rule.
-    run_both_modes([](const auto& collector, const auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
         process_lines(interactive, R"(
 (R is transitive, A R B, B R C) => (A R C)
 > is transitive
@@ -433,9 +430,8 @@ TEST_CASE("numbers: derived results trigger further rule-based computations")
     // triggers: computations cascade across rule modules. This is exactly the
     // pattern multiplication will rely on (partial products feeding
     // additions), pinned down here as a regression test.
-    run_both_modes([](const auto& collector, const auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
         process_lines(interactive, R"(
 ((N - M) = T) => (T cmp M)
 &10 - &3
@@ -450,9 +446,8 @@ TEST_CASE("numbers: derived results trigger further rule-based computations")
 
 TEST_CASE("numbers: result query (A + B) = X is repeatable")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         // First entry: parsing the query materializes the inner (+) fact as
         // a side effect; the query itself is evaluated BEFORE auto-run and
@@ -475,9 +470,8 @@ TEST_CASE("numbers: result query (A + B) = X is repeatable")
 
 TEST_CASE("numbers: result query (A cmp B) = X is repeatable (rule CC0)")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         collector.clear();
         interactive.process("(&42 cmp &9) = X");
@@ -493,11 +487,10 @@ TEST_CASE("numbers: result query (A cmp B) = X is repeatable (rule CC0)")
 // Multiplication via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: multiplication via rules (decimal)")
+TEST_CASE("numbers: multiplication via rules (all arithmetic modules)")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         SUBCASE("12 * 34 = 408 (pins the *-as-atom parse and the full pipeline)")
         {
@@ -535,33 +528,10 @@ TEST_CASE("numbers: multiplication via rules (decimal)")
         } });
 }
 
-TEST_CASE("numbers: multiplication via rules (binary, identical rules)")
-{
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import binary-arithmetic");
-
-        SUBCASE("12 * 34 = 408")
-        {
-            collector.clear();
-            interactive.process("&12 * &34");
-            interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((&12 * &34) = &408)"));
-        }
-        SUBCASE("5 * 5 = 25")
-        {
-            collector.clear();
-            interactive.process("&5 * &5");
-            interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((&5 * &5) = &25)"));
-        } });
-}
-
 TEST_CASE("numbers: result query (A * B) = X is repeatable")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         collector.clear();
         interactive.process("(&6 * &7) = X");
@@ -581,9 +551,8 @@ TEST_CASE("numbers: multiplication cascades into comparison")
 {
     // Three modules chained: mul internally drives add (MA1/MA2), a user
     // rule consumes the = result and asserts a cmp trigger.
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
         process_lines(interactive, R"(
 ((N * M) = T) => (T cmp N)
 &6 * &7
@@ -596,11 +565,10 @@ TEST_CASE("numbers: multiplication cascades into comparison")
 // Division via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: division via rules (decimal)")
+TEST_CASE("numbers: division via rules (all arithmetic modules)")
 {
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import arithmetic");
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
 
         SUBCASE("408 / 12 = 34 (exact division, inverse of the multiplication test)")
         {
@@ -646,39 +614,6 @@ TEST_CASE("numbers: division via rules (decimal)")
             CHECK(any_output_contains(collector, "((&7 mod &7) = &0)"));
         }
         SUBCASE("5 / 0 yields no result (partiality by absence, no dedicated rule)")
-        {
-            collector.clear();
-            interactive.process("&5 / &0");
-            interactive.run(true, false, false);
-            CHECK_FALSE(any_output_contains(collector, "(&5 / &0) ="));
-        } });
-}
-
-TEST_CASE("numbers: division via rules (binary, identical rules)")
-{
-    run_both_modes([](auto& collector, auto& interactive)
-                   {
-        interactive.process(".import binary-arithmetic");
-
-        SUBCASE("408 / 12 = 34 remainder 0")
-        {
-            collector.clear();
-            interactive.process("(&408 / &12) = X");
-            interactive.process("(&408 mod &12) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&408 / &12) = &34)"));
-            CHECK(any_output_contains(collector, "((&408 mod &12) = &0)"));
-        }
-        SUBCASE("5 / 3 = 1 remainder 2")
-        {
-            collector.clear();
-            interactive.process("(&5 / &3) = X");
-            interactive.process("(&5 mod &3) = X");
-            interactive.run(true, false, false);
-            CHECK(any_output_contains(collector, "((&5 / &3) = &1)"));
-            CHECK(any_output_contains(collector, "((&5 mod &3) = &2)"));
-        }
-        SUBCASE("5 / 0 yields no result")
         {
             collector.clear();
             interactive.process("&5 / &0");
