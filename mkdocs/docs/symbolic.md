@@ -23,7 +23,7 @@ zelph> .import diff
 zelph> x ~ symvar
 zelph> (x * x) diffby x
 zelph> ((x * x) diffby x) = D
-Answer: (( x * x ) diffby x ) = ( x + x )
+Answer: ((x * x) diffby x) = (x + x)
 ```
 
 The derivative was not computed by a differentiation routine; it was _derived_,
@@ -68,18 +68,20 @@ Partiality by absence — silence, never a wrong answer.
 
 ## The Simplification Core
 
-The user-facing idiom mirrors `testprime`: a self-fact seeds the work, a
-query retrieves the result repeatably.
+The user-facing idiom mirrors `testprime`: a request self-fact seeds the work
+— entered with the [self-fact prefix `:`](index.md#the-self-fact-prefix) — and
+a query retrieves the result repeatably.
 
 ```
-zelph> (x + &0) simplify (x + &0)
-zelph> ((x + &0) simplify (x + &0)) = X
-Answer: (( x + &0 ) simplify ( x + &0 )) = x
+zelph> :simplify (x + &0)
+zelph> (:simplify (x + &0)) = X
+Answer: (:simplify (x + &0)) = x
 ```
 
 Internally the module follows the arithmetic architecture, with one new stage:
 
-1. **Trigger** — `(T simplify T)` marks the term (`needssimp`, the
+1. **Trigger** — the request self-fact `(T simplify T)`, entered as
+   `:simplify T`, marks the term (`needssimp`, the
    [`needscanon`](arithmetic.md) pattern generalized to terms).
 2. **Decompose** — markers propagate to all subterms.
 3. **Base cases** — declared atoms and numerals are their own normal forms.
@@ -133,9 +135,9 @@ it automatically, derive its `=` result, and one bridge rule adopts it:
 ```
 
 ```
-zelph> ((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))
-zelph> (((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X
-Answer: ((...) simplify (...)) = &50
+zelph> :simplify ((&2 + &3) * (&4 + &6))
+zelph> (:simplify ((&2 + &3) * (&4 + &6))) = X
+Answer: (:simplify ((&2 + &3) * (&4 + &6))) = &50
 ```
 
 The inner sums fold to `&5` and `&10`; congruence then materializes the fresh
@@ -182,7 +184,7 @@ and both collapse to the same `&0` through the simplifier, keeping the
 exposed result single-valued.
 
 That pipeline is the module's connect stage: the raw derivative is not the
-exposed result. It is pushed through an ordinary `(D simplify D)` request —
+exposed result. It is pushed through an ordinary `:simplify D` request —
 another cross-module cascade — so `d(x + c)/dx` answers `&1` (not
 `&1 + &0`), and `d(x + x)/dx` answers `&2` (the raw `&1 + &1` folded through
 the numeric module):
@@ -190,9 +192,9 @@ the numeric module):
 ```
 zelph> (x + c) diffby x
 zelph> ((x + c) diffby x) = D
-Answer: (( x + c ) diffby x ) = &1
+Answer: ((x + c) diffby x) = &1
 zelph> ((ln of x) diffby x) = D
-Answer: (( ln of x ) diffby x ) = (&1 / x )
+Answer: ((ln of x) diffby x) = (&1 / x)
 ```
 
 ## Case Study: The EML Sheffer Operator
@@ -219,9 +221,9 @@ eliminate `eml` in favor of named functions. The flagship is Eq. (5),
 ```
 zelph> .import eml
 zelph> x ~ symvar
-zelph> (&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))
-zelph> ((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X
-Answer: (...) = ( ln of x )
+zelph> :simplify (&1 eml ((&1 eml x) eml &1))
+zelph> (:simplify (&1 eml ((&1 eml x) eml &1))) = X
+Answer: (:simplify (&1 eml ((&1 eml x) eml &1))) = (ln of x)
 ```
 
 The identity is not checked numerically and not assumed: it is _derived_, as
@@ -242,15 +244,15 @@ request, so `e = eml(1, 1)` reduces in two requests: `(&1 eml &1)` answers
 single-valued throughout; one-shot deep normalization is the future
 iterated/e-graph design.
 
-**The compiler.** The expansion direction, `(T emlcompile T)`, builds
-pure-EML forms bottom-up under the same architecture and answers the
-repeatable query `((T emlcompile T) = F)`. Compile-and-reduce round trips
-close for `exp` and `ln`:
+**The compiler.** The expansion direction, `:emlcompile T`, builds pure-EML
+forms bottom-up under the same architecture and answers the repeatable query
+`(:emlcompile T) = F`. Compile-and-reduce round trips close for `exp` and
+`ln`:
 
 ```
-zelph> (ln of x) emlcompile (ln of x)
-zelph> ((ln of x) emlcompile (ln of x)) = F
-Answer: (( ln of x ) emlcompile ( ln of x )) = (&1 eml ((&1 eml x ) eml &1))
+zelph> :emlcompile (ln of x)
+zelph> (:emlcompile (ln of x)) = F
+Answer: (:emlcompile (ln of x)) = (&1 eml ((&1 eml x) eml &1))
 ```
 
 Coverage is deliberately strict — `exp`, `ln`, `eml` itself, and leaves;

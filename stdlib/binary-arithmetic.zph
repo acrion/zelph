@@ -66,6 +66,19 @@
 # node_to_string then displays these cons lists as decimal &-literals,
 # inverting the &-input conversion above. Display only.
 (zelph/set-number-digits ["0" "1"])
+
+# Exclude the module's term-forming operators from the self-fact display
+# sugar: facts like (&1 + &1), (nil add nil) or (1 d+ 1) are self-facts
+# only because all terms are hash-consed -- coincidences of value, not
+# request markers -- and must render verbose. Registered up front so even
+# load-time echoes of table facts display verbose. The operators *, < and
+# > need no registration: they contain parser-reserved characters, which
+# excludes them from the sugar structurally. The canonicalization markers
+# (needscanon, canon, canonnum) stay unregistered on purpose: (T canon T)
+# genuinely states "T is its own canonical form", and :canon T reads
+# exactly that way.
+(zelph/no-selffact-sugar "+" "-" "/" "mod" "cmp" "==" "add" "sub" "lcmp"
+                         "mul" "dmul" "dvd" "d+" "d-" "dx" "dcmp")
 %
 
 # ---------------------------------------------------------------------------

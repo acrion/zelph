@@ -90,14 +90,14 @@ export const DEMO_GROUPS = [
         id: "2.2",
         label: "Test a prime",
         requires: ["2.1"],
-        command: "(&53 testprime &53) = X",
+        command: "(:testprime &53) = X",
         info: `Runs the full primality test for 53. Watch the cascade: division inside multiplication inside subtraction inside comparison &mdash; and at the end, a plain relational fact: 53 is prime.`,
       },
       {
         id: "2.3",
         label: "Test a composite",
         requires: ["2.1"],
-        command: "(&42 testprime &42) = X",
+        command: "(:testprime &42) = X",
         info: `Tests 42. Note: the verdict may appear a little further up in the output, among the derivation trace, rather than at the very end. Press the button again and the answer appears immediately &mdash; zelph remembers everything it ever derived (unless you sandbox work in clusters: <a href="https://acrion.github.io/zelph/#node-clusters-transactional-workspaces" target="_blank">node clusters</a>).`,
       },
       {
@@ -112,14 +112,14 @@ export const DEMO_GROUPS = [
         id: "2.5",
         label: "List primes",
         requires: ["2.4"],
-        command: "(X testprime X) = prime",
+        command: "(:testprime X) = prime",
         info: `All numbers the scan proved prime &mdash; as a plain query against derived facts.`,
       },
       {
         id: "2.6",
         label: "List composites",
         requires: ["2.4"],
-        command: "(X testprime X) = composite",
+        command: "(:testprime X) = composite",
         info: `All numbers the scan disproved. Note that 0 and 1 appear in neither list: they receive no verdict at all &mdash; partiality by absence, the same principle that makes division by zero simply derive nothing.`,
       },
       {
@@ -164,14 +164,14 @@ export const DEMO_GROUPS = [
       {
         id: "2.13",
         label: "Consistency rule",
-        command: "(N isprime N, N hasdivisor D) => !",
+        command: "(:isprime N, N hasdivisor D) => !",
         info: `A constraint rule: a number that is prime and has a divisor is a contradiction (consequence <code>!</code>). On the current data it stays silent &mdash; the derived facts are consistent. This is the exact mechanism behind zelph's Wikidata work, where such rules flag thousands of inconsistencies in a 100-million-fact import.`,
       },
       {
         id: "2.14",
         label: "Provoke a contradiction",
         requires: ["2.4", "2.13"],
-        command: ".cluster demo\n&9 isprime &9\n.cluster-drop demo",
+        command: ".cluster demo\n:isprime &9\n.cluster-drop demo",
         info: `Asserts a falsehood. The constraint rule fires, the contradictory fact is detected. To prevent that this contradiction is shown after each future step, we activate a cluster for this demo fact and drop it afterwards (alternatively, it is also possible to use <code>.prune-facts X isprime X</code>). Detection rather than prevention is the design: it is what makes auditing huge, inconsistent real-world datasets feasible.`,
       },
     ],
@@ -245,7 +245,7 @@ export const DEMO_GROUPS = [
         label: "Neural rule conditions",
         requires: ["4.2"],
         command:
-          "(A testprime A, A hasdivisor X, ≈divnet(A hasdivisor X)) => (A verifiedDivisor X)\n(A testprime A, ≈divnet(A hasdivisor X), ¬(A hasdivisor X)) => (A candidateDivisor X)",
+          "(:testprime A, A hasdivisor X, ≈divnet(A hasdivisor X)) => (A verifiedDivisor X)\n(:testprime A, ≈divnet(A hasdivisor X), ¬(A hasdivisor X)) => (A candidateDivisor X)",
         info: `Two rules consult the net via the ≈ operator. The guard rule re-verifies known divisor facts (numbers whose probability mass splits between two divisors clear the threshold for only one of them). The generator rule lets the net propose divisors where the scan found none &mdash; note the interplay of ≈ and negation. Spoiler: with identity-based inputs, the net has learned the dataset's prior &mdash; "an unknown number is probably even" &mdash; and suspects every prime of being divisible by 2. Its guess for the number 2 itself is accidentally correct. Each deduced fact carries the net's confidence as its fact probability.`,
       },
       {
@@ -298,7 +298,7 @@ export const DEMO_GROUPS = [
         label: "Constant folding for free",
         requires: ["5.4"],
         command:
-          "((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))\n(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X",
+          ":simplify ((&2 + &3) * (&4 + &6))\n(:simplify ((&2 + &3) * (&4 + &6))) = X",
         info: `The simplifier has no folding code. Its reduced forms are ordinary arithmetic facts, so the arithmetic module computes their <code>=</code> results, and one bridge rule <code>(T red C, C = R) =&gt; (T rw R)</code> adopts them. Watch <code>(&5 * &10)</code> being materialized and computed mid-simplification &mdash; and on this substrate, even the folded 50 traces back to the NAND axiom.`,
       },
       {
@@ -306,7 +306,7 @@ export const DEMO_GROUPS = [
         label: "Declared knowledge simplifies",
         requires: ["5.4"],
         command:
-          "a ~ symconst\nb ~ symconst\nc ~ symconst\n(a + b) = c\n(a + b) simplify (a + b)\n((a + b) simplify (a + b)) = X",
+          "a ~ symconst\nb ~ symconst\nc ~ symconst\n(a + b) = c\n:simplify (a + b)\n(:simplify (a + b)) = X",
         info: `The same bridge rule consumes <em>declared</em> equations: stating <code>(a + b) = c</code> over opaque constants makes simplification answer <code>c</code>. An equation imported from a knowledge graph drives rewriting exactly like a computed one &mdash; computation and knowledge share one fact space.`,
       },
       {
@@ -336,7 +336,7 @@ export const DEMO_GROUPS = [
         label: "Derive Eq. (5)",
         requires: ["5.9"],
         command:
-          "x ~ symvar\n(&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))\n((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X",
+          "x ~ symvar\n:simplify (&1 eml ((&1 eml x) eml &1))\n(:simplify (&1 eml ((&1 eml x) eml &1))) = X",
         info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier. The engine derives <code>(ln of x)</code> as a chain of ordinary deductions &mdash; across two strata of the negation schedule &mdash; with the full provenance attached. The identity is not checked numerically and not assumed: it is derived.`,
       },
     ],

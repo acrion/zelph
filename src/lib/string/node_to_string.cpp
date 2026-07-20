@@ -572,6 +572,55 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         }
     }
 
+    // Self-fact display sugar: a fact whose subject and object are the same
+    // node renders as ":pred subject" -- the display inverse of the ":pred X"
+    // input sugar. Restricted to predicate names for which the sugar form
+    // ROUND-TRIPS through the parser: only PEG symchars (no whitespace, no
+    // reserved structure characters such as '*', '<', '>', ',', quotes, or
+    // '¬'), and not shaped like a variable (":A x" would re-parse with
+    // variable semantics). Everything else -- including hash-consed numeric
+    // self-facts on '*' such as (&9 * &9) -- keeps the verbose "S P S" form.
+    bool        self_fact_sugar = false;
+    std::string self_fact_pred;
+    if (subject != 0 && objects.size() == 1
+        && resolve_var(*objects.begin()) == resolve_var(subject))
+    {
+        const auto sugar_safe_name = [](const std::string& name) -> bool
+        {
+            if (name.empty() || string::is_var(name)) return false;
+            for (const char ch : name)
+            {
+                const unsigned char c = static_cast<unsigned char>(ch);
+                if (c <= ' ') return false; // whitespace and ASCII control characters
+                switch (c)
+                {
+                case '<':
+                case '>':
+                case '(':
+                case ')':
+                case '{':
+                case '}':
+                case '*':
+                case ',':
+                case '"':
+                    return false; // PEG-reserved structure characters
+                default:
+                    break;
+                }
+                if (c == 0xC2) return false; // UTF-8 lead byte of U+00AC ('¬'), U+00AB/U+00BB ('«'/'»')
+            }
+            return true;
+        };
+
+        const network::Node rel_node = resolve_var(z->parse_relation(resolved));
+        const std::string   rel_name = z->get_formatted_name(rel_node, lang);
+        if (sugar_safe_name(rel_name) && !z->selffact_sugar_suppressed(rel_node))
+        {
+            self_fact_sugar = true;
+            self_fact_pred  = rel_name;
+        }
+    }
+
     auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
     child_history->insert(resolved);
 
@@ -636,7 +685,11 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
     std::string objects_name;
 
-    if (objects.size() > max_objects)
+    if (self_fact_sugar)
+    {
+        // The object equals the subject; the sugar form renders it only once.
+    }
+    else if (objects.size() > max_objects)
     {
         objects_name = string::mark_identifier("(... " + std::to_string(objects.size()) + " objects ...)");
     }
@@ -672,7 +725,10 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     }
 
     // The components (subject_name, relation_name, objects_name) are already marked.
-    result = subject_name + " " + relation_name + " " + objects_name;
+    if (self_fact_sugar)
+        result = string::mark_identifier(":" + self_fact_pred) + " " + subject_name;
+    else
+        result = subject_name + " " + relation_name + " " + objects_name;
 
     if (is_negation)
     {

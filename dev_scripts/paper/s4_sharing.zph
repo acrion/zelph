@@ -1,0 +1,21 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s4_sharing.zph
+# Hash-consing: EML trees are canonical DAGs. Two independently built,
+# structurally identical trees are ONE node, and the compiled (ln of x)
+# is literally that node -- shared verbatim inside every compiled tree
+# containing ln x. (If "identical-node" prints false, report back: then
+# Janet's = does not compare node identity and the probe needs rework.)
+.import arithmetic
+.import symbolic-core
+.import eml
+x ~ symvar
+y ~ symvar
+%(defn ex [t] (zelph/fact t "eml" (zelph/number "1")))
+%(defn lg [t] (zelph/fact (zelph/number "1") "eml" (ex (zelph/fact (zelph/number "1") "eml" t))))
+%(def a (lg "x"))
+%(def b (zelph/fact (zelph/number "1") "eml" (zelph/fact (zelph/fact (zelph/number "1") "eml" "x") "eml" (zelph/number "1"))))
+%(print (string "identical-node: " (= a b)))
+(ln of x) emlcompile (ln of x)
+(x * y) emlcompile (x * y)
+(x / y) emlcompile (x / y)
+%(let [t (zelph/fact "ln" "of" "x")] (print (string "compiled-ln-shared: " (zelph/exists (zelph/fact t "emlcompile" t) "=" (lg "x")))))

@@ -167,8 +167,8 @@ query idiom:
 ```
 .import arithmetic            # or: .import binary-arithmetic
 .import primes                # or: .import primes-naf
-(&113 testprime &113) = X
-Answer: (&113 testprime &113) = prime
+(:testprime &113) = X
+Answer: (:testprime &113) = prime
 ```
 
 Both perform trial division with the square bound (candidates stop once

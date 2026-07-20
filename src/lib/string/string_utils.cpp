@@ -107,7 +107,53 @@ namespace zelph::string
     // Remove all guillemets (« and ») that were added by above function mark_identifier
     std::string unmark_identifiers(const std::string& str)
     {
-        return string::replace_all_copy(replace_all_copy(str, "«", " "), "»", " ");
+        // Identifiers are marked with « » (guillemets). Previously these markers
+        // were simply stripped. Now, if the marked substring contains a space, the
+        // markers are replaced with double quotes instead of being removed.
+        static const std::string open  = "«"; // U+00AB, 2 bytes in UTF-8
+        static const std::string close = "»"; // U+00BB, 2 bytes in UTF-8
+
+        std::string result;
+        result.reserve(str.size());
+
+        std::size_t pos = 0;
+        while (pos < str.size())
+        {
+            const std::size_t open_pos = str.find(open, pos);
+            if (open_pos == std::string::npos)
+            {
+                result.append(str, pos, std::string::npos);
+                break;
+            }
+
+            // Copy everything before the opening marker unchanged.
+            result.append(str, pos, open_pos - pos);
+
+            const std::size_t content_start = open_pos + open.size();
+            const std::size_t close_pos     = str.find(close, content_start);
+            if (close_pos == std::string::npos)
+            {
+                // Unbalanced opening marker: strip it, keep the rest (previous behavior).
+                result.append(str, content_start, std::string::npos);
+                break;
+            }
+
+            const std::string content = str.substr(content_start, close_pos - content_start);
+            if (content.find(' ') != std::string::npos)
+            {
+                result += '"';
+                result += content;
+                result += '"';
+            }
+            else
+            {
+                result += content;
+            }
+
+            pos = close_pos + close.size();
+        }
+
+        return result;
     }
 
     std::string sanitize_filename(const std::string& name)

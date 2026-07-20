@@ -130,7 +130,7 @@ Predicates are completely generic: symbolic predicates such as `..`, `-->`, or `
 
 ### Nested Expressions and Sets
 
-zelph supports advanced grouping and recursion using parentheses `()`, braces `{}`, and angle brackets `<>`.
+zelph supports advanced grouping and recursion using parentheses `()`, braces `{}`, and angle brackets `<>`, plus a shorthand prefix `:` for [self-facts](#the-self-fact-prefix).
 
 #### Parentheses: Nested Facts
 
@@ -297,6 +297,71 @@ Answer:   tim    ~   male
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
 
 Querying `tim _predicate _object` (where leading underscores indicate variables, equivalent to using single uppercase letters) confirms that both facts are in the graph.
+
+#### The Self-Fact Prefix `:`
+
+Several standard-library modules use **self-facts** — facts whose subject and
+object are the same node — as request markers: `(N testprime N)` triggers the
+primality test, `(T simplify T)` a simplification. Because writing the term
+twice is noisy (and error-prone for large terms), zelph provides a prefix
+shorthand:
+
+```
+:pred X
+```
+
+is pure syntax sugar for
+
+```
+X pred X
+```
+
+The desugaring happens at parser level, so the shorthand works at any nesting
+level: as a rule condition or consequence, inside conjunctions, and in the
+repeatable query idiom. The operand is evaluated exactly once and used as both
+subject and object, so both sides are guaranteed to be the _same_ node — even
+when the operand has side effects (a focus `*`, nested fact creation).
+
+> The term _self-fact_ is zelph's own: graph-theoretically a loop, relationally
+> a point on the diagonal of the predicate — the classic way to encode unary
+> predicates over a binary-relation substrate. For the logic-side perspective,
+> and for why zelph does not assign operators a fixed arity instead, see
+> [Unary Predicates and Self-Facts](logic.md#unary-predicates-and-self-facts).
+
+```
+zelph> .import arithmetic
+zelph> .import primes
+zelph> :testprime &13
+zelph> (:testprime &13) = X
+Answer: (:testprime &13) = prime
+zelph> (:isprime N, N hasdivisor D) => !
+```
+
+A lone `:pred` on a line is an incomplete statement; the operand may follow on
+the next line, so multi-line input works as usual. A variable token as
+predicate keeps variable semantics: the rule pattern `(:R X)` matches any
+self-fact, whatever its predicate.
+
+**Display.** The formatter uses the same shorthand in the other direction:
+any fact whose subject and object coincide is printed as `:pred subject`.
+Because all terms are hash-consed, this includes facts that merely _happen_ to
+be self-facts, such as `(&1 + &1)` — printed `:+ &1`. A manual expansion of
+such output back to the verbose `S P S` form parses to the identical node.
+The sugar form is only used where it round-trips through the parser: the
+predicate needs a single-token name free of reserved characters (`*`, `<`,
+`>`, `,`, quotes, `¬`) that is not shaped like a variable. Facts such as
+`(&9 * &9)` or `x "is opposite of" x` therefore keep the verbose form.
+
+Modules can additionally exclude predicates from the display sugar via
+[`zelph/no-selffact-sugar`](janet.md#redefinable-hooks): the arithmetic and EML modules register their
+term-forming operators, so a hash-consed coincidence like `(&1 + &1)` or
+`(&1 eml &1)` prints verbose, while request markers (`:testprime`,
+`:simplify`) keep the compact form. The registration only affects display;
+`:+ &1` remains valid input.
+
+The colon is **not** a reserved character: atoms with an _inner_ colon (URLs,
+`wd:Q5`-style names) are unaffected; only a leading colon in value position
+triggers the sugar.
 
 ## Creating a node graph
 
@@ -483,7 +548,9 @@ This semantics is used by zelph in several contexts, such as rule unification. I
 zelph also supports **self-referential facts**, where subject and object are the same
 node (e.g., `A cons A`). These arise rarely in practice — Wikidata contains a small
 number of such entries, for example `South Africa (Q258) country (P17) South Africa
-(Q258)`. Internally, the object connection is omitted because the subject is already
+(Q258)`. On input and output, such facts are covered by the
+[self-fact prefix `:`](#the-self-fact-prefix): the Wikidata example prints as
+`:P17 Q258`. Internally, the object connection is omitted because the subject is already
 connected to the fact-node bidirectionally, which serves as the implicit object
 connection. Detection is unambiguous: a fact-node whose left-neighbor set contains
 only the subject node (no additional unidirectional incoming connection) is

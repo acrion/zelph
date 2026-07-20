@@ -392,6 +392,19 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
   inverse of `zelph/number`. All other cons lists keep the generic `<...>`
   display. An empty array disables the feature.
 
+- **`(zelph/no-selffact-sugar preds...)`**  
+  Exclude predicates from the self-fact display sugar. A fact whose subject
+  and object are the same node normally prints in the compact prefix form
+  `:pred subject` (see [The Self-Fact Prefix `:`](index.md#the-self-fact-prefix)).
+  For term-forming operators this contraction is undesirable: `(&1 + &1)` is
+  a self-fact only because all terms are hash-consed, and should print
+  verbose. Registered predicates always render as `S P S`. The registration
+  is **additive** across calls, so stacked modules can each register their
+  own operators; it affects display only — `:+ &1` remains valid _input_ —
+  and is session state like the digit alphabet (cleared by `.reset`, not
+  persisted). The arithmetic modules register their operators (`+`, `-`,
+  `d+`, ...), `stdlib/eml.zph` registers `eml`.
+
 ### Referencing Janet Variables in zelph: Unquote `,`
 
 The `,` (comma) operator bridges the two languages in the opposite direction: it allows zelph statements to reference values defined in Janet. Prefix any Janet variable name with `,` inside zelph syntax:

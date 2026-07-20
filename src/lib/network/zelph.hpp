@@ -173,6 +173,15 @@ namespace zelph::network
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
 
+        // Display control for self-fact sugar (":pred X"): predicates
+        // registered here always render in the verbose "S P S" form.
+        // Script-defined, like the digit alphabet: C++ makes no assumptions
+        // about which predicates are term-forming operators -- the module
+        // that defines an operator declares its display. Input sugar is
+        // unaffected. Session state (cleared by .reset, not persisted).
+        void add_verbose_selffact_predicates(const std::vector<Node>& preds);
+        bool selffact_sugar_suppressed(Node pred) const;
+
         // --- Fact-creation observer (semi-naive evaluation) ---
         // Invoked from fact() exactly when a NEW fact node is materialized
         // (never for pre-existing facts). Reasoning::run uses it to capture
@@ -257,6 +266,8 @@ namespace zelph::network
         bool                                                      _use_parallel{true};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
+        std::unordered_set<Node>                                  _verbose_selffact_preds;
+        mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
         FactCreationObserver                                      _on_fact_created;
     };
 }

@@ -1,0 +1,19 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s2_roundtrips.zph
+# Compile/reduce round trips for exp and ln in one session.
+.import arithmetic
+.import symbolic-core
+.import eml
+x ~ symvar
+(exp of x) emlcompile (exp of x)
+((exp of x) emlcompile (exp of x)) = F
+((exp of x) emlcompile (exp of x)) = F
+(x eml &1) simplify (x eml &1)
+((x eml &1) simplify (x eml &1)) = X
+((x eml &1) simplify (x eml &1)) = X
+(ln of x) emlcompile (ln of x)
+((ln of x) emlcompile (ln of x)) = F
+((ln of x) emlcompile (ln of x)) = F
+(&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))
+((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X
+((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X

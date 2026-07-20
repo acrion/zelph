@@ -243,6 +243,13 @@ public:
                                                                                                                    "node_to_string then displays every nil-terminated cons list consisting solely of these digit "
                                                                                                                    "nodes as a decimal &-literal -- the inverse of the &-input syntax (zelph/number). All other "
                                                                                                                    "cons lists keep the generic <...> display. An empty array disables the feature.");
+
+        janet_def(_janet_env, "zelph/no-selffact-sugar", wrap((JanetCFunction)janet_cfun_zelph_no_selffact_sugar), "(zelph/no-selffact-sugar preds...)\nExclude predicates from the self-fact display sugar: facts (X pred X) "
+                                                                                                                   "with a registered predicate always render verbose as \"X pred X\", never as \":pred X\". "
+                                                                                                                   "Additive across calls, so stacked modules can each register their own operators. "
+                                                                                                                   "Input sugar (\":pred X\") keeps working regardless. Intended for term-forming "
+                                                                                                                   "operators (+, eml, nand, ...), where subject == object is a hash-consing "
+                                                                                                                   "coincidence rather than a request marker.");
     }
 
     void setup_module_paths() const
@@ -303,6 +310,7 @@ public:
         // 6. :quoted -> "..."
         // 7. :focused -> *Element (Returns the element instead of the container)
         // 8. :unquote -> ,identifier (Reference to a Janet variable)
+        // 9. :selffact -> :pred X (self-fact sugar: desugars to (X pred X))
         // Returns tagged tuples like [:atom "val"], [:list-compact "val"] or [:nested sub-stmt...] for C++ processing
         std::string peg_setup = R"zph(
             (def zelph-grammar
@@ -351,6 +359,15 @@ public:
                 # (& as prefix is a nod to BBC BASIC / Amstrad CPC number literals.)
                 :tag-number (group (* (constant :number) "&" (capture (some :symchars))))
 
+                # Self-fact sugar: :pred X. Syntax only -- desugars to the
+                # self-fact (X pred X), the stdlib marker idiom (:simplify T
+                # for (T simplify T)). ':' stays an ordinary symchar
+                # elsewhere, so atoms with inner colons (URLs, wd:Q5) are
+                # unaffected; only a LEADING colon on a value position
+                # triggers the sugar. The predicate is a single plain token;
+                # a variable token (e.g. :R) keeps variable semantics.
+                :tag-selffact (group (* (constant :selffact) ":" (capture (some :symchars)) :s* :val-any))
+
                 # Atom Definition Order:
                 # 1. Quoted (always safe)
                 # 2. Multi-char arrows (e.g. "=>"). Must be before raw-atom because "=" is a symchar.
@@ -398,7 +415,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-selffact :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -1109,6 +1126,31 @@ public:
         return janet_wrap_nil(); // unreachable
     }
 
+    // Register predicates whose self-facts must render verbose. Additive
+    // (unlike the replace-the-set semantics of zelph/set-number-digits):
+    // arithmetic, symbolic-core and eml load incrementally, and a later
+    // module must not clobber an earlier module's registrations.
+    static Janet janet_cfun_zelph_no_selffact_sugar(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/no-selffact-sugar", argc, argv, true);
+
+        std::vector<network::Node> preds;
+        preds.reserve(static_cast<size_t>(argc));
+        for (int32_t i = 0; i < argc; ++i)
+        {
+            // Creating the node is intentional: modules register their
+            // operators up front, possibly before any fact mentions them.
+            network::Node p = s_instance->resolve_janet_arg(argv[i]);
+            if (!p) janet_panicf("zelph/no-selffact-sugar: argument %d could not be resolved", i);
+            preds.push_back(p);
+        }
+
+        s_instance->_n->add_verbose_selffact_predicates(preds);
+        return janet_wrap_nil();
+    }
+
     // Extract the car (first element / subject) of a cons cell.
     // Returns nil if the argument is nil or not a valid cons cell.
     static Janet janet_cfun_zelph_car(int32_t argc, Janet* argv)
@@ -1695,6 +1737,11 @@ public:
         else if (type == "nested")
         {
             // [:nested val1 val2 ...]
+            // A single value in parentheses is plain grouping, not a fact.
+            // Required for self-fact sugar in nested positions, e.g. a rule
+            // consequence (:isprime N) or a subject ((:simplify T) = S).
+            if (len == 2) return transform_arg(data[1]);
+
             std::vector<Janet> args;
             for (int32_t i = 1; i < len; ++i)
                 args.push_back(data[i]);
@@ -1771,6 +1818,33 @@ public:
                 net = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
             return "(zelph/approx " + transform_arg(data[2])
                  + " \"" + string::replace_all_copy(net, "\"", "\\\"") + "\")";
+        }
+        else if (type == "selffact")
+        {
+            // [:selffact pred-token value]
+            // Desugars ":pred X" to the self-fact (X pred X). The operand is
+            // evaluated exactly once and used as both subject and object, so
+            // side effects (focus, fact creation) happen once and both sides
+            // are guaranteed to be the same node. A variable token as
+            // predicate (e.g. :R) keeps variable semantics, matching
+            // ordinary fact parsing.
+            if (len < 3) return "nil";
+
+            std::string pred;
+            if (janet_checktype(data[1], JANET_STRING))
+                pred = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
+            else if (janet_checktype(data[1], JANET_BUFFER))
+            {
+                JanetBuffer* b = janet_unwrap_buffer(data[1]);
+                pred           = std::string(reinterpret_cast<const char*>(b->data), b->count);
+            }
+            if (pred.empty()) return "nil";
+
+            const std::string pred_code = string::is_var(pred)
+                                            ? "'" + pred
+                                            : "\"" + string::replace_all_copy(pred, "\"", "\\\"") + "\"";
+
+            return "(let [$sf " + transform_arg(data[2]) + "] (zelph/fact $sf " + pred_code + " $sf))";
         }
         else if (type == "list-nodes")
         {
@@ -2404,16 +2478,21 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     if (top_tokens == 0) return false;
     if (top_tokens <= 2)
     {
-        if (top_tokens == 1)
+        size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
+        if (first_char_idx != std::string::npos)
         {
-            size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
-            if (first_char_idx != std::string::npos)
+            char c = code[first_char_idx];
+            if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || c == '\xC2'))
             {
-                char c = code[first_char_idx];
-                if (c == '{' || c == '<' || c == '*' || c == '\xC2')
-                {
-                    return true;
-                }
+                return true;
+            }
+            // Self-fact sugar ":pred X" is a complete statement of exactly
+            // two top-level tokens (the operand doubles as subject and
+            // object). A lone ":pred" keeps accumulating, so the operand
+            // may follow on the next line.
+            if (top_tokens == 2 && c == ':')
+            {
+                return true;
             }
         }
         return false;

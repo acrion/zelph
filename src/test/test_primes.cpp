@@ -68,7 +68,12 @@ TEST_CASE("primes: trial-division primality via rules (all arithmetic modules)")
             interactive.run(true, false, false);
             CHECK(any_output_contains(collector, "((&9 testprime &9) = composite"));
             CHECK(any_output_contains(collector, "&9 hasdivisor &3"));
-            CHECK_FALSE(any_output_contains(collector, "&9 isprime"));
+            
+            // Full triple, not the "&9 isprime" fragment: the fact renders in
+            // self-fact sugar (":isprime &9"), which the equivalence layer in
+            // test_helpers only derives from a complete S P S pattern -- a
+            // bare fragment would silently lose its guarding effect.
+            CHECK_FALSE(any_output_contains(collector, "&9 isprime &9"));
         }
         SUBCASE("15 is composite; the search halts at the smallest divisor")
         {

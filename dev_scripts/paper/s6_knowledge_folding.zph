@@ -1,0 +1,19 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s6_knowledge_folding.zph
+# Computed folding (cascaded), declared folding, and composed partiality.
+.import arithmetic
+.import symbolic-core
+x ~ symvar
+((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))
+(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X
+(((&2 + &3) * (&4 + &6)) simplify ((&2 + &3) * (&4 + &6))) = X
+a ~ symconst
+b ~ symconst
+c ~ symconst
+(a + b) = c
+(a + b) simplify (a + b)
+((a + b) simplify (a + b)) = X
+((a + b) simplify (a + b)) = X
+(&5 / &0) simplify (&5 / &0)
+((&5 / &0) simplify (&5 / &0)) = X
+((&5 / &0) simplify (&5 / &0)) = X

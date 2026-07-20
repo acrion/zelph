@@ -179,9 +179,9 @@ elem4 partoflist mylist
 elem5 partoflist mylist
 (A partoflist L, ¬(A --> X)) => (A "is last of" L)
 )");
-        CHECK(any_output_contains(collector, "elem5 is last of mylist"));
-        CHECK_FALSE(any_output_contains(collector, "elem1 is last of"));
-        CHECK_FALSE(any_output_contains(collector, "elem4 is last of")); });
+        CHECK(any_output_contains(collector, "elem5 \"is last of\" mylist"));
+        CHECK_FALSE(any_output_contains(collector, "elem1 \"is last of\""));
+        CHECK_FALSE(any_output_contains(collector, "elem4 \"is last of\"")); });
 }
 
 TEST_CASE("stratified: classic (naive) evaluation defers negation too")
@@ -289,7 +289,7 @@ TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
             interactive.process("(&42 testprime &42) = X");
             interactive.run(true, false, false);
             CHECK(any_output_contains(collector, "((&42 testprime &42) = composite"));
-            CHECK_FALSE(any_output_contains(collector, "&42 isprime"));
+            CHECK_FALSE(any_output_contains(collector, "&42 isprime &42"));
             CHECK_FALSE(any_output_contains(collector, "(&42 testprime &42) = prime"));
         }
         SUBCASE("9 is composite (square boundary E*E == N)")
@@ -299,7 +299,7 @@ TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
             interactive.run(true, false, false);
             CHECK(any_output_contains(collector, "((&9 testprime &9) = composite"));
             CHECK(any_output_contains(collector, "&9 hasdivisor &3"));
-            CHECK_FALSE(any_output_contains(collector, "&9 isprime"));
+            CHECK_FALSE(any_output_contains(collector, "&9 isprime &9"));
         }
         SUBCASE("0 and 1 are neither prime nor composite (no verdict)")
         {

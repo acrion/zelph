@@ -1,0 +1,5 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s0_environment.zph
+# Reproducibility header: embedded component versions. Record manually in
+# addition: zelph version/commit, OS, compiler, CPU/RAM of the machine.
+.licenses

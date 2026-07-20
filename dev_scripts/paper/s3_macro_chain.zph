@@ -1,0 +1,21 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s3_macro_chain.zph
+# Macro-chain compilation (-,+,*,/) and the Table-S2 witness recovery:
+# simplifying the compiled x - y tree yields eml(ln x, exp y).
+.import arithmetic
+.import symbolic-core
+.import eml
+x ~ symvar
+y ~ symvar
+(x - y) emlcompile (x - y)
+((x - y) emlcompile (x - y)) = F
+((x - y) emlcompile (x - y)) = F
+(x + y) emlcompile (x + y)
+((x + y) emlcompile (x + y)) = F
+(x * y) emlcompile (x * y)
+((x * y) emlcompile (x * y)) = F
+(x / y) emlcompile (x / y)
+((x / y) emlcompile (x / y)) = F
+((&1 eml ((&1 eml x) eml &1)) eml (y eml &1)) simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))
+(((&1 eml ((&1 eml x) eml &1)) eml (y eml &1)) simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) = X
+(((&1 eml ((&1 eml x) eml &1)) eml (y eml &1)) simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) = X

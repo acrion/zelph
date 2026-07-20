@@ -51,6 +51,11 @@
 # Identities are FORMAL (principal-branch and domain caveats as in
 # symbolic-core.zph).
 
+# Exclude the eml operator from the self-fact display sugar: facts
+# like (&1 eml &1) are self-facts only because all terms are hash-consed
+# -- coincidences of value, not request markers -- and must render verbose.
+%(zelph/no-selffact-sugar "eml")
+
 # ---------------------------------------------------------------------------
 # The constant e (paper bootstrap step 1: e = eml(1, 1))
 # ---------------------------------------------------------------------------

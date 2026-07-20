@@ -91,7 +91,7 @@ TEST_CASE("parsing: spaced sequence")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "seq_spaced is_defined_as < seqItem1 seqItem2 seqItem3 >");
-        CHECK(any_output_contains(collector, "< seqItem1 seqItem2 seqItem3 >")); });
+        CHECK(any_output_contains(collector, "<seqItem1 seqItem2 seqItem3>")); });
 }
 
 TEST_CASE("parsing: quoted sequence is reversed")
@@ -111,8 +111,8 @@ TEST_CASE("parsing: nested sequence in set")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "nested_seq_in_set holds { <setElem1 setElem2> <setElem3 setElem4> }");
-        CHECK(any_output_contains(collector, "< setElem1 setElem2 >"));
-        CHECK(any_output_contains(collector, "< setElem3 setElem4 >")); });
+        CHECK(any_output_contains(collector, "<setElem1 setElem2>"));
+        CHECK(any_output_contains(collector, "<setElem3 setElem4>")); });
 }
 
 TEST_CASE("parsing: mixed container")
@@ -241,7 +241,7 @@ elem4 partoflist mylist
 elem5 partoflist mylist
 (A partoflist L, *(A --> X) ~ negation) => (A "is last of" L)
 )");
-        CHECK(any_output_starts_with(collector, "( elem5 is last of mylist )")); });
+        CHECK(any_output_starts_with(collector, "( elem5 \"is last of\" mylist )")); });
 }
 
 TEST_CASE("negation: syntax sugar with not-green rule")
@@ -256,7 +256,7 @@ plant2 is yellow
 )");
         // plant is both yellow and green, so rule does not fire for plant.
         // plant2 is yellow but not green, so the rule fires.
-        CHECK(any_output_starts_with(collector, "( plant2 is not green )")); });
+        CHECK(any_output_starts_with(collector, "( plant2 \"is not\" green )")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ Germany "is located in" Europe
 (zelph/fact cond "=>" (zelph/fact 'X "is located in" 'Z)))
 %
 )");
-        CHECK(any_output_starts_with(collector, "( Berlin is located in Europe )")); });
+        CHECK(any_output_starts_with(collector, "( Berlin \"is located in\" Europe )")); });
 }
 
 TEST_CASE("janet: unquote referencing janet variable")
@@ -602,7 +602,7 @@ TEST_CASE("meta-rule: opposite relation generates inverse")
 "has part" "is opposite of" "is part of"
 chimpanzee "has part" hand
 )");
-        CHECK(any_output_starts_with(collector, "( hand is part of chimpanzee )")); });
+        CHECK(any_output_starts_with(collector, "( hand \"is part of\" chimpanzee )")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +634,7 @@ TEST_CASE("deep unification: function composition as graph transformation")
 f maps <item1 item2>
 g maps <item2 item3>
 )");
-        CHECK(any_output_starts_with(collector, "(( g compose f ) maps < item1 item3 >)")); });
+        CHECK(any_output_starts_with(collector, "((g compose f) maps <item1 item3>)")); });
 }
 
 // ---------------------------------------------------------------------------

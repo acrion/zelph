@@ -609,6 +609,28 @@ std::shared_ptr<const std::unordered_map<Node, uint32_t>> Zelph::number_digit_va
     return _number_digits;
 }
 
+// Register predicates whose self-facts must always render in the verbose
+// "S P S" form instead of the ":pred S" display sugar. Deliberately
+// ADDITIVE across calls (unlike the replace-the-set semantics of
+// set_number_digits): modules stack (arithmetic -> symbolic-core -> eml),
+// and a later module must not clobber an earlier module's registrations.
+// Display-only session state, cleared by .reset and not persisted --
+// like the digit alphabet, the graph topology is unaffected.
+void Zelph::add_verbose_selffact_predicates(const std::vector<Node>& preds)
+{
+    std::unique_lock lock(_smtx_verbose_selffact_preds);
+    _verbose_selffact_preds.insert(preds.begin(), preds.end());
+}
+
+// True if self-facts on this predicate must not use the ":pred S" display
+// sugar. Queried by node_to_string for every self-fact candidate; the
+// shared lock keeps concurrent formatting cheap.
+bool Zelph::selffact_sugar_suppressed(const Node pred) const
+{
+    std::shared_lock lock(_smtx_verbose_selffact_preds);
+    return _verbose_selffact_preds.contains(pred);
+}
+
 void Zelph::set_fact_creation_observer(FactCreationObserver observer)
 {
     _on_fact_created = std::move(observer);

@@ -510,6 +510,43 @@ As in Datalog, disjunction is expressed through **multiple rules with the same c
 
 This is equivalent to `(bird(A) ∨ bat(A)) → can_fly(A)`.
 
+### Unary Predicates and Self-Facts
+
+zelph facts are subject–predicate–object triples; there is no dedicated
+arity-1 fact form. A unary predicate P(x) is therefore expressed as a
+**self-fact** — a fact whose subject and object are the same node:
+
+```
+x P x
+```
+
+The term is zelph's own coinage; in graph-theoretic terms a self-fact is a
+loop at `x`, in relational terms it places `x` on the _diagonal_ of the
+binary relation `P` — asserting P(x) via x P x is the classic encoding of
+unary predicates in a formalism whose primitive is a binary relation. The
+standard library uses self-facts as _request markers_: `(N testprime N)`
+triggers the primality test, `(T simplify T)` a simplification. The
+[self-fact prefix `:`](index.md#the-self-fact-prefix) makes both directions
+convenient — `:testprime N` on input, and the same compact form on output.
+
+A natural question, especially from a mathematical perspective: why not
+assign every operator a fixed **arity** — `simplify` unary, `+` binary — so
+that `simplify(T)` is primitive and no marker encoding is needed? The
+answer is the first-class-predicate design discussed
+[above](#prolog-and-datalog): a predicate in zelph is an ordinary node
+without a signature. The node `+` is not exclusively an operator. The fact
+`(&2 + &3)` is itself a node that appears as the _subject_ of the result
+fact `((&2 + &3) = &5)`; meta-rules quantify over predicates (`R is
+transitive`); and facts may carry several objects, so even "binary" is not
+structurally fixed. A schema layer assigning arities would have to
+constrain exactly the flexibility that makes
+[meta-rules](#meta-rules-predicates-as-first-class-nodes) expressible.
+Consequently, whether a predicate acts as a term-forming operator or as a
+marker is knowledge of the _module_ that defines it, not of the engine —
+which is why the corresponding display decision is a script-level
+declaration ([`zelph/no-selffact-sugar`](janet.md), the same philosophy as
+`zelph/number`), not a built-in rule.
+
 ## Semantic Math: Computation as Graph Rewriting
 
 <a href="#" onclick="jumpTo(984); return false;">🎬 Watch this section</a>
