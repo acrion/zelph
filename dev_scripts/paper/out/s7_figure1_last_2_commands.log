@@ -1,0 +1,91 @@
+:simplify (&1 eml ((&1 eml x) eml &1))
+Starting reasoning with 24 worker threads.
+--- Reasoning iteration 1 (classic, positive stratum) ---
+(:needssimp (&1 eml ((&1 eml x) eml &1))) ⇐ (:simplify (&1 eml ((&1 eml x) eml &1)))
+(:needssimp ((&1 eml x) eml &1)) ⇐ (:needssimp (&1 eml ((&1 eml x) eml &1)))
+--- Reasoning iteration 2 (semi-naive, delta=2) ---
+(:needssimp &1) ⇐ (:needssimp (&1 eml ((&1 eml x) eml &1)))
+(:needssimp (&1 eml x)) ⇐ (:needssimp ((&1 eml x) eml &1))
+--- Reasoning iteration 3 (semi-naive, delta=2) ---
+(:simp &1) ⇐ (:needssimp &1)
+(:needssimp x) ⇐ (:needssimp (&1 eml x))
+--- Reasoning iteration 4 (semi-naive, delta=2) ---
+(:simp x) ⇐ {(x ~ symvar) (:needssimp x)}
+--- Reasoning iteration 5 (semi-naive, delta=1) ---
+(:red (&1 eml x)) ⇐ {(:simp x) (:simp &1) (:needssimp (&1 eml x))}
+--- Reasoning iteration 6 (semi-naive, delta=1) ---
+--- Deferred stratum (negation, classic pass) ---
+(:simp (&1 eml x)) ⇐ {(¬((&1 eml x) rw S)) (:red (&1 eml x))}
+--- Reasoning iteration 7 (semi-naive, delta=1) ---
+(:red ((&1 eml x) eml &1)) ⇐ {(:simp &1) (:simp (&1 eml x)) (:needssimp ((&1 eml x) eml &1))}
+--- Reasoning iteration 8 (semi-naive, delta=1) ---
+(((&1 eml x) eml &1) rw (exp of (&1 eml x))) ⇐ (((&1 eml x) eml &1) red ((&1 eml x) eml &1))
+--- Reasoning iteration 9 (semi-naive, delta=2) ---
+(((&1 eml x) eml &1) simp (exp of (&1 eml x))) ⇐ {(((&1 eml x) eml &1) rw (exp of (&1 eml x))) (:red ((&1 eml x) eml &1))}
+--- Reasoning iteration 10 (semi-naive, delta=1) ---
+((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x)))) ⇐ {(((&1 eml x) eml &1) simp (exp of (&1 eml x))) (:simp &1) (:needssimp (&1 eml ((&1 eml x) eml &1)))}
+--- Reasoning iteration 11 (semi-naive, delta=2) ---
+((&1 eml ((&1 eml x) eml &1)) rw (ln of x)) ⇐ ((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x))))
+((&1 eml ((&1 eml x) eml &1)) simp (ln of x)) ⇐ {((&1 eml ((&1 eml x) eml &1)) rw (ln of x)) ((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x))))}
+--- Reasoning iteration 12 (semi-naive, delta=3) ---
+((:simplify (&1 eml ((&1 eml x) eml &1))) = (ln of x)) ⇐ {((&1 eml ((&1 eml x) eml &1)) simp (ln of x)) (:simplify (&1 eml ((&1 eml x) eml &1)))}
+--- Reasoning iteration 13 (semi-naive, delta=1) ---
+--- Deferred stratum (negation, classic pass) ---
+Reasoning complete. Total unification matches processed: 174. Total contradictions found: 0.
+Reasoning summary: 174 matches processed, 0 contradictions found.
+Parallel unifications activated for 0 distinct fixed relations.
+Reasoning complete in 0h0m0.016s – 174 matches processed, 0 contradictions found.
+Ready.
+:emlcompile (x - y)
+Starting reasoning with 24 worker threads.
+--- Reasoning iteration 1 (classic, positive stratum) ---
+(:needseml (x - y)) ⇐ (:emlcompile (x - y))
+((x sub y) bi 0) ⇐ (x - y)
+(:needseml y) ⇐ (:needseml (x - y))
+(:needseml x) ⇐ (:needseml (x - y))
+--- Reasoning iteration 2 (semi-naive, delta=5) ---
+(:emlform y) ⇐ {(y ~ symvar) (:needseml y)}
+(:emlform x) ⇐ {(x ~ symvar) (:needseml x)}
+--- Reasoning iteration 3 (semi-naive, delta=2) ---
+((x - y) emlform ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) ⇐ {(:emlform y) (:needseml (x - y)) (:emlform x)}
+--- Reasoning iteration 4 (semi-naive, delta=3) ---
+((:emlcompile (x - y)) = ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) ⇐ {((x - y) emlform ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) (:emlcompile (x - y))}
+--- Reasoning iteration 5 (semi-naive, delta=1) ---
+--- Deferred stratum (negation, classic pass) ---
+Reasoning complete. Total unification matches processed: 235. Total contradictions found: 0.
+Reasoning summary: 235 matches processed, 0 contradictions found.
+Parallel unifications activated for 0 distinct fixed relations.
+Reasoning complete in 0h0m0.012s – 235 matches processed, 0 contradictions found.
+Ready.
+Node ID: 6621324152381525746
+  Variable: no
+  (No names in any language)
+  Mermaid HTML: file:///tmp/(«_emlcompile» («x» «-» «y»)) «=» ((&1 «eml» ((&1 «eml» «x») «eml» &1)) «eml» («y» «eml» &1)).html
+  Incoming connections from:
+    - (&1 eml ((&1 eml x) eml &1)) eml (y eml &1) (ID 5043279919388784649)
+    - :emlcompile (x - y) (ID 8722030765425277146)
+  Outgoing connections to:
+    - = (ID 60)
+    - :emlcompile (x - y) (ID 8722030765425277146)
+  Representation: (:emlcompile (x - y)) = ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))
+------------------------
+-- 112 ms --
+zelph> .mermaid 5043279919388784649
+  Mermaid HTML: file:///tmp/(&1 «eml» ((&1 «eml» «x») «eml» &1)) «eml» («y» «eml» &1).html
+zelph> .node 7509203402285477608
+Resolved to node ID: 7509203402285477608
+Node ID: 7509203402285477608
+  Variable: no
+  (No names in any language)
+  Mermaid HTML: file:///tmp/&1 «eml» ((&1 «eml» P) «eml» &1).html
+  Incoming connections from:
+    - (&1 eml P) eml &1 (ID 5520071259182690596)
+    - &1 (ID 7429918472110206907)
+    - (&1 eml ((&1 eml P) eml &1)) eml (Q eml &1) (ID 8457443710156839620)
+  Outgoing connections to:
+    - eml (ID 138)
+    - &1 (ID 7429918472110206907)
+    - (&1 eml ((&1 eml P) eml &1)) eml (Q eml &1) (ID 8457443710156839620)
+  Representation: &1 eml ((&1 eml P) eml &1)
+------------------------
+zelph>

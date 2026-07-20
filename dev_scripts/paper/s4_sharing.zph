@@ -15,7 +15,8 @@ y ~ symvar
 %(def a (lg "x"))
 %(def b (zelph/fact (zelph/number "1") "eml" (zelph/fact (zelph/fact (zelph/number "1") "eml" "x") "eml" (zelph/number "1"))))
 %(print (string "identical-node: " (= a b)))
-(ln of x) emlcompile (ln of x)
-(x * y) emlcompile (x * y)
-(x / y) emlcompile (x / y)
+:emlcompile (ln of x)
+:emlcompile (x * y)
+:emlcompile (x / y)
+.run
 %(let [t (zelph/fact "ln" "of" "x")] (print (string "compiled-ln-shared: " (zelph/exists (zelph/fact t "emlcompile" t) "=" (lg "x")))))

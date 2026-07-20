@@ -1,0 +1,197 @@
+zelph on  develop [$!+?] via △ v4.4.0
+❯ zelph
+zelph 1.0.0-dev
+-- REPL mode - type .help for commands, .quit to exit --
+
+zelph> .import arithmetic
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/arithmetic.zph...
+<zelph/node ((«nil» «add» «nil») «ci» «1») «sum» &1>
+<zelph/node ((«nil» «sub» «nil») «bi» «0») «diff» «nil»>
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/common-arithmetic.zph...
+(N + M) => ((N add M) ci 0)
+{(((A d+ B) tci C) co E) (((A cons R) add (B cons S)) ci C)} => ((R add S) ci E)
+{(((A d+ 0) tci C) co E) (((A cons R) add nil) ci C)} => ((R add nil) ci E)
+{((nil add (B cons S)) ci C) (((0 d+ B) tci C) co E)} => ((nil add S) ci E)
+{(((R add S) ci E) sum T) (((A cons R) add (B cons S)) ci C) (((A d+ B) tci C) co E) (((A d+ B) tci C) sum D)} => ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+{(((A d+ 0) tci C) sum D) (((A d+ 0) tci C) co E) (((R add nil) ci E) sum T) (((A cons R) add nil) ci C)} => ((((A cons R) add nil) ci C) sum (D cons T))
+{(((nil add S) ci E) sum T) (((0 d+ B) tci C) co E) (((0 d+ B) tci C) sum D) ((nil add (B cons S)) ci C)} => (((nil add (B cons S)) ci C) sum (D cons T))
+{(((N add M) ci 0) sum T) (N + M)} => ((N + M) = T)
+(nil lcmp nil) res eq
+(N cmp M) => (N lcmp M)
+((A cons R) lcmp (B cons S)) => (R lcmp S)
+((A cons R) lcmp nil) => (R lcmp nil)
+(nil lcmp (B cons S)) => (nil lcmp S)
+{((A dcmp B) res X) ((A cons R) lcmp (B cons S)) ((R lcmp S) res eq)} => (((A cons R) lcmp (B cons S)) res X)
+{(X != eq) ((A cons R) lcmp (B cons S)) ((R lcmp S) res X)} => (((A cons R) lcmp (B cons S)) res X)
+{((A dcmp 0) res X) ((A cons R) lcmp nil) ((R lcmp nil) res eq)} => (((A cons R) lcmp nil) res X)
+{(X != eq) ((A cons R) lcmp nil) ((R lcmp nil) res X)} => (((A cons R) lcmp nil) res X)
+{((0 dcmp B) res X) ((nil lcmp S) res eq) (nil lcmp (B cons S))} => ((nil lcmp (B cons S)) res X)
+{((nil lcmp S) res X) (X != eq) (nil lcmp (B cons S))} => ((nil lcmp (B cons S)) res X)
+{(N cmp M) ((N lcmp M) res lt)} => (N < M)
+{((N lcmp M) res gt) (N cmp M)} => (N > M)
+{(N cmp M) ((N lcmp M) res eq)} => (N == M)
+{(N cmp M) ((N lcmp M) res X)} => ((N cmp M) = X)
+(N - M) => ((N sub M) bi 0)
+{(((A d- B) tbi C) bo E) (((A cons R) sub (B cons S)) bi C)} => ((R sub S) bi E)
+{(((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E)} => ((R sub nil) bi E)
+{(((0 d- B) tbi C) bo E) ((nil sub (B cons S)) bi C)} => ((nil sub S) bi E)
+{(((A d- B) tbi C) bo E) (((A cons R) sub (B cons S)) bi C) (((A d- B) tbi C) diff D) (((R sub S) bi E) diff T)} => ((((A cons R) sub (B cons S)) bi C) diff (D cons T))
+{(((A d- 0) tbi C) diff D) (((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E) (((R sub nil) bi E) diff T)} => ((((A cons R) sub nil) bi C) diff (D cons T))
+{((nil sub (B cons S)) bi C) (((0 d- B) tbi C) bo E) (((0 d- B) tbi C) diff D) (((nil sub S) bi E) diff T)} => (((nil sub (B cons S)) bi C) diff (D cons T))
+{(((N sub M) bi 0) diff T) (N - M) (T canonnum S)} => ((N - M) = S)
+(N * M) => (N mul M)
+{((A cons R) mul M) (R != nil)} => (R mul M)
+((A cons R) mul M) => ((A dmul M) mci 0)
+{((A dmul (B cons S)) mci C) (((A dx B) tci C) mco E)} => ((A dmul S) mci E)
+((A dmul nil) mci 0) => (((A dmul nil) mci 0) pprod nil)
+{((A dmul nil) mci C) (C != 0)} => (((A dmul nil) mci C) pprod <C>)
+{(((A dx B) tci C) pd D) (((A dx B) tci C) mco E) (((A dmul S) mci E) pprod T) ((A dmul (B cons S)) mci C)} => (((A dmul (B cons S)) mci C) pprod (D cons T))
+{(((A dmul M) mci 0) pprod P) (<A> mul M)} => ((<A> mul M) prod P)
+{(R != nil) (((A dmul M) mci 0) pprod P) ((R mul M) prod Q) ((A cons R) mul M)} => (P + (0 cons Q))
+{((R mul M) prod Q) ((P + (0 cons Q)) = T) (R != nil) (((A dmul M) mci 0) pprod P) ((A cons R) mul M)} => (((A cons R) mul M) prod T)
+{(N * M) ((N mul M) prod T)} => ((N * M) = T)
+(N / M) => (N dvd M)
+(N mod M) => (N dvd M)
+{(N / M) (Q isdigit true)} => ((Q dmul M) mci 0)
+{(N mod M) (Q isdigit true)} => ((Q dmul M) mci 0)
+{((A cons R) dvd M) (R != nil)} => (R dvd M)
+{(((Q dmul M) mci 0) pprod P) ((A cons R) dvd M) (R != nil) ((R dvd M) rem S)} => ((A cons S) - P)
+{(((Q dmul M) mci 0) pprod P) (<A> dvd M)} => (<A> - P)
+{((T - P) = D) (((Q dmul M) mci 0) pprod P)} => (D cmp M)
+{(((Q dmul M) mci 0) pprod P) (D < M) ((A cons R) dvd M) ((R dvd M) quot T) (R != nil) (((A cons S) - P) = D) ((R dvd M) rem S)} => (((A cons R) dvd M) quot (Q cons T))
+{(((A cons S) - P) = D) ((R dvd M) rem S) (R != nil) (D < M) (((Q dmul M) mci 0) pprod P) ((A cons R) dvd M)} => (((A cons R) dvd M) rem D)
+{(((Q dmul M) mci 0) pprod P) (D < M) ((<A> - P) = D) (<A> dvd M)} => ((<A> dvd M) quot <Q>)
+{(D < M) (<A> dvd M) ((<A> - P) = D) (((Q dmul M) mci 0) pprod P)} => ((<A> dvd M) rem D)
+{((N dvd M) quot Q) (N / M) (Q canonnum S)} => ((N / M) = S)
+{(R canonnum S) ((N dvd M) rem R) (N mod M)} => ((N mod M) = S)
+(((N sub M) bi 0) diff T) => (:needscanon T)
+((N dvd M) quot T) => (:needscanon T)
+((N dvd M) rem T) => (:needscanon T)
+{(:needscanon (A cons R)) (R != nil)} => (:needscanon R)
+{(A != 0) (:needscanon <A>)} => (:canon <A>)
+(:needscanon &0) => (&0 canon nil)
+{(R != nil) (A != 0) (:needscanon (A cons R)) (R canon S)} => ((A cons R) canon (A cons S))
+{(R != nil) (:needscanon (0 cons R)) (S != nil) (R canon S)} => ((0 cons R) canon (0 cons S))
+{(:needscanon (0 cons R)) (R != nil) (R canon nil)} => ((0 cons R) canon nil)
+{(S != nil) (:needscanon T) (T canon S)} => (T canonnum S)
+{(:needscanon T) (T canon nil)} => (T canonnum &0)
+(:needscanon nil) ⇐ (((nil sub nil) bi 0) diff nil)
+(:canonnum &0) ⇐ {(:needscanon &0) (&0 canon nil)}
+-- 39 ms --
+zelph> .import symbolic-core
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/symbolic-core.zph...
+exp inverseof ln
+ln inverseof exp
+(:simplify T) => (:needssimp T)
+(:needssimp (U + V)) => (:needssimp U)
+(:needssimp (U + V)) => (:needssimp V)
+(:needssimp (U * V)) => (:needssimp U)
+(:needssimp (U * V)) => (:needssimp V)
+(:needssimp (U / V)) => (:needssimp U)
+(:needssimp (U / V)) => (:needssimp V)
+(:needssimp (F of U)) => (:needssimp U)
+{(X ~ symvar) (:needssimp X)} => (:simp X)
+{(X ~ symconst) (:needssimp X)} => (:simp X)
+(:needssimp (A cons R)) => (:simp (A cons R))
+{(U simp P) (V simp Q) (:needssimp (U + V))} => ((U + V) red (P + Q))
+{(:needssimp (U * V)) (V simp Q) (U simp P)} => ((U * V) red (P * Q))
+{(V simp Q) (:needssimp (U / V)) (U simp P)} => ((U / V) red (P / Q))
+{(:needssimp (F of U)) (U simp P)} => ((F of U) red (F of P))
+(T red (X + &0)) => (T rw X)
+(T red (&0 + X)) => (T rw X)
+(T red (X * &1)) => (T rw X)
+(T red (&1 * X)) => (T rw X)
+(T red (X * &0)) => (T rw &0)
+(T red (&0 * X)) => (T rw &0)
+(T red (X / &1)) => (T rw X)
+(T red (&0 / X)) => (T rw &0)
+{(T red (F of (G of U))) (F inverseof G)} => (T rw U)
+{(T red C) (C = R)} => (T rw R)
+{(T rw S) (T red C)} => (T simp S)
+{(¬(T rw S)) (T red C)} => (T simp C)
+{(T simp S) (:simplify T)} => ((:simplify T) = S)
+-- 41 ms --
+zelph> .import eml
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/eml.zph...
+e ~ symconst
+(:needssimp (U eml V)) => (:needssimp U)
+(:needssimp (U eml V)) => (:needssimp V)
+{(V simp Q) (U simp P) (:needssimp (U eml V))} => ((U eml V) red (P eml Q))
+(T red (X eml &1)) => (T rw (exp of X))
+(T red (&1 eml (exp of (&1 eml X)))) => (T rw (ln of X))
+(T red (exp of &1)) => (T rw e)
+(:emlcompile T) => (:needseml T)
+(:needseml (F of U)) => (:needseml U)
+(:needseml (U eml V)) => (:needseml U)
+(:needseml (U eml V)) => (:needseml V)
+{(X ~ symvar) (:needseml X)} => (:emlform X)
+{(:needseml X) (X ~ symconst)} => (:emlform X)
+(:needseml (A cons R)) => (:emlform (A cons R))
+{(:needseml (exp of U)) (U emlform P)} => ((exp of U) emlform (P eml &1))
+{(U emlform P) (:needseml (ln of U))} => ((ln of U) emlform (&1 eml ((&1 eml P) eml &1)))
+{(U emlform P) (V emlform Q) (:needseml (U eml V))} => ((U eml V) emlform (P eml Q))
+(:needseml (U - V)) => (:needseml U)
+(:needseml (U - V)) => (:needseml V)
+{(V emlform Q) (:needseml (U - V)) (U emlform P)} => ((U - V) emlform ((&1 eml ((&1 eml P) eml &1)) eml (Q eml &1)))
+(:needseml (neg of V)) => (:needseml ((ln of &1) - V))
+{(:needseml (neg of V)) (((ln of &1) - V) emlform F)} => ((neg of V) emlform F)
+(:needseml (U + V)) => (:needseml (U - (neg of V)))
+{(:needseml (U + V)) ((U - (neg of V)) emlform F)} => ((U + V) emlform F)
+(:needseml (inv of V)) => (:needseml (exp of (neg of (ln of V))))
+{(:needseml (inv of V)) ((exp of (neg of (ln of V))) emlform F)} => ((inv of V) emlform F)
+(:needseml (U * V)) => (:needseml (exp of ((ln of U) + (ln of V))))
+{(:needseml (U * V)) ((exp of ((ln of U) + (ln of V))) emlform F)} => ((U * V) emlform F)
+(:needseml (U / V)) => (:needseml (U * (inv of V)))
+{((U * (inv of V)) emlform F) (:needseml (U / V))} => ((U / V) emlform F)
+{(T emlform F) (:emlcompile T)} => ((:emlcompile T) = F)
+-- 36 ms --
+zelph> x ~ symvar
+x ~ symvar
+-- 33 ms --
+zelph> y ~ symvar
+y ~ symvar
+-- 26 ms --
+zelph> :simplify (&1 eml ((&1 eml x) eml &1))
+:simplify (&1 eml ((&1 eml x) eml &1))
+(:needssimp (&1 eml ((&1 eml x) eml &1))) ⇐ (:simplify (&1 eml ((&1 eml x) eml &1)))
+(:needssimp ((&1 eml x) eml &1)) ⇐ (:needssimp (&1 eml ((&1 eml x) eml &1)))
+(:needssimp &1) ⇐ (:needssimp (&1 eml ((&1 eml x) eml &1)))
+(:needssimp (&1 eml x)) ⇐ (:needssimp ((&1 eml x) eml &1))
+(:simp &1) ⇐ (:needssimp &1)
+(:needssimp x) ⇐ (:needssimp (&1 eml x))
+(:simp x) ⇐ {(x ~ symvar) (:needssimp x)}
+(:red (&1 eml x)) ⇐ {(:simp x) (:simp &1) (:needssimp (&1 eml x))}
+(:simp (&1 eml x)) ⇐ {(¬((&1 eml x) rw S)) (:red (&1 eml x))}
+(:red ((&1 eml x) eml &1)) ⇐ {(:simp &1) (:simp (&1 eml x)) (:needssimp ((&1 eml x) eml &1))}
+(((&1 eml x) eml &1) rw (exp of (&1 eml x))) ⇐ (((&1 eml x) eml &1) red ((&1 eml x) eml &1))
+(((&1 eml x) eml &1) simp (exp of (&1 eml x))) ⇐ {(((&1 eml x) eml &1) rw (exp of (&1 eml x))) (:red ((&1 eml x) eml &1))}
+((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x)))) ⇐ {(((&1 eml x) eml &1) simp (exp of (&1 eml x))) (:simp &1) (:needssimp (&1 eml ((&1 eml x) eml &1)))}
+((&1 eml ((&1 eml x) eml &1)) rw (ln of x)) ⇐ ((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x))))
+((&1 eml ((&1 eml x) eml &1)) simp (ln of x)) ⇐ {((&1 eml ((&1 eml x) eml &1)) rw (ln of x)) ((&1 eml ((&1 eml x) eml &1)) red (&1 eml (exp of (&1 eml x))))}
+((:simplify (&1 eml ((&1 eml x) eml &1))) = (ln of x)) ⇐ {((&1 eml ((&1 eml x) eml &1)) simp (ln of x)) (:simplify (&1 eml ((&1 eml x) eml &1)))}
+-- 47 ms --
+zelph> :emlcompile (x - y)
+:emlcompile (x - y)
+(:needseml (x - y)) ⇐ (:emlcompile (x - y))
+((x sub y) bi 0) ⇐ (x - y)
+(:needseml y) ⇐ (:needseml (x - y))
+(:needseml x) ⇐ (:needseml (x - y))
+(:emlform y) ⇐ {(y ~ symvar) (:needseml y)}
+(:emlform x) ⇐ {(x ~ symvar) (:needseml x)}
+((x - y) emlform ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) ⇐ {(:emlform y) (:needseml (x - y)) (:emlform x)}
+((:emlcompile (x - y)) = ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) ⇐ {((x - y) emlform ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) (:emlcompile (x - y))}
+-- 33 ms --
+zelph> .node
+Node ID: 6621324152381525746
+  Variable: no
+  (No names in any language)
+  Mermaid HTML: file:///tmp/(«_emlcompile» («x» «-» «y»)) «=» ((&1 «eml» ((&1 «eml» «x») «eml» &1)) «eml» («y» «eml» &1)).html
+  Incoming connections from:
+    - (&1 eml ((&1 eml x) eml &1)) eml (y eml &1) (ID 5043279919388784649)
+    - :emlcompile (x - y) (ID 8722030765425277146)
+  Outgoing connections to:
+    - = (ID 60)
+    - :emlcompile (x - y) (ID 8722030765425277146)
+  Representation: (:emlcompile (x - y)) = ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))
+------------------------
+zelph>

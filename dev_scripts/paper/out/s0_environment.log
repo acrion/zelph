@@ -1,0 +1,16 @@
+zelph 1.0.0-dev
+-- REPL mode - type .help for commands, .quit to exit --
+
+zelph> .licenses
+zelph 1.0.0-dev
+
+zelph incorporates the following third-party software:
+------------------------------------------------------
+Janet (v1.41.2) - MIT License
+unordered_dense (v4.8.1) - MIT License
+Cap'n Proto (v1.4.0) - MIT License
+bzip2 (v1.0.8) - bzip2 License (BSD-style)
+------------------------------------------------------
+For full license texts and copyright notices, please refer to the
+documentation or the source code repositories.
+zelph>

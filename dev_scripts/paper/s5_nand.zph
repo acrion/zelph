@@ -8,5 +8,5 @@
 (&12 * &34) = X
 (&12 * &34) = X
 .import primes-naf
-(&13 testprime &13) = X
-(&13 testprime &13) = X
+(:testprime &13) = X
+(:testprime &13) = X

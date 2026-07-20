@@ -5,6 +5,7 @@
 .import symbolic-core
 .import eml
 x ~ symvar
-(&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))
-((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X
-((&1 eml ((&1 eml x) eml &1)) simplify (&1 eml ((&1 eml x) eml &1))) = X
+:simplify (&1 eml ((&1 eml x) eml &1))
+.run
+(:simplify (&1 eml ((&1 eml x) eml &1))) = X
+(:simplify (&1 eml ((&1 eml x) eml &1))) = X

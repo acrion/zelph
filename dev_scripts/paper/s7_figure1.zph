@@ -1,0 +1,29 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s7_figure1.zph
+#
+# To achieve exactly the same behaviour as when entered in the REPL (as described in the paper),
+# we execute .run after each command (in the REPL, .auto-run is on by default).
+# This does not influence results, but internal node IDs printed by the last command `.node`.
+
+.import arithmetic
+.run
+
+.import symbolic-core
+.run
+
+.import eml
+.run
+
+x ~ symvar
+.run
+
+y ~ symvar
+.run
+
+:simplify (&1 eml ((&1 eml x) eml &1))
+.run
+
+:emlcompile (x - y)
+.run
+
+.node

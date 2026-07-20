@@ -1,0 +1,268 @@
+zelph on  develop [$!+?] via △ v4.4.0
+❯ zelph
+zelph 1.0.0-dev
+-- REPL mode - type .help for commands, .quit to exit --
+
+zelph> .import arithmetic
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/arithmetic.zph...
+<zelph/node ((«nil» «add» «nil») «ci» «1») «sum» &1>
+<zelph/node ((«nil» «sub» «nil») «bi» «0») «diff» «nil»>
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/common-arithmetic.zph...
+(N + M) => ((N add M) ci 0)
+{(((A d+ B) tci C) co E) (((A cons R) add (B cons S)) ci C)} => ((R add S) ci E)
+{(((A d+ 0) tci C) co E) (((A cons R) add nil) ci C)} => ((R add nil) ci E)
+{((nil add (B cons S)) ci C) (((0 d+ B) tci C) co E)} => ((nil add S) ci E)
+{(((R add S) ci E) sum T) (((A cons R) add (B cons S)) ci C) (((A d+ B) tci C) co E) (((A d+ B) tci C) sum D)} => ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+{(((A d+ 0) tci C) sum D) (((A d+ 0) tci C) co E) (((R add nil) ci E) sum T) (((A cons R) add nil) ci C)} => ((((A cons R) add nil) ci C) sum (D cons T))
+{(((nil add S) ci E) sum T) (((0 d+ B) tci C) co E) (((0 d+ B) tci C) sum D) ((nil add (B cons S)) ci C)} => (((nil add (B cons S)) ci C) sum (D cons T))
+{(((N add M) ci 0) sum T) (N + M)} => ((N + M) = T)
+(nil lcmp nil) res eq
+(N cmp M) => (N lcmp M)
+((A cons R) lcmp (B cons S)) => (R lcmp S)
+((A cons R) lcmp nil) => (R lcmp nil)
+(nil lcmp (B cons S)) => (nil lcmp S)
+{((A dcmp B) res X) ((A cons R) lcmp (B cons S)) ((R lcmp S) res eq)} => (((A cons R) lcmp (B cons S)) res X)
+{(X != eq) ((A cons R) lcmp (B cons S)) ((R lcmp S) res X)} => (((A cons R) lcmp (B cons S)) res X)
+{((A dcmp 0) res X) ((A cons R) lcmp nil) ((R lcmp nil) res eq)} => (((A cons R) lcmp nil) res X)
+{(X != eq) ((A cons R) lcmp nil) ((R lcmp nil) res X)} => (((A cons R) lcmp nil) res X)
+{((0 dcmp B) res X) ((nil lcmp S) res eq) (nil lcmp (B cons S))} => ((nil lcmp (B cons S)) res X)
+{((nil lcmp S) res X) (X != eq) (nil lcmp (B cons S))} => ((nil lcmp (B cons S)) res X)
+{(N cmp M) ((N lcmp M) res lt)} => (N < M)
+{((N lcmp M) res gt) (N cmp M)} => (N > M)
+{(N cmp M) ((N lcmp M) res eq)} => (N == M)
+{(N cmp M) ((N lcmp M) res X)} => ((N cmp M) = X)
+(N - M) => ((N sub M) bi 0)
+{(((A d- B) tbi C) bo E) (((A cons R) sub (B cons S)) bi C)} => ((R sub S) bi E)
+{(((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E)} => ((R sub nil) bi E)
+{(((0 d- B) tbi C) bo E) ((nil sub (B cons S)) bi C)} => ((nil sub S) bi E)
+{(((A d- B) tbi C) bo E) (((A cons R) sub (B cons S)) bi C) (((A d- B) tbi C) diff D) (((R sub S) bi E) diff T)} => ((((A cons R) sub (B cons S)) bi C) diff (D cons T))
+{(((A d- 0) tbi C) diff D) (((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E) (((R sub nil) bi E) diff T)} => ((((A cons R) sub nil) bi C) diff (D cons T))
+{((nil sub (B cons S)) bi C) (((0 d- B) tbi C) bo E) (((0 d- B) tbi C) diff D) (((nil sub S) bi E) diff T)} => (((nil sub (B cons S)) bi C) diff (D cons T))
+{(((N sub M) bi 0) diff T) (N - M) (T canonnum S)} => ((N - M) = S)
+(N * M) => (N mul M)
+{((A cons R) mul M) (R != nil)} => (R mul M)
+((A cons R) mul M) => ((A dmul M) mci 0)
+{((A dmul (B cons S)) mci C) (((A dx B) tci C) mco E)} => ((A dmul S) mci E)
+((A dmul nil) mci 0) => (((A dmul nil) mci 0) pprod nil)
+{((A dmul nil) mci C) (C != 0)} => (((A dmul nil) mci C) pprod <C>)
+{(((A dx B) tci C) pd D) (((A dx B) tci C) mco E) (((A dmul S) mci E) pprod T) ((A dmul (B cons S)) mci C)} => (((A dmul (B cons S)) mci C) pprod (D cons T))
+{(((A dmul M) mci 0) pprod P) (<A> mul M)} => ((<A> mul M) prod P)
+{(R != nil) (((A dmul M) mci 0) pprod P) ((R mul M) prod Q) ((A cons R) mul M)} => (P + (0 cons Q))
+{((R mul M) prod Q) ((P + (0 cons Q)) = T) (R != nil) (((A dmul M) mci 0) pprod P) ((A cons R) mul M)} => (((A cons R) mul M) prod T)
+{(N * M) ((N mul M) prod T)} => ((N * M) = T)
+(N / M) => (N dvd M)
+(N mod M) => (N dvd M)
+{(N / M) (Q isdigit true)} => ((Q dmul M) mci 0)
+{(N mod M) (Q isdigit true)} => ((Q dmul M) mci 0)
+{((A cons R) dvd M) (R != nil)} => (R dvd M)
+{(((Q dmul M) mci 0) pprod P) ((A cons R) dvd M) (R != nil) ((R dvd M) rem S)} => ((A cons S) - P)
+{(((Q dmul M) mci 0) pprod P) (<A> dvd M)} => (<A> - P)
+{((T - P) = D) (((Q dmul M) mci 0) pprod P)} => (D cmp M)
+{(((Q dmul M) mci 0) pprod P) (D < M) ((A cons R) dvd M) ((R dvd M) quot T) (R != nil) (((A cons S) - P) = D) ((R dvd M) rem S)} => (((A cons R) dvd M) quot (Q cons T))
+{(((A cons S) - P) = D) ((R dvd M) rem S) (R != nil) (D < M) (((Q dmul M) mci 0) pprod P) ((A cons R) dvd M)} => (((A cons R) dvd M) rem D)
+{(((Q dmul M) mci 0) pprod P) (D < M) ((<A> - P) = D) (<A> dvd M)} => ((<A> dvd M) quot <Q>)
+{(D < M) (<A> dvd M) ((<A> - P) = D) (((Q dmul M) mci 0) pprod P)} => ((<A> dvd M) rem D)
+{((N dvd M) quot Q) (N / M) (Q canonnum S)} => ((N / M) = S)
+{(R canonnum S) ((N dvd M) rem R) (N mod M)} => ((N mod M) = S)
+(((N sub M) bi 0) diff T) => (:needscanon T)
+((N dvd M) quot T) => (:needscanon T)
+((N dvd M) rem T) => (:needscanon T)
+{(:needscanon (A cons R)) (R != nil)} => (:needscanon R)
+{(A != 0) (:needscanon <A>)} => (:canon <A>)
+(:needscanon &0) => (&0 canon nil)
+{(R != nil) (A != 0) (:needscanon (A cons R)) (R canon S)} => ((A cons R) canon (A cons S))
+{(R != nil) (:needscanon (0 cons R)) (S != nil) (R canon S)} => ((0 cons R) canon (0 cons S))
+{(:needscanon (0 cons R)) (R != nil) (R canon nil)} => ((0 cons R) canon nil)
+{(S != nil) (:needscanon T) (T canon S)} => (T canonnum S)
+{(:needscanon T) (T canon nil)} => (T canonnum &0)
+(:needscanon nil) ⇐ (((nil sub nil) bi 0) diff nil)
+(:canonnum &0) ⇐ {(:needscanon &0) (&0 canon nil)}
+-- 44 ms --
+zelph> .import symbolic-core
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/symbolic-core.zph...
+exp inverseof ln
+ln inverseof exp
+(:simplify T) => (:needssimp T)
+(:needssimp (U + V)) => (:needssimp U)
+(:needssimp (U + V)) => (:needssimp V)
+(:needssimp (U * V)) => (:needssimp U)
+(:needssimp (U * V)) => (:needssimp V)
+(:needssimp (U / V)) => (:needssimp U)
+(:needssimp (U / V)) => (:needssimp V)
+(:needssimp (F of U)) => (:needssimp U)
+{(X ~ symvar) (:needssimp X)} => (:simp X)
+{(X ~ symconst) (:needssimp X)} => (:simp X)
+(:needssimp (A cons R)) => (:simp (A cons R))
+{(U simp P) (V simp Q) (:needssimp (U + V))} => ((U + V) red (P + Q))
+{(:needssimp (U * V)) (V simp Q) (U simp P)} => ((U * V) red (P * Q))
+{(V simp Q) (:needssimp (U / V)) (U simp P)} => ((U / V) red (P / Q))
+{(:needssimp (F of U)) (U simp P)} => ((F of U) red (F of P))
+(T red (X + &0)) => (T rw X)
+(T red (&0 + X)) => (T rw X)
+(T red (X * &1)) => (T rw X)
+(T red (&1 * X)) => (T rw X)
+(T red (X * &0)) => (T rw &0)
+(T red (&0 * X)) => (T rw &0)
+(T red (X / &1)) => (T rw X)
+(T red (&0 / X)) => (T rw &0)
+{(T red (F of (G of U))) (F inverseof G)} => (T rw U)
+{(T red C) (C = R)} => (T rw R)
+{(T rw S) (T red C)} => (T simp S)
+{(¬(T rw S)) (T red C)} => (T simp C)
+{(T simp S) (:simplify T)} => ((:simplify T) = S)
+-- 27 ms --
+zelph> x ~ symvar
+x ~ symvar
+-- 26 ms --
+zelph> :simplify ((&2 + &3) * (&4 + &6))
+:simplify ((&2 + &3) * (&4 + &6))
+(:needssimp ((&2 + &3) * (&4 + &6))) ⇐ (:simplify ((&2 + &3) * (&4 + &6)))
+((&2 + &3) mul (&4 + &6)) ⇐ ((&2 + &3) * (&4 + &6))
+((&4 add &6) ci 0) ⇐ (&4 + &6)
+((&2 add &3) ci 0) ⇐ (&2 + &3)
+(((&4 add &6) ci 0) sum &10) ⇐ {(((nil add nil) ci 1) sum &1) ((&4 add &6) ci 0) (((4 d+ 6) tci 0) co 1) (((4 d+ 6) tci 0) sum 0)}
+(((&2 add &3) ci 0) sum &5) ⇐ {(((nil add nil) ci 0) sum nil) ((&2 add &3) ci 0) (((2 d+ 3) tci 0) co 0) (((2 d+ 3) tci 0) sum 5)}
+(:needssimp (&4 + &6)) ⇐ (:needssimp ((&2 + &3) * (&4 + &6)))
+(:needssimp (&2 + &3)) ⇐ (:needssimp ((&2 + &3) * (&4 + &6)))
+((&4 + &6) = &10) ⇐ {(((&4 add &6) ci 0) sum &10) (&4 + &6)}
+((&2 + &3) = &5) ⇐ {(((&2 add &3) ci 0) sum &5) (&2 + &3)}
+(:needssimp &4) ⇐ (:needssimp (&4 + &6))
+(:needssimp &6) ⇐ (:needssimp (&4 + &6))
+(:needssimp &2) ⇐ (:needssimp (&2 + &3))
+(:needssimp &3) ⇐ (:needssimp (&2 + &3))
+(:simp &4) ⇐ (:needssimp &4)
+(:simp &6) ⇐ (:needssimp &6)
+(:simp &2) ⇐ (:needssimp &2)
+(:simp &3) ⇐ (:needssimp &3)
+(:red (&4 + &6)) ⇐ {(:simp &4) (:simp &6) (:needssimp (&4 + &6))}
+(:red (&2 + &3)) ⇐ {(:simp &2) (:simp &3) (:needssimp (&2 + &3))}
+((&4 + &6) rw &10) ⇐ {(:red (&4 + &6)) ((&4 + &6) = &10)}
+((&4 + &6) simp &10) ⇐ {((&4 + &6) rw &10) (:red (&4 + &6))}
+((&2 + &3) rw &5) ⇐ {(:red (&2 + &3)) ((&2 + &3) = &5)}
+((&2 + &3) simp &5) ⇐ {((&2 + &3) rw &5) (:red (&2 + &3))}
+(((&2 + &3) * (&4 + &6)) red (&5 * &10)) ⇐ {(:needssimp ((&2 + &3) * (&4 + &6))) ((&4 + &6) simp &10) ((&2 + &3) simp &5)}
+(&5 mul &10) ⇐ (&5 * &10)
+((5 dmul &10) mci 0) ⇐ (&5 mul &10)
+((5 dmul &1) mci 0) ⇐ {((5 dmul &10) mci 0) (((5 dx 0) tci 0) mco 0)}
+((5 dmul nil) mci 0) ⇐ {((5 dmul &1) mci 0) (((5 dx 1) tci 0) mco 0)}
+(((5 dmul nil) mci 0) pprod nil) ⇐ ((5 dmul nil) mci 0)
+(((5 dmul &1) mci 0) pprod &5) ⇐ {(((5 dx 1) tci 0) pd 5) (((5 dx 1) tci 0) mco 0) (((5 dmul nil) mci 0) pprod nil) ((5 dmul &1) mci 0)}
+(((5 dmul &10) mci 0) pprod &50) ⇐ {(((5 dx 0) tci 0) pd 0) (((5 dx 0) tci 0) mco 0) (((5 dmul &1) mci 0) pprod &5) ((5 dmul &10) mci 0)}
+((&5 mul &10) prod &50) ⇐ {(((5 dmul &10) mci 0) pprod &50) (&5 mul &10)}
+((&5 * &10) = &50) ⇐ {(&5 * &10) ((&5 mul &10) prod &50)}
+(((&2 + &3) * (&4 + &6)) rw &50) ⇐ {(((&2 + &3) * (&4 + &6)) red (&5 * &10)) ((&5 * &10) = &50)}
+(((&2 + &3) * (&4 + &6)) simp &50) ⇐ {(((&2 + &3) * (&4 + &6)) rw &50) (((&2 + &3) * (&4 + &6)) red (&5 * &10))}
+((:simplify ((&2 + &3) * (&4 + &6))) = &50) ⇐ {(((&2 + &3) * (&4 + &6)) simp &50) (:simplify ((&2 + &3) * (&4 + &6)))}
+-- 43 ms --
+zelph> (:simplify ((&2 + &3) * (&4 + &6))) = X
+(:simplify ((&2 + &3) * (&4 + &6))) = X
+Answer: (:simplify ((&2 + &3) * (&4 + &6))) = &50
+-- 33 ms --
+zelph> (:simplify ((&2 + &3) * (&4 + &6))) = X
+(:simplify ((&2 + &3) * (&4 + &6))) = X
+Answer: (:simplify ((&2 + &3) * (&4 + &6))) = &50
+-- 10 ms --
+zelph> a ~ symconst
+a ~ symconst
+-- 28 ms --
+zelph> b ~ symconst
+b ~ symconst
+-- 12 ms --
+zelph> c ~ symconst
+c ~ symconst
+-- 22 ms --
+zelph> (a + b) = c
+(a + b) = c
+((a add b) ci 0) ⇐ (a + b)
+-- 18 ms --
+zelph> :simplify (a + b)
+:simplify (a + b)
+(:needssimp (a + b)) ⇐ (:simplify (a + b))
+(:needssimp b) ⇐ (:needssimp (a + b))
+(:needssimp a) ⇐ (:needssimp (a + b))
+(:simp b) ⇐ {(b ~ symconst) (:needssimp b)}
+(:simp a) ⇐ {(a ~ symconst) (:needssimp a)}
+(:red (a + b)) ⇐ {(:simp a) (:simp b) (:needssimp (a + b))}
+((a + b) rw c) ⇐ {(:red (a + b)) ((a + b) = c)}
+((a + b) simp c) ⇐ {((a + b) rw c) (:red (a + b))}
+((:simplify (a + b)) = c) ⇐ {((a + b) simp c) (:simplify (a + b))}
+-- 43 ms --
+zelph> (:simplify (a + b)) = X
+(:simplify (a + b)) = X
+Answer: (:simplify (a + b)) = c
+-- 16 ms --
+zelph> (:simplify (a + b)) = X
+(:simplify (a + b)) = X
+Answer: (:simplify (a + b)) = c
+-- 25 ms --
+zelph> :simplify (&5 / &0)
+:simplify (&5 / &0)
+((0 dmul &0) mci 0) ⇐ {(&5 / &0) (0 isdigit true)}
+((7 dmul &0) mci 0) ⇐ {(&5 / &0) (7 isdigit true)}
+((2 dmul &0) mci 0) ⇐ {(&5 / &0) (2 isdigit true)}
+((6 dmul &0) mci 0) ⇐ {(&5 / &0) (6 isdigit true)}
+((3 dmul &0) mci 0) ⇐ {(&5 / &0) (3 isdigit true)}
+((8 dmul &0) mci 0) ⇐ {(&5 / &0) (8 isdigit true)}
+((1 dmul &0) mci 0) ⇐ {(&5 / &0) (1 isdigit true)}
+((5 dmul &0) mci 0) ⇐ {(&5 / &0) (5 isdigit true)}
+((9 dmul &0) mci 0) ⇐ {(&5 / &0) (9 isdigit true)}
+((4 dmul &0) mci 0) ⇐ {(&5 / &0) (4 isdigit true)}
+(:needssimp (&5 / &0)) ⇐ (:simplify (&5 / &0))
+((2 dmul nil) mci 0) ⇐ {((2 dmul &0) mci 0) (((2 dx 0) tci 0) mco 0)}
+((6 dmul nil) mci 0) ⇐ {((6 dmul &0) mci 0) (((6 dx 0) tci 0) mco 0)}
+((8 dmul nil) mci 0) ⇐ {((8 dmul &0) mci 0) (((8 dx 0) tci 0) mco 0)}
+((9 dmul nil) mci 0) ⇐ {((9 dmul &0) mci 0) (((9 dx 0) tci 0) mco 0)}
+((0 dmul nil) mci 0) ⇐ {((0 dmul &0) mci 0) (((0 dx 0) tci 0) mco 0)}
+((4 dmul nil) mci 0) ⇐ {((4 dmul &0) mci 0) (((4 dx 0) tci 0) mco 0)}
+((7 dmul nil) mci 0) ⇐ {((7 dmul &0) mci 0) (((7 dx 0) tci 0) mco 0)}
+((1 dmul nil) mci 0) ⇐ {((1 dmul &0) mci 0) (((1 dx 0) tci 0) mco 0)}
+((3 dmul nil) mci 0) ⇐ {((3 dmul &0) mci 0) (((3 dx 0) tci 0) mco 0)}
+(((5 dmul &0) mci 0) pprod &0) ⇐ {(((5 dx 0) tci 0) pd 0) (((5 dx 0) tci 0) mco 0) (((5 dmul nil) mci 0) pprod nil) ((5 dmul &0) mci 0)}
+(&5 dvd &0) ⇐ (&5 / &0)
+(:needssimp &5) ⇐ (:needssimp (&5 / &0))
+(:needssimp &0) ⇐ (:needssimp (&5 / &0))
+(((2 dmul nil) mci 0) pprod nil) ⇐ ((2 dmul nil) mci 0)
+(((6 dmul nil) mci 0) pprod nil) ⇐ ((6 dmul nil) mci 0)
+(((8 dmul nil) mci 0) pprod nil) ⇐ ((8 dmul nil) mci 0)
+(((9 dmul nil) mci 0) pprod nil) ⇐ ((9 dmul nil) mci 0)
+(((0 dmul nil) mci 0) pprod nil) ⇐ ((0 dmul nil) mci 0)
+(((4 dmul nil) mci 0) pprod nil) ⇐ ((4 dmul nil) mci 0)
+(((7 dmul nil) mci 0) pprod nil) ⇐ ((7 dmul nil) mci 0)
+(((1 dmul nil) mci 0) pprod nil) ⇐ ((1 dmul nil) mci 0)
+(((3 dmul nil) mci 0) pprod nil) ⇐ ((3 dmul nil) mci 0)
+(&5 - &0) ⇐ {(((5 dmul &0) mci 0) pprod &0) (&5 dvd &0)}
+(:simp &5) ⇐ (:needssimp &5)
+(:simp &0) ⇐ (:needssimp &0)
+(((2 dmul &0) mci 0) pprod &0) ⇐ {(((2 dx 0) tci 0) pd 0) (((2 dx 0) tci 0) mco 0) (((2 dmul nil) mci 0) pprod nil) ((2 dmul &0) mci 0)}
+(((6 dmul &0) mci 0) pprod &0) ⇐ {(((6 dx 0) tci 0) pd 0) (((6 dx 0) tci 0) mco 0) (((6 dmul nil) mci 0) pprod nil) ((6 dmul &0) mci 0)}
+(((8 dmul &0) mci 0) pprod &0) ⇐ {(((8 dx 0) tci 0) pd 0) (((8 dx 0) tci 0) mco 0) (((8 dmul nil) mci 0) pprod nil) ((8 dmul &0) mci 0)}
+(((9 dmul &0) mci 0) pprod &0) ⇐ {(((9 dx 0) tci 0) pd 0) (((9 dx 0) tci 0) mco 0) (((9 dmul nil) mci 0) pprod nil) ((9 dmul &0) mci 0)}
+(((0 dmul &0) mci 0) pprod &0) ⇐ {(((0 dx 0) tci 0) pd 0) (((0 dx 0) tci 0) mco 0) (((0 dmul nil) mci 0) pprod nil) ((0 dmul &0) mci 0)}
+(((4 dmul &0) mci 0) pprod &0) ⇐ {(((4 dx 0) tci 0) pd 0) (((4 dx 0) tci 0) mco 0) (((4 dmul nil) mci 0) pprod nil) ((4 dmul &0) mci 0)}
+(((7 dmul &0) mci 0) pprod &0) ⇐ {(((7 dx 0) tci 0) pd 0) (((7 dx 0) tci 0) mco 0) (((7 dmul nil) mci 0) pprod nil) ((7 dmul &0) mci 0)}
+(((1 dmul &0) mci 0) pprod &0) ⇐ {(((1 dx 0) tci 0) pd 0) (((1 dx 0) tci 0) mco 0) (((1 dmul nil) mci 0) pprod nil) ((1 dmul &0) mci 0)}
+(((3 dmul &0) mci 0) pprod &0) ⇐ {(((3 dx 0) tci 0) pd 0) (((3 dx 0) tci 0) mco 0) (((3 dmul nil) mci 0) pprod nil) ((3 dmul &0) mci 0)}
+((&5 sub &0) bi 0) ⇐ (&5 - &0)
+(:red (&5 / &0)) ⇐ {(:simp &0) (:needssimp (&5 / &0)) (:simp &5)}
+(((&5 sub &0) bi 0) diff &5) ⇐ {(((5 d- 0) tbi 0) bo 0) ((&5 sub &0) bi 0) (((5 d- 0) tbi 0) diff 5) (((nil sub nil) bi 0) diff nil)}
+(:needscanon &5) ⇐ (((&5 sub &0) bi 0) diff &5)
+(:canon &5) ⇐ {(5 != 0) (:needscanon &5)}
+(:canonnum &5) ⇐ {(&5 != nil) (:needscanon &5) (:canon &5)}
+((&5 - &0) = &5) ⇐ {(((&5 sub &0) bi 0) diff &5) (&5 - &0) (:canonnum &5)}
+(&5 cmp &0) ⇐ {((&5 - &0) = &5) (((8 dmul &0) mci 0) pprod &0)}
+(&5 lcmp &0) ⇐ (&5 cmp &0)
+((&5 lcmp &0) res gt) ⇐ {((5 dcmp 0) res gt) (&5 lcmp &0) ((nil lcmp nil) res eq)}
+(&5 > &0) ⇐ {((&5 lcmp &0) res gt) (&5 cmp &0)}
+((&5 cmp &0) = gt) ⇐ {(&5 cmp &0) ((&5 lcmp &0) res gt)}
+(:simp (&5 / &0)) ⇐ {(¬((&5 / &0) rw S)) (:red (&5 / &0))}
+((:simplify (&5 / &0)) = (&5 / &0)) ⇐ {(:simp (&5 / &0)) (:simplify (&5 / &0))}
+-- 100 ms --
+zelph> (:simplify (&5 / &0)) = X
+(:simplify (&5 / &0)) = X
+Answer: (:simplify (&5 / &0)) = (&5 / &0)
+-- 37 ms --
+zelph> (:simplify (&5 / &0)) = X
+(:simplify (&5 / &0)) = X
+Answer: (:simplify (&5 / &0)) = (&5 / &0)
+-- 35 ms --
+zelph>

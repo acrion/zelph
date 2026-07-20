@@ -1,0 +1,546 @@
+zelph on  develop [$!+?] via △ v4.4.0
+❯ zelph
+zelph 1.0.0-dev
+-- REPL mode - type .help for commands, .quit to exit --
+
+zelph> .import binary-nand-arithmetic
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/binary-nand-arithmetic.zph...
+0 isdigit true
+1 isdigit true
+(1 nand 1) out 0
+{(A isdigit true) (B isdigit true) (¬((A nand B) out 0))} => ((A nand B) out 1)
+{(A isdigit true) ((A nand A) out N)} => (A neg N)
+{(B isdigit true) ((A nand B) out N) ((N nand N) out V) (A isdigit true)} => ((A and B) out V)
+{(A isdigit true) (A neg N) (B neg M) (B isdigit true) ((N nand M) out V)} => ((A or B) out V)
+{((B nand N) out Q) (A isdigit true) (B isdigit true) ((A nand B) out N) ((P nand Q) out X) ((A nand N) out P)} => ((A xor B) out X)
+{(C isdigit true) (A isdigit true) ((A and B) out P) ((T or R) out M) (B isdigit true) ((A and C) out Q) ((B and C) out R) ((P or Q) out T)} => (((A maj B) mj3 C) out M)
+{((X xor C) out S) (A isdigit true) ((A xor B) out X) (C isdigit true) (B isdigit true)} => (((A d+ B) tci C) sum S)
+{(C isdigit true) (B isdigit true) (((A maj B) mj3 C) out E) (A isdigit true)} => (((A d+ B) tci C) co E)
+{(C isdigit true) ((X xor C) out D) (A isdigit true) ((A xor B) out X) (B isdigit true)} => (((A d- B) tbi C) diff D)
+{(B isdigit true) (((N maj B) mj3 C) out E) (A neg N) (A isdigit true) (C isdigit true)} => (((A d- B) tbi C) bo E)
+{(C isdigit true) ((P xor C) out D) ((A and B) out P) (A isdigit true) (B isdigit true)} => (((A dx B) tci C) pd D)
+{((P and C) out E) (A isdigit true) ((A and B) out P) (C isdigit true) (B isdigit true)} => (((A dx B) tci C) mco E)
+(A isdigit true) => ((A dcmp A) res eq)
+{(A isdigit true) ((A and N) out 1) (B neg N) (B isdigit true)} => ((A dcmp B) res gt)
+{((N and B) out 1) (A isdigit true) (A neg N) (B isdigit true)} => ((A dcmp B) res lt)
+((nil add nil) ci 0) sum nil
+((nil add nil) ci 1) sum &1
+((nil sub nil) bi 0) diff nil
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/common-arithmetic.zph...
+(N + M) => ((N add M) ci 0)
+{(((A d+ B) tci C) co E) (((A cons R) add (B cons S)) ci C)} => ((R add S) ci E)
+{(((A d+ 0) tci C) co E) (((A cons R) add nil) ci C)} => ((R add nil) ci E)
+{(((0 d+ B) tci C) co E) ((nil add (B cons S)) ci C)} => ((nil add S) ci E)
+{(((A d+ B) tci C) co E) (((R add S) ci E) sum T) (((A d+ B) tci C) sum D) (((A cons R) add (B cons S)) ci C)} => ((((A cons R) add (B cons S)) ci C) sum (D cons T))
+{(((A d+ 0) tci C) co E) (((A d+ 0) tci C) sum D) (((A cons R) add nil) ci C) (((R add nil) ci E) sum T)} => ((((A cons R) add nil) ci C) sum (D cons T))
+{((nil add (B cons S)) ci C) (((nil add S) ci E) sum T) (((0 d+ B) tci C) sum D) (((0 d+ B) tci C) co E)} => (((nil add (B cons S)) ci C) sum (D cons T))
+{(((N add M) ci 0) sum T) (N + M)} => ((N + M) = T)
+(nil lcmp nil) res eq
+(N cmp M) => (N lcmp M)
+((A cons R) lcmp (B cons S)) => (R lcmp S)
+((A cons R) lcmp nil) => (R lcmp nil)
+(nil lcmp (B cons S)) => (nil lcmp S)
+{((R lcmp S) res eq) ((A cons R) lcmp (B cons S)) ((A dcmp B) res X)} => (((A cons R) lcmp (B cons S)) res X)
+{((R lcmp S) res X) (X != eq) ((A cons R) lcmp (B cons S))} => (((A cons R) lcmp (B cons S)) res X)
+{((A dcmp 0) res X) ((A cons R) lcmp nil) ((R lcmp nil) res eq)} => (((A cons R) lcmp nil) res X)
+{((R lcmp nil) res X) (X != eq) ((A cons R) lcmp nil)} => (((A cons R) lcmp nil) res X)
+{(nil lcmp (B cons S)) ((0 dcmp B) res X) ((nil lcmp S) res eq)} => ((nil lcmp (B cons S)) res X)
+{(X != eq) (nil lcmp (B cons S)) ((nil lcmp S) res X)} => ((nil lcmp (B cons S)) res X)
+{(N cmp M) ((N lcmp M) res lt)} => (N < M)
+{((N lcmp M) res gt) (N cmp M)} => (N > M)
+{((N lcmp M) res eq) (N cmp M)} => (N == M)
+{(N cmp M) ((N lcmp M) res X)} => ((N cmp M) = X)
+(N - M) => ((N sub M) bi 0)
+{(((A cons R) sub (B cons S)) bi C) (((A d- B) tbi C) bo E)} => ((R sub S) bi E)
+{(((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E)} => ((R sub nil) bi E)
+{(((0 d- B) tbi C) bo E) ((nil sub (B cons S)) bi C)} => ((nil sub S) bi E)
+{(((R sub S) bi E) diff T) (((A d- B) tbi C) diff D) (((A cons R) sub (B cons S)) bi C) (((A d- B) tbi C) bo E)} => ((((A cons R) sub (B cons S)) bi C) diff (D cons T))
+{(((R sub nil) bi E) diff T) (((A cons R) sub nil) bi C) (((A d- 0) tbi C) bo E) (((A d- 0) tbi C) diff D)} => ((((A cons R) sub nil) bi C) diff (D cons T))
+{(((0 d- B) tbi C) diff D) (((nil sub S) bi E) diff T) (((0 d- B) tbi C) bo E) ((nil sub (B cons S)) bi C)} => (((nil sub (B cons S)) bi C) diff (D cons T))
+{(T canonnum S) (N - M) (((N sub M) bi 0) diff T)} => ((N - M) = S)
+(N * M) => (N mul M)
+{((A cons R) mul M) (R != nil)} => (R mul M)
+((A cons R) mul M) => ((A dmul M) mci 0)
+{((A dmul (B cons S)) mci C) (((A dx B) tci C) mco E)} => ((A dmul S) mci E)
+((A dmul nil) mci 0) => (((A dmul nil) mci 0) pprod nil)
+{(C != 0) ((A dmul nil) mci C)} => (((A dmul nil) mci C) pprod <C>)
+{((A dmul (B cons S)) mci C) (((A dx B) tci C) mco E) (((A dmul S) mci E) pprod T) (((A dx B) tci C) pd D)} => (((A dmul (B cons S)) mci C) pprod (D cons T))
+{(<A> mul M) (((A dmul M) mci 0) pprod P)} => ((<A> mul M) prod P)
+{(R != nil) ((R mul M) prod Q) (((A dmul M) mci 0) pprod P) ((A cons R) mul M)} => (P + (0 cons Q))
+{(R != nil) (((A dmul M) mci 0) pprod P) ((R mul M) prod Q) ((A cons R) mul M) ((P + (0 cons Q)) = T)} => (((A cons R) mul M) prod T)
+{((N mul M) prod T) (N * M)} => ((N * M) = T)
+(N / M) => (N dvd M)
+(N mod M) => (N dvd M)
+{(Q isdigit true) (N / M)} => ((Q dmul M) mci 0)
+{(N mod M) (Q isdigit true)} => ((Q dmul M) mci 0)
+{(R != nil) ((A cons R) dvd M)} => (R dvd M)
+{((R dvd M) rem S) (((Q dmul M) mci 0) pprod P) ((A cons R) dvd M) (R != nil)} => ((A cons S) - P)
+{(((Q dmul M) mci 0) pprod P) (<A> dvd M)} => (<A> - P)
+{((T - P) = D) (((Q dmul M) mci 0) pprod P)} => (D cmp M)
+{((R dvd M) rem S) (R != nil) (((Q dmul M) mci 0) pprod P) ((R dvd M) quot T) (D < M) ((A cons R) dvd M) (((A cons S) - P) = D)} => (((A cons R) dvd M) quot (Q cons T))
+{(R != nil) (((Q dmul M) mci 0) pprod P) (D < M) (((A cons S) - P) = D) ((R dvd M) rem S) ((A cons R) dvd M)} => (((A cons R) dvd M) rem D)
+{(<A> dvd M) (D < M) (((Q dmul M) mci 0) pprod P) ((<A> - P) = D)} => ((<A> dvd M) quot <Q>)
+{(<A> dvd M) (((Q dmul M) mci 0) pprod P) ((<A> - P) = D) (D < M)} => ((<A> dvd M) rem D)
+{(N / M) ((N dvd M) quot Q) (Q canonnum S)} => ((N / M) = S)
+{(N mod M) ((N dvd M) rem R) (R canonnum S)} => ((N mod M) = S)
+(((N sub M) bi 0) diff T) => (:needscanon T)
+((N dvd M) quot T) => (:needscanon T)
+((N dvd M) rem T) => (:needscanon T)
+{(:needscanon (A cons R)) (R != nil)} => (:needscanon R)
+{(:needscanon <A>) (A != 0)} => (:canon <A>)
+(:needscanon &0) => (&0 canon nil)
+{(A != 0) (R canon S) (R != nil) (:needscanon (A cons R))} => ((A cons R) canon (A cons S))
+{(S != nil) (:needscanon (0 cons R)) (R != nil) (R canon S)} => ((0 cons R) canon (0 cons S))
+{(:needscanon (0 cons R)) (R != nil) (R canon nil)} => ((0 cons R) canon nil)
+{(T canon S) (:needscanon T) (S != nil)} => (T canonnum S)
+{(:needscanon T) (T canon nil)} => (T canonnum &0)
+(:canonnum &0) ⇐ {(:needscanon &0) (&0 canon nil)}
+(:needscanon nil) ⇐ (((nil sub nil) bi 0) diff nil)
+((0 dcmp 0) res eq) ⇐ (0 isdigit true)
+((1 dcmp 1) res eq) ⇐ (1 isdigit true)
+(1 neg 0) ⇐ {(1 isdigit true) ((1 nand 1) out 0)}
+((0 nand 0) out 1) ⇐ {(0 isdigit true) (0 isdigit true) (¬((0 nand 0) out 0))}
+((0 nand 1) out 1) ⇐ {(0 isdigit true) (1 isdigit true) (¬((0 nand 1) out 0))}
+((1 nand 0) out 1) ⇐ {(1 isdigit true) (0 isdigit true) (¬((1 nand 0) out 0))}
+((0 and 0) out 0) ⇐ {(0 isdigit true) ((0 nand 0) out 1) ((1 nand 1) out 0) (0 isdigit true)}
+((1 and 1) out 1) ⇐ {(1 isdigit true) ((1 nand 1) out 0) ((0 nand 0) out 1) (1 isdigit true)}
+((1 or 1) out 1) ⇐ {(1 isdigit true) (1 neg 0) (1 neg 0) (1 isdigit true) ((0 nand 0) out 1)}
+((0 xor 0) out 0) ⇐ {((0 nand 1) out 1) (0 isdigit true) (0 isdigit true) ((0 nand 0) out 1) ((1 nand 1) out 0) ((0 nand 1) out 1)}
+(0 neg 1) ⇐ {(0 isdigit true) ((0 nand 0) out 1)}
+((0 and 1) out 0) ⇐ {(1 isdigit true) ((0 nand 1) out 1) ((1 nand 1) out 0) (0 isdigit true)}
+((1 or 0) out 1) ⇐ {(1 isdigit true) (1 neg 0) (0 neg 1) (0 isdigit true) ((0 nand 1) out 1)}
+((1 xor 0) out 1) ⇐ {((0 nand 1) out 1) (1 isdigit true) (0 isdigit true) ((1 nand 0) out 1) ((0 nand 1) out 1) ((1 nand 1) out 0)}
+((0 xor 1) out 1) ⇐ {((1 nand 1) out 0) (0 isdigit true) (1 isdigit true) ((0 nand 1) out 1) ((1 nand 0) out 1) ((0 nand 1) out 1)}
+((1 and 0) out 0) ⇐ {(0 isdigit true) ((1 nand 0) out 1) ((1 nand 1) out 0) (1 isdigit true)}
+((0 or 1) out 1) ⇐ {(0 isdigit true) (0 neg 1) (1 neg 0) (1 isdigit true) ((1 nand 0) out 1)}
+((1 xor 1) out 0) ⇐ {((1 nand 0) out 1) (1 isdigit true) (1 isdigit true) ((1 nand 1) out 0) ((1 nand 1) out 0) ((1 nand 0) out 1)}
+(((0 dx 0) tci 0) pd 0) ⇐ {(0 isdigit true) ((0 xor 0) out 0) ((0 and 0) out 0) (0 isdigit true) (0 isdigit true)}
+(((0 dx 0) tci 1) pd 1) ⇐ {(1 isdigit true) ((0 xor 1) out 1) ((0 and 0) out 0) (0 isdigit true) (0 isdigit true)}
+(((0 dx 1) tci 0) mco 0) ⇐ {((0 and 0) out 0) (0 isdigit true) ((0 and 1) out 0) (0 isdigit true) (1 isdigit true)}
+(((0 dx 0) tci 0) mco 0) ⇐ {((0 and 0) out 0) (0 isdigit true) ((0 and 0) out 0) (0 isdigit true) (0 isdigit true)}
+(((1 dx 0) tci 0) mco 0) ⇐ {((0 and 0) out 0) (1 isdigit true) ((1 and 0) out 0) (0 isdigit true) (0 isdigit true)}
+(((0 dx 0) tci 1) mco 0) ⇐ {((0 and 1) out 0) (0 isdigit true) ((0 and 0) out 0) (1 isdigit true) (0 isdigit true)}
+(((1 maj 1) mj3 0) out 1) ⇐ {(0 isdigit true) (1 isdigit true) ((1 and 1) out 1) ((1 or 0) out 1) (1 isdigit true) ((1 and 0) out 0) ((1 and 0) out 0) ((1 or 0) out 1)}
+(((1 maj 1) mj3 1) out 1) ⇐ {(1 isdigit true) (1 isdigit true) ((1 and 1) out 1) ((1 or 1) out 1) (1 isdigit true) ((1 and 1) out 1) ((1 and 1) out 1) ((1 or 1) out 1)}
+(((1 maj 0) mj3 1) out 1) ⇐ {(1 isdigit true) (1 isdigit true) ((1 and 0) out 0) ((1 or 0) out 1) (0 isdigit true) ((1 and 1) out 1) ((0 and 1) out 0) ((0 or 1) out 1)}
+((0 dcmp 1) res lt) ⇐ {((1 and 1) out 1) (0 isdigit true) (0 neg 1) (1 isdigit true)}
+(((1 dx 1) tci 0) pd 1) ⇐ {(0 isdigit true) ((1 xor 0) out 1) ((1 and 1) out 1) (1 isdigit true) (1 isdigit true)}
+(((1 dx 1) tci 1) pd 0) ⇐ {(1 isdigit true) ((1 xor 1) out 0) ((1 and 1) out 1) (1 isdigit true) (1 isdigit true)}
+(((1 dx 1) tci 1) mco 1) ⇐ {((1 and 1) out 1) (1 isdigit true) ((1 and 1) out 1) (1 isdigit true) (1 isdigit true)}
+(((1 dx 1) tci 0) mco 0) ⇐ {((1 and 0) out 0) (1 isdigit true) ((1 and 1) out 1) (0 isdigit true) (1 isdigit true)}
+((1 dcmp 0) res gt) ⇐ {(1 isdigit true) ((1 and 1) out 1) (0 neg 1) (0 isdigit true)}
+(((1 d+ 1) tci 0) sum 0) ⇐ {((0 xor 0) out 0) (1 isdigit true) ((1 xor 1) out 0) (0 isdigit true) (1 isdigit true)}
+(((0 d+ 0) tci 0) sum 0) ⇐ {((0 xor 0) out 0) (0 isdigit true) ((0 xor 0) out 0) (0 isdigit true) (0 isdigit true)}
+(((0 d+ 0) tci 1) sum 1) ⇐ {((0 xor 1) out 1) (0 isdigit true) ((0 xor 0) out 0) (1 isdigit true) (0 isdigit true)}
+(((1 d- 1) tbi 0) diff 0) ⇐ {(0 isdigit true) ((0 xor 0) out 0) (1 isdigit true) ((1 xor 1) out 0) (1 isdigit true)}
+(((0 d- 0) tbi 0) diff 0) ⇐ {(0 isdigit true) ((0 xor 0) out 0) (0 isdigit true) ((0 xor 0) out 0) (0 isdigit true)}
+(((0 d- 0) tbi 1) diff 1) ⇐ {(1 isdigit true) ((0 xor 1) out 1) (0 isdigit true) ((0 xor 0) out 0) (0 isdigit true)}
+(((0 dx 1) tci 0) pd 0) ⇐ {(0 isdigit true) ((0 xor 0) out 0) ((0 and 1) out 0) (0 isdigit true) (1 isdigit true)}
+(((1 dx 0) tci 0) pd 0) ⇐ {(0 isdigit true) ((0 xor 0) out 0) ((1 and 0) out 0) (1 isdigit true) (0 isdigit true)}
+(((0 d- 0) tbi 1) bo 1) ⇐ {(0 isdigit true) (((1 maj 0) mj3 1) out 1) (0 neg 1) (0 isdigit true) (1 isdigit true)}
+(((0 d- 1) tbi 0) bo 1) ⇐ {(1 isdigit true) (((1 maj 1) mj3 0) out 1) (0 neg 1) (0 isdigit true) (0 isdigit true)}
+(((0 d- 1) tbi 1) bo 1) ⇐ {(1 isdigit true) (((1 maj 1) mj3 1) out 1) (0 neg 1) (0 isdigit true) (1 isdigit true)}
+((0 or 0) out 0) ⇐ {(0 isdigit true) (0 neg 1) (0 neg 1) (0 isdigit true) ((1 nand 1) out 0)}
+(((0 maj 1) mj3 0) out 0) ⇐ {(0 isdigit true) (0 isdigit true) ((0 and 1) out 0) ((0 or 0) out 0) (1 isdigit true) ((0 and 0) out 0) ((1 and 0) out 0) ((0 or 0) out 0)}
+(((0 maj 1) mj3 1) out 1) ⇐ {(1 isdigit true) (0 isdigit true) ((0 and 1) out 0) ((0 or 1) out 1) (1 isdigit true) ((0 and 1) out 0) ((1 and 1) out 1) ((0 or 0) out 0)}
+(((0 maj 0) mj3 1) out 0) ⇐ {(1 isdigit true) (0 isdigit true) ((0 and 0) out 0) ((0 or 0) out 0) (0 isdigit true) ((0 and 1) out 0) ((0 and 1) out 0) ((0 or 0) out 0)}
+(((0 dx 1) tci 1) pd 1) ⇐ {(1 isdigit true) ((0 xor 1) out 1) ((0 and 1) out 0) (0 isdigit true) (1 isdigit true)}
+(((0 dx 1) tci 1) mco 0) ⇐ {((0 and 1) out 0) (0 isdigit true) ((0 and 1) out 0) (1 isdigit true) (1 isdigit true)}
+(((1 dx 0) tci 1) mco 0) ⇐ {((0 and 1) out 0) (1 isdigit true) ((1 and 0) out 0) (1 isdigit true) (0 isdigit true)}
+(((1 d+ 0) tci 0) sum 1) ⇐ {((1 xor 0) out 1) (1 isdigit true) ((1 xor 0) out 1) (0 isdigit true) (0 isdigit true)}
+(((0 d+ 1) tci 0) sum 1) ⇐ {((1 xor 0) out 1) (0 isdigit true) ((0 xor 1) out 1) (0 isdigit true) (1 isdigit true)}
+(((1 d+ 0) tci 1) sum 0) ⇐ {((1 xor 1) out 0) (1 isdigit true) ((1 xor 0) out 1) (1 isdigit true) (0 isdigit true)}
+(((1 d- 0) tbi 0) diff 1) ⇐ {(0 isdigit true) ((1 xor 0) out 1) (1 isdigit true) ((1 xor 0) out 1) (0 isdigit true)}
+(((0 d- 1) tbi 0) diff 1) ⇐ {(0 isdigit true) ((1 xor 0) out 1) (0 isdigit true) ((0 xor 1) out 1) (1 isdigit true)}
+(((1 d- 0) tbi 1) diff 0) ⇐ {(1 isdigit true) ((1 xor 1) out 0) (1 isdigit true) ((1 xor 0) out 1) (0 isdigit true)}
+(((1 d+ 1) tci 1) sum 1) ⇐ {((0 xor 1) out 1) (1 isdigit true) ((1 xor 1) out 0) (1 isdigit true) (1 isdigit true)}
+(((0 d+ 1) tci 1) sum 0) ⇐ {((1 xor 1) out 0) (0 isdigit true) ((0 xor 1) out 1) (1 isdigit true) (1 isdigit true)}
+(((1 d- 1) tbi 1) diff 1) ⇐ {(1 isdigit true) ((0 xor 1) out 1) (1 isdigit true) ((1 xor 1) out 0) (1 isdigit true)}
+(((0 d- 1) tbi 1) diff 0) ⇐ {(1 isdigit true) ((1 xor 1) out 0) (0 isdigit true) ((0 xor 1) out 1) (1 isdigit true)}
+(((1 dx 0) tci 1) pd 1) ⇐ {(1 isdigit true) ((0 xor 1) out 1) ((1 and 0) out 0) (1 isdigit true) (0 isdigit true)}
+(((1 maj 0) mj3 0) out 0) ⇐ {(0 isdigit true) (1 isdigit true) ((1 and 0) out 0) ((0 or 0) out 0) (0 isdigit true) ((1 and 0) out 0) ((0 and 0) out 0) ((0 or 0) out 0)}
+(((1 d+ 1) tci 0) co 1) ⇐ {(0 isdigit true) (1 isdigit true) (((1 maj 1) mj3 0) out 1) (1 isdigit true)}
+(((1 d+ 1) tci 1) co 1) ⇐ {(1 isdigit true) (1 isdigit true) (((1 maj 1) mj3 1) out 1) (1 isdigit true)}
+(((1 d+ 0) tci 1) co 1) ⇐ {(1 isdigit true) (0 isdigit true) (((1 maj 0) mj3 1) out 1) (1 isdigit true)}
+(((0 maj 0) mj3 0) out 0) ⇐ {(0 isdigit true) (0 isdigit true) ((0 and 0) out 0) ((0 or 0) out 0) (0 isdigit true) ((0 and 0) out 0) ((0 and 0) out 0) ((0 or 0) out 0)}
+(((0 d+ 1) tci 0) co 0) ⇐ {(0 isdigit true) (1 isdigit true) (((0 maj 1) mj3 0) out 0) (0 isdigit true)}
+(((1 d- 1) tbi 0) bo 0) ⇐ {(1 isdigit true) (((0 maj 1) mj3 0) out 0) (1 neg 0) (1 isdigit true) (0 isdigit true)}
+(((0 d+ 1) tci 1) co 1) ⇐ {(1 isdigit true) (1 isdigit true) (((0 maj 1) mj3 1) out 1) (0 isdigit true)}
+(((1 d- 1) tbi 1) bo 1) ⇐ {(1 isdigit true) (((0 maj 1) mj3 1) out 1) (1 neg 0) (1 isdigit true) (1 isdigit true)}
+(((0 d+ 0) tci 1) co 0) ⇐ {(1 isdigit true) (0 isdigit true) (((0 maj 0) mj3 1) out 0) (0 isdigit true)}
+(((1 d- 0) tbi 1) bo 0) ⇐ {(0 isdigit true) (((0 maj 0) mj3 1) out 0) (1 neg 0) (1 isdigit true) (1 isdigit true)}
+(((1 d+ 0) tci 0) co 0) ⇐ {(0 isdigit true) (0 isdigit true) (((1 maj 0) mj3 0) out 0) (1 isdigit true)}
+(((0 d- 0) tbi 0) bo 0) ⇐ {(0 isdigit true) (((1 maj 0) mj3 0) out 0) (0 neg 1) (0 isdigit true) (0 isdigit true)}
+(((0 d+ 0) tci 0) co 0) ⇐ {(0 isdigit true) (0 isdigit true) (((0 maj 0) mj3 0) out 0) (0 isdigit true)}
+(((1 d- 0) tbi 0) bo 0) ⇐ {(0 isdigit true) (((0 maj 0) mj3 0) out 0) (1 neg 0) (1 isdigit true) (0 isdigit true)}
+-- 43 ms --
+zelph> (1 nand 1) out X
+(1 nand 1) out X
+Answer: (1 nand 1) out 0
+-- 26 ms --
+zelph> (0 nand 1) out X
+(0 nand 1) out X
+Answer: (0 nand 1) out 1
+-- 15 ms --
+zelph> ((1 d+ 1) tci 1) co X
+((1 d+ 1) tci 1) co X
+Answer: ((1 d+ 1) tci 1) co 1
+-- 15 ms --
+zelph> (&12 * &34) = X
+(&12 * &34) = X
+(&12 mul &34) ⇐ (&12 * &34)
+(&6 mul &34) ⇐ {(&12 mul &34) (&6 != nil)}
+((0 dmul &34) mci 0) ⇐ (&12 mul &34)
+(&3 mul &34) ⇐ {(&6 mul &34) (&3 != nil)}
+((0 dmul &17) mci 0) ⇐ {((0 dmul &34) mci 0) (((0 dx 0) tci 0) mco 0)}
+(&1 mul &34) ⇐ {(&3 mul &34) (&1 != nil)}
+((1 dmul &34) mci 0) ⇐ (&3 mul &34)
+((0 dmul &8) mci 0) ⇐ {((0 dmul &17) mci 0) (((0 dx 1) tci 0) mco 0)}
+((1 dmul &17) mci 0) ⇐ {((1 dmul &34) mci 0) (((1 dx 0) tci 0) mco 0)}
+((0 dmul &4) mci 0) ⇐ {((0 dmul &8) mci 0) (((0 dx 0) tci 0) mco 0)}
+((1 dmul &8) mci 0) ⇐ {((1 dmul &17) mci 0) (((1 dx 1) tci 0) mco 0)}
+((0 dmul &2) mci 0) ⇐ {((0 dmul &4) mci 0) (((0 dx 0) tci 0) mco 0)}
+((1 dmul &4) mci 0) ⇐ {((1 dmul &8) mci 0) (((1 dx 0) tci 0) mco 0)}
+((0 dmul &1) mci 0) ⇐ {((0 dmul &2) mci 0) (((0 dx 0) tci 0) mco 0)}
+((1 dmul &2) mci 0) ⇐ {((1 dmul &4) mci 0) (((1 dx 0) tci 0) mco 0)}
+((0 dmul nil) mci 0) ⇐ {((0 dmul &1) mci 0) (((0 dx 1) tci 0) mco 0)}
+((1 dmul &1) mci 0) ⇐ {((1 dmul &2) mci 0) (((1 dx 0) tci 0) mco 0)}
+(((0 dmul nil) mci 0) pprod nil) ⇐ ((0 dmul nil) mci 0)
+((1 dmul nil) mci 0) ⇐ {((1 dmul &1) mci 0) (((1 dx 1) tci 0) mco 0)}
+(((0 dmul &1) mci 0) pprod &0) ⇐ {((0 dmul &1) mci 0) (((0 dx 1) tci 0) mco 0) (((0 dmul nil) mci 0) pprod nil) (((0 dx 1) tci 0) pd 0)}
+(((1 dmul nil) mci 0) pprod nil) ⇐ ((1 dmul nil) mci 0)
+(((0 dmul &2) mci 0) pprod &0) ⇐ {((0 dmul &2) mci 0) (((0 dx 0) tci 0) mco 0) (((0 dmul &1) mci 0) pprod &0) (((0 dx 0) tci 0) pd 0)}
+(((1 dmul &1) mci 0) pprod &1) ⇐ {((1 dmul &1) mci 0) (((1 dx 1) tci 0) mco 0) (((1 dmul nil) mci 0) pprod nil) (((1 dx 1) tci 0) pd 1)}
+(((0 dmul &4) mci 0) pprod &0) ⇐ {((0 dmul &4) mci 0) (((0 dx 0) tci 0) mco 0) (((0 dmul &2) mci 0) pprod &0) (((0 dx 0) tci 0) pd 0)}
+(((1 dmul &2) mci 0) pprod &2) ⇐ {((1 dmul &2) mci 0) (((1 dx 0) tci 0) mco 0) (((1 dmul &1) mci 0) pprod &1) (((1 dx 0) tci 0) pd 0)}
+(((0 dmul &8) mci 0) pprod &0) ⇐ {((0 dmul &8) mci 0) (((0 dx 0) tci 0) mco 0) (((0 dmul &4) mci 0) pprod &0) (((0 dx 0) tci 0) pd 0)}
+(((1 dmul &4) mci 0) pprod &4) ⇐ {((1 dmul &4) mci 0) (((1 dx 0) tci 0) mco 0) (((1 dmul &2) mci 0) pprod &2) (((1 dx 0) tci 0) pd 0)}
+(((0 dmul &17) mci 0) pprod &0) ⇐ {((0 dmul &17) mci 0) (((0 dx 1) tci 0) mco 0) (((0 dmul &8) mci 0) pprod &0) (((0 dx 1) tci 0) pd 0)}
+(((1 dmul &8) mci 0) pprod &8) ⇐ {((1 dmul &8) mci 0) (((1 dx 0) tci 0) mco 0) (((1 dmul &4) mci 0) pprod &4) (((1 dx 0) tci 0) pd 0)}
+(((0 dmul &34) mci 0) pprod &0) ⇐ {((0 dmul &34) mci 0) (((0 dx 0) tci 0) mco 0) (((0 dmul &17) mci 0) pprod &0) (((0 dx 0) tci 0) pd 0)}
+(((1 dmul &17) mci 0) pprod &17) ⇐ {((1 dmul &17) mci 0) (((1 dx 1) tci 0) mco 0) (((1 dmul &8) mci 0) pprod &8) (((1 dx 1) tci 0) pd 1)}
+(((1 dmul &34) mci 0) pprod &34) ⇐ {((1 dmul &34) mci 0) (((1 dx 0) tci 0) mco 0) (((1 dmul &17) mci 0) pprod &17) (((1 dx 0) tci 0) pd 0)}
+((&1 mul &34) prod &34) ⇐ {(&1 mul &34) (((1 dmul &34) mci 0) pprod &34)}
+(&34 + &68) ⇐ {(&1 != nil) ((&1 mul &34) prod &34) (((1 dmul &34) mci 0) pprod &34) (&3 mul &34)}
+((&34 add &68) ci 0) ⇐ (&34 + &68)
+((&17 add &34) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&34 add &68) ci 0)}
+((&8 add &17) ci 0) ⇐ {(((1 d+ 0) tci 0) co 0) ((&17 add &34) ci 0)}
+((&4 add &8) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&8 add &17) ci 0)}
+((&2 add &4) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&4 add &8) ci 0)}
+((&1 add &2) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&2 add &4) ci 0)}
+((nil add &1) ci 0) ⇐ {(((1 d+ 0) tci 0) co 0) ((&1 add &2) ci 0)}
+(((nil add &1) ci 0) sum &1) ⇐ {((nil add &1) ci 0) (((nil add nil) ci 0) sum nil) (((0 d+ 1) tci 0) sum 1) (((0 d+ 1) tci 0) co 0)}
+(((&1 add &2) ci 0) sum &3) ⇐ {(((1 d+ 0) tci 0) co 0) (((nil add &1) ci 0) sum &1) (((1 d+ 0) tci 0) sum 1) ((&1 add &2) ci 0)}
+(((&2 add &4) ci 0) sum &6) ⇐ {(((0 d+ 0) tci 0) co 0) (((&1 add &2) ci 0) sum &3) (((0 d+ 0) tci 0) sum 0) ((&2 add &4) ci 0)}
+(((&4 add &8) ci 0) sum &12) ⇐ {(((0 d+ 0) tci 0) co 0) (((&2 add &4) ci 0) sum &6) (((0 d+ 0) tci 0) sum 0) ((&4 add &8) ci 0)}
+(((&8 add &17) ci 0) sum &25) ⇐ {(((0 d+ 1) tci 0) co 0) (((&4 add &8) ci 0) sum &12) (((0 d+ 1) tci 0) sum 1) ((&8 add &17) ci 0)}
+(((&17 add &34) ci 0) sum &51) ⇐ {(((1 d+ 0) tci 0) co 0) (((&8 add &17) ci 0) sum &25) (((1 d+ 0) tci 0) sum 1) ((&17 add &34) ci 0)}
+(((&34 add &68) ci 0) sum &102) ⇐ {(((0 d+ 0) tci 0) co 0) (((&17 add &34) ci 0) sum &51) (((0 d+ 0) tci 0) sum 0) ((&34 add &68) ci 0)}
+((&34 + &68) = &102) ⇐ {(((&34 add &68) ci 0) sum &102) (&34 + &68)}
+((&3 mul &34) prod &102) ⇐ {(&1 != nil) (((1 dmul &34) mci 0) pprod &34) ((&1 mul &34) prod &34) (&3 mul &34) ((&34 + &68) = &102)}
+(&0 + &204) ⇐ {(&3 != nil) ((&3 mul &34) prod &102) (((0 dmul &34) mci 0) pprod &0) (&6 mul &34)}
+((&0 add &204) ci 0) ⇐ (&0 + &204)
+((&0 add &102) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &204) ci 0)}
+((&0 add &51) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &102) ci 0)}
+((&0 add &25) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&0 add &51) ci 0)}
+((&0 add &12) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&0 add &25) ci 0)}
+((&0 add &6) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &12) ci 0)}
+((nil add &3) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &6) ci 0)}
+(((nil add &3) ci 0) sum &3) ⇐ {((nil add &3) ci 0) (((nil add &1) ci 0) sum &1) (((0 d+ 1) tci 0) sum 1) (((0 d+ 1) tci 0) co 0)}
+(((&0 add &6) ci 0) sum &6) ⇐ {(((0 d+ 0) tci 0) co 0) (((nil add &3) ci 0) sum &3) (((0 d+ 0) tci 0) sum 0) ((&0 add &6) ci 0)}
+(((&0 add &12) ci 0) sum &12) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &6) ci 0) sum &6) (((0 d+ 0) tci 0) sum 0) ((&0 add &12) ci 0)}
+(((&0 add &25) ci 0) sum &25) ⇐ {(((0 d+ 1) tci 0) co 0) (((&0 add &12) ci 0) sum &12) (((0 d+ 1) tci 0) sum 1) ((&0 add &25) ci 0)}
+(((&0 add &51) ci 0) sum &51) ⇐ {(((0 d+ 1) tci 0) co 0) (((&0 add &25) ci 0) sum &25) (((0 d+ 1) tci 0) sum 1) ((&0 add &51) ci 0)}
+(((&0 add &102) ci 0) sum &102) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &51) ci 0) sum &51) (((0 d+ 0) tci 0) sum 0) ((&0 add &102) ci 0)}
+(((&0 add &204) ci 0) sum &204) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &102) ci 0) sum &102) (((0 d+ 0) tci 0) sum 0) ((&0 add &204) ci 0)}
+((&0 + &204) = &204) ⇐ {(((&0 add &204) ci 0) sum &204) (&0 + &204)}
+((&6 mul &34) prod &204) ⇐ {(&3 != nil) (((0 dmul &34) mci 0) pprod &0) ((&3 mul &34) prod &102) (&6 mul &34) ((&0 + &204) = &204)}
+(&0 + &408) ⇐ {(&6 != nil) ((&6 mul &34) prod &204) (((0 dmul &34) mci 0) pprod &0) (&12 mul &34)}
+((&0 add &408) ci 0) ⇐ (&0 + &408)
+((&0 add &204) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &408) ci 0)}
+((&0 add &102) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &204) ci 0)}
+((&0 add &51) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &102) ci 0)}
+((&0 add &25) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&0 add &51) ci 0)}
+((&0 add &12) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&0 add &25) ci 0)}
+((nil add &6) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &12) ci 0)}
+(((nil add &6) ci 0) sum &6) ⇐ {((nil add &6) ci 0) (((nil add &3) ci 0) sum &3) (((0 d+ 0) tci 0) sum 0) (((0 d+ 0) tci 0) co 0)}
+(((&0 add &12) ci 0) sum &12) ⇐ {(((0 d+ 0) tci 0) co 0) (((nil add &6) ci 0) sum &6) (((0 d+ 0) tci 0) sum 0) ((&0 add &12) ci 0)}
+(((&0 add &25) ci 0) sum &25) ⇐ {(((0 d+ 1) tci 0) co 0) (((&0 add &12) ci 0) sum &12) (((0 d+ 1) tci 0) sum 1) ((&0 add &25) ci 0)}
+(((&0 add &51) ci 0) sum &51) ⇐ {(((0 d+ 1) tci 0) co 0) (((&0 add &25) ci 0) sum &25) (((0 d+ 1) tci 0) sum 1) ((&0 add &51) ci 0)}
+(((&0 add &102) ci 0) sum &102) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &51) ci 0) sum &51) (((0 d+ 0) tci 0) sum 0) ((&0 add &102) ci 0)}
+(((&0 add &204) ci 0) sum &204) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &102) ci 0) sum &102) (((0 d+ 0) tci 0) sum 0) ((&0 add &204) ci 0)}
+(((&0 add &408) ci 0) sum &408) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &204) ci 0) sum &204) (((0 d+ 0) tci 0) sum 0) ((&0 add &408) ci 0)}
+((&0 + &408) = &408) ⇐ {(((&0 add &408) ci 0) sum &408) (&0 + &408)}
+((&12 mul &34) prod &408) ⇐ {(&6 != nil) (((0 dmul &34) mci 0) pprod &0) ((&6 mul &34) prod &204) (&12 mul &34) ((&0 + &408) = &408)}
+((&12 * &34) = &408) ⇐ {((&12 mul &34) prod &408) (&12 * &34)}
+-- 59 ms --
+zelph> (&12 * &34) = X
+(&12 * &34) = X
+Answer: (&12 * &34) = &408
+-- 17 ms --
+zelph> .import primes-naf
+Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/primes-naf.zph...
+(:testprime N) => (&2 cmp N)
+{(&2 == N) (:testprime N)} => (:isprime N)
+{(:testprime N) (&2 < N)} => (&2 divisorcand N)
+(D divisorcand N) => (D + &1)
+{(D divisorcand N) ((D + &1) = E)} => (E * E)
+{((D + &1) = E) ((E * E) = P) (D divisorcand N)} => (P cmp N)
+{((D + &1) = E) (D divisorcand N) (P < N) ((E * E) = P)} => (E divisorcand N)
+{((D + &1) = E) (D divisorcand N) (P == N) ((E * E) = P)} => (E divisorcand N)
+(D divisorcand N) => (N mod D)
+{((N mod D) = &0) (D divisorcand N)} => (N hasdivisor D)
+{(:testprime N) (&2 < N) (¬(N hasdivisor D))} => (:isprime N)
+{(:isprime N) (:testprime N)} => ((:testprime N) = prime)
+{(N hasdivisor D) (:testprime N)} => ((:testprime N) = composite)
+-- 44 ms --
+zelph> (:testprime &13) = X
+(:testprime &13) = X
+(&2 cmp &13) ⇐ (:testprime &13)
+(&2 lcmp &13) ⇐ (&2 cmp &13)
+(&1 lcmp &6) ⇐ (&2 lcmp &13)
+(nil lcmp &3) ⇐ (&1 lcmp &6)
+(nil lcmp &1) ⇐ (nil lcmp &3)
+((nil lcmp &1) res lt) ⇐ {(nil lcmp &1) ((0 dcmp 1) res lt) ((nil lcmp nil) res eq)}
+((nil lcmp &3) res lt) ⇐ {(lt != eq) (nil lcmp &3) ((nil lcmp &1) res lt)}
+((&1 lcmp &6) res lt) ⇐ {((nil lcmp &3) res lt) (lt != eq) (&1 lcmp &6)}
+((&2 lcmp &13) res lt) ⇐ {((&1 lcmp &6) res lt) (lt != eq) (&2 lcmp &13)}
+((&2 cmp &13) = lt) ⇐ {(&2 cmp &13) ((&2 lcmp &13) res lt)}
+(&2 < &13) ⇐ {(&2 cmp &13) ((&2 lcmp &13) res lt)}
+(&2 divisorcand &13) ⇐ {(:testprime &13) (&2 < &13)}
+(&13 mod &2) ⇐ (&2 divisorcand &13)
+(&2 + &1) ⇐ (&2 divisorcand &13)
+(&13 dvd &2) ⇐ (&13 mod &2)
+((&2 add &1) ci 0) ⇐ (&2 + &1)
+(&6 dvd &2) ⇐ {(&6 != nil) (&13 dvd &2)}
+((&1 add nil) ci 0) ⇐ {(((0 d+ 1) tci 0) co 0) ((&2 add &1) ci 0)}
+(&3 dvd &2) ⇐ {(&3 != nil) (&6 dvd &2)}
+(((&1 add nil) ci 0) sum &1) ⇐ {(((1 d+ 0) tci 0) co 0) (((1 d+ 0) tci 0) sum 1) ((&1 add nil) ci 0) (((nil add nil) ci 0) sum nil)}
+(&1 dvd &2) ⇐ {(&1 != nil) (&3 dvd &2)}
+(((&2 add &1) ci 0) sum &3) ⇐ {(((0 d+ 1) tci 0) co 0) (((&1 add nil) ci 0) sum &1) (((0 d+ 1) tci 0) sum 1) ((&2 add &1) ci 0)}
+(&1 - &2) ⇐ {(((1 dmul &2) mci 0) pprod &2) (&1 dvd &2)}
+(&1 - &0) ⇐ {(((0 dmul &2) mci 0) pprod &0) (&1 dvd &2)}
+((&2 + &1) = &3) ⇐ {(((&2 add &1) ci 0) sum &3) (&2 + &1)}
+((&1 sub &2) bi 0) ⇐ (&1 - &2)
+((&1 sub &0) bi 0) ⇐ (&1 - &0)
+(&3 * &3) ⇐ {(&2 divisorcand &13) ((&2 + &1) = &3)}
+((nil sub &1) bi 0) ⇐ {((&1 sub &2) bi 0) (((1 d- 0) tbi 0) bo 0)}
+((nil sub &0) bi 0) ⇐ {((&1 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(&3 mul &3) ⇐ (&3 * &3)
+((nil sub nil) bi 1) ⇐ {(((0 d- 1) tbi 0) bo 1) ((nil sub &1) bi 0)}
+(((nil sub &0) bi 0) diff &0) ⇐ {(((0 d- 0) tbi 0) diff 0) (((nil sub nil) bi 0) diff nil) (((0 d- 0) tbi 0) bo 0) ((nil sub &0) bi 0)}
+(&1 mul &3) ⇐ {(&3 mul &3) (&1 != nil)}
+((1 dmul &3) mci 0) ⇐ (&3 mul &3)
+(((&1 sub &0) bi 0) diff &1) ⇐ {(((nil sub &0) bi 0) diff &0) (((1 d- 0) tbi 0) diff 1) ((&1 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(((1 dmul &3) mci 0) pprod &3) ⇐ {((1 dmul &3) mci 0) (((1 dx 1) tci 0) mco 0) (((1 dmul &1) mci 0) pprod &1) (((1 dx 1) tci 0) pd 1)}
+(:needscanon &1) ⇐ (((&1 sub &0) bi 0) diff &1)
+((&1 mul &3) prod &3) ⇐ {(&1 mul &3) (((1 dmul &3) mci 0) pprod &3)}
+(&3 + &6) ⇐ {(&1 != nil) ((&1 mul &3) prod &3) (((1 dmul &3) mci 0) pprod &3) (&3 mul &3)}
+(&1 canon &1) ⇐ {(1 != 0) (&0 canon nil) (&0 != nil) (:needscanon &1)}
+(&1 canonnum &1) ⇐ {(&1 canon &1) (:needscanon &1) (&1 != nil)}
+((&3 add &6) ci 0) ⇐ (&3 + &6)
+((&1 - &0) = &1) ⇐ {(&1 canonnum &1) (&1 - &0) (((&1 sub &0) bi 0) diff &1)}
+((&1 add &3) ci 0) ⇐ {(((1 d+ 0) tci 0) co 0) ((&3 add &6) ci 0)}
+(&1 cmp &2) ⇐ {((&1 - &0) = &1) (((0 dmul &2) mci 0) pprod &0)}
+((nil add &1) ci 1) ⇐ {(((1 d+ 1) tci 0) co 1) ((&1 add &3) ci 0)}
+(&1 lcmp &2) ⇐ (&1 cmp &2)
+(((nil add &1) ci 1) sum &2) ⇐ {((nil add &1) ci 1) (((nil add nil) ci 1) sum &1) (((0 d+ 1) tci 1) sum 0) (((0 d+ 1) tci 1) co 1)}
+((&1 lcmp &2) res lt) ⇐ {((nil lcmp &1) res lt) (lt != eq) (&1 lcmp &2)}
+(((&1 add &3) ci 0) sum &4) ⇐ {(((1 d+ 1) tci 0) co 1) (((nil add &1) ci 1) sum &2) (((1 d+ 1) tci 0) sum 0) ((&1 add &3) ci 0)}
+((&1 cmp &2) = lt) ⇐ {(&1 cmp &2) ((&1 lcmp &2) res lt)}
+(&1 < &2) ⇐ {(&1 cmp &2) ((&1 lcmp &2) res lt)}
+(((&3 add &6) ci 0) sum &9) ⇐ {(((1 d+ 0) tci 0) co 0) (((&1 add &3) ci 0) sum &4) (((1 d+ 0) tci 0) sum 1) ((&3 add &6) ci 0)}
+((&1 dvd &2) rem &1) ⇐ {(&1 dvd &2) (((0 dmul &2) mci 0) pprod &0) ((&1 - &0) = &1) (&1 < &2)}
+((&1 dvd &2) quot &0) ⇐ {(&1 dvd &2) (&1 < &2) (((0 dmul &2) mci 0) pprod &0) ((&1 - &0) = &1)}
+((&3 + &6) = &9) ⇐ {(((&3 add &6) ci 0) sum &9) (&3 + &6)}
+(&3 - &0) ⇐ {((&1 dvd &2) rem &1) (((0 dmul &2) mci 0) pprod &0) (&3 dvd &2) (&1 != nil)}
+(&3 - &2) ⇐ {((&1 dvd &2) rem &1) (((1 dmul &2) mci 0) pprod &2) (&3 dvd &2) (&1 != nil)}
+(:needscanon &1) ⇐ ((&1 dvd &2) rem &1)
+((&3 mul &3) prod &9) ⇐ {(&1 != nil) (((1 dmul &3) mci 0) pprod &3) ((&1 mul &3) prod &3) (&3 mul &3) ((&3 + &6) = &9)}
+((&3 sub &0) bi 0) ⇐ (&3 - &0)
+((&3 sub &2) bi 0) ⇐ (&3 - &2)
+(:canon &1) ⇐ {(:needscanon &1) (1 != 0)}
+(:canonnum &1) ⇐ {(:canon &1) (:needscanon &1) (&1 != nil)}
+((&3 * &3) = &9) ⇐ {((&3 mul &3) prod &9) (&3 * &3)}
+((&1 sub &0) bi 0) ⇐ {((&3 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+((&1 sub &1) bi 0) ⇐ {((&3 sub &2) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(&9 cmp &13) ⇐ {((&2 + &1) = &3) ((&3 * &3) = &9) (&2 divisorcand &13)}
+(((&1 sub &0) bi 0) diff &1) ⇐ {(((nil sub nil) bi 0) diff nil) (((1 d- 0) tbi 0) diff 1) ((&1 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(((&1 sub &1) bi 0) diff &0) ⇐ {(((nil sub nil) bi 0) diff nil) (((1 d- 1) tbi 0) diff 0) ((&1 sub &1) bi 0) (((1 d- 1) tbi 0) bo 0)}
+(&9 lcmp &13) ⇐ (&9 cmp &13)
+(((&3 sub &0) bi 0) diff &3) ⇐ {(((&1 sub &0) bi 0) diff &1) (((1 d- 0) tbi 0) diff 1) ((&3 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(((&3 sub &2) bi 0) diff &1) ⇐ {(((&1 sub &1) bi 0) diff &0) (((1 d- 0) tbi 0) diff 1) ((&3 sub &2) bi 0) (((1 d- 0) tbi 0) bo 0)}
+(&4 lcmp &6) ⇐ (&9 lcmp &13)
+(:needscanon &3) ⇐ (((&3 sub &0) bi 0) diff &3)
+((&3 - &2) = &1) ⇐ {(&1 canonnum &1) (&3 - &2) (((&3 sub &2) bi 0) diff &1)}
+(&2 lcmp &3) ⇐ (&4 lcmp &6)
+(:canon &3) ⇐ {(1 != 0) (:canon &1) (&1 != nil) (:needscanon &3)}
+(:canonnum &3) ⇐ {(:canon &3) (:needscanon &3) (&3 != nil)}
+((&3 dvd &2) quot &1) ⇐ {((&1 dvd &2) rem &1) (&1 != nil) (((1 dmul &2) mci 0) pprod &2) ((&1 dvd &2) quot &0) (&1 < &2) (&3 dvd &2) ((&3 - &2) = &1)}
+((&3 dvd &2) rem &1) ⇐ {(&1 != nil) (((1 dmul &2) mci 0) pprod &2) (&1 < &2) ((&3 - &2) = &1) ((&1 dvd &2) rem &1) (&3 dvd &2)}
+(&1 lcmp &1) ⇐ (&2 lcmp &3)
+((&3 - &0) = &3) ⇐ {(:canonnum &3) (&3 - &0) (((&3 sub &0) bi 0) diff &3)}
+(&2 - &0) ⇐ {((&3 dvd &2) rem &1) (((0 dmul &2) mci 0) pprod &0) (&6 dvd &2) (&3 != nil)}
+(&2 - &2) ⇐ {((&3 dvd &2) rem &1) (((1 dmul &2) mci 0) pprod &2) (&6 dvd &2) (&3 != nil)}
+((&1 lcmp &1) res eq) ⇐ {((nil lcmp nil) res eq) (&1 lcmp &1) ((1 dcmp 1) res eq)}
+(&3 cmp &2) ⇐ {((&3 - &0) = &3) (((0 dmul &2) mci 0) pprod &0)}
+((&2 sub &0) bi 0) ⇐ (&2 - &0)
+((&2 sub &2) bi 0) ⇐ (&2 - &2)
+((&2 lcmp &3) res lt) ⇐ {((&1 lcmp &1) res eq) (&2 lcmp &3) ((0 dcmp 1) res lt)}
+(&3 lcmp &2) ⇐ (&3 cmp &2)
+(((&2 sub &0) bi 0) diff &2) ⇐ {(((&1 sub &0) bi 0) diff &1) (((0 d- 0) tbi 0) diff 0) ((&2 sub &0) bi 0) (((0 d- 0) tbi 0) bo 0)}
+(((&2 sub &2) bi 0) diff &0) ⇐ {(((&1 sub &1) bi 0) diff &0) (((0 d- 0) tbi 0) diff 0) ((&2 sub &2) bi 0) (((0 d- 0) tbi 0) bo 0)}
+((&4 lcmp &6) res lt) ⇐ {((&2 lcmp &3) res lt) (lt != eq) (&4 lcmp &6)}
+((&3 lcmp &2) res gt) ⇐ {((&1 lcmp &1) res eq) (&3 lcmp &2) ((1 dcmp 0) res gt)}
+(:needscanon &2) ⇐ (((&2 sub &0) bi 0) diff &2)
+(:needscanon &0) ⇐ (((&2 sub &2) bi 0) diff &0)
+((&9 lcmp &13) res lt) ⇐ {((&4 lcmp &6) res lt) (lt != eq) (&9 lcmp &13)}
+((&3 cmp &2) = gt) ⇐ {(&3 cmp &2) ((&3 lcmp &2) res gt)}
+(&3 > &2) ⇐ {((&3 lcmp &2) res gt) (&3 cmp &2)}
+(:canon &2) ⇐ {(&1 != nil) (:needscanon &2) (&1 != nil) (:canon &1)}
+(&0 canon nil) ⇐ {(:needscanon &0) (&0 != nil) (&0 canon nil)}
+(&0 canonnum &0) ⇐ {(:needscanon &0) (&0 canon nil)}
+((&9 cmp &13) = lt) ⇐ {(&9 cmp &13) ((&9 lcmp &13) res lt)}
+(&9 < &13) ⇐ {(&9 cmp &13) ((&9 lcmp &13) res lt)}
+(:canonnum &2) ⇐ {(:canon &2) (:needscanon &2) (&2 != nil)}
+((&2 - &2) = &0) ⇐ {(&0 canonnum &0) (&2 - &2) (((&2 sub &2) bi 0) diff &0)}
+(&3 divisorcand &13) ⇐ {((&2 + &1) = &3) (&2 divisorcand &13) (&9 < &13) ((&3 * &3) = &9)}
+((&2 - &0) = &2) ⇐ {(:canonnum &2) (&2 - &0) (((&2 sub &0) bi 0) diff &2)}
+(&0 cmp &2) ⇐ {((&2 - &2) = &0) (((1 dmul &2) mci 0) pprod &2)}
+(&13 mod &3) ⇐ (&3 divisorcand &13)
+(&3 + &1) ⇐ (&3 divisorcand &13)
+(&2 cmp &2) ⇐ {((&2 - &0) = &2) (((0 dmul &2) mci 0) pprod &0)}
+(&0 lcmp &2) ⇐ (&0 cmp &2)
+((0 dmul &3) mci 0) ⇐ {(&13 mod &3) (0 isdigit true)}
+(&13 dvd &3) ⇐ (&13 mod &3)
+((&3 add &1) ci 0) ⇐ (&3 + &1)
+(&2 lcmp &2) ⇐ (&2 cmp &2)
+((&0 lcmp &2) res lt) ⇐ {((nil lcmp &1) res lt) (lt != eq) (&0 lcmp &2)}
+(((0 dmul &3) mci 0) pprod &0) ⇐ {((0 dmul &3) mci 0) (((0 dx 1) tci 0) mco 0) (((0 dmul &1) mci 0) pprod &0) (((0 dx 1) tci 0) pd 0)}
+(&6 dvd &3) ⇐ {(&6 != nil) (&13 dvd &3)}
+((&1 add nil) ci 1) ⇐ {(((1 d+ 1) tci 0) co 1) ((&3 add &1) ci 0)}
+((&2 lcmp &2) res eq) ⇐ {((&1 lcmp &1) res eq) (&2 lcmp &2) ((0 dcmp 0) res eq)}
+((&0 cmp &2) = lt) ⇐ {(&0 cmp &2) ((&0 lcmp &2) res lt)}
+(&0 < &2) ⇐ {(&0 cmp &2) ((&0 lcmp &2) res lt)}
+(&1 cmp &3) ⇐ {((&1 - &0) = &1) (((0 dmul &3) mci 0) pprod &0)}
+(&3 cmp &3) ⇐ {((&3 - &0) = &3) (((0 dmul &3) mci 0) pprod &0)}
+(&2 cmp &3) ⇐ {((&2 - &0) = &2) (((0 dmul &3) mci 0) pprod &0)}
+(&3 dvd &3) ⇐ {(&3 != nil) (&6 dvd &3)}
+(((&1 add nil) ci 1) sum &2) ⇐ {(((1 d+ 0) tci 1) co 1) (((1 d+ 0) tci 1) sum 0) ((&1 add nil) ci 1) (((nil add nil) ci 1) sum &1)}
+((&2 cmp &2) = eq) ⇐ {(&2 cmp &2) ((&2 lcmp &2) res eq)}
+(&2 == &2) ⇐ {((&2 lcmp &2) res eq) (&2 cmp &2)}
+((&6 dvd &2) quot &3) ⇐ {((&3 dvd &2) rem &1) (&3 != nil) (((1 dmul &2) mci 0) pprod &2) ((&3 dvd &2) quot &1) (&0 < &2) (&6 dvd &2) ((&2 - &2) = &0)}
+((&6 dvd &2) rem &0) ⇐ {(&3 != nil) (((1 dmul &2) mci 0) pprod &2) (&0 < &2) ((&2 - &2) = &0) ((&3 dvd &2) rem &1) (&6 dvd &2)}
+(&1 lcmp &3) ⇐ (&1 cmp &3)
+(&3 lcmp &3) ⇐ (&3 cmp &3)
+((&2 cmp &3) = lt) ⇐ {(&2 cmp &3) ((&2 lcmp &3) res lt)}
+(&2 < &3) ⇐ {(&2 cmp &3) ((&2 lcmp &3) res lt)}
+(&1 dvd &3) ⇐ {(&1 != nil) (&3 dvd &3)}
+(((&3 add &1) ci 0) sum &4) ⇐ {(((1 d+ 1) tci 0) co 1) (((&1 add nil) ci 1) sum &2) (((1 d+ 1) tci 0) sum 0) ((&3 add &1) ci 0)}
+(:needscanon &3) ⇐ ((&6 dvd &2) quot &3)
+(&1 - &0) ⇐ {((&6 dvd &2) rem &0) (((0 dmul &2) mci 0) pprod &0) (&13 dvd &2) (&6 != nil)}
+(&1 - &2) ⇐ {((&6 dvd &2) rem &0) (((1 dmul &2) mci 0) pprod &2) (&13 dvd &2) (&6 != nil)}
+((&1 lcmp &3) res lt) ⇐ {((nil lcmp &1) res lt) (lt != eq) (&1 lcmp &3)}
+((&3 lcmp &3) res eq) ⇐ {((&1 lcmp &1) res eq) (&3 lcmp &3) ((1 dcmp 1) res eq)}
+(&1 - &3) ⇐ {(((1 dmul &3) mci 0) pprod &3) (&1 dvd &3)}
+((&3 + &1) = &4) ⇐ {(((&3 add &1) ci 0) sum &4) (&3 + &1)}
+(&3 canon &3) ⇐ {(1 != 0) (&1 canon &1) (&1 != nil) (:needscanon &3)}
+(&3 canonnum &3) ⇐ {(&3 canon &3) (:needscanon &3) (&3 != nil)}
+((&1 sub &0) bi 0) ⇐ (&1 - &0)
+((&1 sub &2) bi 0) ⇐ (&1 - &2)
+((&1 cmp &3) = lt) ⇐ {(&1 cmp &3) ((&1 lcmp &3) res lt)}
+(&1 < &3) ⇐ {(&1 cmp &3) ((&1 lcmp &3) res lt)}
+((&3 cmp &3) = eq) ⇐ {(&3 cmp &3) ((&3 lcmp &3) res eq)}
+(&3 == &3) ⇐ {((&3 lcmp &3) res eq) (&3 cmp &3)}
+((&1 sub &3) bi 0) ⇐ (&1 - &3)
+(&4 * &4) ⇐ {(&3 divisorcand &13) ((&3 + &1) = &4)}
+((&0 sub &0) bi 0) ⇐ {((&1 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+((&0 sub &1) bi 0) ⇐ {((&1 sub &2) bi 0) (((1 d- 0) tbi 0) bo 0)}
+((&1 dvd &3) rem &1) ⇐ {(&1 dvd &3) (((0 dmul &3) mci 0) pprod &0) ((&1 - &0) = &1) (&1 < &3)}
+((&1 dvd &3) quot &0) ⇐ {(&1 dvd &3) (&1 < &3) (((0 dmul &3) mci 0) pprod &0) ((&1 - &0) = &1)}
+(&4 mul &4) ⇐ (&4 * &4)
+(((&0 sub &0) bi 0) diff &0) ⇐ {(((nil sub nil) bi 0) diff nil) (((0 d- 0) tbi 0) diff 0) ((&0 sub &0) bi 0) (((0 d- 0) tbi 0) bo 0)}
+(&3 - &3) ⇐ {((&1 dvd &3) rem &1) (((1 dmul &3) mci 0) pprod &3) (&3 dvd &3) (&1 != nil)}
+(&2 mul &4) ⇐ {(&4 mul &4) (&2 != nil)}
+(((&1 sub &0) bi 0) diff &1) ⇐ {(((&0 sub &0) bi 0) diff &0) (((1 d- 0) tbi 0) diff 1) ((&1 sub &0) bi 0) (((1 d- 0) tbi 0) bo 0)}
+((&3 sub &3) bi 0) ⇐ (&3 - &3)
+(&1 mul &4) ⇐ {(&2 mul &4) (&1 != nil)}
+((&1 - &0) = &1) ⇐ {(&1 canonnum &1) (&1 - &0) (((&1 sub &0) bi 0) diff &1)}
+(((&3 sub &3) bi 0) diff &0) ⇐ {(((&1 sub &1) bi 0) diff &0) (((1 d- 1) tbi 0) diff 0) ((&3 sub &3) bi 0) (((1 d- 1) tbi 0) bo 0)}
+((&1 mul &4) prod &4) ⇐ {(&1 mul &4) (((1 dmul &4) mci 0) pprod &4)}
+((&13 dvd &2) quot &6) ⇐ {((&6 dvd &2) rem &0) (&6 != nil) (((0 dmul &2) mci 0) pprod &0) ((&6 dvd &2) quot &3) (&1 < &2) (&13 dvd &2) ((&1 - &0) = &1)}
+((&13 dvd &2) rem &1) ⇐ {(&6 != nil) (((0 dmul &2) mci 0) pprod &0) (&1 < &2) ((&1 - &0) = &1) ((&6 dvd &2) rem &0) (&13 dvd &2)}
+((&3 - &3) = &0) ⇐ {(&0 canonnum &0) (&3 - &3) (((&3 sub &3) bi 0) diff &0)}
+(&0 + &8) ⇐ {(&1 != nil) ((&1 mul &4) prod &4) (((0 dmul &4) mci 0) pprod &0) (&2 mul &4)}
+(:needscanon &6) ⇐ ((&13 dvd &2) quot &6)
+((&13 mod &2) = &1) ⇐ {(&13 mod &2) ((&13 dvd &2) rem &1) (:canonnum &1)}
+(&0 cmp &3) ⇐ {((&3 - &3) = &0) (((1 dmul &3) mci 0) pprod &3)}
+((&0 add &8) ci 0) ⇐ (&0 + &8)
+(&6 canon &6) ⇐ {(&3 != nil) (:needscanon &6) (&3 != nil) (&3 canon &3)}
+(&0 lcmp &3) ⇐ (&0 cmp &3)
+((&0 add &4) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &8) ci 0)}
+(&6 canonnum &6) ⇐ {(&6 canon &6) (:needscanon &6) (&6 != nil)}
+((&0 lcmp &3) res lt) ⇐ {((nil lcmp &1) res lt) (lt != eq) (&0 lcmp &3)}
+((&0 add &2) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &4) ci 0)}
+((&0 cmp &3) = lt) ⇐ {(&0 cmp &3) ((&0 lcmp &3) res lt)}
+(&0 < &3) ⇐ {(&0 cmp &3) ((&0 lcmp &3) res lt)}
+(((&0 add &2) ci 0) sum &2) ⇐ {(((0 d+ 0) tci 0) co 0) (((nil add &1) ci 0) sum &1) (((0 d+ 0) tci 0) sum 0) ((&0 add &2) ci 0)}
+((&3 dvd &3) quot &1) ⇐ {((&1 dvd &3) rem &1) (&1 != nil) (((1 dmul &3) mci 0) pprod &3) ((&1 dvd &3) quot &0) (&0 < &3) (&3 dvd &3) ((&3 - &3) = &0)}
+((&3 dvd &3) rem &0) ⇐ {(&1 != nil) (((1 dmul &3) mci 0) pprod &3) (&0 < &3) ((&3 - &3) = &0) ((&1 dvd &3) rem &1) (&3 dvd &3)}
+(((&0 add &4) ci 0) sum &4) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &2) ci 0) sum &2) (((0 d+ 0) tci 0) sum 0) ((&0 add &4) ci 0)}
+(&0 - &3) ⇐ {((&3 dvd &3) rem &0) (((1 dmul &3) mci 0) pprod &3) (&6 dvd &3) (&3 != nil)}
+(&0 - &0) ⇐ {((&3 dvd &3) rem &0) (((0 dmul &3) mci 0) pprod &0) (&6 dvd &3) (&3 != nil)}
+(((&0 add &8) ci 0) sum &8) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &4) ci 0) sum &4) (((0 d+ 0) tci 0) sum 0) ((&0 add &8) ci 0)}
+((&0 sub &3) bi 0) ⇐ (&0 - &3)
+((&0 sub &0) bi 0) ⇐ (&0 - &0)
+((&0 + &8) = &8) ⇐ {(((&0 add &8) ci 0) sum &8) (&0 + &8)}
+((&0 sub &1) bi 1) ⇐ {((&0 sub &3) bi 0) (((0 d- 1) tbi 0) bo 1)}
+(((&0 sub &0) bi 0) diff &0) ⇐ {(((&0 sub &0) bi 0) diff &0) (((0 d- 0) tbi 0) diff 0) ((&0 sub &0) bi 0) (((0 d- 0) tbi 0) bo 0)}
+((&2 mul &4) prod &8) ⇐ {(&1 != nil) (((0 dmul &4) mci 0) pprod &0) ((&1 mul &4) prod &4) (&2 mul &4) ((&0 + &8) = &8)}
+((&0 - &0) = &0) ⇐ {(&0 canonnum &0) (&0 - &0) (((&0 sub &0) bi 0) diff &0)}
+(&0 + &16) ⇐ {(&2 != nil) ((&2 mul &4) prod &8) (((0 dmul &4) mci 0) pprod &0) (&4 mul &4)}
+((&6 dvd &3) quot &2) ⇐ {((&3 dvd &3) rem &0) (&3 != nil) (((0 dmul &3) mci 0) pprod &0) ((&3 dvd &3) quot &1) (&0 < &3) (&6 dvd &3) ((&0 - &0) = &0)}
+((&6 dvd &3) rem &0) ⇐ {(&3 != nil) (((0 dmul &3) mci 0) pprod &0) (&0 < &3) ((&0 - &0) = &0) ((&3 dvd &3) rem &0) (&6 dvd &3)}
+((&0 add &16) ci 0) ⇐ (&0 + &16)
+((&13 dvd &3) quot &4) ⇐ {((&6 dvd &3) rem &0) (&6 != nil) (((0 dmul &3) mci 0) pprod &0) ((&6 dvd &3) quot &2) (&1 < &3) (&13 dvd &3) ((&1 - &0) = &1)}
+(:needscanon &2) ⇐ ((&6 dvd &3) quot &2)
+(&1 - &3) ⇐ {((&6 dvd &3) rem &0) (((1 dmul &3) mci 0) pprod &3) (&13 dvd &3) (&6 != nil)}
+((&13 dvd &3) rem &1) ⇐ {(&6 != nil) (((0 dmul &3) mci 0) pprod &0) (&1 < &3) ((&1 - &0) = &1) ((&6 dvd &3) rem &0) (&13 dvd &3)}
+((&0 add &8) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &16) ci 0)}
+(:needscanon &4) ⇐ ((&13 dvd &3) quot &4)
+(&2 canon &2) ⇐ {(&1 != nil) (:needscanon &2) (&1 != nil) (&1 canon &1)}
+((&1 sub &3) bi 0) ⇐ (&1 - &3)
+((&13 mod &3) = &1) ⇐ {(&13 mod &3) ((&13 dvd &3) rem &1) (:canonnum &1)}
+((&0 add &4) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &8) ci 0)}
+(&4 canon &4) ⇐ {(&2 != nil) (:needscanon &4) (&2 != nil) (&2 canon &2)}
+(&2 canonnum &2) ⇐ {(&2 canon &2) (:needscanon &2) (&2 != nil)}
+((nil add &2) ci 0) ⇐ {(((0 d+ 0) tci 0) co 0) ((&0 add &4) ci 0)}
+(&4 canonnum &4) ⇐ {(&4 canon &4) (:needscanon &4) (&4 != nil)}
+(((nil add &2) ci 0) sum &2) ⇐ {((nil add &2) ci 0) (((nil add &1) ci 0) sum &1) (((0 d+ 0) tci 0) sum 0) (((0 d+ 0) tci 0) co 0)}
+(((&0 add &4) ci 0) sum &4) ⇐ {(((0 d+ 0) tci 0) co 0) (((nil add &2) ci 0) sum &2) (((0 d+ 0) tci 0) sum 0) ((&0 add &4) ci 0)}
+(((&0 add &8) ci 0) sum &8) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &4) ci 0) sum &4) (((0 d+ 0) tci 0) sum 0) ((&0 add &8) ci 0)}
+(((&0 add &16) ci 0) sum &16) ⇐ {(((0 d+ 0) tci 0) co 0) (((&0 add &8) ci 0) sum &8) (((0 d+ 0) tci 0) sum 0) ((&0 add &16) ci 0)}
+((&0 + &16) = &16) ⇐ {(((&0 add &16) ci 0) sum &16) (&0 + &16)}
+((&4 mul &4) prod &16) ⇐ {(&2 != nil) (((0 dmul &4) mci 0) pprod &0) ((&2 mul &4) prod &8) (&4 mul &4) ((&0 + &16) = &16)}
+((&4 * &4) = &16) ⇐ {((&4 mul &4) prod &16) (&4 * &4)}
+(&16 cmp &13) ⇐ {((&3 + &1) = &4) ((&4 * &4) = &16) (&3 divisorcand &13)}
+(&16 lcmp &13) ⇐ (&16 cmp &13)
+(&8 lcmp &6) ⇐ (&16 lcmp &13)
+(&4 lcmp &3) ⇐ (&8 lcmp &6)
+(&2 lcmp &1) ⇐ (&4 lcmp &3)
+(&1 lcmp nil) ⇐ (&2 lcmp &1)
+((&1 lcmp nil) res gt) ⇐ {((1 dcmp 0) res gt) (&1 lcmp nil) ((nil lcmp nil) res eq)}
+((&2 lcmp &1) res gt) ⇐ {((&1 lcmp nil) res gt) (gt != eq) (&2 lcmp &1)}
+((&4 lcmp &3) res gt) ⇐ {((&2 lcmp &1) res gt) (gt != eq) (&4 lcmp &3)}
+((&8 lcmp &6) res gt) ⇐ {((&4 lcmp &3) res gt) (gt != eq) (&8 lcmp &6)}
+((&16 lcmp &13) res gt) ⇐ {((&8 lcmp &6) res gt) (gt != eq) (&16 lcmp &13)}
+((&16 cmp &13) = gt) ⇐ {(&16 cmp &13) ((&16 lcmp &13) res gt)}
+(&16 > &13) ⇐ {((&16 lcmp &13) res gt) (&16 cmp &13)}
+(:isprime &13) ⇐ {(:testprime &13) (&2 < &13) (¬(&13 hasdivisor D))}
+((:testprime &13) = prime) ⇐ {(:isprime &13) (:testprime &13)}
+-- 187 ms --
+zelph> (:testprime &13) = X
+(:testprime &13) = X
+Answer: (:testprime &13) = prime
+-- 67 ms --
+zelph>
