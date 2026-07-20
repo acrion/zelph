@@ -792,16 +792,16 @@ private:
                 string::node_to_string(_n, fact_repr, _n->lang(), node, max_neighbors);
                 if (!fact_repr.empty() && fact_repr != "??")
                 {
-                    return fact_repr + " (ID " + std::to_string(node) + ")";
+                    return fact_repr + " (ID " + string::unmark_identifiers(std::to_string(node)) + ")";
                 }
                 else
                 {
-                    return "ID " + std::to_string(node);
+                    return "ID " + string::unmark_identifiers(std::to_string(node));
                 }
             }
             else
             {
-                return node_name + " (ID " + std::to_string(node) + ")";
+                return node_name + " (ID " + string::unmark_identifiers(std::to_string(node)) + ")";
             }
         };
 
@@ -817,7 +817,7 @@ private:
             {
                 for (network::Node node : conns)
                 {
-                    _n->out_stream() << "    - " << format_node(node) << std::endl;
+                    _n->out_stream() << "    - " << string::unmark_identifiers(format_node(node)) << std::endl;
                 }
             }
             else
@@ -833,7 +833,7 @@ private:
         string::node_to_string(_n, fact_repr, _n->lang(), nd, max_neighbors);
         if (!fact_repr.empty() && fact_repr != "??")
         {
-            _n->out_stream() << "  Representation: " << fact_repr << std::endl;
+            _n->out_stream() << "  Representation: " << string::unmark_identifiers(fact_repr) << std::endl;
         }
 
         _n->out_stream() << "------------------------" << std::endl;

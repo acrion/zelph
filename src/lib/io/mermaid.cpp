@@ -30,7 +30,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
+#include <algorithm>
 #include <fstream>
+#include <map>
 #include <set>
 
 // #define DEBUG_MERMAID
@@ -421,6 +423,65 @@ bool identify_subgraph_components(const network::Zelph* const z, network::Node n
     return true;
 }
 
+namespace
+{
+    // Deterministic, ID-independent ordering key for visualization output.
+    // Uses the node's representation WITHOUT the numeric ID prefix (same call
+    // as for predicate edge labels), so the same logical graph yields the same
+    // picture regardless of node creation order, zelph version, or standard
+    // library implementation.
+    const std::string& order_key(const network::Zelph* const           z,
+                                 network::Node                         n,
+                                 int                                   max_neighbors,
+                                 std::map<network::Node, std::string>& cache)
+    {
+        auto it = cache.find(n);
+        if (it == cache.end())
+            it = cache.emplace(n, z->get_name_hex(n, false, max_neighbors)).first;
+        return it->second;
+    }
+
+    bool key_less(const network::Zelph* const           z,
+                  network::Node                         a,
+                  network::Node                         b,
+                  int                                   max_neighbors,
+                  std::map<network::Node, std::string>& cache)
+    {
+        const std::string& ka = order_key(z, a, max_neighbors, cache);
+        const std::string& kb = order_key(z, b, max_neighbors, cache);
+        if (ka != kb) return ka < kb;
+        return a < b; // stable tie-break for identical representations
+    }
+
+    // Sorts neighbors deterministically, drops excluded nodes BEFORE applying
+    // the budget (so exclusions no longer consume slots), truncates to
+    // max_neighbors, and reports how many neighbors remain hidden.
+    std::vector<network::Node> sorted_limited(const network::Zelph* const              z,
+                                              const network::adjacency_set&            neighbors,
+                                              int                                      max_neighbors,
+                                              const std::unordered_set<network::Node>& exclude_nodes,
+                                              size_t&                                  hidden_count,
+                                              std::map<network::Node, std::string>&    cache)
+    {
+        std::vector<network::Node> v;
+        v.reserve(neighbors.size());
+        for (network::Node n : neighbors)
+            if (!exclude_nodes.count(n))
+                v.push_back(n);
+
+        std::sort(v.begin(), v.end(), [&](network::Node a, network::Node b)
+                  { return key_less(z, a, b, max_neighbors, cache); });
+
+        hidden_count = 0;
+        if (max_neighbors > 0 && v.size() > static_cast<size_t>(max_neighbors))
+        {
+            hidden_count = v.size() - static_cast<size_t>(max_neighbors);
+            v.resize(static_cast<size_t>(max_neighbors));
+        }
+        return v;
+    }
+}
+
 void collect_mermaid_nodes(const network::Zelph* const                                     z,
                            WrapperNode                                                     current_wrap,
                            int                                                             max_depth,
@@ -432,7 +493,8 @@ void collect_mermaid_nodes(const network::Zelph* const                          
                            std::unordered_set<WrapperNode>&                                all_nodes,
                            int                                                             max_neighbors,
                            size_t&                                                         placeholder_counter,
-                           const std::unordered_set<network::Node>&                        exclude_nodes)
+                           const std::unordered_set<network::Node>&                        exclude_nodes,
+                           std::map<network::Node, std::string>&                           key_cache)
 {
     if (--max_depth <= 0 || visited.count(current_wrap))
         return;
@@ -445,16 +507,11 @@ void collect_mermaid_nodes(const network::Zelph* const                          
     network::Node current = current_wrap.value;
 
     // Left neighbors (incoming)
-    const auto& lefts      = z->get_left(current);
-    size_t      num_left   = lefts.size();
-    size_t      limit_left = (max_neighbors > 0) ? std::min(static_cast<size_t>(max_neighbors), num_left) : num_left;
-    auto        left_it    = lefts.begin();
-    for (size_t i = 0; i < limit_left; ++i, ++left_it)
+    size_t                           hidden_left = 0;
+    const std::vector<network::Node> lefts =
+        sorted_limited(z, z->get_left(current), max_neighbors, exclude_nodes, hidden_left, key_cache);
+    for (network::Node left : lefts)
     {
-        network::Node left = *left_it;
-
-        if (exclude_nodes.count(left)) continue;
-
         network::Node hash = network::Zelph::create_hash({current, left});
 
         if (processed_edge_hashes.insert(hash).second)
@@ -465,28 +522,23 @@ void collect_mermaid_nodes(const network::Zelph* const                          
             all_nodes.insert(WrapperNode{false, left});
         }
 
-        collect_mermaid_nodes(z, WrapperNode{false, left}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
+        collect_mermaid_nodes(z, WrapperNode{false, left}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes, key_cache);
     }
-    if (max_neighbors > 0 && num_left > static_cast<size_t>(max_neighbors))
+    if (hidden_left > 0)
     {
-        // Add unique placeholder for lefts
+        // Placeholder now carries the number of HIDDEN neighbors, not the total
         ++placeholder_counter;
-        WrapperNode placeholder_wrap{true, placeholder_counter, num_left};
+        WrapperNode placeholder_wrap{true, placeholder_counter, hidden_left};
         raw_edges.emplace_back(placeholder_wrap, WrapperNode{false, current}, std::string("-->"));
         all_nodes.insert(placeholder_wrap);
     }
 
     // Right neighbors (outgoing)
-    const auto& rights      = z->get_right(current);
-    size_t      num_right   = rights.size();
-    size_t      limit_right = (max_neighbors > 0) ? std::min(static_cast<size_t>(max_neighbors), num_right) : num_right;
-    auto        right_it    = rights.begin();
-    for (size_t i = 0; i < limit_right; ++i, ++right_it)
+    size_t                           hidden_right = 0;
+    const std::vector<network::Node> rights =
+        sorted_limited(z, z->get_right(current), max_neighbors, exclude_nodes, hidden_right, key_cache);
+    for (network::Node right : rights)
     {
-        network::Node right = *right_it;
-
-        if (exclude_nodes.count(right)) continue;
-
         network::Node hash = network::Zelph::create_hash({current, right});
 
         if (processed_edge_hashes.insert(hash).second)
@@ -497,13 +549,12 @@ void collect_mermaid_nodes(const network::Zelph* const                          
             all_nodes.insert(WrapperNode{false, right});
         }
 
-        collect_mermaid_nodes(z, WrapperNode{false, right}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
+        collect_mermaid_nodes(z, WrapperNode{false, right}, max_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes, key_cache);
     }
-    if (max_neighbors > 0 && num_right > static_cast<size_t>(max_neighbors))
+    if (hidden_right > 0)
     {
-        // Add unique placeholder for rights
         ++placeholder_counter;
-        WrapperNode placeholder_wrap{true, placeholder_counter, num_right};
+        WrapperNode placeholder_wrap{true, placeholder_counter, hidden_right};
         raw_edges.emplace_back(WrapperNode{false, current}, placeholder_wrap, std::string("-->"));
         all_nodes.insert(placeholder_wrap);
     }
@@ -561,6 +612,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     std::unordered_set<WrapperNode>                                all_nodes;
     size_t                                                         placeholder_counter = 0;
     size_t                                                         clone_counter       = 0;
+    std::map<network::Node, std::string>                           key_cache; // representation cache for deterministic ordering
 
     // clone_in_sg[(original_node, subgraph)] = clone_mermaid_id
     // Tracks which leaf nodes are replaced by clones in which subgraphs.
@@ -577,7 +629,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         raw_edges.clear();
         all_nodes.clear();
         placeholder_counter = 0;
-        collect_mermaid_nodes(z, WrapperNode{false, start}, effective_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes);
+        collect_mermaid_nodes(z, WrapperNode{false, start}, effective_depth, visited, processed_edge_hashes, conditions, deductions, raw_edges, all_nodes, max_neighbors, placeholder_counter, exclude_nodes, key_cache);
 
         // Remove excluded nodes from all_nodes and raw_edges
         for (auto it = all_nodes.begin(); it != all_nodes.end();)
@@ -709,7 +761,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
                             if (info2.subject == sgs[i] || info2.object == sgs[i]) sgi_ref = true;
                         }
                         if ((sgi_ref && !owner_ref)
-                            || (sgs[i] > owner && !(owner_ref && !sgi_ref)))
+                            || (key_less(z, owner, sgs[i], max_neighbors, key_cache) && !(owner_ref && !sgi_ref)))
                             owner = sgs[i];
                     }
                 }
@@ -807,7 +859,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
                                 else if (!a_ref && b_ref)
                                     to_remove = a;
                                 else
-                                    to_remove = std::min(a, b);
+                                    to_remove = key_less(z, a, b, max_neighbors, key_cache) ? a : b;
 
 #ifdef DEBUG_MERMAID
                                 diagnostic_stream() << "[DEBUG_MERMAID] Subgraph-level conflict: subgraph-node " << nd
@@ -964,6 +1016,27 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         }
     }
 
+    // === DETERMINISTIC EMISSION ORDER ===
+    // Mermaid's layout depends on statement order. Emit nodes and subgraphs in
+    // an ID-independent order so the same logical graph renders identically
+    // across zelph versions and platforms. Placeholders keep their (now
+    // deterministic) creation order and go last.
+    std::vector<WrapperNode> ordered_nodes(all_nodes.begin(), all_nodes.end());
+    std::sort(ordered_nodes.begin(), ordered_nodes.end(), [&](const WrapperNode& a, const WrapperNode& b)
+              {
+                      if (a.is_placeholder != b.is_placeholder)
+                          return a.is_placeholder < b.is_placeholder;
+                      if (a.is_placeholder)
+                          return a.value < b.value;
+                      return key_less(z, a.value, b.value, max_neighbors, key_cache); });
+
+    std::vector<network::Node> sg_order;
+    sg_order.reserve(subgraphs.size());
+    for (auto& [r, info] : subgraphs)
+        sg_order.push_back(r);
+    std::sort(sg_order.begin(), sg_order.end(), [&](network::Node a, network::Node b)
+              { return key_less(z, a, b, max_neighbors, key_cache); });
+
     // === BUILD INTERNAL EDGE SET ===
     // Edges that are part of a subgraph's S-P-O structure (to be removed from raw edges)
     std::set<std::pair<uint64_t, uint64_t>> internal_edge_pairs;
@@ -1011,7 +1084,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     // Clone node definitions: clone_id -> definition string
     std::map<std::string, std::string> clone_node_defs;
 
-    for (const WrapperNode& wn : all_nodes)
+    for (const WrapperNode& wn : ordered_nodes)
     {
         std::string id;
         std::string raw_label;
@@ -1019,12 +1092,12 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         if (wn.is_placeholder)
         {
             id        = "ph_" + std::to_string(wn.value);
-            raw_label = "[... " + std::to_string(wn.total_count) + " nodes ...]";
+            raw_label = "[... " + std::to_string(wn.total_count) + " more ...]";
         }
         else
         {
             id        = "n_" + std::to_string(static_cast<unsigned long long>(wn.value));
-            raw_label = z->get_name_hex(wn.value, true, max_neighbors);
+            raw_label = z->get_name_hex(wn.value, false, max_neighbors);
         }
         node_ids[wn] = id;
 
@@ -1091,7 +1164,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     for (auto& [key, cid] : clone_in_sg)
     {
         network::Node nd        = key.first;
-        std::string   raw_label = z->get_name_hex(nd, true, max_neighbors);
+        std::string   raw_label = z->get_name_hex(nd, false, max_neighbors);
         std::string   label     = string::unmark_identifiers(raw_label);
         string::replace_all(label, "\"", "#quot;");
         clone_node_defs[cid] = cid + "(\"" + label + "\")";
@@ -1102,7 +1175,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     }
 
     // Subgraph styles
-    for (auto& [r, info] : subgraphs)
+    for (network::Node r : sg_order)
     {
         std::string        sg_id  = "sg_" + std::to_string(static_cast<unsigned long long>(r));
         const std::string& fill   = col_sg;
@@ -1182,7 +1255,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     };
 
     // Emit top-level nodes
-    for (const WrapperNode& wn : all_nodes)
+    for (const WrapperNode& wn : ordered_nodes)
     {
         if (wn.is_placeholder)
         {
@@ -1195,7 +1268,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     }
 
     // Emit top-level subgraphs
-    for (auto& [r, info] : subgraphs)
+    for (network::Node r : sg_order)
     {
         if (sg_parent_final[r] == 0)
             emit_subgraph(r, 1);
@@ -1211,8 +1284,10 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     std::vector<size_t> clone_edge_indices;
 
     // 1. Labeled edges for subgraphs (subject -->|predicate| object)
-    for (auto& [r, info] : subgraphs)
+    for (network::Node r : sg_order)
     {
+        const SubgraphInfo& info = subgraphs[r];
+
         std::string subj_id = resolve_id_in_sg(info.subject, r);
         std::string obj_id  = resolve_id_in_sg(info.object, r);
 

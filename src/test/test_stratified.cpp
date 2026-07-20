@@ -313,3 +313,24 @@ TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = composite"));
         } });
 }
+
+TEST_CASE("stratified: deferred alternation with sugar-form negated conditions")
+{
+    // Same two-round alternation as the test above, written entirely in
+    // self-fact sugar -- including the combination of two desugarings:
+    // ":pred X" nested inside "¬(...)" inside a conjunction. Not a bug
+    // regression; pinned because this stacking of sugar forms is exercised
+    // nowhere else, and grammar changes to either sugar must not break it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(:start A) => (:p A)
+(:p A, ¬(:blockp A)) => (:q A)
+(:q A) => (:r A)
+(:r A, ¬(:blockr A)) => (:s A)
+:start w
+)");
+        CHECK(any_output_contains(collector, "w q w"));
+        CHECK(any_output_contains(collector, "w r w"));
+        CHECK(any_output_contains(collector, "w s w")); });
+}
