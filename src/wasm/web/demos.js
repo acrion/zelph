@@ -258,12 +258,6 @@ export const DEMO_GROUPS = [
     ],
   },
   {
-    // Publish together with the paper release: this group imports stdlib
-    // modules (binary-nand-arithmetic, symbolic-core, diff, eml) that are
-    // pushed only with the paper. If the WASM build embeds the stdlib via
-    // an explicit file list rather than a glob, add these four modules
-    // there as well -- otherwise the buttons fail in the playground while
-    // working locally.
     title: "From NAND to EML",
     buttons: [
       {

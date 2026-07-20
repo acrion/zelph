@@ -17,6 +17,7 @@ The built-in demo buttons walk you through:
 - **Logic and meta-rules** — a primality test using negation as failure, transitivity as a taught concept, contradiction detection ([background](logic.md))
 - **SPARQL** — queries over facts derived by reasoning ([background](sparql.md))
 - **Neural networks** — represented and executed inside the semantic graph ([background](neural.md))
+- **From NAND to EML** — arithmetic synthesized from a single NAND axiom, with a symbolic layer (simplification, differentiation, the EML operator) built on top ([background](symbolic.md))
 
 **Versions:** the playground on
 <a href="https://acrion.github.io/zelph/play/">acrion.github.io/zelph/play</a>
