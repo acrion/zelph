@@ -1,0 +1,168 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include "test_helpers.hpp"
+
+#include "io/output.hpp"
+#include "network/zelph.hpp"
+
+#include <thread>
+#include <vector>
+
+using namespace zelph::test;
+
+TEST_CASE(".deductions focus: only input-anchored deductions are printed")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Auto-run is active inside run_both_modes: every process() call
+        // triggers the reasoning run for that statement itself, with the
+        // focus set holding exactly that statement. NO explicit
+        // interactive.run calls here -- a second run would execute with an
+        // already-cleared focus set and blur what is being tested.
+        //
+        // Cascade with a CHANGING subject: qq1 derives a qq2 fact about
+        // the fresh term (h of A) -- its subject is materialized during
+        // reasoning, not by input, so focus mode must filter it -- and qq2
+        // derives qq3 back about A itself, which IS the input's subject,
+        // so focus mode must print it. The rule statements run before
+        // collector.clear(), so their echoes cannot contaminate the
+        // negative check.
+        interactive.process(".deductions focus");
+        interactive.process("(A qq1 A) => ((h of A) qq2 (h of A))");
+        interactive.process("((h of A) qq2 (h of A)) => (A qq3 A)");
+        collector.clear();
+        interactive.process(":qq1 socrates");
+        CHECK(any_deduction_of(collector, "qq3"));
+        CHECK_FALSE(any_deduction_of(collector, "qq2"));
+        // Both facts exist regardless of printing (probe).
+        interactive.process(R"js(%(let [h (zelph/fact "h" "of" "socrates")] (string "FOCA-" (zelph/exists h "qq2" h))))js");
+        CHECK(any_output_contains(collector, "FOCA-true"));
+        // Control: in all mode the intermediate deduction prints.
+        interactive.process(".deductions all");
+        collector.clear();
+        interactive.process(":qq1 plato");
+        CHECK(any_deduction_of(collector, "qq2")); });
+}
+
+TEST_CASE(".deductions focus: subterms of the input are not focus anchors")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // The top-level fact is asserted via zelph/fact: a bare
+        // parenthesized term typed into the REPL is a QUERY, not an
+        // assertion. The Janet path takes the same fact() route as the
+        // parser, so the capture sees the same bottom-up materialization:
+        // the subterm fact (s h1 t) first, then the top-level fact using
+        // it as subject -- the numeral-suffix scheme. The focus reduction
+        // must keep the top-level fact plus its immediate subject (s h1 t)
+        // and object r, but drop the subterm's own components: with the
+        // unreduced capture, s anchored (s h2 t) and it printed -- the
+        // &42 regression, where every numeral suffix anchored half of the
+        // division cascade.
+        interactive.process(".deductions focus");
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+        // Anchored on the input's own subject -> printed.
+        CHECK(any_output_contains(collector, "g2"));
+        // Anchored on the subterm's component s -> filtered but derived.
+        CHECK_FALSE(any_event_contains(collector, "h2"));
+        interactive.process(R"js(%(string "FOCB-" (zelph/exists "s" "h2" "t")))js");
+        CHECK(any_output_contains(collector, "FOCB-true")); });
+}
+
+TEST_CASE(".deductions focus: interactively entered anchors persist across runs")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Focus anchors accumulate over the session: a deduction whose
+        // subject (or rule) was entered in an EARLIER statement still
+        // prints. Both orders of the classic transitivity demo must show
+        // the derived fact -- under per-statement focus, the rule-first
+        // order filtered it (subject tim and the rule both stemmed from
+        // earlier statements).
+        interactive.process(".deductions focus");
+        SUBCASE("rule first")
+        {
+            interactive.process("(R kis ktransitive, A R B, B R C) => (A R C)");
+            interactive.process("kancestor kis ktransitive");
+            interactive.process("tim kancestor tom");
+            collector.clear();
+            interactive.process("tom kancestor paul");
+            CHECK(any_deduction_of(collector, "tim kancestor paul"));
+        }
+        SUBCASE("rule last")
+        {
+            interactive.process("kancestor kis ktransitive");
+            interactive.process("tim kancestor tom");
+            interactive.process("tom kancestor paul");
+            collector.clear();
+            interactive.process("(R kis ktransitive, A R B, B R C) => (A R C)");
+            CHECK(any_deduction_of(collector, "tim kancestor paul"));
+        } });
+}
+
+TEST_CASE(".deductions focus: imported statements do not become anchors")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Imports run with input capture suppressed: reasoning-internal
+        // facts of the arithmetic stdlib must stay filtered even though
+        // every one of its statements passed through process(). The
+        // entered query is the only anchor, so exactly its = result
+        // prints -- the demo-2.3 acceptance shape, now pinned as a test.
+        interactive.process(".deductions focus");
+        interactive.process(".import binary-arithmetic");
+        collector.clear();
+        interactive.process("(&6 * &7) = X");
+        CHECK(any_deduction_of(collector, "(&6 * &7) = &42"));
+        CHECK_FALSE(any_deduction_of(collector, "mci"));
+        CHECK_FALSE(any_deduction_of(collector, "pprod")); });
+}
+
+// Concurrent OutputStream flushes must be serialized through the same
+// print mutex as emit(): OutputStream copies the handler and flushes
+// without a lock of its own, so before the locked_stream fix, parallel
+// reasoning workers logging via diagnostic_stream() invoked a stateful
+// handler (OutputCollector's vector) concurrently -- heap corruption.
+TEST_CASE("output: concurrent stream flushes are serialized")
+{
+    zelph::io::OutputCollector collector;
+    zelph::network::Zelph      z(collector.sink());
+    constexpr int              threads = 8;
+    constexpr int              lines   = 5000;
+    std::vector<std::thread>   workers;
+    workers.reserve(threads);
+    for (int t = 0; t < threads; ++t)
+        workers.emplace_back([&z]
+                             {
+            for (int i = 0; i < lines; ++i)
+                z.diagnostic_stream() << "stress " << i << std::endl; });
+    for (auto& w : workers)
+        w.join();
+    CHECK(collector.events().size() == static_cast<size_t>(threads) * lines);
+}

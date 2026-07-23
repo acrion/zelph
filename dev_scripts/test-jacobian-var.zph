@@ -1,0 +1,21 @@
+.import binary-arithmetic
+.import integer-arithmetic
+.import polynomial
+.import topoly
+.import symbolic-core
+.import diff
+.import symbolic-minus
+a ~ symvar
+b ~ symvar
+c ~ symvar
+a pouter b
+b pouter c
+%(defn t* [u v] (zelph/fact u "*" v))
+%(defn t+ [u v] (zelph/fact u "+" v))
+%(defn t- [u v] (zelph/fact u "-" v))
+%(defn n [s] (zelph/number s))
+%(defn tp [t] (zelph/fact t "topoly" t))
+%(defn g-terms [a b c] (def ab (t* a b)) (def s (t+ (n "2") ab)) (def t (t+ (n "8") (t* (n "3") ab))) (def s2 (t* s s)) (def b2 (t* b b)) (def a2 (t* a a)) [(t+ (t* (t* s2 s) c) (t* (t* (n "2") b2) (t* s t))) (t+ (t* (n "8") b) (t+ (t* (t* (n "3") a) (t* s2 c)) (t* (t* (n "6") a) (t* b2 t)))) (t- (t* (n "8") a) (t+ (t* (t* (n "6") a2) b) (t* (t* a2 a) c)))])
+
+%(def gs (g-terms "a" "b" "c"))
+%(each g gs (each v ["a" "b" "c"] (zelph/fact g "diffby" v)))

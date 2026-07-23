@@ -374,6 +374,33 @@ namespace zelph::test
         }
     }
 
+    template <typename F>
+    void run_parallel_mode(F&& test_fn)
+    {
+        SUBCASE("parallel")
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".semi-naive check");
+            collector.clear();
+            test_fn(collector, interactive);
+        }
+    }
+
+    template <typename F>
+    void run_single_core_mode(F&& test_fn)
+    {
+        SUBCASE("single-core")
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".parallel");
+            interactive.process(".semi-naive check");
+            collector.clear();
+            test_fn(collector, interactive);
+        }
+    }
+
     // Run a test against every arithmetic stdlib module, nested into
     // run_both_modes: 3 modules x 2 parallelism modes per leaf subcase,
     // each in `.semi-naive check` mode. All three modules expose the
@@ -432,5 +459,20 @@ namespace zelph::test
             collector.clear();
             test_fn(collector, interactive);
         }
+    }
+
+    inline bool any_deduction_of(const zelph::io::OutputCollector& collector, const std::string& sub)
+    {
+        const std::string needle = normalize(sub);
+        if (needle.empty()) return false;
+        for (const auto& e : collector.events())
+        {
+            if (e.channel != zelph::io::OutputChannel::Out) continue;
+            const std::string n     = normalize(e.text);
+            const size_t      arrow = n.find("⇐");
+            const std::string head  = arrow == std::string::npos ? n : n.substr(0, arrow);
+            if (head.find(needle) != std::string::npos) return true;
+        }
+        return false;
     }
 } // namespace zelph::test

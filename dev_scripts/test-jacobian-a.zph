@@ -1,0 +1,14 @@
+%(defn dof [g v] (get (get (zelph/query (zelph/fact (zelph/fact g "diffby" v) "=" '_D)) 0) '_D))
+%(def ds (map (fn [g] (map (fn [v] (dof g v)) ["a" "b" "c"])) gs))
+# Guard against the silent-nil failure mode: without the diff stack (or if
+# the zelph/query row API differs from the assumed shape), dof returns nil
+# and everything downstream degenerates without any error.
+%(each row ds (each d row (assert d "missing derivative -- diff stack not loaded or query API mismatch")))
+%(defn cof [p q r s] (t- (t* p s) (t* q r)))
+
+# --- Variant A: first-row expansion (baseline, identical to the test) ---
+%(def m11 (cof (get (get ds 1) 1) (get (get ds 1) 2) (get (get ds 2) 1) (get (get ds 2) 2)))
+%(def m12 (cof (get (get ds 1) 0) (get (get ds 1) 2) (get (get ds 2) 0) (get (get ds 2) 2)))
+%(def m13 (cof (get (get ds 1) 0) (get (get ds 1) 1) (get (get ds 2) 0) (get (get ds 2) 1)))
+%(def det (t+ (t- (t* (get (get ds 0) 0) m11) (t* (get (get ds 0) 1) m12)) (t* (get (get ds 0) 2) m13)))
+%(tp det)

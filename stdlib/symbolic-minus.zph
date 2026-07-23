@@ -1,0 +1,78 @@
+# Simplifier and differentiation support for subtraction (-) and unary
+# negation (neg of ...) -- the follow-up anticipated in eml.zph's header,
+# which introduced both as term formers for the compiler only.
+#
+# PREREQUISITES (import order):
+#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
+#   .import symbolic-core
+#   .import diff              # OPTIONAL -- the differentiation rules below
+#   .import symbolic-minus    # are inert without it (no dstate facts exist)
+#
+# OPERATOR EXTENSION PROTOCOL contributions for the binary operator -:
+# decompose, congruence, rewrites. neg needs NO decompose/congruence of
+# its own: (neg of U) is an ordinary application fact, covered by
+# symbolic-core's generic (F of U) rules. Its involution needs no rule
+# either -- one inverseof declaration feeds the existing generic
+# inverse-pair rule.
+#
+# NUMERIC FOLDING is inherited, not implemented: a red form (&5 - &3) IS
+# an ordinary - fact, the natural module derives its = result, and the
+# SN bridge adopts it. (&3 - &5) derives nothing over the naturals and
+# falls back to itself -- undefinedness stays visible. Loading
+# integer-arithmetic + symbolic-integers COMPLETES this partiality: the
+# same term then folds to (neg zint &2).
+#
+# DELIBERATE OMISSION: no (T red (X - X)) => (T rw &0) rule. With the Z
+# facade loaded, red ((pos zint A) - (pos zint A)) folds to the zint
+# zero via z-; an X - X rule would additionally rewrite to the natural
+# zero -- two rw values for one red form, breaking simp's single-
+# valuedness. Cancellation of equal SYMBOLIC terms is the polynomial
+# normal-form layer's job, not a local rewrite's.
+#
+# Identities are FORMAL (domain caveats as in symbolic-core.zph).
+
+# ---------------------------------------------------------------------------
+# neg is its own inverse: -(-u) = u, via the generic inverse-pair rule
+# ---------------------------------------------------------------------------
+neg inverseof neg
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (1): decompose
+# ---------------------------------------------------------------------------
+((U - V) needssimp (U - V)) => (U needssimp U)
+((U - V) needssimp (U - V)) => (V needssimp V)
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (2): congruence
+# ---------------------------------------------------------------------------
+((U - V) needssimp (U - V), U simp P, V simp Q) => ((U - V) red (P - Q))
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (3): rewrites. Conflict-free with the SN fold on
+# the only overlap, red (X - &0) for numeral X: both paths yield X (the
+# natural module's N - 0 result is canonical).
+# ---------------------------------------------------------------------------
+(T red (X - &0)) => (T rw X)
+(T red (neg of &0)) => (T rw &0)
+
+# ---------------------------------------------------------------------------
+# Differentiation extension: d(u - v)/dx = du/dx - dv/dx and
+# d(-u)/dx = -(du/dx). neg's dstate and containment come from diff.zph's
+# generic (F of U) rules; only - needs its own. neg gets a dedicated
+# assemble rule (like ln): its derivative is not of the form G(u) for a
+# named symbol G.
+# ---------------------------------------------------------------------------
+((U - V) dstate X) => (U dstate X)
+((U - V) dstate X) => (V dstate X)
+
+((U - V) dstate X, U contains X) => ((U - V) contains X)
+((U - V) dstate X, V contains X) => ((U - V) contains X)
+
+((U - V) dstate X,
+ (U wrt X) deriv P,
+ (V wrt X) deriv Q)
+=> (((U - V) wrt X) deriv (P - Q))
+
+((neg of U) dstate X,
+ (U wrt X) deriv P)
+=> (((neg of U) wrt X) deriv (neg of P))

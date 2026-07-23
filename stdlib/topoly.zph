@@ -1,0 +1,116 @@
+# Term-to-polynomial compiler: symbolic terms over the polynomial
+# vocabulary compile to the canonical multivariate normal forms of
+# polynomial.zph -- pure forward-chaining rules, Trigger / Decompose /
+# Assemble / Connect.
+#
+# PREREQUISITES (import order):
+#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
+#   .import integer-arithmetic  # incl. the uniform operator facade
+#   .import polynomial
+#   .import topoly
+#
+# symbolic-core and diff are deliberately NOT prerequisites: this module
+# consumes only the shared term VOCABULARY -- the binary operators
+# +, -, *, the application (neg of U), sort declarations (~ symvar,
+# ~ symconst) and numerals -- all of which are ordinary facts that exist
+# with or without the simplifier. They are, however, the typical
+# producers of the terms being compiled (simplified derivatives from
+# diff + symbolic-minus compile directly).
+#
+# VOCABULARY and leaf handling:
+#   - symvar X            compiles to (X poly ((pos zint &0) cons
+#                         ((pos zint &1) cons nil))) -- the polynomial X
+#   - symconst C          compiles the same way: opaque constants are
+#                         INDETERMINATES here (identities hold in the
+#                         polynomial ring Z[C, X, ...]); like every
+#                         variable, C must appear in the pouter order
+#   - zint numerals       are their own constant polynomials
+#   - natural numerals    promote to (pos zint N) -- so subtraction that
+#                         is partial over the naturals is total here:
+#                         (:topoly (&3 - &5)) = (neg zint &2)
+#   - (U + V), (U - V), (U * V), (neg of U)
+#                         delegate to padd / psub / pmul / pneg
+# Anything else -- division, other function applications, undeclared
+# atoms -- gets no aspoly fact, and the request stays silently
+# unanswered: partiality by absence.
+#
+# REQUEST IDIOM (testprime pattern, repeatable):
+#   (:topoly T) = P
+#
+# IDENTITY CHECKING: canonical forms are unique hash-consed nodes, so
+# proving a polynomial identity means compiling both sides and
+# comparing NODE IDENTITY -- e.g. ((&1 + x) * (&1 - x)) and
+# (&1 - (x * x)) compile to the same node. This also closes the loop
+# that symbolic-minus deliberately left open: (:topoly (x - x)) is
+# (pos zint &0) -- cancellation of equal symbolic terms IS the
+# polynomial layer's job, and here it happens.
+#
+# VARIABLE ORDER: as in polynomial.zph, cross-variable results require
+# a declared strict total pouter order over all indeterminates in use;
+# missing order pairs derive nothing.
+#
+# CANONICITY: leaves compile to canonical polynomials, and the
+# delegated operations preserve canonicity, so every aspoly result is
+# canonical; = is single-valued because each term shape is matched by
+# exactly one assemble family and the data layer's = facts are
+# single-valued.
+#
+# Display sugar: no registrations needed. (T topoly T) is a genuine
+# request (:topoly T), needstopoly is a marker, and (P aspoly P) for a
+# leaf genuinely reads "P is its own polynomial form" -- exactly like
+# (T canon T).
+
+# ---------------------------------------------------------------------------
+# Rule TT0 -- Trigger
+# ---------------------------------------------------------------------------
+(T topoly T) => (T needstopoly T)
+
+# ---------------------------------------------------------------------------
+# Rules TD -- Decompose (closed operator set)
+# ---------------------------------------------------------------------------
+((U + V) needstopoly (U + V)) => (U needstopoly U)
+((U + V) needstopoly (U + V)) => (V needstopoly V)
+((U - V) needstopoly (U - V)) => (U needstopoly U)
+((U - V) needstopoly (U - V)) => (V needstopoly V)
+((U * V) needstopoly (U * V)) => (U needstopoly U)
+((U * V) needstopoly (U * V)) => (V needstopoly V)
+((neg of U) needstopoly (neg of U)) => (U needstopoly U)
+
+# ---------------------------------------------------------------------------
+# Rules TB -- Base cases: leaves
+# ---------------------------------------------------------------------------
+(X needstopoly X, X ~ symvar)
+=> (X aspoly (X poly ((pos zint &0) cons ((pos zint &1) cons nil))))
+
+(X needstopoly X, X ~ symconst)
+=> (X aspoly (X poly ((pos zint &0) cons ((pos zint &1) cons nil))))
+
+((G zint N) needstopoly (G zint N)) => ((G zint N) aspoly (G zint N))
+
+((A cons R) needstopoly (A cons R))
+=> ((A cons R) aspoly (pos zint (A cons R)))
+
+# ---------------------------------------------------------------------------
+# Rules TA -- Assemble: delegate to the data layer (MA1/MA2 pattern --
+# seed the operation as an ordinary fact, adopt its = result)
+# ---------------------------------------------------------------------------
+((U + V) needstopoly (U + V), U aspoly P, V aspoly Q) => (P padd Q)
+((U + V) needstopoly (U + V), U aspoly P, V aspoly Q, (P padd Q) = R)
+=> ((U + V) aspoly R)
+
+((U - V) needstopoly (U - V), U aspoly P, V aspoly Q) => (P psub Q)
+((U - V) needstopoly (U - V), U aspoly P, V aspoly Q, (P psub Q) = R)
+=> ((U - V) aspoly R)
+
+((U * V) needstopoly (U * V), U aspoly P, V aspoly Q) => (P pmul Q)
+((U * V) needstopoly (U * V), U aspoly P, V aspoly Q, (P pmul Q) = R)
+=> ((U * V) aspoly R)
+
+((neg of U) needstopoly (neg of U), U aspoly P) => (P pneg P)
+((neg of U) needstopoly (neg of U), U aspoly P, (P pneg P) = R)
+=> ((neg of U) aspoly R)
+
+# ---------------------------------------------------------------------------
+# Rule TC0 -- Connect: expose the result under =, testprime-style
+# ---------------------------------------------------------------------------
+(T topoly T, T aspoly P) => ((T topoly T) = P)

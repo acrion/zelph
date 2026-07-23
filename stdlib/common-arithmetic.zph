@@ -267,9 +267,19 @@
 => (((A cons R) mul M) prod T)
 
 # ---------------------------------------------------------------------------
-# Rule MC0 -- Connect
+# Rule MC0 -- Connect: expose the CANONICAL result, mirroring SC0/VC0.
+# Products of two nonzero factors are canonical by construction (the
+# top digits stem from the nonzero leading-digit product plus carries),
+# and canonnum is the identity on canonical lists -- nothing changes on
+# that path. A ZERO factor, however, yields a zero-extended raw list:
+# binary &3 * &0 accumulates <0> + <00> = <00>, and a zero FIRST factor
+# emits one zero digit per digit of M. That raw list is value-correct
+# but a different node than &0 -- and rendered indistinguishably as &0,
+# since the display converts digit lists by value. The canonnum bridge
+# restores the module contract that = always carries the canonical
+# node (the same number is always the same node).
 # ---------------------------------------------------------------------------
-(N * M, (N mul M) prod T) => ((N * M) = T)
+(N * M, (N mul M) prod T, T canonnum S) => ((N * M) = S)
 
 # ===========================================================================
 # Division (N / M) and remainder (N mod M) -- Euclidean division on the
@@ -419,13 +429,17 @@
 # self-fact marks a node without introducing pseudo-atoms like "true".
 
 # ---------------------------------------------------------------------------
-# Rules KT1-KT3 -- Triggers: mark producer results as numbers to be
-# canonicalized. (Addition and multiplication of canonical operands are
-# canonical; cmp is value-based and needs nothing.)
+# Rules KT1-KT4 -- Triggers: mark producer results as numbers to be
+# canonicalized. (Addition of canonical operands is canonical; cmp is
+# value-based and needs nothing. Multiplication is canonical ONLY for
+# nonzero factors -- a zero factor zero-extends, see MC0 -- so its
+# results enter the recursion too. KT4 is keyed on the user-facing
+# pair like MC0, so internal recursion prods are not canonicalized.)
 # ---------------------------------------------------------------------------
 (((N sub M) bi 0) diff T) => (T needscanon T)
 ((N dvd M) quot T) => (T needscanon T)
 ((N dvd M) rem T) => (T needscanon T)
+(N * M, (N mul M) prod T) => (T needscanon T)
 
 # ---------------------------------------------------------------------------
 # Rule KD1 -- Decompose: the tail recursion walks into the list. Guarded

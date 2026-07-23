@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -123,6 +124,7 @@ namespace zelph::network
         bool                 has_left_edge(Node b, Node a) const;
         bool                 has_right_edge(Node a, Node b) const;
         static Node          create_hash(const adjacency_set& vec);
+        static Node          create_hash(const Node predicate, const Node subject, const adjacency_set& objects);
         static bool          is_hash(Node a);
         static bool          is_var(Node a);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
@@ -133,34 +135,81 @@ namespace zelph::network
         Node                 set(const std::unordered_set<Node>& elements);
         Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
         Node                 parse_relation(const Node rule) const;
-        Node                 count() const;
-        AllNodeView          get_all_nodes_view() const;
-        LangNodeView         get_lang_nodes_view(const std::string& lang) const;
-        bool                 try_get_fact_structures_cached(Node fact, std::vector<FactStructure>& out) const;
-        void                 store_fact_structures_cached(Node fact, const std::vector<FactStructure>& value) const;
-        void                 invalidate_fact_structures_cache() const noexcept;
-        FactComponents       extract_fact_components(Node relation) const;
-        void                 set_output_handler(io::OutputHandler output) const;
-        io::OutputHandler    get_output_handler() const;
-        void                 emit(io::OutputChannel channel, const std::string& text, bool newline = true) const;
-        void                 out(const std::string&, bool newline = true) const;
-        void                 error(const std::string&, bool newline = true) const;
-        void                 diagnostic(const std::string&, bool newline = true) const;
-        void                 prompt(const std::string&, bool newline = false) const;
-        io::OutputStream     out_stream() const;
-        io::OutputStream     diagnostic_stream() const;
-        io::OutputStream     error_stream() const;
-        io::OutputStream     prompt_stream() const;
-        void                 set_logging(int max_depth) const;
-        bool                 should_log(int depth) const;
-        bool                 logging_active() const;
-        void                 log(int depth, const std::string& category, const std::string& message) const;
-        bool                 use_parallel() const { return _use_parallel; }
-        void                 toggle_parallel() { _use_parallel = !_use_parallel; }
-        void                 set_synapse(const Node from, const Node to, const double weight) const;
-        bool                 has_synapse(const Node from, const Node to) const;
-        double               edge_weight(Node from, Node to, double fallback = 1.0) const;
-        void                 set_edge_weight(Node from, Node to, double weight) const;
+        // Locked-scope read access (see Network::ReadScope). Constructed
+        // here because only zelph.cpp sees the complete Impl type -- this
+        // is the visibility-correct path (Cap'n-Proto layering).
+        Network::ReadScope read_scope() const;
+
+        // parse_relation for code running under a live ReadScope: all
+        // adjacency reads via scope references, predicate detection via
+        // the caller-provided relation-type memo. The memo MUST be fetched
+        // BEFORE the scope opens (its lazy build takes network locks).
+        Node         parse_relation_scoped(const Network::ReadScope&                 scope,
+                                           const ankerl::unordered_dense::set<Node>& rel_types,
+                                           Node                                      rule) const;
+        Node         count() const;
+        AllNodeView  get_all_nodes_view() const;
+        LangNodeView get_lang_nodes_view(const std::string& lang) const;
+        bool         try_get_fact_structures_cached(Node fact, FactStructurePtr& out) const;
+        void         store_fact_structures_cached(Node fact, FactStructurePtr value) const;
+        void         invalidate_fact_structures_cache() const noexcept;
+        void         invalidate_fact_structures_for(Node subject, Node predicate, const adjacency_set& objects, Node relation) const;
+
+        // Memoized set of declared relation types -- one shared_ptr read
+        // per fact-structure reconstruction instead of a check_fact probe
+        // per right neighbor (which cost a {->}-set temporary, its sorted
+        // hash, three rwlock pairs and two adjacency copies EACH -- the
+        // dominant per-miss machinery in the Jacobian profiles). Built
+        // lazily; invalidated by new declarations and by every wholesale
+        // cache clear (removals, merges, loads).
+        std::shared_ptr<const ankerl::unordered_dense::set<Node>> relation_type_set() const;
+
+        // Fact-structure cache statistics. Populated only while logging is
+        // active (like all profiler counters); dumped by .prof, zeroed by
+        // .prof reset. Arbitrates the two remaining cost hypotheses after
+        // the per-node invalidation change: reconstruction frequency
+        // (misses) vs per-hit overhead (lock + deep copy).
+        struct FsCacheStats
+        {
+            uint64_t hits{0};
+            uint64_t misses{0};
+            uint64_t full_clears{0};
+            uint64_t stale_erased{0};
+        };
+        FsCacheStats      fs_cache_stats() const;
+        void              reset_fs_cache_stats() const;
+        FactComponents    extract_fact_components(Node relation) const;
+        void              set_output_handler(io::OutputHandler output) const;
+        io::OutputHandler get_output_handler() const;
+        void              emit(io::OutputChannel channel, const std::string& text, bool newline = true) const;
+        void              out(const std::string&, bool newline = true) const;
+        void              error(const std::string&, bool newline = true) const;
+        void              diagnostic(const std::string&, bool newline = true) const;
+        void              prompt(const std::string&, bool newline = false) const;
+        io::OutputStream  out_stream() const;
+        io::OutputStream  diagnostic_stream() const;
+        io::OutputStream  error_stream() const;
+        io::OutputStream  prompt_stream() const;
+        void              set_logging(int max_depth) const;
+        bool              should_log(int depth) const;
+        bool              logging_active() const;
+        void              log(int depth, const std::string& category, const std::string& message) const;
+        bool              use_parallel() const { return _use_parallel; }
+        void              toggle_parallel() { _use_parallel = !_use_parallel; }
+
+        // Anchor-based candidate lookups of the unification engine
+        // (subject/object-driven snapshots, grounded-subject anchoring,
+        // partial-pattern anchoring). Semantically neutral index shortcuts,
+        // active by default in BOTH parallel and single-core evaluation --
+        // deliberately decoupled from .parallel, which only controls thread
+        // pool usage. The off switch provides an anchor-free naive reference
+        // for completeness tests and for diagnosing suspected anchor bugs.
+        bool   use_anchors() const { return _use_anchors; }
+        void   set_anchors(const bool on) { _use_anchors = on; }
+        void   set_synapse(const Node from, const Node to, const double weight) const;
+        bool   has_synapse(const Node from, const Node to) const;
+        double edge_weight(Node from, Node to, double fallback = 1.0) const;
+        void   set_edge_weight(Node from, Node to, double weight) const;
 
         // --- Number display (registered digit alphabet) ---
         // A script may register the digit alphabet of its number
@@ -264,10 +313,19 @@ namespace zelph::network
         std::unordered_map<network::Node, std::string>            _core_names_by_node;
         std::unordered_map<std::string, network::Node>            _core_names_by_name;
         bool                                                      _use_parallel{true};
+        bool                                                      _use_anchors{true};
+        mutable std::atomic<uint64_t>                             _fs_cache_hits{0};
+        mutable std::atomic<uint64_t>                             _fs_cache_misses{0};
+        mutable std::atomic<uint64_t>                             _fs_cache_full_clears{0};
+        mutable std::atomic<uint64_t>                             _fs_cache_stale_erased{0};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
         std::unordered_set<Node>                                  _verbose_selffact_preds;
         mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
         FactCreationObserver                                      _on_fact_created;
+
+    private:
+        zelph::io::OutputStream locked_stream(zelph::io::OutputChannel channel) const;
+        void                    invalidate_relation_type_set() const;
     };
 }

@@ -1,0 +1,223 @@
+# Signed integer arithmetic (Z) on top of the natural-number modules.
+#
+# PREREQUISITES (import order, like symbolic-core):
+#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
+#   .import integer-arithmetic
+#
+# REPRESENTATION: an integer is the ordinary term (pos zint N) or
+# (neg zint N), where N is a natural-number cons list of the loaded
+# module and pos/neg are plain atoms. No new machinery: the pair is a
+# fact node like any other, built by fact() and matched by deep
+# unification. The module is therefore base-agnostic and works on all
+# three natural substrates.
+#
+# CANONICAL FORM: zero is (pos zint &0); the term (neg zint &0) must
+# never be produced (one value, one node -- the invariant canonnum pins
+# for the naturals). All rules below yield canonical results provided
+# the operands are canonical: pos magnitudes may be any canonical
+# natural, neg magnitudes must be nonzero.
+#
+# OPERATIONS (results exposed under =, the uniform query idiom):
+#   (X z+ Y) = Z     addition
+#   (X z- Y) = Z     subtraction -- total on Z, unlike natural -
+#   (X zx Y) = Z     multiplication ("zx" instead of "z*": like the dx
+#                    digit table, because * is parser-reserved inside
+#                    atom names)
+#   (X zcmp Y)       comparison; relational results reuse the SAME
+#                    predicates <, >, == as natural comparison, so
+#                    meta-rules quantifying over them ("> is
+#                    transitive") span N and Z; the outcome is also
+#                    exposed as (X zcmp Y) = gt/lt/eq
+#
+# DESIGN: no internal recursion layer of its own. The case analysis of
+# signed arithmetic is flat, so every rule keys directly on the
+# user-facing fact and delegates all magnitude work to the natural
+# module by asserting ordinary +, -, *, cmp facts -- the MA1/MA2
+# cross-module cascade as the module's only computational device.
+# Partiality composes: for a mixed-sign addition BOTH candidate
+# differences are asserted, natural subtraction silently kills the
+# invalid one, and the cmp guards select the matching connect rule.
+# Euclidean division on Z (floor vs. truncation is a genuine design
+# choice) is deliberately left to a follow-up.
+
+%
+(defn zelph/int
+  "Signed decimal literal -> canonical zint term, i.e. (pos zint N) or
+  (neg zint N). Input-layer convenience like zelph/number, to which the
+  magnitude is delegated; a -0 literal canonicalizes to (pos zint N)
+  with N = 0."
+  [s]
+  (if (string/has-prefix? "-" s)
+    (let [m (string/slice s 1)]
+      (if (= m "0")
+        (zelph/fact "pos" "zint" (zelph/number "0"))
+        (zelph/fact "neg" "zint" (zelph/number m))))
+    (zelph/fact "pos" "zint" (zelph/number s))))
+
+# Exclude the module's operators from the self-fact display sugar --
+# same rationale as in the arithmetic modules: value coincidences like
+# ((pos zint &2) z+ (pos zint &2)) are self-facts only through
+# hash-consing and must render verbose.
+(zelph/no-selffact-sugar "z+" "z-" "zx" "zcmp" "zint")
+%
+
+# ---------------------------------------------------------------------------
+# Addition (X z+ Y)
+# ---------------------------------------------------------------------------
+
+# Rules ZA1-ZA2 -- same signs: add the magnitudes, keep the sign. The
+# neg case stays canonical because canonical negative magnitudes are
+# nonzero, so their sum is nonzero.
+((pos zint A) z+ (pos zint B)) => (A + B)
+((neg zint A) z+ (neg zint B)) => (A + B)
+
+((pos zint A) z+ (pos zint B), (A + B) = S)
+=> (((pos zint A) z+ (pos zint B)) = (pos zint S))
+
+((neg zint A) z+ (neg zint B), (A + B) = S)
+=> (((neg zint A) z+ (neg zint B)) = (neg zint S))
+
+# Rules ZA3-ZA4 -- mixed signs, seed stage: assert the magnitude
+# comparison and BOTH candidate differences; the invalid difference
+# never produces a fact (natural subtraction is partial).
+((pos zint A) z+ (neg zint B)) => (A cmp B)
+((pos zint A) z+ (neg zint B)) => (A - B)
+((pos zint A) z+ (neg zint B)) => (B - A)
+
+((neg zint A) z+ (pos zint B)) => (A cmp B)
+((neg zint A) z+ (pos zint B)) => (A - B)
+((neg zint A) z+ (pos zint B)) => (B - A)
+
+# Rules ZA5-ZA10 -- mixed signs, connect stage: the comparison selects
+# the surviving candidate; exact cancellation yields canonical zero.
+((pos zint A) z+ (neg zint B), A > B, (A - B) = D)
+=> (((pos zint A) z+ (neg zint B)) = (pos zint D))
+
+((pos zint A) z+ (neg zint B), A == B)
+=> (((pos zint A) z+ (neg zint B)) = (pos zint &0))
+
+((pos zint A) z+ (neg zint B), A < B, (B - A) = D)
+=> (((pos zint A) z+ (neg zint B)) = (neg zint D))
+
+((neg zint A) z+ (pos zint B), A < B, (B - A) = D)
+=> (((neg zint A) z+ (pos zint B)) = (pos zint D))
+
+((neg zint A) z+ (pos zint B), A == B)
+=> (((neg zint A) z+ (pos zint B)) = (pos zint &0))
+
+((neg zint A) z+ (pos zint B), A > B, (A - B) = D)
+=> (((neg zint A) z+ (pos zint B)) = (neg zint D))
+
+# ---------------------------------------------------------------------------
+# Subtraction (X z- Y) -- total on Z via delegation: X - Y = X + (-Y).
+# The subtrahend's negation is spelled out per sign case. Negating a
+# POSITIVE subtrahend is guarded by B > &0 so that (neg zint &0) is
+# never materialized, not even as an operand term; subtracting zero has
+# its own direct rule instead. Negating a NEGATIVE subtrahend needs no
+# guard: canonical negative magnitudes are nonzero.
+# ---------------------------------------------------------------------------
+(X z- (pos zint B)) => (B cmp &0)
+
+(X z- (neg zint B)) => (X z+ (pos zint B))
+(X z- (neg zint B), (X z+ (pos zint B)) = R)
+=> ((X z- (neg zint B)) = R)
+
+(X z- (pos zint B), B > &0) => (X z+ (neg zint B))
+(X z- (pos zint B), B > &0, (X z+ (neg zint B)) = R)
+=> ((X z- (pos zint B)) = R)
+
+(X z- (pos zint &0)) => ((X z- (pos zint &0)) = X)
+
+# ---------------------------------------------------------------------------
+# Multiplication (X zx Y) -- sign rule times natural product. Only the
+# mixed-sign cases need a zero guard: a canonical negative operand is
+# nonzero, so the product can only vanish through the positive operand,
+# and (neg zint &0) must not be produced. The guard is expressed
+# in-system: the positive magnitude is compared against &0 and the
+# connect rules key on the outcome.
+# ---------------------------------------------------------------------------
+((G zint A) zx (H zint B)) => (A * B)
+
+((pos zint A) zx (neg zint B)) => (A cmp &0)
+((neg zint A) zx (pos zint B)) => (B cmp &0)
+
+((pos zint A) zx (pos zint B), (A * B) = P)
+=> (((pos zint A) zx (pos zint B)) = (pos zint P))
+
+((neg zint A) zx (neg zint B), (A * B) = P)
+=> (((neg zint A) zx (neg zint B)) = (pos zint P))
+
+((pos zint A) zx (neg zint B), A > &0, (A * B) = P)
+=> (((pos zint A) zx (neg zint B)) = (neg zint P))
+
+((pos zint A) zx (neg zint B), A == &0)
+=> (((pos zint A) zx (neg zint B)) = (pos zint &0))
+
+((neg zint A) zx (pos zint B), B > &0, (A * B) = P)
+=> (((neg zint A) zx (pos zint B)) = (neg zint P))
+
+((neg zint A) zx (pos zint B), B == &0)
+=> (((neg zint A) zx (pos zint B)) = (pos zint &0))
+
+# ---------------------------------------------------------------------------
+# Comparison (X zcmp Y) -- sign case analysis; magnitudes delegate to
+# natural cmp, with the order REVERSED for two negatives. Relational
+# results land on the shared predicates <, >, ==.
+# ---------------------------------------------------------------------------
+
+# Mixed signs decide by sign alone: canonical negatives are <= -1,
+# positives are >= 0.
+((pos zint A) zcmp (neg zint B)) => ((pos zint A) > (neg zint B))
+((neg zint A) zcmp (pos zint B)) => ((neg zint A) < (pos zint B))
+
+# Same signs: one seed rule covers both cases (G binds pos or neg).
+((G zint A) zcmp (G zint B)) => (A cmp B)
+
+((pos zint A) zcmp (pos zint B), A > B) => ((pos zint A) > (pos zint B))
+((pos zint A) zcmp (pos zint B), A < B) => ((pos zint A) < (pos zint B))
+((pos zint A) zcmp (pos zint B), A == B) => ((pos zint A) == (pos zint B))
+
+((neg zint A) zcmp (neg zint B), A > B) => ((neg zint A) < (neg zint B))
+((neg zint A) zcmp (neg zint B), A < B) => ((neg zint A) > (neg zint B))
+((neg zint A) zcmp (neg zint B), A == B) => ((neg zint A) == (neg zint B))
+
+# Result bridge -- uniform query idiom (X zcmp Y) = gt/lt/eq, exactly
+# like rule CC0 of the natural modules.
+(X zcmp Y, X > Y) => ((X zcmp Y) = gt)
+(X zcmp Y, X < Y) => ((X zcmp Y) = lt)
+(X zcmp Y, X == Y) => ((X zcmp Y) = eq)
+
+# ---------------------------------------------------------------------------
+# Uniform operator facade -- Z under the natural modules' user-facing
+# predicates. Rules gated on zint-shaped operands route +, -, * and cmp
+# facts to their z-counterparts and re-expose the results under =, so the
+# query idiom is uniform across N and Z:
+#
+#   ((pos zint &2) + (neg zint &5)) = X        answers (neg zint &3)
+#
+# The natural modules' triggers DO fire on these facts and create dead
+# internal states (e.g. ((zintA add zintB) ci 0)); they are harmless --
+# digit recursion cannot decompose zint facts, whose predicate is zint,
+# not cons -- and are the price of shared predicates, the same trade
+# symbolic-core.zph documents. The payoff: symbolic-core's knowledge-
+# folding bridge (T red C, C = R) => (T rw R) consumes these = facts
+# with NO Z-specific bridge at all -- constant folding over Z is this
+# facade plus the existing rule. Division/mod are deliberately not
+# routed (Euclidean division on Z is a follow-up); a zint / fact simply
+# derives nothing -- partiality by absence, consistent everywhere.
+# ---------------------------------------------------------------------------
+((G zint A) + (H zint B)) => ((G zint A) z+ (H zint B))
+((G zint A) + (H zint B), ((G zint A) z+ (H zint B)) = R)
+=> (((G zint A) + (H zint B)) = R)
+
+((G zint A) - (H zint B)) => ((G zint A) z- (H zint B))
+((G zint A) - (H zint B), ((G zint A) z- (H zint B)) = R)
+=> (((G zint A) - (H zint B)) = R)
+
+((G zint A) * (H zint B)) => ((G zint A) zx (H zint B))
+((G zint A) * (H zint B), ((G zint A) zx (H zint B)) = R)
+=> (((G zint A) * (H zint B)) = R)
+
+((G zint A) cmp (H zint B)) => ((G zint A) zcmp (H zint B))
+((G zint A) cmp (H zint B), ((G zint A) zcmp (H zint B)) = R)
+=> (((G zint A) cmp (H zint B)) = R)

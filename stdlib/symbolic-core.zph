@@ -128,7 +128,8 @@ ln inverseof exp
 # Confluence with the SR rules: on every overlap (e.g. red (&2 + &0),
 # matched by SR and computed numerically) both paths yield the SAME
 # node, because numeric results of canonical operands are canonical --
-# addition/multiplication by construction, division via canonnum.
+# addition by construction; subtraction, multiplication and division
+# via canonnum.
 # Partiality composes: (&5 / &0) gets no = fact, no rw, and falls back
 # to itself as its own normal form.
 # ---------------------------------------------------------------------------

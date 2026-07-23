@@ -164,16 +164,16 @@ static bool unify_nodes(
         }
 
         // 3. Structural equivalence
-        auto rule_structs = get_fact_structures(_n, rule_node, false, depth);
-        if (rule_structs.empty())
+        auto rule_structs = get_fact_structures(_n, rule_node, depth);
+        if (rule_structs->empty())
         {
             U_LOG(depth, "  -> Rule node is atom, but not identical. Fail.");
             result = false;
             break;
         }
 
-        auto graph_structs = get_fact_structures(_n, graph_node, false, depth);
-        if (graph_structs.empty())
+        auto graph_structs = get_fact_structures(_n, graph_node, depth);
+        if (graph_structs->empty())
         {
             U_LOG(depth, "  -> Graph node is atom, but rule expects structure. Fail.");
             result = false;
@@ -183,9 +183,9 @@ static bool unify_nodes(
         if (_n->logging_active())
             prof.unify_struct_pair_attempts.fetch_add(1, std::memory_order_relaxed);
 
-        for (const auto& rs : rule_structs)
+        for (const auto& rs : *rule_structs)
         {
-            for (const auto& gs : graph_structs)
+            for (const auto& gs : *graph_structs)
             {
                 Variables attempt = local_bindings;
 
@@ -267,8 +267,8 @@ static bool contains_variable_deep(Zelph* n, Node nd, const int depth, std::unor
     if (!Zelph::Impl::is_hash(nd)) return false;  // plain atom -> no internal structure
     if (!visited.insert(nd).second) return false; // cycle protection
 
-    auto structs = get_fact_structures(n, nd, false, depth);
-    for (const auto& fs : structs)
+    auto structs = get_fact_structures(n, nd, depth);
+    for (const auto& fs : *structs)
     {
         if (contains_variable_deep(n, fs.subject, depth, visited)) return true;
         if (contains_variable_deep(n, fs.predicate, depth, visited)) return true;
@@ -385,6 +385,163 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
 
     out = ans.relation();
     return GroundResult::Grounded;
+}
+
+// --- Partial-pattern anchoring ----------------------------------------------
+//
+// Bound-pattern grounding (above) handles the fully-bound case: the pattern
+// denotes exactly one node. This section handles the PARTIALLY bound case:
+// grounding failed (some variable is unbound), but the pattern still
+// contains a concrete node in a subject or object position at some
+// structural depth -- a bound variable's value, a concrete atom, or a fully
+// concrete subterm. Every graph fact matching the condition must contain
+// that exact node at the corresponding depth: concrete nodes unify only via
+// identity, because hash-consing makes equal fully-concrete structures the
+// SAME node. zelph's topology then makes each structural parent reachable
+// from its child via get_right (subjects are bidirectional with their fact
+// node, objects point to it), so climbing `depth` adjacency levels from the
+// anchor yields a complete candidate SUPERSET -- typically a handful of
+// nodes instead of the full relation extent. This is exactly what the
+// SC-congruence conditions ((U + V) needssimp (U + V)) with bound V used to
+// scan: 94M candidate facts in the diffby phase, ~78M of them needssimp.
+// The same mechanism, with a 1-level climb, covers conditions like
+// (T rw S) whose subject VARIABLE is bound to a fact node -- accepted by
+// the sequential anchor path but rejected by the constructor's stricter
+// atom-only subject_is_bound check, which sent them into parallel
+// full-relation scans (red/rw/simp/= in the profiles).
+//
+// Predicate positions never qualify as anchors: a fact points TO its
+// predicate, so the predicate's incoming side is the full extent
+// (snapshot_left_of) -- exactly the scan this avoids.
+//
+// Soundness is unconditional: candidates still pass extract_bindings'
+// structural unification. Completeness is budget-independent: an aborted
+// climb falls back to the full scan, never to a truncated candidate set.
+
+namespace
+{
+    struct AnchorCandidate
+    {
+        Node              node{0}; // concrete node (after variable substitution)
+        std::vector<Node> preds;   // climb filter per level, immediate parent's
+                                   // predicate first; 0 = no filter (variable
+                                   // predicate). The final climb to the fact
+                                   // candidates uses the condition's relation.
+    };
+}
+
+// Collect all concrete anchor candidates inside `pattern` (a subject or
+// object of the condition). `chain` holds the predicate filters from
+// pattern's level up to (excluding) the condition's relation.
+static void collect_partial_anchors(
+    Zelph*                        n,
+    Node                          pattern,
+    const Node                    parent_rule,
+    const Variables&              vars,
+    std::vector<Node>&            chain,
+    std::unordered_set<Node>&     visited,
+    const int                     depth_left,
+    const int                     log_depth,
+    std::vector<AnchorCandidate>& out)
+{
+    if (pattern == 0) return;
+
+    if (Zelph::Impl::is_var(pattern))
+    {
+        const Node bound = zelph::string::get(vars, pattern, Node{0});
+        if (bound == 0 || Zelph::Impl::is_var(bound) || bound == parent_rule || !n->exists(bound)) return;
+        if (Zelph::Impl::is_hash(bound))
+        {
+            // Mirror is_concrete_lookup_node: a bound value containing
+            // variables at any depth (template leak) is not a data node;
+            // anchoring on it would break the identity argument.
+            std::unordered_set<Node> vc;
+            if (contains_variable_deep(n, bound, log_depth, vc)) return;
+        }
+        out.push_back({bound, chain});
+        return;
+    }
+
+    if (!Zelph::Impl::is_hash(pattern))
+    {
+        if (pattern != parent_rule)
+            out.push_back({pattern, chain}); // concrete atom in the pattern
+        return;
+    }
+
+    {
+        std::unordered_set<Node> vc;
+        if (!contains_variable_deep(n, pattern, log_depth, vc))
+        {
+            if (pattern != parent_rule)
+                out.push_back({pattern, chain}); // fully concrete subterm
+            return;
+        }
+    }
+
+    if (depth_left <= 0) return;
+    if (!visited.insert(pattern).second) return; // cyclic pattern: conservative
+
+    // Descend. The predicate chain becomes a climb FILTER, so a wrong
+    // structural reading could filter out genuine candidates: descend only
+    // when the reading is unambiguous.
+    auto structs = get_fact_structures(n, pattern, log_depth);
+    if (structs->size() == 1)
+    {
+        const FactStructure& fs = (*structs)[0];
+        const Node           p  = Zelph::Impl::is_var(fs.predicate) ? Node{0} : fs.predicate;
+
+        chain.insert(chain.begin(), p);
+        collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out);
+        for (Node o : fs.objects)
+            collect_partial_anchors(n, o, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out);
+        chain.erase(chain.begin());
+    }
+
+    visited.erase(pattern);
+}
+
+// Climb from the anchor to the condition's candidate facts. Returns false
+// when a budget is exceeded; the caller then keeps the full-scan behaviour.
+static bool climb_partial_anchor(
+    Zelph*                 n,
+    const AnchorCandidate& anchor,
+    const Node             current_rel,
+    const size_t           frontier_budget,
+    const size_t           work_budget,
+    adjacency_set&         out)
+{
+    adjacency_set frontier;
+    frontier.insert(anchor.node);
+    size_t work = 0;
+
+    for (size_t level = 0; level <= anchor.preds.size() && !frontier.empty(); ++level)
+    {
+        const Node filter = level < anchor.preds.size() ? anchor.preds[level] : current_rel;
+
+        adjacency_set next;
+        for (const Node c : frontier)
+        {
+            const adjacency_set parents = n->get_right(c);
+            work += parents.size();
+            if (work > work_budget) return false;
+
+            for (const Node f : parents)
+            {
+                if (filter != 0)
+                {
+                    if (!n->has_right_edge(f, filter)) continue; // wrong predicate
+                    if (n->has_left_edge(f, filter)) continue;   // filter node is f's subject, not its predicate
+                }
+                next.insert(f);
+            }
+        }
+        if (next.size() > frontier_budget) return false;
+        frontier = std::move(next);
+    }
+
+    out = std::move(frontier);
+    return true;
 }
 
 Unification::Unification(
@@ -533,10 +690,17 @@ Unification::Unification(
     _relation_index         = _relation_list.begin();
     _fact_index_initialized = false;
 
-    if (_seed_fact == 0 && _n->use_parallel())
+    // Anchor construction and the parallel scan launch share the boundness
+    // analysis below but are gated INDEPENDENTLY: anchoring (use_anchors)
+    // is a semantically neutral index shortcut that must engage in
+    // single-core / classic evaluation too, while the snapshot launch
+    // additionally requires the thread pool (use_parallel). The former
+    // coupling to use_parallel() alone left classic mode scanning full
+    // relation extents (>20 min for the det workload vs ~1 min anchored).
+    // Seed mode bypasses both: its candidate set is the single seeded fact.
+    if (_seed_fact == 0 && (_n->use_anchors() || _n->use_parallel()))
     {
-        // Subject/Object Driven Indexing
-        //  parallel only with fixed relation
+        // Subject/Object boundness analysis.
         //  OPTIMIZATION: Do NOT use parallel processing/snapshotting if subject is bound, as the result set is likely tiny.
         bool subject_is_bound = false;
         if (_subject_grounded != 0)
@@ -551,7 +715,7 @@ Unification::Unification(
             if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
             // Only optimize if s is an ATOM (not a structure), because complex structures
             // cannot be looked up simply via get_right(s) in a deep unification context.
-            if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, false, log_depth).empty()) subject_is_bound = true;
+            if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, log_depth)->empty()) subject_is_bound = true;
         }
 
         // Do not use parallel if the object is bound (const or bound var).
@@ -561,7 +725,7 @@ Unification::Unification(
         {
             if (!Zelph::Impl::is_var(o))
             {
-                if (get_fact_structures(_n, o, false, log_depth).empty())
+                if (get_fact_structures(_n, o, log_depth)->empty())
                 {
                     object_is_bound = true;
                     break;
@@ -581,12 +745,79 @@ Unification::Unification(
             {
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
-                if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, false, log_depth).empty()) s_bound = true;
+                if (!Zelph::Impl::is_var(s) && get_fact_structures(_n, s, log_depth)->empty()) s_bound = true;
             }
             u_log(_n, _log_depth, "DIAG: subject_is_bound=" + std::to_string(s_bound) + " object_is_bound=" + std::to_string(object_is_bound) + " relation_list_size=" + std::to_string(_relation_list.size()) + " subject=" + U_NODE(_subject) + " objects_size=" + std::to_string(_objects.size()));
         }
 
-        if (_pool && _relation_variable == 0 && !subject_is_bound && !object_is_bound && !concurrency::tl_is_pool_worker)
+        // --- Partial-pattern anchoring ---
+        // Neither side is fully bound and grounding failed; before resorting
+        // to a full-relation scan (sequential or parallel), try to anchor on
+        // a concrete inner node of the pattern (see collect_partial_anchors
+        // above). Only for a fixed relation: the climb's top filter is the
+        // relation itself.
+        // Gated on use_anchors() alone, NOT use_parallel(): the climbed
+        // candidate set is consumed by the sequential iterator and is
+        // exactly as valid in single-core mode.
+        if (_n->use_anchors()
+            && !subject_is_bound && !object_is_bound && _relation_variable == 0 && !_relation_list.empty())
+        {
+            const Node fixed_rel = *_relation_list.begin();
+
+            std::vector<AnchorCandidate> anchors;
+            {
+                std::vector<Node>        chain;
+                std::unordered_set<Node> visited;
+                constexpr int            max_anchor_depth = 4;
+                collect_partial_anchors(_n, _subject, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors);
+                for (Node o : _objects)
+                    collect_partial_anchors(_n, o, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors);
+            }
+
+            if (!anchors.empty())
+            {
+                // Prefer the lowest-degree anchor: the climb's cost is the
+                // frontier's adjacency, so a specific subterm beats a hub
+                // (nil, a digit, a popular numeral).
+                const AnchorCandidate* best     = nullptr;
+                size_t                 best_deg = 0;
+                for (const auto& a : anchors)
+                {
+                    const size_t deg = _n->_pImpl->right_count_of(a.node);
+                    if (!best || deg < best_deg)
+                    {
+                        best     = &a;
+                        best_deg = deg;
+                    }
+                }
+
+                // Budgets relative to the full-scan alternative: a climb
+                // visits edges with O(1) hash checks, while a relation scan
+                // runs get_fact_structures + unification per fact -- an edge
+                // is far cheaper than a scanned fact, hence the 16x factor.
+                // Exceeding a budget keeps today's behaviour (hub anchors
+                // degrade to the full scan, never to a slow climb);
+                // completeness is unaffected either way.
+                const size_t extent          = _n->_pImpl->left_count_of(fixed_rel);
+                const size_t frontier_budget = std::max<size_t>(128, extent);
+                const size_t work_budget     = std::max<size_t>(1024, 16 * extent);
+
+                adjacency_set candidates;
+                if (climb_partial_anchor(_n, *best, fixed_rel, frontier_budget, work_budget, candidates))
+                {
+                    _partial_snapshot       = std::move(candidates);
+                    _partial_snapshot_valid = true;
+
+                    if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                    {
+                        u_log(_n, _log_depth, "partial-anchor: " + std::to_string(best->preds.size() + 1) + "-level climb from " + U_NODE(best->node) + " -> " + std::to_string(_partial_snapshot.size()) + " candidate(s) for relation " + U_NODE(fixed_rel));
+                    }
+                }
+            }
+        }
+
+        if (_pool && _n->use_parallel() && _relation_variable == 0 && !subject_is_bound && !object_is_bound
+            && !_partial_snapshot_valid && !concurrency::tl_is_pool_worker)
         {
             Node fixed_rel = *_relation_list.begin();
 
@@ -646,10 +877,10 @@ Unification::Unification(
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
-                                       auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+                                       auto structs = get_fact_structures(_n, fact, _log_depth);
                                        ++local_scanned;
 
-                                       for (const auto& fs : structs)
+                                       for (const auto& fs : *structs)
                                        {
                                            if (fs.predicate != fixed_rel) continue;
 
@@ -689,6 +920,7 @@ bool Unification::increment_fact_index()
         {
             // Check if the Subject or Object is already bound. If so, iterate only their connections.
             bool optimized_snapshot = false;
+            bool partial_used       = false;
             Node current_rel        = *_relation_index;
 
             if (_seed_fact != 0)
@@ -702,8 +934,24 @@ bool Unification::increment_fact_index()
                 _facts_snapshot.insert(_seed_fact);
                 optimized_snapshot = true;
             }
-            else if (_n->use_parallel())
+            else if (_partial_snapshot_valid)
             {
+                // Partial-pattern anchor (see the constructor): the complete
+                // candidate superset was precomputed by climbing from a
+                // concrete inner node. Built only for the single fixed
+                // relation, so it is consumed exactly once.
+                _facts_snapshot         = std::move(_partial_snapshot);
+                _partial_snapshot_valid = false;
+                partial_used            = true;
+                optimized_snapshot      = true;
+            }
+            else if (_n->use_anchors())
+            {
+                // Subject/object-driven anchoring is gated on use_anchors(),
+                // not use_parallel(): these lookups are index shortcuts
+                // orthogonal to threading. ".anchors off" restores the
+                // full-relation reference scan of the fallback branch below.
+                //
                 // Rule-template nodes exist in the graph. The subject/object-
                 // driven shortcut must not anchor on nodes that are themselves
                 // rule topology: the conjunction set node, or pattern fact
@@ -833,10 +1081,12 @@ bool Unification::increment_fact_index()
 
                 _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
                 _prof.snapshot_facts_total.fetch_add(_facts_snapshot.size(), std::memory_order_relaxed);
-                if (optimized_snapshot)
+                if (partial_used)
                 {
-                    // Heuristik: subject-driven wenn subject bound branch genutzt wurde, sonst object-driven
-                    // (hier nicht perfekt unterscheidbar ohne extra flag; wenn du willst, kann ich das sauber flaggen)
+                    _prof.snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed);
+                }
+                else if (optimized_snapshot)
+                {
                     _prof.snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed);
                 }
                 else
@@ -899,17 +1149,17 @@ std::shared_ptr<Variables> Unification::Next()
 
                 // Get all valid structural interpretations of the fact node.
                 // This allows matching facts that serve as subjects for other facts (nested structures).
-                auto structs = get_fact_structures(_n, fact, /*prefer_single=*/false, _log_depth);
+                auto structs = get_fact_structures(_n, fact, _log_depth);
 
                 if (_n->logging_active())
                 {
                     _prof.get_fact_structures_calls.fetch_add(1, std::memory_order_relaxed);
-                    _prof.structures_total.fetch_add(structs.size(), std::memory_order_relaxed);
+                    _prof.structures_total.fetch_add(structs->size(), std::memory_order_relaxed);
                 }
 
                 std::shared_ptr<Variables> first = nullptr;
 
-                for (const auto& fs : structs)
+                for (const auto& fs : *structs)
                 {
                     // Filter: Ensure the interpretation matches the relation currently being scanned
                     if (fs.predicate != *_relation_index) continue;

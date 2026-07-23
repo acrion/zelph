@@ -629,6 +629,10 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 > displays these lists as decimal `&`-literals (e.g. `&12345` instead of
 > `<12345>`).
 
+> The intermediate states below are shown with `.deductions all`. The
+> default mode (`focus`) derives them all the same but prints only the
+> final `=` fact — see [Deduction Output Modes](index.md#deduction-output-modes).
+
 ```
 .import arithmetic
 (<12345> + <98765>) = X
@@ -691,6 +695,8 @@ deliberately stay in the graph: they are reusable knowledge for subsequent
 computations. To sandbox a computation instead, wrap it in a
 [cluster](index.md#node-clusters-transactional-workspaces) and drop it
 afterwards.
+
+By default, the REPL's deduction trace is filtered to facts about your input; see [Deduction Output Modes](index.md#deduction-output-modes).
 
 ### Semantic Integration with Knowledge Graphs
 

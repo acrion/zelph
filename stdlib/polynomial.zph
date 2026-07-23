@@ -1,0 +1,373 @@
+# Multivariate polynomial normal forms over Z -- the data layer of the
+# polynomial normal-form module. Pure forward-chaining rules; covers
+# addition, negation, subtraction and multiplication. The
+# term-to-polynomial compiler (topoly) is a separate follow-up module.
+#
+# PREREQUISITES (import order):
+#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
+#   .import integer-arithmetic  # incl. the uniform operator facade
+#   .import polynomial
+#
+# The module is independent of symbolic-core: it is a DATA layer, like
+# the arithmetic modules. The compiler bridging symbolic terms to this
+# layer is a separate follow-up module.
+#
+# REPRESENTATION (recursive dense, collapsed, variable-tagged):
+#   - A CONSTANT polynomial is a zint term: (pos zint N) / (neg zint N).
+#   - A NON-CONSTANT polynomial with main variable V is (V poly L),
+#     where L is a cons list of canonical polynomials, LSB-first: the
+#     V^0 coefficient is the outermost cell -- the numeral orientation,
+#     because a number in base b IS a polynomial evaluated at b, and
+#     the rules below are the digit recursions with the carry removed.
+#   - COLLAPSE: a polynomial constant in V is represented by its
+#     constant coefficient directly, never as (V poly (C cons nil)).
+#     Canonical coefficient lists therefore have length >= 2.
+#   - The LAST list element (leading coefficient) is never the zero
+#     polynomial; inner zeros are value-relevant and kept. By collapse,
+#     the zero polynomial at EVERY level is the single node
+#     (pos zint &0) -- which is what makes the strip stage's zero test
+#     a pattern match instead of a structural recursion.
+#   - NESTING ORDER: composite coefficients inside (V poly L) have main
+#     variables strictly inner to V. The order is declared by the user
+#     as pouter facts (V pouter W: V is strictly outer); adjacent pairs
+#     suffice, transitivity is provided below. The order must be a
+#     STRICT total order on the variables in use -- declaring both
+#     V pouter W and W pouter V would break single-valuedness, exactly
+#     like conflicting declared equations in symbolic-core.
+#   - The variable tag resolves the ambiguity a collapsed UNTAGGED list
+#     representation would have across nesting levels (the list for y
+#     as a constant-in-x polynomial would be node-identical to the list
+#     for x); with the tag, every canonical polynomial is a unique
+#     hash-consed node, so equality of normal forms is node identity.
+#
+# OPERATIONS (results exposed under =, the uniform query idiom):
+#   (P padd Q) = R        addition
+#   (:pneg P) = R         negation (request self-fact, testprime idiom)
+#   (P psub Q) = R        subtraction, via pneg + padd
+#   (P pmul Q) = R        multiplication
+#
+# CANONICITY: all rules yield canonical results for canonical operands.
+# Only same-main-variable addition can produce non-canonical raw lists
+# (cancellation of present coefficients, possibly including the leading
+# one); its results run through the strip/collapse stage below -- the
+# canonnum pattern with the zero POLYNOMIAL in place of the zero digit.
+# Head-adjustment cases (different main variables, or constant into
+# composite) touch only the V^0 coefficient: the tail -- including the
+# nonzero leading coefficient -- passes through unchanged, and a zero
+# HEAD is an inner zero, which is canonical. Negation maps nonzero
+# coefficients to nonzero coefficients elementwise. Multiplication
+# needs no strip stage of its own: see the pmul section. Applying
+# an operation to non-polynomial or non-canonical operands derives
+# nothing -- partiality by absence, as everywhere in the stdlib.
+#
+# ZERO TEST, POSITIVELY: the strip rules must distinguish zero from
+# nonzero elements. Zero is matched directly as the ground pattern
+# (pos zint &0). Nonzero is derived as a positive marker (pnonzero)
+# from the three positive shapes -- (neg zint N), (pos zint N) with
+# N > &0 via an in-system cmp, and (W poly K) composites (never zero
+# by the leading-coefficient invariant). This keeps the module fully
+# inside the positive stratum: no negation, no != against structured
+# nodes.
+
+# Exclude operators with possible operand value coincidences from the
+# self-fact display sugar ((P padd P) is x + x, not a request marker,
+# and elementwise scaling seeds products like ((pos zint &2) pmul
+# (pos zint &2))). The marker predicates (pneg, lneg, needsplcanon,
+# plcanon, pzcheck, pnonzero) stay unregistered on purpose: they are
+# genuine self-facts. lscale/lprod need no entry -- a scalar and a
+# cons list are never the same node.
+%(zelph/no-selffact-sugar "padd" "psub" "ladd" "pmul")
+
+# ---------------------------------------------------------------------------
+# Variable order: adjacent declarations suffice
+# ---------------------------------------------------------------------------
+(A pouter B, B pouter C) => (A pouter C)
+
+# ===========================================================================
+# Addition (P padd Q) -- flat case analysis on the operand shapes (the
+# integer-arithmetic design), recursing through coefficient pairs.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Rules PZ -- constant + constant: delegate to the Z facade (an ordinary
+# + fact, routed to z+, result under =). Canonical: z+ results are.
+# ---------------------------------------------------------------------------
+((G zint A) padd (H zint B)) => ((G zint A) + (H zint B))
+((G zint A) padd (H zint B), ((G zint A) + (H zint B)) = R)
+=> (((G zint A) padd (H zint B)) = R)
+
+# ---------------------------------------------------------------------------
+# Rules PS -- same main variable: element-wise list addition (the digit
+# recursion minus the carry). Seeds the internal ladd state; the
+# connect stage below consumes its canonicalized result.
+# ---------------------------------------------------------------------------
+((V poly L) padd (V poly M)) => (L ladd M)
+
+# ladd recursion: seed the element addition, recurse on the tails.
+((A cons R) ladd (B cons S)) => (A padd B)
+((A cons R) ladd (B cons S)) => (R ladd S)
+
+((A cons R) ladd (B cons S),
+ (A padd B) = D,
+ (R ladd S) lsum T)
+=> (((A cons R) ladd (B cons S)) lsum (D cons T))
+
+# Short circuits: adding the empty list is the identity -- the
+# zero-extension of D2/D3 without the digit table.
+((A cons R) ladd nil) => (((A cons R) ladd nil) lsum (A cons R))
+(nil ladd (B cons S)) => ((nil ladd (B cons S)) lsum (B cons S))
+(nil ladd nil) => ((nil ladd nil) lsum nil)
+
+# ---------------------------------------------------------------------------
+# Rules PH -- head adjustment: the inner operand is constant relative
+# to the outer one and adds into its V^0 coefficient. The tail R passes
+# through unchanged (canonical lists have length >= 2, so R != nil, and
+# its last element stays the untouched nonzero leading coefficient); a
+# zero head is an inner zero and therefore canonical as-is.
+# ---------------------------------------------------------------------------
+
+# composite + inner composite, both orientations
+((V poly (A cons R)) padd (W poly M), V pouter W) => (A padd (W poly M))
+((V poly (A cons R)) padd (W poly M), V pouter W,
+ (A padd (W poly M)) = D)
+=> (((V poly (A cons R)) padd (W poly M)) = (V poly (D cons R)))
+
+((W poly M) padd (V poly (A cons R)), V pouter W) => ((W poly M) padd A)
+((W poly M) padd (V poly (A cons R)), V pouter W,
+ ((W poly M) padd A) = D)
+=> (((W poly M) padd (V poly (A cons R))) = (V poly (D cons R)))
+
+# constant + composite, both orientations
+((G zint N) padd (V poly (A cons R))) => ((G zint N) padd A)
+((G zint N) padd (V poly (A cons R)), ((G zint N) padd A) = D)
+=> (((G zint N) padd (V poly (A cons R))) = (V poly (D cons R)))
+
+((V poly (A cons R)) padd (G zint N)) => (A padd (G zint N))
+((V poly (A cons R)) padd (G zint N), (A padd (G zint N)) = D)
+=> (((V poly (A cons R)) padd (G zint N)) = (V poly (D cons R)))
+
+# ===========================================================================
+# Canonicalization of same-main-variable sums -- the canonnum pattern
+# with the zero polynomial (pos zint &0) in place of the zero digit.
+# Only lsum results enter (KT-analog); the marker recursion walks the
+# suffixes; strip drops leading zeros (innermost cells, next to nil).
+# ===========================================================================
+
+# Trigger and decompose (guarded like KD1: no nil marker state)
+((L ladd M) lsum T) => (T needsplcanon T)
+((A cons R) needsplcanon (A cons R), R != nil) => (R needsplcanon R)
+
+# Element zero check: derive the positive nonzero marker
+((A cons R) needsplcanon (A cons R)) => (A pzcheck A)
+
+((neg zint N) pzcheck (neg zint N))
+=> ((neg zint N) pnonzero (neg zint N))
+((pos zint N) pzcheck (pos zint N)) => (N cmp &0)
+((pos zint N) pzcheck (pos zint N), N > &0)
+=> ((pos zint N) pnonzero (pos zint N))
+((W poly K) pzcheck (W poly K))
+=> ((W poly K) pnonzero (W poly K))
+
+# Strip rules (KA1-KA5 analogs; tail semantics -- may reach nil)
+((A cons nil) needsplcanon (A cons nil), A pnonzero A)
+=> ((A cons nil) plcanon (A cons nil))
+
+(((pos zint &0) cons nil) needsplcanon ((pos zint &0) cons nil))
+=> (((pos zint &0) cons nil) plcanon nil)
+
+((A cons R) needsplcanon (A cons R), A pnonzero A, R != nil,
+ R plcanon S)
+=> ((A cons R) plcanon (A cons S))
+
+(((pos zint &0) cons R) needsplcanon ((pos zint &0) cons R), R != nil,
+ R plcanon S, S != nil)
+=> (((pos zint &0) cons R) plcanon ((pos zint &0) cons S))
+
+(((pos zint &0) cons R) needsplcanon ((pos zint &0) cons R), R != nil,
+ R plcanon nil)
+=> (((pos zint &0) cons R) plcanon nil)
+
+# ---------------------------------------------------------------------------
+# Rules PSC -- connect the same-main-variable case: total cancellation
+# yields the zero polynomial, a single surviving cell collapses to its
+# coefficient, longer lists keep the variable tag. The three plcanon
+# shapes are mutually exclusive, so = stays single-valued.
+# ---------------------------------------------------------------------------
+((V poly L) padd (V poly M), (L ladd M) lsum T, T plcanon nil)
+=> (((V poly L) padd (V poly M)) = (pos zint &0))
+
+((V poly L) padd (V poly M), (L ladd M) lsum T, T plcanon (A cons nil))
+=> (((V poly L) padd (V poly M)) = A)
+
+((V poly L) padd (V poly M), (L ladd M) lsum T,
+ T plcanon (A cons (B cons S)))
+=> (((V poly L) padd (V poly M)) = (V poly (A cons (B cons S))))
+
+# ===========================================================================
+# Negation (:pneg P) -- elementwise; nonzero maps to nonzero, so the
+# result is canonical without any strip stage. The zint cases mirror
+# the ZN rules of symbolic-integers ((neg zint &0) is never produced).
+# ===========================================================================
+((pos zint N) pneg (pos zint N)) => (N cmp &0)
+((pos zint N) pneg (pos zint N), N > &0)
+=> (((pos zint N) pneg (pos zint N)) = (neg zint N))
+((pos zint &0) pneg (pos zint &0))
+=> (((pos zint &0) pneg (pos zint &0)) = (pos zint &0))
+((neg zint N) pneg (neg zint N))
+=> (((neg zint N) pneg (neg zint N)) = (pos zint N))
+
+((V poly L) pneg (V poly L)) => (L lneg L)
+
+((A cons R) lneg (A cons R)) => (A pneg A)
+((A cons R) lneg (A cons R), R != nil) => (R lneg R)
+
+((A cons nil) lneg (A cons nil), (A pneg A) = D)
+=> (((A cons nil) lneg (A cons nil)) lnegres (D cons nil))
+
+((A cons R) lneg (A cons R), R != nil,
+ (A pneg A) = D,
+ (R lneg R) lnegres T)
+=> (((A cons R) lneg (A cons R)) lnegres (D cons T))
+
+((V poly L) pneg (V poly L), (L lneg L) lnegres T)
+=> (((V poly L) pneg (V poly L)) = (V poly T))
+
+# ===========================================================================
+# Subtraction (P psub Q) = P padd (-Q) -- pure delegation.
+# ===========================================================================
+(P psub Q) => (Q pneg Q)
+(P psub Q, (Q pneg Q) = N) => (P padd N)
+(P psub Q, (Q pneg Q) = N, (P padd N) = R) => ((P psub Q) = R)
+
+# ===========================================================================
+# Multiplication (P pmul Q) -- flat case analysis on the operand
+# shapes, like padd. No strip stage of its own: over Z (an integral
+# domain) products of nonzero coefficients are nonzero, so scaling
+# preserves canonicity elementwise, and the only accumulation (the
+# schoolbook case) delegates to padd, which owns its canonicalization.
+# The cases are mutually exclusive, so = stays single-valued: constant
+# x constant is the Z facade; the ground zero times a composite has
+# direct rules; a NONZERO constant or an inner-variable composite
+# scales elementwise; same-main-variable composites run the schoolbook
+# recursion. Two composites without a declared pouter order derive
+# nothing -- partiality by absence.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Rules MZ -- constant x constant: delegate to the Z facade (an
+# ordinary * fact, routed to zx; zero operands are canonical there).
+# ---------------------------------------------------------------------------
+((G zint A) pmul (H zint B)) => ((G zint A) * (H zint B))
+((G zint A) pmul (H zint B), ((G zint A) * (H zint B)) = R)
+=> (((G zint A) pmul (H zint B)) = R)
+
+# ---------------------------------------------------------------------------
+# Rules M0 -- the zero polynomial absorbs composites, both
+# orientations. Scaling by zero would build an all-zero list
+# (non-canonical), so the zero scalar is excluded from the scaling
+# case via the pnonzero guard; these ground rules answer it directly.
+# ---------------------------------------------------------------------------
+((pos zint &0) pmul (V poly L))
+=> (((pos zint &0) pmul (V poly L)) = (pos zint &0))
+((V poly L) pmul (pos zint &0))
+=> (((V poly L) pmul (pos zint &0)) = (pos zint &0))
+
+# ---------------------------------------------------------------------------
+# Rules MS -- scaling: a nonzero constant or an inner-variable
+# composite times a coefficient list, elementwise. Both operand
+# orientations seed the SAME internal (C lscale L) state and read the
+# same lprod result, so commutative orders connect to the identical
+# result node by construction. Canonicity without a strip stage:
+# scaling preserves the list length, the nonzero leading coefficient
+# stays nonzero, and inner zeros scale to the zero polynomial node
+# (via rules MZ/M0). The zint scalar's nonzero guard reuses the
+# pzcheck/pnonzero markers of the canonicalization stage above.
+# ---------------------------------------------------------------------------
+
+# zint scalar, both orientations
+((G zint N) pmul (V poly L)) => ((G zint N) pzcheck (G zint N))
+((V poly L) pmul (G zint N)) => ((G zint N) pzcheck (G zint N))
+
+((G zint N) pmul (V poly L), (G zint N) pnonzero (G zint N))
+=> ((G zint N) lscale L)
+((V poly L) pmul (G zint N), (G zint N) pnonzero (G zint N))
+=> ((G zint N) lscale L)
+
+((G zint N) pmul (V poly L), ((G zint N) lscale L) lprod S)
+=> (((G zint N) pmul (V poly L)) = (V poly S))
+((V poly L) pmul (G zint N), ((G zint N) lscale L) lprod S)
+=> (((V poly L) pmul (G zint N)) = (V poly S))
+
+# inner-variable composite scalar, both orientations (composites are
+# never zero by the leading-coefficient invariant: no guard needed)
+((V poly L) pmul (W poly M), V pouter W) => ((W poly M) lscale L)
+((W poly M) pmul (V poly L), V pouter W) => ((W poly M) lscale L)
+
+((V poly L) pmul (W poly M), V pouter W, ((W poly M) lscale L) lprod S)
+=> (((V poly L) pmul (W poly M)) = (V poly S))
+((W poly M) pmul (V poly L), V pouter W, ((W poly M) lscale L) lprod S)
+=> (((W poly M) pmul (V poly L)) = (V poly S))
+
+# lscale recursion: seed the elementwise product (fixed orientation,
+# scalar first -- the connected result node is orientation-independent
+# anyway, since elementwise results are canonical forms), recurse on
+# the tail.
+(C lscale (A cons R)) => (C pmul A)
+(C lscale (A cons R), R != nil) => (C lscale R)
+
+(C lscale (A cons nil), (C pmul A) = D)
+=> ((C lscale (A cons nil)) lprod (D cons nil))
+
+(C lscale (A cons R), R != nil,
+ (C pmul A) = D,
+ (C lscale R) lprod T)
+=> ((C lscale (A cons R)) lprod (D cons T))
+
+# ---------------------------------------------------------------------------
+# Rules MM -- same main variable: schoolbook recursion on the left
+# coefficient list,  (A cons R) x Q  =  A*Q  padd  V*(R x Q).
+# Head and tail products are seeded as ordinary pmul facts: the head
+# coefficient A is constant or strictly inner relative to V (the
+# scaling cases above); the tail polynomial is B for the collapsed
+# one-cell tail, (V poly R) otherwise (a canonical suffix: its last
+# cell is the operand's untouched nonzero leading coefficient).
+#
+# The tail product ALWAYS has main variable V: Q = (V poly M) has
+# V-degree >= 1 (canonical lists have length >= 2) and the tail
+# polynomial is nonzero, so their product has V-degree >= 1 over an
+# integral domain. The connect conditions match that shape,
+# (V poly K) -- if the invariant were ever violated they would fall
+# silent instead of assembling garbage. The V-shift is then the free
+# cons: prepending the zero polynomial as the new V^0 coefficient --
+# an inner zero, canonical, and the shifted list keeps its nonzero
+# last cell. Accumulation delegates to padd (MA1/MA2 pattern).
+# ---------------------------------------------------------------------------
+((V poly (A cons R)) pmul (V poly M)) => (A pmul (V poly M))
+
+((V poly (A cons (B cons nil))) pmul (V poly M)) => (B pmul (V poly M))
+((V poly (A cons (B cons (C cons S)))) pmul (V poly M))
+=> ((V poly (B cons (C cons S))) pmul (V poly M))
+
+# one-cell tail: assemble and connect
+((V poly (A cons (B cons nil))) pmul (V poly M),
+ (A pmul (V poly M)) = H,
+ (B pmul (V poly M)) = (V poly K))
+=> (H padd (V poly ((pos zint &0) cons K)))
+
+((V poly (A cons (B cons nil))) pmul (V poly M),
+ (A pmul (V poly M)) = H,
+ (B pmul (V poly M)) = (V poly K),
+ (H padd (V poly ((pos zint &0) cons K))) = R)
+=> (((V poly (A cons (B cons nil))) pmul (V poly M)) = R)
+
+# longer tail: assemble and connect via the recursive product
+((V poly (A cons (B cons (C cons S)))) pmul (V poly M),
+ (A pmul (V poly M)) = H,
+ ((V poly (B cons (C cons S))) pmul (V poly M)) = (V poly K))
+=> (H padd (V poly ((pos zint &0) cons K)))
+
+((V poly (A cons (B cons (C cons S)))) pmul (V poly M),
+ (A pmul (V poly M)) = H,
+ ((V poly (B cons (C cons S))) pmul (V poly M)) = (V poly K),
+ (H padd (V poly ((pos zint &0) cons K))) = R)
+=> (((V poly (A cons (B cons (C cons S)))) pmul (V poly M)) = R)

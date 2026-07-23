@@ -36,9 +36,17 @@ namespace zelph::console
         Janet
     };
 
+    enum class DeductionMode
+    {
+        All,   // print every deduction (historic behavior)
+        Focus, // print only deductions anchored in the current input
+        Off    // print no deductions
+    };
+
     struct ReplState
     {
-        bool auto_run{true};
+        bool          auto_run{true};
+        DeductionMode deduction_mode{DeductionMode::Focus};
 #ifndef __EMSCRIPTEN__
         bool        partial_load_mode{false};
         std::string partial_load_source;

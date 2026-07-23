@@ -369,6 +369,11 @@ Node Zelph::create_hash(const adjacency_set& vec)
     return Network::create_hash(vec);
 }
 
+Node Zelph::create_hash(const Node predicate, const Node subject, const adjacency_set& objects)
+{
+    return Network::create_hash(predicate, subject, objects);
+}
+
 bool Zelph::is_hash(Node a)
 {
     return Network::is_hash(a);
@@ -381,81 +386,76 @@ bool Zelph::is_var(Node a)
 
 Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacency_set& objects) const
 {
-    bool known = false;
+    const Node relation = Impl::create_hash(predicate, subject, objects);
 
-    Node relation = Impl::create_hash(predicate, subject, objects);
+    const bool known = _pImpl->fact_edges_hold(relation, subject, objects);
 
-    if (_pImpl->exists(relation))
+    if (!known
+        && !Impl::is_var(subject)
+        && !Impl::is_var(predicate)
+        && std::all_of(objects.begin(), objects.end(), [](const Node t)
+                       { return Impl::is_var(t); })
+        && !string::is_inside_node_to_wstring()
+        && _pImpl->exists(relation))
     {
-        const adjacency_set& connectedFromRelation = _pImpl->get_right(relation);
-        const adjacency_set& connectedToRelation   = _pImpl->get_left(relation);
+        // Suspected hash collision / corrupt state: this cold diagnostic
+        // path fetches its own adjacency copies -- the hot path above no
+        // longer materializes any.
+        const adjacency_set connectedFromRelation = _pImpl->get_right(relation);
+        const adjacency_set connectedToRelation   = _pImpl->get_left(relation);
 
-        known = connectedFromRelation.count(subject) == 1
-             && connectedToRelation.count(subject) == 1 // subject must be connected from and to <--> relation node (i.e. bidirectional, to distinguish it from objects)
-             && std::all_of(objects.begin(), objects.end(), [&](Node t)
-                            { return connectedToRelation.count(t) != 0; }) // objects must all be connected to relation
-             && std::all_of(objects.begin(), objects.end(), [&](Node t)
-                            { return t == subject || connectedFromRelation.count(t) == 0; }); // no object must be connected from relation node
+        const bool relationConnectsToSubject = connectedFromRelation.count(subject) == 1;
 
-        if (!known
-            && !Impl::is_var(subject)
-            && !Impl::is_var(predicate)
-            && std::all_of(objects.begin(), objects.end(), [&](const Node t)
-                           { return Impl::is_var(t); })
-            && !string::is_inside_node_to_wstring())
+        const bool subjectConnectsToRelation         = connectedToRelation.count(subject) == 1;
+        const bool allObjectsConnectToRelation       = std::all_of(objects.begin(), objects.end(), [&](Node t)
+                                                                   { return connectedToRelation.count(t) != 0; });
+        const bool noObjectsAreConnectedFromRelation = std::all_of(objects.begin(), objects.end(), [&](Node t)
+                                                                   { return connectedFromRelation.count(t) == 1; });
+
+        // inconsistent state => debug output TODO
+        std::string output;
+        string::node_to_string(this, output, _lang, relation, 3);
+        error(output, true);
+
+        io::gen_mermaid_html(this,
+                             relation,
+                             "debug.html",
+                             1,
+                             3,
+                             {},
+                             true,
+                             true,
+                             true);
+        error("relationConnectsToSubject         == " + std::to_string(relationConnectsToSubject), true);
+        error("subjectConnectsToRelation         == " + std::to_string(subjectConnectsToRelation), true);
+        error("allObjectsConnectToRelation       == " + std::to_string(allObjectsConnectToRelation), true);
+        error("noObjectsAreConnectedFromRelation == " + std::to_string(noObjectsAreConnectedFromRelation), true);
+
+        FactComponents actual = extract_fact_components(relation);
+        error("Hash collision detected for relation=" + std::to_string(relation), true);
+        error("Expected inputs to create_hash:", true);
+        error("  Subject:   " + std::to_string(subject) + " (hex: 0x" + string::to_hex(subject) + ", bin: " + std::bitset<64>(subject).to_string() + ")", true);
+        error("  Predicate: " + std::to_string(predicate) + " (hex: 0x" + string::to_hex(predicate) + ", bin: " + std::bitset<64>(predicate).to_string() + ")", true);
+        error("  Objects:", true);
+        for (Node obj : objects)
         {
-            const bool relationConnectsToSubject         = connectedFromRelation.count(subject) == 1;
-            const bool subjectConnectsToRelation         = connectedToRelation.count(subject) == 1;
-            const bool allObjectsConnectToRelation       = std::all_of(objects.begin(), objects.end(), [&](Node t)
-                                                                       { return connectedToRelation.count(t) != 0; });
-            const bool noObjectsAreConnectedFromRelation = std::all_of(objects.begin(), objects.end(), [&](Node t)
-                                                                       { return connectedFromRelation.count(t) == 1; });
-
-            // inconsistent state => debug output TODO
-            std::string output;
-            string::node_to_string(this, output, _lang, relation, 3);
-            error(output, true);
-
-            io::gen_mermaid_html(this,
-                                 relation,
-                                 "debug.html",
-                                 1,
-                                 3,
-                                 {},
-                                 true,
-                                 true,
-                                 true);
-            error("relationConnectsToSubject         == " + std::to_string(relationConnectsToSubject), true);
-            error("subjectConnectsToRelation         == " + std::to_string(subjectConnectsToRelation), true);
-            error("allObjectsConnectToRelation       == " + std::to_string(allObjectsConnectToRelation), true);
-            error("noObjectsAreConnectedFromRelation == " + std::to_string(noObjectsAreConnectedFromRelation), true);
-
-            FactComponents actual = extract_fact_components(relation);
-            error("Hash collision detected for relation=" + std::to_string(relation), true);
-            error("Expected inputs to create_hash:", true);
-            error("  Subject:   " + std::to_string(subject) + " (hex: 0x" + string::to_hex(subject) + ", bin: " + std::bitset<64>(subject).to_string() + ")", true);
-            error("  Predicate: " + std::to_string(predicate) + " (hex: 0x" + string::to_hex(predicate) + ", bin: " + std::bitset<64>(predicate).to_string() + ")", true);
-            error("  Objects:", true);
-            for (Node obj : objects)
-            {
-                error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
-            }
-
-            error("Actual inputs in existing relation:", true);
-            error("  Subject:   " + std::to_string(actual.subject) + " (hex: 0x" + string::to_hex(actual.subject) + ", bin: " + std::bitset<64>(actual.subject).to_string() + ")", true);
-            error("  Predicate: " + std::to_string(actual.predicate) + " (hex: 0x" + string::to_hex(actual.predicate) + ", bin: " + std::bitset<64>(actual.predicate).to_string() + ")", true);
-            error("  Objects:", true);
-            for (Node obj : actual.objects)
-            {
-                error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
-            }
-
-            static int hash_collision_count = 0;
-            ++hash_collision_count;
-            error("Hash collision count: " + std::to_string(hash_collision_count), true);
-
-            assert(false);
+            error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
         }
+
+        error("Actual inputs in existing relation:", true);
+        error("  Subject:   " + std::to_string(actual.subject) + " (hex: 0x" + string::to_hex(actual.subject) + ", bin: " + std::bitset<64>(actual.subject).to_string() + ")", true);
+        error("  Predicate: " + std::to_string(actual.predicate) + " (hex: 0x" + string::to_hex(actual.predicate) + ", bin: " + std::bitset<64>(actual.predicate).to_string() + ")", true);
+        error("  Objects:", true);
+        for (Node obj : actual.objects)
+        {
+            error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
+        }
+
+        static int hash_collision_count = 0;
+        ++hash_collision_count;
+        error("Hash collision count: " + std::to_string(hash_collision_count), true);
+
+        assert(false);
     }
 
     if (known)
@@ -507,7 +507,6 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             _pImpl->create(answer.relation());
         }
 
-        invalidate_fact_structures_cache();
         _pImpl->connect(subject, answer.relation());
         _pImpl->connect(answer.relation(), subject);
         for (const Node t : objects)
@@ -534,7 +533,14 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                 _pImpl->connect(t, answer.relation());
             }
         }
+
         _pImpl->connect(answer.relation(), predicate, probability);
+
+        // Per-node invalidation AFTER the edges are drawn: a reader that
+        // cached a partial view of the half-constructed node between the
+        // connects is invalidated here -- the former up-front wholesale
+        // clear left that window open. See invalidate_fact_structures_for.
+        invalidate_fact_structures_for(subject, predicate, objects, answer.relation());
 
         if (_on_fact_created) _on_fact_created(answer.relation(), predicate);
     }
@@ -950,8 +956,18 @@ Node Zelph::parse_relation(const Node rule) const
 {
     Node relation = 0; // 0 means failure
     Node subject  = 0;
+
+    // Memo prefilter: is_correct() implies is_known(), i.e. membership in
+    // relation_type_set(). One O(1) set probe rejects every non-relation
+    // neighbor (subjects, objects' backlinks, parent facts -- typically
+    // all but one) WITHOUT building the {->} probe set, hashing it and
+    // walking edges. Members still run the exact original probe, which
+    // additionally checks the declaration's probability (is_correct).
+    const auto rel_types = relation_type_set();
+
     for (Node nd : _pImpl->get_right(rule))
     {
+        if (rel_types->count(nd) == 0) continue;
         if (check_fact(nd, core.IsA, {core.RelationTypeCategory}).is_correct())
         {
             if (_pImpl->get_right(nd).count(rule) == 1) // In case nd is the subject of the rule, it may be also a relation, but not the one of the current rule. So exclude it by checking for bidirectional connection.
@@ -966,6 +982,48 @@ Node Zelph::parse_relation(const Node rule) const
     if (relation == 0)
     {
         // Since we exclude setting relation to the subject of the rule, now that we have a rule without a relation, it must be a rule where subject and relation are identical.
+        relation = subject;
+    }
+
+    return relation;
+}
+
+Network::ReadScope Zelph::read_scope() const
+{
+    // Impl -> Network conversion requires the complete Impl type, which
+    // only this translation unit has (zelph_impl.hpp is included ONLY
+    // here). Never construct a ReadScope in another header.
+    return Network::ReadScope(*_pImpl);
+}
+
+// Semantic caveat, deliberate: parse_relation's exact probe uses
+// is_correct(), which additionally rejects declarations with
+// probability < 0.5 -- a state nothing produces. get_fact_structures'
+// own predicate detection has always used is_known semantics (the memo),
+// so within fact-structure reconstruction membership and the exact probe
+// are exactly equivalent.
+Node Zelph::parse_relation_scoped(const Network::ReadScope&                 scope,
+                                  const ankerl::unordered_dense::set<Node>& rel_types,
+                                  const Node                                rule) const
+{
+    Node relation = 0; // 0 means failure
+    Node subject  = 0;
+
+    for (const Node nd : scope.right(rule))
+    {
+        if (rel_types.count(nd) == 0) continue;
+
+        if (scope.right(nd).count(rule) == 1) // nd is the rule's subject (bidirectional); it may be a relation type, but not THIS rule's relation
+            subject = nd;
+        else if (relation)
+            return 0; // there may be only 1 relation
+        else
+            relation = nd;
+    }
+
+    if (relation == 0)
+    {
+        // No relation besides the subject: subject and relation are identical.
         relation = subject;
     }
 
@@ -994,31 +1052,42 @@ Zelph::LangNodeView Zelph::get_lang_nodes_view(const std::string& lang) const
     return LangNodeView(it->second);
 }
 
-bool Zelph::try_get_fact_structures_cached(Node fact, std::vector<FactStructure>& out) const
+bool Zelph::try_get_fact_structures_cached(Node fact, FactStructurePtr& out) const
 {
     // If cache is currently empty/known-invalid, avoid locking
     if (!_pImpl->_fs_cache_has_entries.load(std::memory_order_acquire))
+    {
+        if (logging_active()) _fs_cache_misses.fetch_add(1, std::memory_order_relaxed);
         return false;
+    }
 
     std::shared_lock lock(_pImpl->_fs_cache_mtx);
     auto             it = _pImpl->_fs_cache.find(fact);
-    if (it == _pImpl->_fs_cache.end()) return false;
+    if (it == _pImpl->_fs_cache.end())
+    {
+        if (logging_active()) _fs_cache_misses.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
 
-    out = it->second; // copy (function returns by value anyway)
+    if (logging_active()) _fs_cache_hits.fetch_add(1, std::memory_order_relaxed);
+    out = it->second; // shared_ptr copy: one atomic increment, no allocation
     return true;
 }
 
-void Zelph::store_fact_structures_cached(Node fact, const std::vector<FactStructure>& value) const
+void Zelph::store_fact_structures_cached(Node fact, FactStructurePtr value) const
 {
     {
         std::unique_lock lock(_pImpl->_fs_cache_mtx);
-        _pImpl->_fs_cache[fact] = value;
+        _pImpl->_fs_cache[fact] = std::move(value);
     }
     _pImpl->_fs_cache_has_entries.store(true, std::memory_order_release);
 }
 
 void Zelph::invalidate_fact_structures_cache() const noexcept
 {
+    if (logging_active()) _fs_cache_full_clears.fetch_add(1, std::memory_order_relaxed);
+
+    invalidate_relation_type_set();
     _pImpl->invalidate_predicate_index();
 
     // If cache already empty, do nothing (avoid lock)
@@ -1027,6 +1096,168 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 
     std::unique_lock lock(_pImpl->_fs_cache_mtx);
     _pImpl->_fs_cache.clear();
+}
+
+// Per-fact cache invalidation, called by fact() AFTER the new relation's
+// edges are drawn. Replaces the former wholesale clear on every new fact,
+// which kept the cache near-permanently empty on rule-heavy workloads
+// (21.8k created facts => 1.28M full get_fact_structures reconstructions
+// in the Jacobian diffby phase -- the dominant cost in the perf profile).
+//
+// Correctness argument. A fact node's ID IS create_hash(predicate,
+// subject, objects), so each node has exactly ONE genuine triple, fixed
+// at creation; monotone graph growth can only ADD reconstruction
+// candidates (every skip heuristic flips only towards skipping less),
+// and hash verification prunes any ambiguous candidate set back to the
+// genuine reading. What growth can actually change is therefore:
+//  (1) the new relation node itself and its components (their adjacency
+//      grew, changing candidate collection),
+//  (2) nodes whose child-fact heuristic inspects the components'
+//      neighborhoods -- covered by one BIDIRECTIONAL adjacency level
+//      around subject and objects; deeper levels (the heuristic reads up
+//      to three hops) only feed checks whose outcome hash verification
+//      makes result-neutral,
+//  (3) globally: relation-type declarations (P ~ ->). Predicate detection
+//      consults check_fact(p, IsA, RelationTypeCategory) per right
+//      neighbor, so a new declaration can change ANY cached entry -- that
+//      case falls back to the full clear (rare: module load time only).
+// Residual risk, consciously accepted: entries kept UNVERIFIED (no
+// candidate hash-verifies, e.g. subject==predicate facts) are not
+// re-checked on deeper-level growth. The suite-wide `.semi-naive check`
+// equivalence net backstops this.
+//
+// The bidirectional restriction keeps hubs harmless: nil sits in the
+// RIGHT set of every terminating cons cell, but is bidirectional only
+// with the few facts using it as SUBJECT. The smaller adjacency side is
+// iterated with O(1) edge probes into the other. A neighborhood beyond
+// stale_budget degrades to the full clear -- the anchoring budget
+// philosophy: never unsound, never worse than the old semantics.
+//
+// The predicate-index coupling of the wholesale variant is kept: a built
+// index for this predicate is stale after any new fact. That call is one
+// atomic exchange when (as in the math workloads) no index exists.
+void Zelph::invalidate_fact_structures_for(const Node subject, const Node predicate, const adjacency_set& objects, const Node relation) const
+{
+    _pImpl->invalidate_predicate_index();
+
+    const auto full_clear = [this]
+    {
+        if (logging_active()) _fs_cache_full_clears.fetch_add(1, std::memory_order_relaxed);
+        if (!_pImpl->_fs_cache_has_entries.exchange(false, std::memory_order_acq_rel)) return;
+        std::unique_lock lock(_pImpl->_fs_cache_mtx);
+        _pImpl->_fs_cache.clear();
+    };
+
+    // (3) relation-type declarations change predicate detection globally
+    if (predicate == core.IsA && objects.count(core.RelationTypeCategory) != 0)
+    {
+        invalidate_relation_type_set();
+        full_clear();
+        return;
+    }
+
+    if (!_pImpl->_fs_cache_has_entries.load(std::memory_order_acquire)) return;
+
+    constexpr size_t stale_budget = 256;
+
+    std::vector<Node> stale;
+    stale.reserve(16);
+    stale.push_back(relation);
+    stale.push_back(subject);
+    stale.push_back(predicate); // cheap; a predicate that is itself a fact node gained a left edge
+    for (const Node o : objects)
+        stale.push_back(o);
+
+    // Bidirectional neighbors of c, iterating the smaller adjacency side.
+    const auto add_bidirectional_neighbors = [&](const Node c) -> bool
+    {
+        const bool          iterate_right = _pImpl->right_count_of(c) <= _pImpl->left_count_of(c);
+        const adjacency_set side          = iterate_right ? _pImpl->get_right(c) : _pImpl->get_left(c);
+        for (const Node n : side)
+        {
+            const bool bidirectional = iterate_right ? has_left_edge(c, n)   // n -> c exists too?
+                                                     : has_right_edge(c, n); // c -> n exists too?
+            if (!bidirectional) continue;
+            stale.push_back(n);
+            if (stale.size() > stale_budget) return false;
+        }
+        return true;
+    };
+
+    bool bounded = add_bidirectional_neighbors(subject);
+    for (const Node o : objects)
+    {
+        if (!bounded) break;
+        if (o != subject) bounded = add_bidirectional_neighbors(o);
+    }
+
+    if (!bounded)
+    {
+        full_clear();
+        return;
+    }
+
+    size_t erased = 0;
+    {
+        std::unique_lock lock(_pImpl->_fs_cache_mtx);
+        for (const Node n : stale)
+            erased += _pImpl->_fs_cache.erase(n);
+    }
+    if (erased != 0 && logging_active()) _fs_cache_stale_erased.fetch_add(erased, std::memory_order_relaxed);
+}
+
+std::shared_ptr<const ankerl::unordered_dense::set<Node>> Zelph::relation_type_set() const
+{
+    uint64_t gen;
+    {
+        std::shared_lock lock(_pImpl->_rel_types_mtx);
+        if (_pImpl->_rel_types) return _pImpl->_rel_types;
+        gen = _pImpl->_rel_types_gen;
+    }
+
+    // Build outside the lock: one pass over the declaration facts, each
+    // candidate confirmed with the exact probe this set replaces.
+    auto set = std::make_shared<ankerl::unordered_dense::set<Node>>();
+    for (const Node p : get_sources(core.IsA, core.RelationTypeCategory, false))
+    {
+        if (check_fact(p, core.IsA, {core.RelationTypeCategory}).is_known())
+            set->insert(p);
+    }
+
+    std::unique_lock lock(_pImpl->_rel_types_mtx);
+    if (_pImpl->_rel_types) return _pImpl->_rel_types; // a concurrent build won
+    if (_pImpl->_rel_types_gen != gen)
+    {
+        // Invalidated while building (new declaration): the snapshot is
+        // valid for THIS caller -- equivalent to probing just before the
+        // declaration -- but must not be stored.
+        return set;
+    }
+    _pImpl->_rel_types = std::move(set);
+    return _pImpl->_rel_types;
+}
+
+void Zelph::invalidate_relation_type_set() const
+{
+    std::unique_lock lock(_pImpl->_rel_types_mtx);
+    _pImpl->_rel_types.reset();
+    ++_pImpl->_rel_types_gen;
+}
+
+Zelph::FsCacheStats Zelph::fs_cache_stats() const
+{
+    return {_fs_cache_hits.load(std::memory_order_relaxed),
+            _fs_cache_misses.load(std::memory_order_relaxed),
+            _fs_cache_full_clears.load(std::memory_order_relaxed),
+            _fs_cache_stale_erased.load(std::memory_order_relaxed)};
+}
+
+void Zelph::reset_fs_cache_stats() const
+{
+    _fs_cache_hits.store(0, std::memory_order_relaxed);
+    _fs_cache_misses.store(0, std::memory_order_relaxed);
+    _fs_cache_full_clears.store(0, std::memory_order_relaxed);
+    _fs_cache_stale_erased.store(0, std::memory_order_relaxed);
 }
 
 // Extracts the components (subject, predicate, objects) from a relation node.
@@ -1112,28 +1343,55 @@ void Zelph::prompt(const std::string& msg, bool newline) const
     emit(io::OutputChannel::Prompt, msg, newline);
 }
 
+// Shared implementation of the four *_stream() accessors.
+//
+// OutputStream carries a COPY of the handler and flushes on endl /
+// destruction WITHOUT holding any lock -- unlike emit(), which
+// serializes every handler call through _mtx_print. Pool workers log
+// via diagnostic_stream() (u_log, Zelph::log), so two workers could
+// invoke the handler concurrently: a data race on any stateful
+// handler, observed as double-free crashes of OutputCollector's
+// event vector once a logged test exercised the parallel scan path.
+// Wrapping the handler so that the flush itself takes _mtx_print
+// restores the emit() guarantee for all stream users. _mtx_print is
+// recursive, so handlers that re-enter zelph output remain safe.
+zelph::io::OutputStream Zelph::locked_stream(zelph::io::OutputChannel channel) const
+{
+    zelph::io::OutputHandler handler;
+    {
+        std::lock_guard lock(_pImpl->_mtx_print);
+        handler = _pImpl->_output;
+    }
+    zelph::network::Zelph::Impl* impl = _pImpl;
+
+    return {
+        [impl, handler](const zelph::io::OutputEvent& event)
+        {
+            std::lock_guard lock(impl->_mtx_print);
+            if (handler) handler(event);
+        },
+        channel,
+        false};
+}
+
 zelph::io::OutputStream Zelph::out_stream() const
 {
-    std::lock_guard lock(_pImpl->_mtx_print);
-    return io::OutputStream(_pImpl->_output, io::OutputChannel::Out, false);
+    return locked_stream(io::OutputChannel::Out);
 }
 
 zelph::io::OutputStream Zelph::diagnostic_stream() const
 {
-    std::lock_guard lock(_pImpl->_mtx_print);
-    return io::OutputStream(_pImpl->_output, io::OutputChannel::Diagnostic, false);
+    return locked_stream(io::OutputChannel::Diagnostic);
 }
 
 zelph::io::OutputStream Zelph::error_stream() const
 {
-    std::lock_guard lock(_pImpl->_mtx_print);
-    return io::OutputStream(_pImpl->_output, io::OutputChannel::Error, false);
+    return locked_stream(io::OutputChannel::Error);
 }
 
 zelph::io::OutputStream Zelph::prompt_stream() const
 {
-    std::lock_guard lock(_pImpl->_mtx_print);
-    return io::OutputStream(_pImpl->_output, io::OutputChannel::Prompt, false);
+    return locked_stream(io::OutputChannel::Prompt);
 }
 
 void Zelph::set_logging(int max_depth) const

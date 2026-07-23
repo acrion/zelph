@@ -162,6 +162,7 @@ Key commands include:
 - `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)
 - `.log-janet` – Toggle logging of Janet function calls
 - `.auto-run` – Toggle automatic execution of `.run` after each input (default: on)
+- `.deductions [all|focus|off]` – Set the deduction printing mode (default: focus)",
 - `.parallel` – Toggle parallel processing (default: on)
 - `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts

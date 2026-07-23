@@ -1,0 +1,78 @@
+# Z numerals as first-class symbolic leaves, plus the N -> Z promotion
+# that COMPLETES natural partiality: subtraction results and negations
+# that do not exist over the naturals become zint terms.
+#
+# PREREQUISITES (import order):
+#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
+#   .import integer-arithmetic  # incl. the uniform operator facade
+#   .import symbolic-core
+#   .import symbolic-minus
+#   .import symbolic-integers
+#
+# NUMERIC FOLDING over Z needs no rules here at all: a red form over two
+# zint leaves IS an ordinary +/-/* fact, the facade routes it to
+# z+/z-/zx and re-exposes the result under =, and symbolic-core's SN
+# bridge adopts it -- the exact mechanism of natural constant folding.
+# This module only contributes what the facade cannot: leaf status,
+# neutral/absorbing identities against SYMBOLIC operands, negation of
+# numerals, and the N -> Z promotions.
+#
+# MIXED WORLDS: the naturals' identity rules (X + &0, X * &1, ...) and
+# the zint rules below coexist -- different zero/one nodes for different
+# number worlds. This is what lets diff.zph's natural &0/&1 seeds work
+# unchanged over Z coefficients: d((neg zint &3) * x)/dx assembles
+# ((&0 * x) + ((neg zint &3) * &1)), and the NATURAL identities reduce
+# it to (neg zint &3).
+
+# ---------------------------------------------------------------------------
+# Rule ZL1 -- zint leaves are their own normal forms (the SB pattern;
+# without this base case, parents of zint children would never reduce)
+# ---------------------------------------------------------------------------
+((G zint N) needssimp (G zint N)) => ((G zint N) simp (G zint N))
+
+# ---------------------------------------------------------------------------
+# Rules ZSR -- neutral and absorbing elements over Z numerals, both
+# orientations (mirroring symbolic-core's SR block). Conflict-free with
+# the facade fold on every all-numeral overlap: z+/zx results of
+# canonical operands are canonical, so both paths yield the same node.
+# ---------------------------------------------------------------------------
+(T red (X + (pos zint &0))) => (T rw X)
+(T red ((pos zint &0) + X)) => (T rw X)
+(T red (X - (pos zint &0))) => (T rw X)
+(T red (X * (pos zint &1))) => (T rw X)
+(T red ((pos zint &1) * X)) => (T rw X)
+(T red (X * (pos zint &0))) => (T rw (pos zint &0))
+(T red ((pos zint &0) * X)) => (T rw (pos zint &0))
+
+# ---------------------------------------------------------------------------
+# Rules ZN -- negation of Z numerals. The nonzero case is guarded via an
+# in-system comparison so that (neg zint &0) is never produced and rw
+# stays single-valued (the zero case has its own direct rule).
+# ---------------------------------------------------------------------------
+(T red (neg of (pos zint A))) => (A cmp &0)
+(T red (neg of (pos zint A)), A > &0) => (T rw (neg zint A))
+(T red (neg of (pos zint &0))) => (T rw (pos zint &0))
+(T red (neg of (neg zint A))) => (T rw (pos zint A))
+
+# ---------------------------------------------------------------------------
+# Rules ZP -- N -> Z promotion: complete natural partiality.
+#
+# Negation of a natural numeral has no natural value; here it becomes a
+# zint. The zero case overlaps with symbolic-minus's (neg of &0) rule --
+# deliberately conflict-free, both yield the natural &0.
+# ---------------------------------------------------------------------------
+(T red (neg of (A cons R))) => ((A cons R) cmp &0)
+(T red (neg of (A cons R)), (A cons R) > &0) => (T rw (neg zint (A cons R)))
+(T red (neg of (A cons R)), (A cons R) == &0) => (T rw &0)
+
+# Natural subtraction with minuend < subtrahend derives no natural
+# result (partiality by absence) -- so the SN fold is silent exactly
+# where these rules fire, and vice versa: single-valuedness by case
+# disjointness. The reversed subtraction is asserted as an ordinary -
+# fact for the natural module to answer (MA1/MA2 cascade).
+(T red ((A cons R) - (B cons S))) => ((A cons R) cmp (B cons S))
+(T red ((A cons R) - (B cons S)), (A cons R) < (B cons S))
+=> ((B cons S) - (A cons R))
+(T red ((A cons R) - (B cons S)), (A cons R) < (B cons S),
+ ((B cons S) - (A cons R)) = D)
+=> (T rw (neg zint D))

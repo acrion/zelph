@@ -25,10 +25,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#pragma once
-
 #include "adjacency_set.hpp"
 #include "network_types.hpp"
+
+#include <memory>
+#include <vector>
 
 namespace zelph::network
 {
@@ -38,4 +39,12 @@ namespace zelph::network
         Node          predicate{};
         adjacency_set objects;
     };
+
+    // Cached fact-structure lists are IMMUTABLE and shared: a cache hit
+    // copies one shared_ptr (a single atomic increment) instead of
+    // deep-copying the structures. A holder's pointer stays valid across
+    // invalidations -- it then references a consistent snapshot, exactly
+    // the staleness window the former private copies had.
+    using FactStructureList = std::vector<FactStructure>;
+    using FactStructurePtr  = std::shared_ptr<const FactStructureList>;
 }

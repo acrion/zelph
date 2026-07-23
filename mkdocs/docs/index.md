@@ -623,6 +623,40 @@ This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the 
 It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
 For normal interactive or script use, `.run` is the standard command.
 
+### Deduction Output Modes
+
+zelph performs forward chaining: every derivable consequence is materialized
+in the graph (see [Logic and Computation](logic.md#positioning-forward-chaining-over-graphs)).
+For rule libraries that implement computations — the arithmetic modules are
+the prime example — this is a double-edged sword: a single input like
+`&10 - &3` triggers a long cascade of internal derivations (recursion
+states, canonicalization steps) that are essential to the computation but
+rarely interesting to read. In a goal-driven system like Prolog this
+question does not arise, because only the proof of the asked goal is ever
+constructed; in a forward chainer, filtering the _trace_ is the natural
+counterpart.
+
+The `.deductions` command controls which derived facts are printed:
+
+    .deductions all      # print every deduction (full derivation trace)
+    .deductions focus    # print only deductions about your input (default)
+    .deductions off      # print no deductions
+
+In `focus` mode, a deduction is printed when its subject stems from an
+interactively entered statement: the subject is the entered fact itself, or
+its subject, or one of its objects. Anchors accumulate over the session, so
+a rule entered later still surfaces conclusions about earlier inputs.
+Imported scripts (`.import`) do not contribute anchors — a loaded arithmetic
+library stays silent about its internals.
+
+The filter affects printing only: **all facts are derived and stored
+regardless of the mode**, and query answers, contradictions and warnings are
+always printed. If a result you are interested in is not shown, query it
+(e.g. `&7 > X`) or switch to `.deductions all`. Filtered deductions are
+counted in the "(skipped N deductions)" summary. As a side effect, heavy
+computations run several times faster in focus/off mode, because rendering
+large derived terms dominates the cost.
+
 ## Node Clusters: Transactional Workspaces
 
 When experimenting on a large loaded network — say, a full Wikidata dump — you often want to undo an entire experiment without reloading everything. Clusters provide exactly that:

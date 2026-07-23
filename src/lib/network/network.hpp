@@ -484,16 +484,27 @@ namespace zelph::network
 
         static Node create_hash(const adjacency_set& vec)
         {
+            Node h = 0;
+            h      = mix_bits(h, vec.size());
+
+            if (vec.iterates_sorted())
+            {
+                // Empty/Single/Vector storage already iterates ascending --
+                // exactly the sequence the sorted copy below would produce.
+                // Object sets are almost always tiny, so this path removes
+                // a heap allocation plus a sort from nearly every hash.
+                for (const Node node : vec)
+                    h = mix_bits(h, mod(node));
+                return (h & mask_node) | mark_hash;
+            }
+
+            // Set storage (>64 elements): unspecified iteration order --
+            // keep the order-normalizing copy+sort so the hash stays a pure
+            // function of the element SET.
             std::vector<Node> sorted_vec(vec.begin(), vec.end());
             std::sort(sorted_vec.begin(), sorted_vec.end());
-
-            Node h = 0;
-            h      = mix_bits(h, sorted_vec.size());
-
-            for (Node node : sorted_vec)
-            {
+            for (const Node node : sorted_vec)
                 h = mix_bits(h, mod(node));
-            }
             return (h & mask_node) | mark_hash;
         }
 
@@ -511,6 +522,38 @@ namespace zelph::network
             current_hash      = mix_bits(current_hash, mod(head1));
             current_hash      = mix_bits(current_hash, mod(head2));
             return (current_hash & mask_node) | mark_hash;
+        }
+
+        // Exact-triple edge probe for a fact node: all membership checks of
+        // check_fact under ONE lock scope, on references. The former
+        // implementation bound const& to the BY-VALUE returns of
+        // get_right/get_left -- two full adjacency copies (allocation +
+        // element copy) and several rwlock pairs per call, on one of the
+        // hottest engine paths.
+        bool fact_edges_hold(const Node relation, const Node subject, const adjacency_set& objects) const
+        {
+            // Same lock order as writers (connect): left before right.
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            const auto lr = _left.find(relation);
+            if (lr == _left.end()) return false; // relation node does not exist
+            const auto rr = _right.find(relation);
+            if (rr == _right.end()) return false;
+
+            // Naming follows check_fact: "from" = edges out of the relation
+            // node (_left[relation]), "to" = edges into it (_right[relation]).
+            const adjacency_set& from = lr->second;
+            const adjacency_set& to   = rr->second;
+
+            if (from.count(subject) != 1 || to.count(subject) != 1) return false; // subject must be bidirectional
+
+            for (const Node t : objects)
+            {
+                if (to.count(t) == 0) return false;                   // object must point to the relation
+                if (t != subject && from.count(t) != 0) return false; // and must not be pointed AT (that marks subjects/predicates)
+            }
+            return true;
         }
 
         bool has_left_edge(Node b, Node a) const
@@ -577,6 +620,71 @@ namespace zelph::network
             }
             return it->second;
         }
+
+        // --- ReadScope: one shared lock pair for a whole read-only region ---
+        //
+        // Acquires shared locks on BOTH adjacency maps (left before right --
+        // the writer order of connect()) and hands out REFERENCES into the
+        // maps for its lifetime. Replaces sequences of get_right/get_left
+        // calls that each paid a rwlock pair plus a full adjacency_set copy.
+        //
+        // HARD RULES for code running under a live scope:
+        //  - never write to the network,
+        //  - never take another network lock (no nested ReadScope),
+        //  - never call the locking API: get_right/get_left/exists/
+        //    check_fact/parse_relation/format/log or any output stream.
+        //    std::shared_mutex shared-locking is not guaranteed reentrant,
+        //    and a writer queued between two shared acquisitions deadlocks
+        //    the process.
+        // Pure hash arithmetic (create_hash, is_hash, is_var) and reads
+        // through the scope itself are the only permitted operations.
+        class ReadScope
+        {
+        public:
+            explicit ReadScope(const Network& n)
+                : _n(&n)
+                , _lock_left(n._smtx_left)
+                , _lock_right(n._smtx_right)
+            {
+            }
+
+            ReadScope(ReadScope&&) noexcept        = default;
+            ReadScope(const ReadScope&)            = delete;
+            ReadScope& operator=(const ReadScope&) = delete;
+            ReadScope& operator=(ReadScope&&)      = delete;
+
+            // Successors / outgoing edges of b -- the reference counterpart
+            // of Network::get_right (which reads _left; see there).
+            const adjacency_set& right(const Node b) const
+            {
+                const auto it = _n->_left.find(b);
+                return it == _n->_left.end() ? empty_set() : it->second;
+            }
+
+            // Predecessors / incoming edges of b (counterpart of get_left).
+            const adjacency_set& left(const Node b) const
+            {
+                const auto it = _n->_right.find(b);
+                return it == _n->_right.end() ? empty_set() : it->second;
+            }
+
+            bool exists(const Node a) const
+            {
+                return _n->_left.find(a) != _n->_left.end();
+            }
+
+        private:
+            static const adjacency_set& empty_set()
+            {
+                static const adjacency_set empty;
+                return empty;
+            }
+
+            // Pointer, not reference: keeps the defaulted move constructor.
+            const Network*                      _n;
+            std::shared_lock<std::shared_mutex> _lock_left; // declaration order IS lock order
+            std::shared_lock<std::shared_mutex> _lock_right;
+        };
 
         // --- Synapses (neural substrate) ---
         // A synapse is an entry in the weight store for a directed node

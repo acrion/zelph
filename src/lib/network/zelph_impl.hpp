@@ -1995,9 +1995,18 @@ namespace zelph::network
         mutable std::shared_mutex    _mtx_name_of_node;
         mutable std::recursive_mutex _mtx_print;
 
-        mutable std::shared_mutex                                              _fs_cache_mtx;
-        mutable ankerl::unordered_dense::map<Node, std::vector<FactStructure>> _fs_cache;
-        mutable std::atomic<bool>                                              _fs_cache_has_entries{false};
+        mutable std::shared_mutex                                    _fs_cache_mtx;
+        mutable ankerl::unordered_dense::map<Node, FactStructurePtr> _fs_cache;
+        mutable std::atomic<bool>                                    _fs_cache_has_entries{false};
+
+        // Memoized set of declared relation types: the exact node set for
+        // which check_fact(p, IsA, {RelationTypeCategory}) is_known().
+        // nullptr = not built. _rel_types_gen detects invalidations racing
+        // a concurrent build (built outside the lock, stored only if the
+        // generation is unchanged).
+        mutable std::shared_mutex                                         _rel_types_mtx;
+        mutable std::shared_ptr<const ankerl::unordered_dense::set<Node>> _rel_types;
+        mutable uint64_t                                                  _rel_types_gen{0};
 
         mutable std::shared_mutex                                                         _pred_idx_mtx;
         mutable ankerl::unordered_dense::map<Node, std::shared_ptr<const PredicateIndex>> _pred_idx_cache;

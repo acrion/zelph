@@ -171,6 +171,7 @@ TEST_CASE("nested unification: pattern matching in equations")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 ((A + B) = C) => (test A B)
 (4 + 5) = 9
 )");
@@ -182,6 +183,7 @@ TEST_CASE("nested unification: deep structure matching")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 (subj pred (obj is (subj2 A (b test C)))) => (success A C)
 subj pred (obj is (subj2 a_val (b test c_val)))
 )");
@@ -197,6 +199,7 @@ TEST_CASE("complex conjunction rule with followed-by")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 ((A + B) = C) => (test A B)
 (4 + 5) = 9
 (*{ ((A + B) = C) (B followed-by D) (C followed-by E) } ~ conjunction) => ((A + D) = E)
@@ -215,6 +218,7 @@ TEST_CASE("peano-style successor rule")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 (A followed-by B) => ((<1> + A) = B)
 <0> followed-by <1>
 )");
@@ -529,6 +533,7 @@ TEST_CASE("inequality: multiple != constraints in one rule")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 (X member group, Y member group, Z member group, X != Y, Y != Z, X != Z) => (triple X Y Z)
 a member group
 b member group
@@ -630,6 +635,7 @@ TEST_CASE("deep unification: function composition as graph transformation")
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 (F maps <A B>, G maps <B C>) => ((G compose F) maps <A C>)
 f maps <item1 item2>
 g maps <item2 item3>
@@ -762,6 +768,7 @@ TEST_CASE("grounding: fully bound nested pattern anchors on the exact fact node"
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 x trigger b1
 (a d+ b1) ci c
 ((a d+ b1) ci c) co e

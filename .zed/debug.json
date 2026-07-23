@@ -18,4 +18,19 @@
       "args": ["--build", "build-debug"],
     },
   },
+  {
+    "label": "Debug zelph tests",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/build-debug/bin/zelph_tests",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [],
+    "env": {
+      "RUST_BACKTRACE": "1",
+    },
+    "build": {
+      "command": "cmake",
+      "args": ["--build", "build-debug"],
+    },
+  },
 ]

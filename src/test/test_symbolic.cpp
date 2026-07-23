@@ -509,3 +509,23 @@ TEST_CASE("self-fact sugar: rules, conjunctions, consequences, display")
         interactive.process(R"js(%(string "SF-ML-" (zelph/exists "bar" "chain" "ok")))js");
         CHECK(any_output_contains(collector, "SF-ML-true")); });
 }
+
+TEST_CASE("symbolic: numeral-times-zero folding is single-valued (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        // Regression pin: before multiplication results were routed
+        // through canonnum, a multi-digit numeral times &0 folded (via
+        // SN) to the raw zero-extended product node -- e.g. binary <00>,
+        // rendered indistinguishably as &0 -- while the SR identity rule
+        // rewrote to the canonical &0: two rw facts, two simp results.
+        // Both rewrite paths must land on the SAME canonical node.
+        interactive.process(".import symbolic-core");
+        interactive.process(":simplify (&3 * &0)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(R"js(%(let [t (zelph/fact (zelph/number "3") "*" (zelph/number "0"))] (string "SMUL0-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/number "0")))))js");
+        interactive.process(R"js(%(let [t (zelph/fact (zelph/number "3") "*" (zelph/number "0")) raw (zelph/fact "0" "cons" (zelph/number "0"))] (string "SMUL0-NOT-" (zelph/exists (zelph/fact t "simplify" t) "=" raw))))js");
+        CHECK(any_output_contains(collector, "SMUL0-true"));
+        CHECK(any_output_contains(collector, "SMUL0-NOT-false")); });
+}

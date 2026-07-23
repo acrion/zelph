@@ -429,6 +429,15 @@ namespace zelph::network
             return count(n) != 0;
         }
 
+        // True when iteration order is ascending (Empty/Single/Vector
+        // storage; Vector keeps its payload sorted). Set storage iterates
+        // in unspecified order. Consumed by hash fast paths to skip the
+        // copy+sort step for the common small-set case.
+        bool iterates_sorted() const noexcept
+        {
+            return _mode != Mode::Set;
+        }
+
         void insert(Node n)
         {
             if (n == 0) return; // invalid sentinel

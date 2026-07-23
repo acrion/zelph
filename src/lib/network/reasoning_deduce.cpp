@@ -292,9 +292,22 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         if (created)
         {
             std::lock_guard<std::mutex> lock(_mtx_output);
-            bool                        do_print = _print_deductions;
 
-            if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
+            // Focus mode: only deductions ABOUT an interactively entered
+            // subject are printed. The applied rule is deliberately NOT an
+            // anchor: with session-wide accumulation, rule anchors would
+            // make focus degenerate to "all" for any interactively entered
+            // (or pasted) rule set.
+            const bool focus_reject = _print_deductions && _deduction_filter
+                                   && _input_focus.count(source) == 0;
+
+            bool do_print = _print_deductions && !focus_reject;
+
+            if (focus_reject)
+            {
+                ++_skipped;
+            }
+            else if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
             {
                 do_print = true;
                 _stop_watch.start();

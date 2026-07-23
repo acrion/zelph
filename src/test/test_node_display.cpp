@@ -108,3 +108,38 @@ TEST_CASE("display: self-referential fact as subject of further facts")
         CHECK(any_output_contains(collector, "x foo x"));
         CHECK_FALSE(any_output_contains(collector, "foo ?")); });
 }
+
+TEST_CASE("node display: non-canonical digit lists render raw, not as &-literals (binary mul)")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Binary &3 * &0 accumulates <0> + <00>: the prod fact carries the
+        // zero-extended raw list <00> (only the user-facing = result is
+        // canonicalized via canonnum, see common-arithmetic MC0). The raw
+        // node must render structurally, visibly distinct from &0.
+        interactive.process(".import binary-arithmetic");
+        collector.clear();
+        interactive.process("&3 * &0");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "((&3 mul &0) prod <00>)"));
+        CHECK_FALSE(any_output_contains(collector, "((&3 mul &0) prod &0)"));
+        // The canonicalized user-facing result stays a &-literal.
+        CHECK(any_output_contains(collector, "((&3 * &0) = &0)")); });
+}
+
+TEST_CASE("node display: non-canonical digit lists render raw, not as &-literals (decimal sub)")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Decimal &105 - &98 internally yields the raw diff <007> (the
+        // SC0 comment's own example); the canonnum bridge line now shows
+        // the connection between both renderings explicitly.
+        interactive.process(".import arithmetic");
+        collector.clear();
+        interactive.process("&105 - &98");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "diff <007>"));
+        CHECK(any_output_contains(collector, "(<007> canonnum &7)"));
+        CHECK(any_output_contains(collector, "((&105 - &98) = &7)"));
+        CHECK_FALSE(any_output_contains(collector, "diff &7")); });
+}

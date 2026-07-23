@@ -68,3 +68,5 @@ dev_scripts/mammal_species.json
 dev_scripts/mammals.json
 .aider*
 /paper
+perf*.data
+*.data.old

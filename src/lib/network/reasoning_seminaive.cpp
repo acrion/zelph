@@ -393,6 +393,14 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
             _done = false;
             if (!silent)
                 diagnostic_stream() << "--- Semi-naive safety check (classic pass) ---" << std::endl;
+
+            // Boundary marker, deliberately NOT gated on `silent`: the REPL
+            // auto-runs reasoning with silent=true, which suppresses the
+            // diagnostic banner above while deductions still print. Every
+            // deduction between this marker and the pass result below
+            // belongs to the classic verification pass.
+            out(">>> semi-naive check: classic verification pass <<<", true);
+
             for (Node rule_node : _pImpl->get_left(core.Causes))
                 apply_rule(rule_node, 0);
             _pool->wait();
@@ -401,6 +409,31 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
             ++safety_violations;
             negation_pending = has_deferred; // violation facts must re-open the deferred stratum too
+
+            // Diagnosis aid: name the missed facts explicitly. The observer
+            // stayed active during the classic pass, so the delta now holds
+            // exactly the facts the seeded phase failed to derive (including
+            // inner facts materialized by instantiate_fact). The printed
+            // predicate is the pred_index key that would have been seeded.
+            {
+                std::vector<std::pair<Node, Node>> missed;
+                {
+                    std::lock_guard<std::mutex> lock(delta_mtx);
+                    missed = delta; // copy -- the seeded loop still consumes them
+                }
+                out("Semi-naive check: classic pass #" + std::to_string(safety_violations)
+                        + " derived " + std::to_string(missed.size())
+                        + " fact(s) missed by delta seeding:",
+                    true);
+                for (const auto& [f, p] : missed)
+                {
+                    std::string rendered;
+                    string::node_to_string(this, rendered, _lang, f, 3);
+                    out("  [missed, pred=" + get_formatted_name(p, _lang) + "] "
+                            + string::unmark_identifiers(rendered),
+                        true);
+                }
+            }
 
             if (logging_active())
                 _prof.seminaive_safety_extra.fetch_add(1, std::memory_order_relaxed);

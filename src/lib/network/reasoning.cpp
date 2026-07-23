@@ -31,8 +31,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
+#include <functional>
+#include <sstream>
 #include <vector>
 
 using namespace zelph::network;
@@ -56,6 +60,12 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
 
 void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent)
 {
+    // Input capture must not extend into evaluation: in classic mode the
+    // observer would otherwise collect every deduced fact into the focus
+    // set, neutralizing the filter (semi-naive mode replaces the observer
+    // anyway, but the boundary belongs here, not to the evaluation mode).
+    end_input_capture();
+
     chrono::StopWatch watch;
     watch.start();
 
@@ -275,6 +285,173 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     }
 }
 
+void Reasoning::profiler_dump(const bool reset_after)
+{
+    if (!logging_active())
+    {
+        out("Profiler counters are inactive. Enable them with \".log -1\" "
+            "(counters only, no log lines) or \".log <depth>\".",
+            true);
+        return;
+    }
+
+    auto shorten = [](std::string s)
+    {
+        constexpr size_t max_len = 120;
+        for (char& c : s)
+            if (c == '\n' || c == '\t') c = ' ';
+        if (s.size() > max_len)
+        {
+            s.resize(max_len);
+            s += "...";
+        }
+        return s;
+    };
+
+    // Rules are rendered readably (truncated) so a dump identifies the
+    // dominating rule without manual .node lookups; relations by name.
+    auto rule_str = [&](const Node r) -> std::string
+    {
+        if (!r) return "0";
+        std::string rendered;
+        string::node_to_string(this, rendered, _lang, r, 3);
+        rendered = string::unmark_identifiers(rendered);
+        if (rendered.empty()) return format(r);
+        return shorten(rendered);
+    };
+
+    auto rel_str = [&](const Node r) -> std::string
+    {
+        if (!r) return "0";
+        const std::string name = get_name(r, _lang, true);
+        return name.empty() ? format(r) : name;
+    };
+
+    std::ostringstream oss;
+    {
+        const double sec = std::chrono::duration<double>(
+                               std::chrono::steady_clock::now() - _prof.epoch_start)
+                               .count();
+        oss << "[prof] epoch=" << _prof.epoch_id.load(std::memory_order_relaxed)
+            << " elapsed=" << sec << "s\n";
+    }
+
+    oss << _prof.core_block();
+
+    constexpr size_t top_n      = 10;
+    const auto       append_top = [&](const char*                               title,
+                                      const std::unordered_map<Node, uint64_t>& source,
+                                      const std::function<std::string(Node)>&   namer)
+    {
+        std::vector<std::pair<Node, uint64_t>> entries;
+        {
+            std::lock_guard<std::mutex> lk(_prof._mtx);
+            entries.assign(source.begin(), source.end());
+        }
+        if (entries.empty()) return;
+        std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b)
+                  { return a.second > b.second; });
+        if (entries.size() > top_n) entries.resize(top_n);
+        oss << "  " << title << ":\n";
+        for (const auto& [node, count] : entries)
+            oss << "    " << count << "  " << namer(node) << "\n";
+    };
+
+    append_top("top_relations_by_scan (candidate facts scanned)", _prof.rel_scanned_facts, rel_str);
+    append_top("top_relations_by_match (extract_success)", _prof.rel_matches, rel_str);
+    append_top("top_rules_by_applied", _prof.rule_applied, rule_str);
+    append_top("top_rules_by_facts_created", _prof.rule_facts_created, rule_str);
+
+    diagnostic_stream() << oss.str() << std::flush;
+
+    if (reset_after) _prof.reset_epoch(/*force=*/true);
+}
+
+void Reasoning::begin_input_capture()
+{
+    if (_capture_suppress_depth > 0) return;
+    if (_capturing) return;
+    _capturing = true;
+    // Collect RAW fact nodes only. Parsing a statement materializes its
+    // subterms bottom-up (every cons cell of a numeral is a fact), so the
+    // capture necessarily contains far more than the statement itself;
+    // end_input_capture reduces it to the top-level inputs. Runs on the
+    // REPL thread only -- run() ends the capture before evaluation starts.
+    set_fact_creation_observer([this](Node f, Node)
+                               { _input_captured.insert(f); });
+}
+
+void Reasoning::end_input_capture()
+{
+    if (!_capturing) return;
+    _capturing = false;
+    set_fact_creation_observer(nullptr);
+
+    // Survivors ACCUMULATE into the focus set: focus mode answers "what
+    // follows from what I entered", and "what I entered" grows with the
+    // session. Imported scripts never reach this path (imports suspend
+    // input capture), and nodes materialized DURING reasoning are never
+    // captured at all -- so accumulation cannot degenerate into
+    // everything-is-focused. The set is cleared by .reset and on mode
+    // changes, not per run.
+    std::unordered_set<Node> covered;
+    for (const Node f : _input_captured)
+    {
+        adjacency_set objs;
+        if (const Node subj = parse_fact(f, objs))
+        {
+            covered.insert(subj);
+            for (const Node o : objs)
+                covered.insert(o);
+        }
+    }
+
+    for (const Node f : _input_captured)
+    {
+        if (covered.count(f)) continue;
+        _input_focus.insert(f);
+        adjacency_set objs;
+        if (const Node subj = parse_fact(f, objs))
+        {
+            _input_focus.insert(subj);
+            for (const Node o : objs)
+                _input_focus.insert(o);
+        }
+    }
+
+    _input_captured.clear();
+}
+
+void Reasoning::set_deduction_filter(const bool on)
+{
+    _deduction_filter = on;
+}
+
+void Reasoning::suppress_input_capture(const bool on)
+{
+    if (on)
+    {
+        ++_capture_suppress_depth;
+        if (_capturing)
+        {
+            // Discard, do not reduce: whatever was captured of the triggering
+            // .import line itself is command syntax, not knowledge input.
+            _capturing = false;
+            set_fact_creation_observer(nullptr);
+            _input_captured.clear();
+        }
+    }
+    else if (_capture_suppress_depth > 0)
+    {
+        --_capture_suppress_depth;
+    }
+}
+
+void Reasoning::clear_input_focus()
+{
+    _input_focus.clear();
+}
+
 // Greedy Sort to optimize execution order based on variable bindings
 std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth)
 {
@@ -363,10 +540,36 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
                 std::unordered_set<Node> cond_vars;
                 std::vector<Node>        history;
                 collect_variables(this, cond, cond_vars, depth, history);
-                size_t new_vars = 0;
+
+                size_t new_vars  = 0;
+                bool   connected = cond_vars.empty(); // ground condition: trivially connected
                 for (Node v : cond_vars)
-                    if (simulated_vars.count(v) == 0) ++new_vars;
+                {
+                    if (simulated_vars.count(v) == 0)
+                        ++new_vars;
+                    else
+                        connected = true;
+                }
                 score += 2.0 * static_cast<double>(new_vars);
+
+                // Join connectivity: a condition that shares NO variable with
+                // the (simulated) bindings starts an unconstrained scan of its
+                // relation -- a cross product. It must lose against every
+                // connected condition, whatever their cardinalities. The check
+                // is deliberately based on collect_variables, i.e. variables at
+                // ANY structural depth count as connecting: the connected
+                // condition of the SC congruence rules, ((U + V) needssimp
+                // (U + V)), carries its bound V only inside the pattern, which
+                // is invisible to the subject/object boundness scores above.
+                // Without this term, the new-vars bonus (+4 for the fully
+                // unbound (U simp P) vs +2 here) ordered the full simp scan
+                // FIRST for every seeded congruence match -- 47.6M scanned
+                // simp candidates in the diffby phase alone. The penalty is
+                // uniform when nothing is bound yet (classic first condition),
+                // so relative order there is unchanged; it stays above the
+                // guard tiers (!= -500, neural -800, negation -1000), which
+                // must remain last regardless of connectivity.
+                if (!connected) score -= 200;
             }
 
             // Negated conditions must be evaluated last to ensure

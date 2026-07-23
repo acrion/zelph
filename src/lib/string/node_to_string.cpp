@@ -299,28 +299,50 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
                 {
                     if (current == z->core.Nil) // walk must have ended at the nil terminator
                     {
-                        bool           all_digits = true;
-                        std::string    dec        = "0";
-                        const uint64_t base       = static_cast<uint64_t>(digit_values->size());
-
-                        // list_elements is LSB-first; iterate MSB-first and
-                        // accumulate dec = dec * base + digit_value.
-                        for (auto it = list_elements.rbegin(); it != list_elements.rend(); ++it)
+                        // Canonicity gate: a multi-cell list whose most
+                        // significant cell (the LAST element in LSB-first
+                        // storage) holds the zero digit is value-correct but
+                        // non-canonical -- e.g. the zero-extended raw product
+                        // <00> or the raw difference <007>. Rendering such
+                        // nodes as &-literals made them indistinguishable
+                        // from the canonical node of the same value, which is
+                        // exactly how the &3 * &0 zero-extension bug stayed
+                        // invisible in REPL traces. They fall through to the
+                        // raw <...> display instead. The single-cell zero <0>
+                        // IS the canonical zero and keeps its &0 rendering.
+                        bool canonical = true;
+                        if (list_elements.size() > 1)
                         {
-                            const network::Node eff = resolve_var(*it);
-                            const auto          dv  = digit_values->find(eff);
-                            if (network::Zelph::is_var(eff) || dv == digit_values->end())
-                            {
-                                all_digits = false;
-                                break;
-                            }
-                            mul_add_decimal(dec, base, dv->second);
+                            const auto msb = digit_values->find(resolve_var(list_elements.back()));
+                            if (msb != digit_values->end() && msb->second == 0)
+                                canonical = false;
                         }
 
-                        if (all_digits)
+                        if (canonical)
                         {
-                            result = "&" + dec;
-                            return;
+                            bool           all_digits = true;
+                            std::string    dec        = "0";
+                            const uint64_t base       = static_cast<uint64_t>(digit_values->size());
+
+                            // list_elements is LSB-first; iterate MSB-first and
+                            // accumulate dec = dec * base + digit_value.
+                            for (auto it = list_elements.rbegin(); it != list_elements.rend(); ++it)
+                            {
+                                const network::Node eff = resolve_var(*it);
+                                const auto          dv  = digit_values->find(eff);
+                                if (network::Zelph::is_var(eff) || dv == digit_values->end())
+                                {
+                                    all_digits = false;
+                                    break;
+                                }
+                                mul_add_decimal(dec, base, dv->second);
+                            }
+
+                            if (all_digits)
+                            {
+                                result = "&" + dec;
+                                return;
+                            }
                         }
                     }
                 }

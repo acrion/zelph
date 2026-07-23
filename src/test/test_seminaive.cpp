@@ -143,3 +143,77 @@ TEST_CASE("semi-naive: facts materialized as instantiation side effects seed rul
         interactive.run(true, false, false);
         CHECK(any_output_starts_with(collector, "( p linked q )")); });
 }
+
+TEST_CASE("fact structures: same-predicate parent must not masquerade as subject")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // inner = (x op y), mid = (inner op z), outer = (mid op q). outer
+        // uses mid as its SUBJECT under the SAME predicate, so mid <-> outer
+        // is bidirectional and the child-fact filter deliberately skips it:
+        // pre-fix, get_fact_structures(mid) offered the spurious reading
+        // {outer, op, {z}} alongside the genuine {inner, op, {z}}.
+        //
+        // Why the pattern needs depth 3: unify_nodes commits to the FIRST
+        // successful structure pair, so a shallow pattern matches the
+        // genuine reading and never reaches the spurious one. The depth-3
+        // subject (((F op G) op H) ...) FAILS on the genuine reading of mid
+        // (inner's subject x is an atom where the pattern demands structure)
+        // and SUCCEEDS on the spurious one (outer provides the extra level):
+        // F=inner, I=z -- materializing the junk fact (inner got z),
+        // order-independently. This is the distilled jacobian mechanism,
+        // where the genuine branch failed under pre-bound variables and the
+        // engine fell through to the parent misreading.
+        interactive.process(R"js(%(def inner (zelph/fact "x" "op" "y")))js");
+        interactive.process(R"js(%(def mid (zelph/fact inner "op" "z")))js");
+        interactive.process(R"js(%(def outer (zelph/fact mid "op" "q")))js");
+        interactive.process(R"js(%(zelph/fact mid "mark" mid))js");
+        interactive.process(R"js(%(zelph/fact outer "mark" outer))js");
+        interactive.process("((((F op G) op H) op I) mark (((F op G) op H) op I)) => (F got I)");
+        interactive.run(true, false, false);
+        collector.clear();
+        // Genuine: the mark fact on outer decomposes ((x op y) op z) op q
+        // through three same-predicate levels -> (x got q). Pins the
+        // false-positive risk of hash verification: genuine same-predicate
+        // hash SUBJECTS (mid inside outer, inner inside mid) must keep
+        // matching.
+        interactive.process(R"js(%(string "FS-GENUINE-" (zelph/exists "x" "got" "q")))js");
+        // Junk: only derivable through the spurious reading of mid.
+        interactive.process(R"js(%(let [i (zelph/fact "x" "op" "y")] (string "FS-JUNK-" (zelph/exists i "got" "z"))))js");
+        CHECK(any_output_contains(collector, "FS-GENUINE-true"));
+        CHECK(any_output_contains(collector, "FS-JUNK-false")); });
+}
+
+TEST_CASE("seminaive: seeded join order prefers connected conditions over unconnected scans")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // 64 mark self-facts on structured subjects (u_i pair v_i): the
+        // variable V shared with the seed sits INSIDE the pattern, invisible
+        // to the subject/object boundness scores -- the exact shape of the
+        // SC congruence conditions. 16 big facts form the unconnected
+        // relation; the sizes give the old scorer a robust 4-point margin
+        // in favor of scanning big first (new-vars +4 vs +2, log2 -4 vs -6),
+        // so this case is red without the connectivity term.
+        interactive.process(R"js(%(each i (range 64) (def p (zelph/fact (string "u" i) "pair" (string "v" i))) (zelph/fact p "mark" p)))js");
+        interactive.process(R"js(%(each i (range 16) (zelph/fact (string "x" i) "big" (string "y" i))))js");
+        process_lines(interactive, R"(
+(V go V) => (V trig qq)
+(V trig Q,
+ (U pair V) mark (U pair V),
+ U big P)
+=> (Q res P)
+)");
+        interactive.process(".log 3");
+        collector.clear();
+        interactive.process("v0 go v0");
+
+        // Auto-run derives (v0 trig qq); the delta seeds the second rule's
+        // trig leaf, binding V and Q. Of the two remaining conditions, only
+        // the mark pattern is connected (via V, at structural depth) and
+        // must be ordered before the unconnected big scan. The classic
+        // first iteration also logs a Final order, but with nothing bound
+        // it starts at the trig leaf, so it cannot produce "[0]=big" either.
+        CHECK(any_event_contains(collector, "[0]=mark"));
+        CHECK_FALSE(any_event_contains(collector, "[0]=big")); });
+}

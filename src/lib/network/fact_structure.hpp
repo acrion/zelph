@@ -26,8 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "fact_structure_types.hpp"
-#include "zelph_impl.hpp"
-
+#include "zelph.hpp"
 #include <vector>
 
 namespace zelph::network
@@ -43,304 +42,281 @@ namespace zelph::network
     // nodes that are bidirectionally connected to F because F is THEIR subject
     // (not the other way around).
     //
-    // When `prefer_single` is true (used by reasoning/instantiation), only
-    // the single best structure is returned.  When false (used by unification),
-    // all valid interpretations after disambiguation are returned.
-    inline std::vector<FactStructure> get_fact_structures(
+    // Returns the full disambiguated list as an immutable shared pointer;
+    // callers that only need the single best structure use
+    // get_preferred_structure (equivalent to the former prefer_single=true).
+    inline FactStructurePtr get_fact_structures(
         const Zelph* n,
         Node         fact,
-        bool         prefer_single,
         int          depth)
     {
-        std::vector<FactStructure> structures;
+        // One shared instance backs ALL empty results (atoms, nonexistent
+        // nodes, predicate-free hash nodes): negative entries are by far
+        // the most frequent lookups on the unify recursion path, and this
+        // way they cost neither an allocation nor a per-entry list.
+        static const FactStructurePtr shared_empty = std::make_shared<FactStructureList>();
 
         if (n->should_log(depth))
         {
-            n->log(depth, "get_fact_structures", "Starting for fact: " + n->format(fact) + ", prefer_single: " + std::to_string(prefer_single));
+            n->log(depth, "get_fact_structures", "Starting for fact: " + n->format(fact));
         }
 
-        if (fact == 0 || !n->exists(fact)) return structures;
+        if (fact == 0) return shared_empty;
 
-        // ---- Cache lookup (ignores depth; depth is only for logging) ----
-        // Cache stores the *full* disambiguated list (prefer_single=false semantics).
-        std::vector<FactStructure> cached;
+        // ---- Cache lookup FIRST (ignores depth; depth is only for logging) ----
+        // A hit answers without touching the adjacency locks: the former
+        // exists() probe before the lookup cost one _smtx_left rwlock pair
+        // per hit -- ~60M pairs per Jacobian phase. Safe without it: every
+        // removal/merge/load path clears the whole cache, so a present
+        // entry implies a live node.
+        FactStructurePtr cached;
         if (n->try_get_fact_structures_cached(fact, cached))
         {
             if (n->should_log(depth))
             {
-                n->log(depth, "get_fact_structures", "Cache HIT for fact: " + n->format(fact) + " (structures=" + std::to_string(cached.size()) + ")");
+                n->log(depth, "get_fact_structures", "Cache HIT for fact: " + n->format(fact) + " (structures=" + std::to_string(cached->size()) + ")");
             }
-
-            if (prefer_single && cached.size() > 1) cached.resize(1);
             return cached;
         }
 
-        // Zelph Topology:
-        // S <-> F (Subject is bidirectional)
-        // F -> P  (Predicate is outgoing)
-        // O -> F  (Object is incoming)
+        // Predicate-detection memo for the whole reconstruction (see
+        // Zelph::relation_type_set). MUST be fetched before the ReadScope
+        // below opens: the memo's lazy build takes the very locks the
+        // scope will hold.
+        const auto rel_types = n->relation_type_set();
 
-        adjacency_set right = n->get_right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
-        adjacency_set left  = n->get_left(fact);  // Contains O and S (and Parent-Facts P')
+        FactStructureList structures;
+        bool              no_predicates = false;
 
-        if (n->should_log(depth))
         {
-            n->log(depth, "get_fact_structures", "Right neighbors: " + std::to_string(right.size()) + ", Left neighbors: " + std::to_string(left.size()));
-        }
+            // ---- Locked-scope reconstruction ----
+            // ONE shared lock pair covers the entire miss path. Previously
+            // every neighborhood probe -- dozens per reconstructed node,
+            // up to three hops deep in the child-fact heuristic -- paid
+            // its own rwlock pair plus a full adjacency_set copy. All
+            // reads below go through scope REFERENCES (stable while the
+            // scope is alive). Per the ReadScope contract, nothing in this
+            // block may write, take another network lock, or log (the
+            // output handler is user code, and format/log lock).
+            const Network::ReadScope scope = n->read_scope();
 
-        adjacency_set predicates;
-        for (Node p : right)
-        {
-            if (n->check_fact(p, n->core.IsA, {n->core.RelationTypeCategory}).is_known())
+            if (!scope.exists(fact)) return shared_empty;
+
+            // Zelph Topology:
+            // S <-> F (Subject is bidirectional)
+            // F -> P  (Predicate is outgoing)
+            // O -> F  (Object is incoming)
+            const adjacency_set& right = scope.right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
+            const adjacency_set& left  = scope.left(fact);  // Contains O and S (and Parent-Facts P')
+
+            adjacency_set predicates;
+            for (Node p : right)
             {
-                predicates.insert(p);
+                if (rel_types->count(p) != 0)
+                {
+                    predicates.insert(p);
+                }
             }
-        }
 
-        if (n->should_log(depth))
-        {
-            n->log(depth, "get_fact_structures", "Found predicates: " + std::to_string(predicates.size()));
-        }
-
-        if (predicates.empty())
-        {
-            n->store_fact_structures_cached(fact, structures);
-            return structures;
-        }
-
-        for (Node p : predicates)
-        {
-            if (n->should_log(depth + 1))
+            if (predicates.empty())
             {
-                n->log(depth + 1, "get_fact_structures", "Processing predicate: " + n->format(p));
+                no_predicates = true; // cache store happens OUTSIDE the scope
             }
-
-            for (Node s : right)
+            else
             {
-                if (n->should_log(depth + 2))
+                for (Node p : predicates)
                 {
-                    n->log(depth + 2, "get_fact_structures", "Checking potential subject s: " + n->format(s));
-                }
-
-                if (s == p)
-                {
-                    if (n->should_log(depth + 2))
+                    for (Node s : right)
                     {
-                        n->log(depth + 2, "get_fact_structures", "Skipping s == p");
-                    }
-                    continue;
-                }
-                if (left.count(s) == 0)
-                {
-                    if (n->should_log(depth + 2))
-                    {
-                        n->log(depth + 2, "get_fact_structures", "Skipping: s not bidirectional");
-                    }
-                    continue; // Subject must be bidirectional
-                }
+                        if (s == p) continue;
+                        if (left.count(s) == 0) continue; // Subject must be bidirectional
 
-                // Filter out "child fact" nodes: nodes that use `fact` as THEIR
-                // subject.  These appear bidirectionally connected because
-                // fact(fact, child_pred, {child_obj}) creates the bidirectional
-                // link fact <-> child_relation_node.
+                        // Filter out "child fact" nodes: nodes that use `fact` as THEIR
+                        // subject.  These appear bidirectionally connected because
+                        // fact(fact, child_pred, {child_obj}) creates the bidirectional
+                        // link fact <-> child_relation_node.
 
-                // Exclude variables from this check. Variables in rule patterns
-                // are hash nodes but act as primitive subjects. They
-                // must not be filtered out as child-facts.
-                if (Zelph::Impl::is_hash(s) && !Zelph::Impl::is_var(s))
-                {
-                    if (n->should_log(depth + 2))
-                    {
-                        n->log(depth + 2, "get_fact_structures", "s is fact: Checking for child-fact");
-                    }
-
-                    Node s_pred = n->parse_relation(s);
-                    if (s_pred != 0 && s_pred != p)
-                    {
-                        adjacency_set s_right = n->get_right(s);
-                        adjacency_set s_left  = n->get_left(s);
-
-                        if (s_right.count(fact) > 0 && s_left.count(fact) > 0)
+                        // Exclude variables from this check. Variables in rule patterns
+                        // are hash nodes but act as primitive subjects. They
+                        // must not be filtered out as child-facts.
+                        if (Zelph::is_hash(s) && !Zelph::is_var(s))
                         {
-                            // Heuristic: `fact` is the subject of `s` (i.e. s is a
-                            // child-fact) UNLESS `s` has another bidirectional node
-                            // that is itself a plausible subject — meaning it is NOT
-                            // a recognized relation type and NOT itself a child of `s`.
-                            //
-                            // A node x that is bidirectional with s could be:
-                            //   (a) s's actual subject  → fact is NOT the subject
-                            //   (b) a child-fact of s   → doesn't change that fact IS the subject
-                            //
-                            // To distinguish: if x is a hash node whose own predicate
-                            // differs from s's predicate, x is likely a child-fact of s
-                            // (case b).  Only non-hash nodes or hash nodes sharing s's
-                            // predicate qualify as alternative subjects (case a).
-                            bool fact_is_subject_of_s = true;
-                            for (Node x : s_right)
+                            Node s_pred = n->parse_relation_scoped(scope, *rel_types, s);
+                            if (s_pred != 0 && s_pred != p)
                             {
-                                if (n->should_log(depth + 3))
-                                {
-                                    n->log(depth + 3, "get_fact_structures", "Checking bidirectional x: " + n->format(x));
-                                }
+                                const adjacency_set& s_right = scope.right(s);
+                                const adjacency_set& s_left  = scope.left(s);
 
-                                if (x == fact || x == s_pred)
+                                if (s_right.count(fact) > 0 && s_left.count(fact) > 0)
                                 {
-                                    if (n->should_log(depth + 3))
+                                    // Heuristic: `fact` is the subject of `s` (i.e. s is a
+                                    // child-fact) UNLESS `s` has another bidirectional node
+                                    // that is itself a plausible subject — meaning it is NOT
+                                    // a recognized relation type and NOT itself a child of `s`.
+                                    //
+                                    // A node x that is bidirectional with s could be:
+                                    //   (a) s's actual subject  → fact is NOT the subject
+                                    //   (b) a child-fact of s   → doesn't change that fact IS the subject
+                                    //
+                                    // To distinguish: if x is a hash node whose own predicate
+                                    // differs from s's predicate, x is likely a child-fact of s
+                                    // (case b).  Only non-hash nodes or hash nodes sharing s's
+                                    // predicate qualify as alternative subjects (case a).
+                                    bool fact_is_subject_of_s = true;
+                                    for (Node x : s_right)
                                     {
-                                        n->log(depth + 3, "get_fact_structures", "Skipping x == fact or s_pred");
-                                    }
-                                    continue;
-                                }
-                                if (s_left.count(x) > 0)
-                                {
-                                    // x is bidirectional with s.
-                                    // If x is itself a hash node with a DIFFERENT
-                                    // predicate than s, it is a grandchild (child of s),
-                                    // not an alternative subject.
-                                    if (Zelph::Impl::is_hash(x))
-                                    {
-                                        Node x_pred = n->parse_relation(x);
-                                        if (x_pred != 0 && x_pred != s_pred)
+                                        if (x == fact || x == s_pred) continue;
+                                        if (s_left.count(x) > 0)
                                         {
-                                            // x has a different predicate than s — could be:
-                                            // (a) a child-fact of s (grandchild of fact), OR
-                                            // (b) the genuine subject of s (a complex fact
-                                            //     node that happens to have a different predicate).
-                                            //
-                                            // Distinguish: if `fact` is bidirectional with x,
-                                            // then x is part of fact's sub-tree (case a).
-                                            // Otherwise x is an independent node — the genuine
-                                            // subject of s (case b).
-                                            if (n->get_right(x).count(fact) > 0
-                                                && n->get_left(x).count(fact) > 0)
+                                            // x is bidirectional with s.
+                                            // If x is itself a hash node with a DIFFERENT
+                                            // predicate than s, it is a grandchild (child of s),
+                                            // not an alternative subject.
+                                            if (Zelph::is_hash(x))
                                             {
-                                                // x is connected to fact → child-fact (direct)
-                                                if (n->should_log(depth + 3))
+                                                Node x_pred = n->parse_relation_scoped(scope, *rel_types, x);
+                                                if (x_pred != 0 && x_pred != s_pred)
                                                 {
-                                                    n->log(depth + 3, "get_fact_structures", "x is child-fact (different pred, connected to fact), continue");
-                                                }
-                                                continue;
-                                            }
-
-                                            // x is NOT directly connected to fact.
-                                            // It might still be a grandchild: a child-fact
-                                            // of s that sits deeper in the tree with no
-                                            // direct edge to fact.  Detect this by checking
-                                            // whether s is x's subject — i.e. s is the only
-                                            // bidirectional non-predicate neighbor of x.
-                                            {
-                                                bool          x_is_child_of_s = true;
-                                                adjacency_set x_right2        = n->get_right(x);
-                                                adjacency_set x_left2         = n->get_left(x);
-                                                for (Node y : x_right2)
-                                                {
-                                                    if (y == s || y == x_pred) continue;
-                                                    if (x_left2.count(y) > 0)
+                                                    // x has a different predicate than s — could be:
+                                                    // (a) a child-fact of s (grandchild of fact), OR
+                                                    // (b) the genuine subject of s.
+                                                    //
+                                                    // Distinguish: if `fact` is bidirectional with x,
+                                                    // then x is part of fact's sub-tree (case a).
+                                                    // Otherwise x is an independent node — the genuine
+                                                    // subject of s (case b).
+                                                    if (scope.right(x).count(fact) > 0
+                                                        && scope.left(x).count(fact) > 0)
                                                     {
-                                                        // y is bidirectional with x and is
-                                                        // neither s nor x's predicate.
-                                                        // Before concluding that x has an
-                                                        // alternative subject, check whether
-                                                        // y is itself just a child-fact of x
-                                                        // (i.e. x is y's only subject).
-                                                        if (Zelph::Impl::is_hash(y))
+                                                        // x is connected to fact → child-fact (direct)
+                                                        continue;
+                                                    }
+
+                                                    // x is NOT directly connected to fact.
+                                                    // It might still be a grandchild: a child-fact
+                                                    // of s that sits deeper in the tree with no
+                                                    // direct edge to fact.  Detect this by checking
+                                                    // whether s is x's subject — i.e. s is the only
+                                                    // bidirectional non-predicate neighbor of x.
+                                                    {
+                                                        bool                 x_is_child_of_s = true;
+                                                        const adjacency_set& x_right2        = scope.right(x);
+                                                        const adjacency_set& x_left2         = scope.left(x);
+                                                        for (Node y : x_right2)
                                                         {
-                                                            Node y_pred = n->parse_relation(y);
-                                                            if (y_pred != 0 && y_pred != x_pred)
+                                                            if (y == s || y == x_pred) continue;
+                                                            if (x_left2.count(y) > 0)
                                                             {
-                                                                adjacency_set y_right3        = n->get_right(y);
-                                                                adjacency_set y_left3         = n->get_left(y);
-                                                                bool          y_is_child_of_x = true;
-                                                                for (Node z_node : y_right3)
+                                                                // y is bidirectional with x and is
+                                                                // neither s nor x's predicate.
+                                                                // Before concluding that x has an
+                                                                // alternative subject, check whether
+                                                                // y is itself just a child-fact of x.
+                                                                if (Zelph::is_hash(y))
                                                                 {
-                                                                    if (z_node == x || z_node == y_pred) continue;
-                                                                    if (y_left3.count(z_node) > 0)
+                                                                    Node y_pred = n->parse_relation_scoped(scope, *rel_types, y);
+                                                                    if (y_pred != 0 && y_pred != x_pred)
                                                                     {
-                                                                        y_is_child_of_x = false;
-                                                                        break;
+                                                                        const adjacency_set& y_right3        = scope.right(y);
+                                                                        const adjacency_set& y_left3         = scope.left(y);
+                                                                        bool                 y_is_child_of_x = true;
+                                                                        for (Node z_node : y_right3)
+                                                                        {
+                                                                            if (z_node == x || z_node == y_pred) continue;
+                                                                            if (y_left3.count(z_node) > 0)
+                                                                            {
+                                                                                y_is_child_of_x = false;
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                        if (y_is_child_of_x)
+                                                                        {
+                                                                            continue; // y is child of x, not an alt subject
+                                                                        }
                                                                     }
                                                                 }
-                                                                if (y_is_child_of_x)
-                                                                {
-                                                                    if (n->should_log(depth + 3))
-                                                                    {
-                                                                        n->log(depth + 3, "get_fact_structures", "y=" + n->format(y) + " is child-fact of x, skipping");
-                                                                    }
-                                                                    continue; // y is child of x, not an alt subject
-                                                                }
+                                                                x_is_child_of_s = false;
+                                                                break;
                                                             }
                                                         }
-                                                        x_is_child_of_s = false;
-                                                        break;
+                                                        if (x_is_child_of_s)
+                                                        {
+                                                            continue; // x is grandchild (child of s)
+                                                        }
                                                     }
-                                                }
-                                                if (x_is_child_of_s)
-                                                {
-                                                    if (n->should_log(depth + 3))
-                                                    {
-                                                        n->log(depth + 3, "get_fact_structures", "x is grandchild (child of s, not connected to fact), continue");
-                                                    }
-                                                    continue;
-                                                }
-                                            }
 
-                                            // x is genuinely an alternative subject of s
-                                            fact_is_subject_of_s = false;
-                                            if (n->should_log(depth + 3))
-                                            {
-                                                n->log(depth + 3, "get_fact_structures", "x has different pred but NOT connected to fact -> genuine alt subject x=" + n->format(x));
+                                                    // x is genuinely an alternative subject of s
+                                                    fact_is_subject_of_s = false;
+                                                    break;
+                                                }
                                             }
+                                            // x is a genuine alternative subject of s
+                                            fact_is_subject_of_s = false;
                                             break;
                                         }
                                     }
-                                    // x is a genuine alternative subject of s
-                                    fact_is_subject_of_s = false;
-                                    if (n->should_log(depth + 3))
+                                    if (fact_is_subject_of_s)
                                     {
-                                        n->log(depth + 3, "get_fact_structures", "Found genuine alternative subject x=" + n->format(x) + " -> fact_is_subject_of_s=false");
+                                        continue; // skip: s is a child-fact
                                     }
-                                    break;
                                 }
-                            }
-                            if (fact_is_subject_of_s)
-                            {
-                                if (n->should_log(depth + 2))
-                                {
-                                    n->log(depth + 2, "get_fact_structures", "Skipping: s is child-fact (fact is subject of s)");
-                                }
-                                continue; // skip: s is a child-fact
                             }
                         }
-                    }
-                }
 
-                FactStructure fs;
-                fs.subject   = s;
-                fs.predicate = p;
+                        FactStructure fs;
+                        fs.subject   = s;
+                        fs.predicate = p;
 
-                // Objects are in 'left', but must NOT be in 'right'.
-                // (S is in both, Parent is in both, O is only in left)
-                for (Node o : left)
-                {
-                    if (o != s && o != p)
-                    {
-                        if (right.count(o) == 0)
+                        // Objects are in 'left', but must NOT be in 'right'.
+                        // (S is in both, Parent is in both, O is only in left)
+                        for (Node o : left)
                         {
-                            fs.objects.insert(o);
+                            if (o != s && o != p)
+                            {
+                                if (right.count(o) == 0)
+                                {
+                                    fs.objects.insert(o);
+                                }
+                            }
                         }
+
+                        if (fs.objects.empty())
+                        {
+                            fs.objects.insert(s);
+                        }
+                        structures.push_back(fs);
                     }
                 }
+            }
+        } // ReadScope released -- locking API, logging and cache stores are legal again
 
-                if (fs.objects.empty())
-                {
-                    fs.objects.insert(s);
-                }
-                structures.push_back(fs);
+        if (no_predicates)
+        {
+            if (n->should_log(depth))
+            {
+                n->log(depth, "get_fact_structures", "Found predicates: 0");
+            }
+            n->store_fact_structures_cached(fact, shared_empty);
+            return shared_empty;
+        }
 
-                if (n->should_log(depth + 1))
+        // --- Hash verification ---
+        // [Kommentarblock unverändert aus der aktuellen Datei übernehmen]
+        if (structures.size() > 1)
+        {
+            std::vector<FactStructure> verified;
+            for (const auto& fs : structures)
+            {
+                if (Zelph::create_hash(fs.predicate, fs.subject, fs.objects) == fact)
+                    verified.push_back(fs);
+            }
+            if (!verified.empty())
+            {
+                if (n->should_log(depth))
                 {
-                    n->log(depth + 1, "get_fact_structures", "Added structure: subject=" + n->format(fs.subject) + ", predicate=" + n->format(fs.predicate) + ", objects_count=" + std::to_string(fs.objects.size()));
+                    n->log(depth, "get_fact_structures", "Hash verification: " + std::to_string(structures.size()) + " candidate(s) -> " + std::to_string(verified.size()) + " verified");
                 }
+                structures = std::move(verified);
             }
         }
 
@@ -356,7 +332,7 @@ namespace zelph::network
             bool has_non_hash = false;
             for (const auto& fs : structures)
             {
-                if (!Zelph::Impl::is_hash(fs.subject))
+                if (!Zelph::is_hash(fs.subject))
                 {
                     has_non_hash = true;
                     break;
@@ -368,7 +344,7 @@ namespace zelph::network
                 std::vector<FactStructure> filtered;
                 for (const auto& fs : structures)
                 {
-                    if (!Zelph::Impl::is_hash(fs.subject)) filtered.push_back(fs);
+                    if (!Zelph::is_hash(fs.subject)) filtered.push_back(fs);
                 }
                 structures = std::move(filtered);
 
@@ -408,32 +384,23 @@ namespace zelph::network
             }
         }
 
-        n->store_fact_structures_cached(fact, structures);
-
-        if (prefer_single && structures.size() > 1)
-        {
-            structures.resize(1);
-
-            if (n->should_log(depth))
-            {
-                n->log(depth, "get_fact_structures", "prefer_single: Reduced to 1 structure");
-            }
-        }
+            auto result = std::make_shared<FactStructureList>(std::move(structures));
+        n->store_fact_structures_cached(fact, result);
 
         if (n->should_log(depth))
         {
-            n->log(depth, "get_fact_structures", "Completed: Returning " + std::to_string(structures.size()) + " structures");
+            n->log(depth, "get_fact_structures", "Completed: Returning " + std::to_string(result->size()) + " structures");
         }
 
-        return structures;
+        return result;
     }
 
     // Convenience: return a single preferred structure (for reasoning/instantiation).
     inline FactStructure get_preferred_structure(const Zelph* n, Node fact, const int depth)
     {
-        auto results = get_fact_structures(n, fact, true, depth);
-        if (results.empty()) return FactStructure{};
-        return results[0];
+        const auto results = get_fact_structures(n, fact, depth);
+        if (results->empty()) return FactStructure{};
+        return results->front(); // by-value copy: callers hold it independently of the cache
     }
 
     inline bool try_get_preferred_structure(const Zelph* n, Node fact, FactStructure& out, int depth)

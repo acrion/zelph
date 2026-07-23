@@ -82,6 +82,7 @@ namespace zelph::network
         std::atomic<uint64_t> relation_snapshots{0}; // any snapshot (subject-driven/object-driven/full)
         std::atomic<uint64_t> snapshot_subject_driven{0};
         std::atomic<uint64_t> snapshot_object_driven{0};
+        std::atomic<uint64_t> snapshot_partial_anchor{0};
         std::atomic<uint64_t> snapshot_full_relation{0};
         std::atomic<uint64_t> snapshot_facts_total{0}; // sum of snapshot sizes
 
@@ -132,10 +133,16 @@ namespace zelph::network
             while (cur < v && !target.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {}
         }
 
-        void reset_epoch()
+        // A deliberate no-op while logging is active (unless `force`): in
+        // counter mode (.log -1) the counters ACCUMULATE across statements
+        // and imports -- the measurement window is "everything since .log
+        // was enabled" -- and .prof reads them on demand (.prof reset
+        // starts a fresh window). When logging is off, nothing increments
+        // the counters; the reset merely keeps epoch_id and epoch_start
+        // fresh for the next window.
+        void reset_epoch(bool force = false)
         {
-            // Reset only if logging enabled (otherwise keep overhead minimal).
-            if (_zelph->logging_active()) return;
+            if (!force && _zelph->logging_active()) return;
 
             epoch_id.fetch_add(1, std::memory_order_relaxed);
             epoch_start = std::chrono::steady_clock::now();
@@ -167,6 +174,7 @@ namespace zelph::network
             RZ(relation_snapshots);
             RZ(snapshot_subject_driven);
             RZ(snapshot_object_driven);
+            RZ(snapshot_partial_anchor);
             RZ(snapshot_full_relation);
             RZ(snapshot_facts_total);
             RZ(facts_scanned_sequential);
@@ -196,6 +204,8 @@ namespace zelph::network
             RZ(seminaive_seeds);
             RZ(seminaive_safety_extra);
 #undef RZ
+
+            _zelph->reset_fs_cache_stats();
 
             // maps
             {
@@ -236,16 +246,95 @@ namespace zelph::network
             rule_facts_created[rule] += 1;
         }
 
+        // The counter portion of a profiler dump, shared by the on-demand
+        // summary (Reasoning::profiler_dump, command .prof) and the
+        // per-deduction block below.
+        std::string core_block()
+        {
+            auto load = [](const std::atomic<uint64_t>& a)
+            { return a.load(std::memory_order_relaxed); };
+
+            std::ostringstream oss;
+
+            oss << "  rules_applied=" << load(apply_rule_calls)
+                << " deduce_calls=" << load(deduce_calls)
+                << " facts_created=" << load(facts_created)
+                << " seminaive_seeds=" << load(seminaive_seeds)
+                << " seminaive_safety_extra=" << load(seminaive_safety_extra) << "\n";
+
+            oss << "  evaluate: calls=" << load(evaluate_calls)
+                << " leaf_conditions=" << load(leaf_conditions)
+                << " conjunction_sets=" << load(conjunction_sets)
+                << " optimize_order=" << load(optimize_order_calls) << "\n";
+
+            oss << "  unification: instances=" << load(unification_instances)
+                << " parallel=" << load(unification_parallel_instances)
+                << " next()=" << load(unification_next_calls)
+                << " snapshots=" << load(relation_snapshots)
+                << " partial_anchor=" << load(snapshot_partial_anchor)
+                << " snapshot_facts=" << load(snapshot_facts_total)
+                << " scanned(seq)=" << load(facts_scanned_sequential)
+                << " scanned(par)=" << load(facts_scanned_parallel) << "\n";
+
+            oss << "  unify(): calls=" << load(unify_calls)
+                << " cycle=" << load(unify_cycle_hits)
+                << " id=" << load(unify_identity_hits)
+                << " var_seen=" << load(unify_var_seen)
+                << " var_new=" << load(unify_var_bound_new)
+                << " struct_pairs=" << load(unify_struct_pair_attempts)
+                << " obj_try=" << load(unify_object_try)
+                << " obj_ok=" << load(unify_object_success) << "\n";
+
+            oss << "  get_fact_structures: calls=" << load(get_fact_structures_calls)
+                << " total_structs=" << load(structures_total)
+                << " extract: calls=" << load(extract_calls)
+                << " ok=" << load(extract_success)
+                << " failS=" << load(extract_fail_subject)
+                << " failO=" << load(extract_fail_object)
+                << " template_rejects=" << load(template_rejects) << "\n";
+
+            {
+                const auto fs = _zelph->fs_cache_stats();
+                oss << "  fs_cache: hits=" << fs.hits
+                    << " misses=" << fs.misses
+                    << " full_clears=" << fs.full_clears
+                    << " stale_erased=" << fs.stale_erased << "\n";
+            }
+
+            oss << "  check_fact: known=" << load(check_fact_known)
+                << " new=" << load(check_fact_new)
+                << " wrong=" << load(check_fact_wrong) << "\n";
+
+            oss << "  negation: cond=" << load(negated_conditions)
+                << " ok=" << load(negation_success)
+                << " fail=" << load(negation_fail)
+                << " complement_subjects=" << load(neg_complement_subjects_tested) << "\n";
+
+            oss << "  termination_guard: checks=" << load(termination_guard_checks)
+                << " skips=" << load(termination_guard_skips)
+                << " fresh_vars=" << load(fresh_vars_total)
+                << " fresh_nodes=" << load(fresh_nodes_created) << "\n";
+
+            oss << "  max_depth: reasoning=" << load(max_reasoning_depth)
+                << " unify=" << load(max_unify_depth) << "\n";
+
+            return oss.str();
+        }
+
         void log_after_deduction(Node rule_node, Node deduced_fact, int depth)
         {
             if (!_zelph->logging_active()) return;
 
+            // Counter-only mode (.log -1): should_log(1) is false there, so
+            // the per-deduction dump is suppressed -- at 1e4+ created facts
+            // it would flood gigabytes of output and dominate the
+            // measurement. Counters keep accumulating; .prof dumps them on
+            // demand.
+            if (!_zelph->should_log(1)) return;
+
             using namespace std::chrono;
             auto   now = steady_clock::now();
             double ms  = duration<double, std::milli>(now - epoch_start).count();
-
-            auto load = [](const std::atomic<uint64_t>& a)
-            { return a.load(std::memory_order_relaxed); };
 
             // Top relations by scanned facts
             std::vector<std::pair<Node, uint64_t>> top_rel;
@@ -272,54 +361,12 @@ namespace zelph::network
             };
 
             std::ostringstream oss;
-            oss << "\n[prof] epoch=" << load(epoch_id)
+            oss << "\n[prof] epoch=" << epoch_id.load(std::memory_order_relaxed)
                 << " +" << (ms / 1000.0) << "s"
                 << " after " << fact_str(deduced_fact)
                 << " (rule=" << fact_str(rule_node) << ", depth=" << depth << ")\n";
 
-            oss << "  rules_applied=" << load(apply_rule_calls)
-                << " deduce_calls=" << load(deduce_calls)
-                << " facts_created=" << load(facts_created)
-                << " seminaive_seeds=" << load(seminaive_seeds) << "\n";
-
-            oss << "  unification: instances=" << load(unification_instances)
-                << " parallel=" << load(unification_parallel_instances)
-                << " next()=" << load(unification_next_calls)
-                << " snapshots=" << load(relation_snapshots)
-                << " snapshot_facts=" << load(snapshot_facts_total)
-                << " scanned(seq)=" << load(facts_scanned_sequential)
-                << " scanned(par)=" << load(facts_scanned_parallel) << "\n";
-
-            oss << "  unify(): calls=" << load(unify_calls)
-                << " cycle=" << load(unify_cycle_hits)
-                << " id=" << load(unify_identity_hits)
-                << " var_seen=" << load(unify_var_seen)
-                << " var_new=" << load(unify_var_bound_new)
-                << " struct_pairs=" << load(unify_struct_pair_attempts)
-                << " struct_ok=" << load(unify_struct_success)
-                << " obj_try=" << load(unify_object_try)
-                << " obj_ok=" << load(unify_object_success) << "\n";
-
-            oss << "  get_fact_structures: calls=" << load(get_fact_structures_calls)
-                << " total_structs=" << load(structures_total)
-                << " extract: calls=" << load(extract_calls)
-                << " ok=" << load(extract_success)
-                << " failS=" << load(extract_fail_subject)
-                << " failO=" << load(extract_fail_object)
-                << " template_rejects=" << load(template_rejects) << "\n";
-
-            oss << "  negation: cond=" << load(negated_conditions)
-                << " ok=" << load(negation_success)
-                << " fail=" << load(negation_fail)
-                << " complement_subjects=" << load(neg_complement_subjects_tested) << "\n";
-
-            oss << "  termination_guard: checks=" << load(termination_guard_checks)
-                << " skips=" << load(termination_guard_skips)
-                << " fresh_vars=" << load(fresh_vars_total)
-                << " fresh_nodes=" << load(fresh_nodes_created) << "\n";
-
-            oss << "  max_depth: reasoning=" << load(max_reasoning_depth)
-                << " unify=" << load(max_unify_depth) << "\n";
+            oss << core_block();
 
             if (!top_rel.empty())
             {

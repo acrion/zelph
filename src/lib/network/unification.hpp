@@ -78,8 +78,15 @@ namespace zelph::network
         adjacency_set              _objects;
         Node                       _subject_pred_hint{};
         Node                       _subject_grounded{}; // concrete fact node the subject pattern
-        // resolves to under current bindings
-        // (bound-pattern grounding); 0 = not groundable
+                                                        // resolves to under current bindings
+                                                        // (bound-pattern grounding); 0 = not groundable
+
+        // // Partial-pattern anchoring (see unification.cpp): candidate facts
+        // precomputed by climbing from a concrete inner node of a partially
+        // bound pattern. Valid only for the single fixed relation; consumed
+        // once by increment_fact_index.
+        adjacency_set _partial_snapshot;
+        bool          _partial_snapshot_valid{false};
 
         Node               _seed_fact{};      // semi-naive seed: the single candidate fact (0 = normal scan mode)
         Node               _seed_predicate{}; // its relation type, known at creation time

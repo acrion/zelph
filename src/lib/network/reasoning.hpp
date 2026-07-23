@@ -94,6 +94,30 @@ namespace zelph::network
             _nn_cache.clear();
         }
 
+        // On-demand profiler summary (command .prof): the counter block
+        // plus top-N sections (relations by scan/match, rules by
+        // application/created facts). reset_after additionally zeroes the
+        // counters, starting a fresh measurement window (.prof reset).
+        void profiler_dump(bool reset_after = false);
+
+        // --- Deduction focus (implemented in reasoning.cpp) ---
+
+        // Capture nodes materialized by user input (fact nodes plus their
+        // subjects and objects) into the input-focus set, via the fact
+        // creation observer. Idempotent; run() ends the capture itself, so
+        // the observer never overlaps with the semi-naive delta observer.
+        void begin_input_capture();
+        // When on, deduction printing is restricted to deductions whose
+        // subject or rule is in the input-focus set ("focus mode").
+        void set_deduction_filter(bool on);
+        // Temporarily suppress input capture (imports): begin_input_capture
+        // becomes a no-op while suppressed, and an active capture is closed
+        // WITHOUT contributing to the focus set -- imported statements are
+        // not "entered by the user".
+        void suppress_input_capture(bool on);
+        // Reset the accumulated focus anchors (mode switch; .reset gets a fresh Reasoning instance anyway).
+        void clear_input_focus();
+
         // --- Implemented in reasoning_pruning.cpp ---
 
         void prune_facts(Node pattern, size_t& removed_count);
@@ -112,6 +136,7 @@ namespace zelph::network
 
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
         static bool                        contradicts(const Variables& variables, const Variables& unequals);
+        void                               end_input_capture();
 
         // --- Implemented in reasoning_evaluate.cpp ---
 
@@ -161,6 +186,11 @@ namespace zelph::network
         std::unordered_set<Node>                 _nodes_to_prune;
         std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};
         ReasoningProfiler                        _prof;
+        std::unordered_set<Node>                 _input_captured; // raw fact nodes materialized while parsing input
+        std::unordered_set<Node>                 _input_focus;    // reduced focus set: top-level inputs + their components
+        bool                                     _deduction_filter{false};
+        bool                                     _capturing{false};
+        int                                      _capture_suppress_depth{0}; // > 0: input capture suppressed (nested imports)
 
         // --- Neural (≈) support ---
         Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive

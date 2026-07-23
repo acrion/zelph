@@ -89,6 +89,8 @@ public:
         _script_engine->set_command_handler(
             [this](const std::vector<std::string>& cmd)
             { _command_executor->execute(cmd); });
+
+        _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
     }
 
     void reset_reasoning()
@@ -172,6 +174,7 @@ void console::Interactive::process(std::string line) const
 {
     try
     {
+        _pImpl->_n->begin_input_capture();
         auto& state = _pImpl->_repl_state;
 
         // --- 0. Keyword block accumulation ---
@@ -207,7 +210,7 @@ void console::Interactive::process(std::string line) const
                     state->keyword_prev_blank = false;
 
                     if (state->auto_run)
-                        _pImpl->_n->run(true, false, false, true);
+                        _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
                 }
                 else
                 {
@@ -258,7 +261,7 @@ void console::Interactive::process(std::string line) const
                 state->accumulating_inline_janet = false;
 
                 if (state->auto_run)
-                    _pImpl->_n->run(true, false, false, true);
+                    _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
             }
             return;
         }
@@ -285,7 +288,7 @@ void console::Interactive::process(std::string line) const
                     _pImpl->_script_engine->process_janet(code, false);
 
                     if (state->auto_run)
-                        _pImpl->_n->run(true, false, false, true);
+                        _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
                 }
                 else
                 {
@@ -313,7 +316,7 @@ void console::Interactive::process(std::string line) const
                 _pImpl->_script_engine->process_janet(janet_code, false);
 
                 if (state->auto_run)
-                    _pImpl->_n->run(true, false, false, true);
+                    _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
             }
             else
             {
@@ -385,7 +388,7 @@ void console::Interactive::process(std::string line) const
 
         if (state->auto_run)
         {
-            _pImpl->_n->run(true, false, false, true);
+            _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
         }
     }
     catch (std::exception& ex)

@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/network.hpp"
 #include "network/reasoning.hpp"
 #include "platform/platform_utils.hpp"
+#include "repl_state.hpp"
 #include "script_engine.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
@@ -221,6 +222,8 @@ private:
         { cmd_log(c); };
         _command_map[".log-janet"] = [this](auto& c)
         { cmd_log_janet(c); };
+        _command_map[".prof"] = [this](auto& c)
+        { cmd_prof(c); };
 #ifndef __EMSCRIPTEN__
         _command_map[".save"] = [this](auto& c)
         { cmd_save(c); };
@@ -229,12 +232,16 @@ private:
         { cmd_import(c); };
         _command_map[".auto-run"] = [this](auto& c)
         { cmd_auto_run(c); };
+        _command_map[".deductions"] = [this](auto& c)
+        { cmd_deductions(c); };
 #ifndef __EMSCRIPTEN__
         _command_map[".export-wikidata"] = [this](auto& c)
         { cmd_export_wikidata(c); };
 #endif
         _command_map[".parallel"] = [this](auto& c)
         { cmd_parallel(c); };
+        _command_map[".anchors"] = [this](auto& c)
+        { cmd_anchors(c); };
         _command_map[".semi-naive"] = [this](auto& c)
         { cmd_semi_naive(c); };
         _command_map[".cluster"] = [this](auto& c)
@@ -948,6 +955,15 @@ public:
 
         AutoRunSuspender suspend(_repl_state);
 
+        // RAII so the exception path releases suppression too; the depth
+        // counter in suppress_input_capture keeps nested imports correct.
+        struct CaptureSuppressor
+        {
+            network::Reasoning* n;
+            explicit CaptureSuppressor(network::Reasoning* r) : n(r) { n->suppress_input_capture(true); }
+            ~CaptureSuppressor() { n->suppress_input_capture(false); }
+        } capture_guard{_n};
+
         _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
 
         if (std::filesystem::path(resolved).extension() == ".janet")
@@ -1010,7 +1026,7 @@ public:
 
         if (suspend.was_active())
         {
-            _n->run(true, false, false, true);
+            _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, true);
         }
     }
 
@@ -1218,8 +1234,11 @@ private:
             ".licenses                   – Show third-party libraries and licenses",
             ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
             ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
+            ".prof [reset]               – Dump reasoning profiler counters (requires .log -1 or .log N); 'reset' starts a fresh window",
             ".auto-run                   – Toggle automatic execution of .run after each input",
+            ".deductions [all|focus|off] – Set the deduction printing mode (default: focus)",
             ".parallel                   – Toggle parallel processing (default: on)",
+            ".anchors [on|off]           – Show or set anchor-based candidate lookups in unification (default: on)",
             ".semi-naive [on|off|check]  – Show or set the fixpoint evaluation strategy (default: on)",
 #ifndef __EMSCRIPTEN__
             ".wikidata-constraints <json> <dir> – Export constraints to a directory",
@@ -1518,13 +1537,56 @@ private:
                            "Toggles detailed logging of inputs and outputs for all zelph/* Janet functions.\n"
                            "Logs inputs at function entry and both inputs and output at exit."},
 
+            {".prof", ".prof [reset]\n"
+                      "Dumps the reasoning profiler on demand: the counter block plus the\n"
+                      "top-10 relations by scanned candidate facts, relations by successful\n"
+                      "matches, rules by application count, and rules by created facts.\n"
+                      "Counters only accumulate while logging is active; the counter-only\n"
+                      "mode \".log -1\" enables them WITHOUT any per-deduction log output.\n"
+                      "While logging is active, counters accumulate across statements and\n"
+                      "imports (the per-statement epoch reset is deliberately a no-op\n"
+                      "then), so \".prof\" after an import shows the totals for the whole\n"
+                      "import. \".prof reset\" additionally zeroes the counters, starting\n"
+                      "a fresh measurement window -- use it between two phases."},
+
             {".auto-run", ".auto-run\n"
                           "Toggles the automatic execution of the inference engine (.run) after every input.\n"
                           "Default is ON. Automatically switches to OFF when .load is used."},
 
+            {".deductions", ".deductions [all|focus|off]\n"
+                            "Sets the deduction printing mode for reasoning runs; without an\n"
+                            "argument, shows the current mode (default: focus).\n"
+                            "  all    print every deduction (full derivation trace)\n"
+                            "  focus  print only deductions about your own input: the deduced\n"
+                            "         fact's subject stems from an interactively entered\n"
+                            "         statement -- it is the entered fact itself, or its subject\n"
+                            "         or one of its objects. Anchors accumulate over the session;\n"
+                            "         imported scripts (.import) do not contribute. Switching\n"
+                            "         modes resets the collected anchors.\n"
+                            "  off    print no deductions\n"
+                            "All facts are derived and stored regardless of the mode. Query\n"
+                            "answers, contradictions and warnings are always printed. Filtered\n"
+                            "deductions are counted in \"(skipped N deductions)\". Heavy\n"
+                            "computations run several times faster with focus/off: rendering\n"
+                            "large derived terms dominates the cost."},
+
             {".parallel", ".parallel\n"
                           "Toggles parallel processing on/off.\n"
                           "Default is on for performance."},
+
+            {".anchors", ".anchors [on|off]\n"
+                         "Controls the unification engine's anchor-based candidate lookups:\n"
+                         "subject/object-driven snapshots, grounded-subject anchoring, and\n"
+                         "partial-pattern anchoring. Without argument: shows the current state.\n"
+                         "  on   – (default) conditions with a concrete anchor node scan only that\n"
+                         "         node's adjacency instead of the whole relation extent. This is a\n"
+                         "         pure index shortcut: results are identical to 'off'.\n"
+                         "  off  – every condition scans the full relation extent (naive reference\n"
+                         "         mode). Used by tests as an anchor-free completeness reference and\n"
+                         "         for diagnosing suspected anchor bugs. Expect drastic slowdowns on\n"
+                         "         arithmetic workloads.\n"
+                         "Independent of .parallel: anchoring is active in both parallel and\n"
+                         "single-core evaluation."},
 
             {".semi-naive", ".semi-naive [on|off|check]\n"
                             "Controls the fixpoint evaluation strategy of the reasoning engine.\n"
@@ -1905,13 +1967,13 @@ private:
     void cmd_run(const std::vector<std::string>&)
     {
         require_full_graph_mode(".run");
-        _n->run(true, false, false);
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false);
         _n->diagnostic("Ready.", true);
     }
     void cmd_run_once(const std::vector<std::string>&)
     {
         require_full_graph_mode(".run-once");
-        _n->run(true, false, true);
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, true);
         _n->diagnostic("Ready.", true);
     }
 #ifndef __EMSCRIPTEN__
@@ -2574,6 +2636,12 @@ private:
         _script_engine->toggle_janet_logging();
         _n->out("Janet function logging is now " + _script_engine->get_janet_logging_status() + ".", true);
     }
+    void cmd_prof(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() > 2 || (cmd.size() == 2 && cmd[1] != "reset"))
+            throw std::runtime_error("Usage: .prof [reset]");
+        _n->profiler_dump(cmd.size() == 2);
+    }
 #ifndef __EMSCRIPTEN__
     void cmd_save(const std::vector<std::string>& cmd)
     {
@@ -2601,6 +2669,37 @@ private:
         _repl_state->auto_run = !_repl_state->auto_run;
         _n->out("Auto-run is now " + std::string(_repl_state->auto_run ? "enabled" : "disabled") + ".", true);
     }
+    void cmd_deductions(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() >= 2)
+        {
+            if (cmd[1] == "all")
+            {
+                _repl_state->deduction_mode = DeductionMode::All;
+                _n->clear_input_focus();
+            }
+            else if (cmd[1] == "focus")
+            {
+                _repl_state->deduction_mode = DeductionMode::Focus;
+                _n->clear_input_focus();
+            }
+            else if (cmd[1] == "off")
+            {
+                _repl_state->deduction_mode = DeductionMode::Off;
+                _n->clear_input_focus();
+            }
+            else
+            {
+                _n->error("Usage: .deductions [all|focus|off]", true);
+                return;
+            }
+        }
+        _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
+        const char* name = _repl_state->deduction_mode == DeductionMode::All   ? "all"
+                         : _repl_state->deduction_mode == DeductionMode::Focus ? "focus"
+                                                                               : "off";
+        _n->out("Deduction printing mode: " + std::string(name), true);
+    }
     void cmd_parallel(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 1)
@@ -2608,6 +2707,20 @@ private:
 
         _n->toggle_parallel();
         _n->out("Parallel processing is now " + std::string(_n->use_parallel() ? "enabled" : "disabled") + ".", true);
+    }
+
+    void cmd_anchors(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() == 1)
+        {
+            _n->out(std::string("Anchor-based lookups: ") + (_n->use_anchors() ? "on" : "off"), true);
+            return;
+        }
+        if (cmd.size() != 2 || (cmd[1] != "on" && cmd[1] != "off"))
+            throw std::runtime_error("Usage: .anchors [on|off]");
+
+        _n->set_anchors(cmd[1] == "on");
+        _n->out(std::string("Anchor-based lookups: ") + (_n->use_anchors() ? "on" : "off"), true);
     }
 
     void cmd_semi_naive(const std::vector<std::string>& cmd)

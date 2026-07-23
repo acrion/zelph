@@ -1,0 +1,47 @@
+.import binary-arithmetic
+.import integer-arithmetic
+.import polynomial
+.import topoly
+.import symbolic-core
+.import diff
+.import symbolic-minus
+a ~ symvar
+b ~ symvar
+c ~ symvar
+a pouter b
+b pouter c
+%(defn t* [u v] (zelph/fact u "*" v))
+%(defn t+ [u v] (zelph/fact u "+" v))
+%(defn t- [u v] (zelph/fact u "-" v))
+%(defn n [s] (zelph/number s))
+%(defn tp [t] (zelph/fact t "topoly" t))
+%(defn g-terms [a b c] (def ab (t* a b)) (def s (t+ (n "2") ab)) (def t (t+ (n "8") (t* (n "3") ab))) (def s2 (t* s s)) (def b2 (t* b b)) (def a2 (t* a a)) [(t+ (t* (t* s2 s) c) (t* (t* (n "2") b2) (t* s t))) (t+ (t* (n "8") b) (t+ (t* (t* (n "3") a) (t* s2 c)) (t* (t* (n "6") a) (t* b2 t)))) (t- (t* (n "8") a) (t+ (t* (t* (n "6") a2) b) (t* (t* a2 a) c)))])
+
+%(def gs (g-terms "a" "b" "c"))
+%(each g gs (each v ["a" "b" "c"] (zelph/fact g "diffby" v)))
+.run
+
+%(defn dof [g v] (get (get (zelph/query (zelph/fact (zelph/fact g "diffby" v) "=" '_D)) 0) '_D))
+%(def ds (map (fn [g] (map (fn [v] (dof g v)) ["a" "b" "c"])) gs))
+# Guard against the silent-nil failure mode: without the diff stack (or if
+# the zelph/query row API differs from the assumed shape), dof returns nil
+# and everything downstream degenerates without any error.
+%(each row ds (each d row (assert d "missing derivative -- diff stack not loaded or query API mismatch")))
+%(defn cof [p q r s] (t- (t* p s) (t* q r)))
+
+# --- Variant A: first-row expansion (baseline, identical to the test) ---
+%(def m11 (cof (get (get ds 1) 1) (get (get ds 1) 2) (get (get ds 2) 1) (get (get ds 2) 2)))
+%(def m12 (cof (get (get ds 1) 0) (get (get ds 1) 2) (get (get ds 2) 0) (get (get ds 2) 2)))
+%(def m13 (cof (get (get ds 1) 0) (get (get ds 1) 1) (get (get ds 2) 0) (get (get ds 2) 1)))
+%(def det (t+ (t- (t* (get (get ds 0) 0) m11) (t* (get (get ds 0) 1) m12)) (t* (get (get ds 0) 2) m13)))
+%(tp det)
+
+# --- Variant B: third-row expansion (comment A out, comment this in) ---
+# det = D31*(D12*D23 - D13*D22) - D32*(D11*D23 - D13*D21) + D33*(D11*D22 - D12*D21)
+# D31 (deg<=3), D32 = -6a^2, D33 = -a^3 are tiny, so the three outer
+# multiplications are near-free and the 2x2 minors are medium*medium.
+#%(def n31 (cof (get (get ds 0) 1) (get (get ds 0) 2) (get (get ds 1) 1) (get (get ds 1) 2)))
+#%(def n32 (cof (get (get ds 0) 0) (get (get ds 0) 2) (get (get ds 1) 0) (get (get ds 1) 2)))
+#%(def n33 (cof (get (get ds 0) 0) (get (get ds 0) 1) (get (get ds 1) 0) (get (get ds 1) 1)))
+#%(def det3 (t+ (t- (t* (get (get ds 2) 0) n31) (t* (get (get ds 2) 1) n32)) (t* (get (get ds 2) 2) n33)))
+#%(tp det3)

@@ -1,0 +1,17 @@
+%(defn dof [g v] (get (get (zelph/query (zelph/fact (zelph/fact g "diffby" v) "=" '_D)) 0) '_D))
+%(def ds (map (fn [g] (map (fn [v] (dof g v)) ["a" "b" "c"])) gs))
+# Guard against the silent-nil failure mode: without the diff stack (or if
+# the zelph/query row API differs from the assumed shape), dof returns nil
+# and everything downstream degenerates without any error.
+%(each row ds (each d row (assert d "missing derivative -- diff stack not loaded or query API mismatch")))
+%(defn cof [p q r s] (t- (t* p s) (t* q r)))
+
+# --- Variant B: third-row expansion
+# det = D31*(D12*D23 - D13*D22) - D32*(D11*D23 - D13*D21) + D33*(D11*D22 - D12*D21)
+# D31 (deg<=3), D32 = -6a^2, D33 = -a^3 are tiny, so the three outer
+# multiplications are near-free and the 2x2 minors are medium*medium.
+%(def n31 (cof (get (get ds 0) 1) (get (get ds 0) 2) (get (get ds 1) 1) (get (get ds 1) 2)))
+%(def n32 (cof (get (get ds 0) 0) (get (get ds 0) 2) (get (get ds 1) 0) (get (get ds 1) 2)))
+%(def n33 (cof (get (get ds 0) 0) (get (get ds 0) 1) (get (get ds 1) 0) (get (get ds 1) 1)))
+%(def det3 (t+ (t- (t* (get (get ds 2) 0) n31) (t* (get (get ds 2) 1) n32)) (t* (get (get ds 2) 2) n33)))
+%(tp det3)

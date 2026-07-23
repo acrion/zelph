@@ -35,22 +35,41 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(doctest)
 
+FetchContent_Declare(
+    unordered_dense
+    GIT_REPOSITORY https://github.com/martinus/unordered_dense.git
+    GIT_TAG v4.8.1
+    SYSTEM
+)
+
+FetchContent_MakeAvailable(unordered_dense)
+
 add_executable(zelph_tests
     test_clusters.cpp
+    test_fact_cache.cpp
+    test_check_fact.cpp
+    test_integers.cpp
+    test_jacobian.cpp
     test_nand_arithmetic.cpp
     test_neural.cpp
     test_node_display.cpp
     test_numbers.cpp
+    test_output.cpp
+    test_partial_anchor.cpp
+    test_polynomial.cpp
     test_primes.cpp
+    test_profiler.cpp
     test_reasoning.cpp
     test_seminaive.cpp
     test_sparql.cpp
     test_stratified.cpp
     test_symbolic.cpp
+    test_symbolic_integers.cpp
+    test_topoly.cpp
     test_wikidata_qualifiers.cpp
     test_hf_cache.cpp
 )
-target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main)
+target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
 
 # Mirror the standard library next to the test binary. Same rationale as in
 # src/app; needed independently so tests work when the app target is not
