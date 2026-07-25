@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 LOG_FILE=$(mktemp /tmp/zelph-mul.XXXXXX)
-printf '.import arithmetic\n.log 9\n&12 * &34\n.quit\n' | build-release/bin/zelph >"${LOG_FILE}" 2>&1
+printf '.import decimal-arithmetic\n.log 9\n&12 * &34\n.quit\n' | build-release/bin/zelph >"${LOG_FILE}" 2>&1
 
 echo "=== Final order frequency ==="
 grep "Final order" "${LOG_FILE}" | sort | uniq -c | sort -rn

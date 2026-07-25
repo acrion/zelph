@@ -1,4 +1,4 @@
-# .import arithmetic
+# .import decimal-arithmetic
 
 # Rule-based multi-digit addition for arbitrarily large positive integers.
 #
@@ -16,6 +16,7 @@
 #   (&17 / &5) = X
 #   (&17 mod &5) = X
 
+.provides arithmetic
 %
 (defn zelph/number [s] (zelph/list-chars s))
 

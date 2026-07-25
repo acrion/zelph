@@ -17,7 +17,7 @@ parsed by the loaded `zelph/number` at import time):
 - [`stdlib/eml.zph`](https://github.com/acrion/zelph/blob/main/stdlib/eml.zph) — case study: the EML Sheffer operator
 
 ```
-zelph> .import arithmetic       # or binary-arithmetic / binary-nand-arithmetic
+zelph> .import decimal-arithmetic       # or binary-arithmetic / binary-nand-arithmetic
 zelph> .import symbolic-core
 zelph> .import diff
 zelph> x ~ symvar
@@ -289,3 +289,8 @@ so the stratified schedule of the identity fallback is continuously verified
 against classic evaluation. Assertions are structural (`zelph/exists` probes
 on graph nodes), not string comparisons: symbolic results are checked as the
 nodes they are.
+
+The engine machinery that turned these workloads from intractable into
+routine — the layered fact-structure lookup, the acceleration stores, and
+candidate-set anchoring — is documented for contributors in
+[Internals: Performance Architecture](internals/performance.md).

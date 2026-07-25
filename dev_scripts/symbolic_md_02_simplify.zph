@@ -1,5 +1,5 @@
 # Validates "The Simplification Core"
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 x ~ symvar
 (x + &0) simplify (x + &0)

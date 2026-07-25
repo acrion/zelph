@@ -344,6 +344,8 @@ later derivation can make a negation _fail_ but never make it newly
 _succeed_ — a negation that succeeds at a stratum boundary is final.
 Both evaluation strategies (classic and semi-naive) implement the same
 schedule, and the `.semi-naive check` mode verifies their equivalence.
+How this check anchors engine development is described in
+[Internals: Measurement Methodology](internals/measurement.md).
 
 The payoff is that universally quantified conditions can be written the way
 a textbook would state them. The primality rule
@@ -634,7 +636,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 > final `=` fact — see [Deduction Output Modes](index.md#deduction-output-modes).
 
 ```
-.import arithmetic
+.import decimal-arithmetic
 (<12345> + <98765>) = X
 ```
 

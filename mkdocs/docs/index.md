@@ -329,7 +329,7 @@ when the operand has side effects (a focus `*`, nested fact creation).
 > [Unary Predicates and Self-Facts](logic.md#unary-predicates-and-self-facts).
 
 ```
-zelph> .import arithmetic
+zelph> .import decimal-arithmetic
 zelph> .import primes
 zelph> :testprime &13
 zelph> (:testprime &13) = X
@@ -843,10 +843,50 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 
 This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata").
 
+## Importing Scripts: Module IDs and Interchangeable Implementations
+
+`.import <script>` loads and executes a zelph (`.zph`) or Janet (`.janet`)
+script, resolving first against the working directory and then the standard
+library (the `.zph` extension is optional).
+
+### Import once
+
+Every imported `.zph` script is registered under a **module ID** — by default
+its lowercase file name without extension (`binary-arithmetic` for
+`binary-arithmetic.zph`). A script whose ID is already registered is skipped,
+much like `#pragma once` in C++. Scripts can therefore declare their
+prerequisites with plain `.import` lines at the top; shared dependencies are
+never loaded twice, and import cycles terminate. `.new` clears the registry.
+Janet scripts are exempt: they are runnable programs and may be executed
+repeatedly, e.g. with different arguments.
+
+### Interchangeable implementations: `.provides`
+
+A script can claim **additional** module IDs with
+
+    .provides <id> [<id2> ...]
+
+placed at the top of the file. Scripts claiming the same ID are
+interchangeable — and mutually exclusive — implementations of one capability:
+whichever is imported first wins, and later providers of the ID are skipped.
+
+The three arithmetic substrates all declare `.provides arithmetic`. Dependent
+modules simply import the default substrate (`.import binary-arithmetic`); to
+compute on a different substrate, import it **before** anything that depends
+on arithmetic:
+
+    .import binary-nand-arithmetic   # claims "arithmetic" first
+    .import symbolic-core            # its ".import binary-arithmetic" is skipped
+
+If a directly requested script is skipped because a _different_ script
+already provides one of its IDs, zelph prints a warning — you asked for a
+specific implementation, but an alternative is already active.
+
 ## Project Status
 
 The project is currently in beta phase. The core functionality has been rigorously tested against the full Wikidata dataset and is operational.
-Comprehensive automated tests are run with every commit, see https://github.com/acrion/zelph/blob/main/src/test/test_interactive.cpp
+Comprehensive automated tests are run with every commit, see https://github.com/acrion/zelph/blob/main/src/test/CMakeLists.txt. Contributor-facing documentation of the engine's internal performance architecture — and of the measurement methodology used to develop it — lives
+in the [Internals](internals/performance.md) section.
 
 Current focus areas include:
 

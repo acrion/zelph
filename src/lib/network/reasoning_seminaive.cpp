@@ -42,12 +42,14 @@ namespace
     // Static evaluation-plan data for one rule, built once per run().
     struct IndexedRule
     {
-        Node                                      rule{0};
-        Node                                      top_condition{0}; // leaf or conjunction set node
-        adjacency_set                             elements;         // conjunction elements (or the single condition)
-        std::vector<Node>                         leaves;           // positive, seedable leaf conditions
-        std::vector<Node>                         leaf_preds;       // parallel to leaves; 0 = variable predicate
-        std::shared_ptr<std::unordered_set<Node>> excluded;         // rule topology nodes (conjunction set + elements)
+        Node                     rule{0};
+        Node                     top_condition{0};          // leaf or conjunction set node
+        adjacency_set            elements;                  // conjunction elements (or the single condition)
+        std::vector<Node>        leaves;                    // positive, seedable leaf conditions
+        std::vector<Node>        leaf_preds;                // parallel to leaves; 0 = variable predicate
+        std::vector<PatternInfo> leaf_patterns;             // parallel to leaves: rule-static ctor
+                                                            // decomposition, built once, reused per seed
+        std::shared_ptr<std::unordered_set<Node>> excluded; // rule topology nodes (conjunction set + elements)
         adjacency_set                             deductions;
         bool                                      delta_unsafe{false}; // must be applied classically every iteration
         bool                                      deferred{false};     // contains a negated condition -> stratum 2
@@ -187,6 +189,11 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
                 ir.leaves.push_back(cond);
                 ir.leaf_preds.push_back(Zelph::Impl::is_var(rel) ? Node{0} : rel);
+                // Hoisted out of the Unification constructor: the pattern
+                // decomposition is a pure function of the condition node
+                // (with armed stores: its immutable genuine triple), so one
+                // build here serves every seed of this leaf.
+                ir.leaf_patterns.push_back(build_pattern_info(this, cond, 2));
             }
 
             if (ir.leaves.empty()) ir.delta_unsafe = true;
@@ -277,7 +284,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
         auto vars = std::make_shared<Variables>();
         auto uneq = std::make_shared<Variables>();
 
-        Unification u(this, cond, ir.rule, vars, uneq, nullptr, 2, _prof, seed_fact, seed_pred);
+        Unification u(this, ir.leaf_patterns[leaf_idx], ir.rule, vars, uneq, nullptr, 2, _prof, seed_fact, seed_pred);
 
         while (std::shared_ptr<Variables> match = u.Next())
         {

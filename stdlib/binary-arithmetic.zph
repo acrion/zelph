@@ -28,6 +28,8 @@
 #   (&17 / &5) = X
 #   (&17 mod &5) = X
 
+.provides arithmetic
+
 %
 (defn- half-decimal
   "Halve a decimal digit string. Returns [quotient remainder-bit]."

@@ -45,9 +45,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(unordered_dense)
 
 add_executable(zelph_tests
+    test_check_fact.cpp
     test_clusters.cpp
     test_fact_cache.cpp
-    test_check_fact.cpp
+    test_genuine_structure.cpp
+    test_hf_cache.cpp
     test_integers.cpp
     test_jacobian.cpp
     test_nand_arithmetic.cpp
@@ -66,8 +68,8 @@ add_executable(zelph_tests
     test_symbolic.cpp
     test_symbolic_integers.cpp
     test_topoly.cpp
+    test_var_closure.cpp
     test_wikidata_qualifiers.cpp
-    test_hf_cache.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
 

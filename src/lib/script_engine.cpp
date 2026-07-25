@@ -86,6 +86,14 @@ public:
     // Set by Interactive; backs zelph/save and zelph/load.
     CommandHandler _command_handler;
 
+    // See ScriptEngine::set_echo_predicate.
+    EchoPredicate _echo_predicate;
+
+    bool echo_enabled() const
+    {
+        return !_echo_predicate || _echo_predicate();
+    }
+
     // The thread that owns _janet_env. zelph/import must run here: the REPL
     // pipeline it delegates to executes Janet code in the main VM, which is
     // not usable from other Janet threads (each has its own VM).
@@ -2111,9 +2119,12 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             network::Node n = zelph_unwrap_node(out);
             if (n)
             {
-                std::string output;
-                string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
-                if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
+                if (_pImpl->echo_enabled())
+                {
+                    std::string output;
+                    string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
+                    if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
+                }
 
                 if (_pImpl->has_scoped_variables())
                 {
@@ -2123,7 +2134,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
         }
         else
         {
-            if (!janet_checktype(out, JANET_NIL))
+            if (_pImpl->echo_enabled() && !janet_checktype(out, JANET_NIL))
             {
                 _pImpl->_n->out(Impl::format_janet(out), true);
             }
@@ -2260,6 +2271,11 @@ void ScriptEngine::set_import_handler(ImportHandler handler)
 void ScriptEngine::set_command_handler(CommandHandler handler)
 {
     _pImpl->_command_handler = std::move(handler);
+}
+
+void ScriptEngine::set_echo_predicate(EchoPredicate predicate)
+{
+    _pImpl->_echo_predicate = std::move(predicate);
 }
 
 bool ScriptEngine::has_keyword(const std::string& keyword) const

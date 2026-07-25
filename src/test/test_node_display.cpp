@@ -86,7 +86,7 @@ TEST_CASE("display: proper lists keep their compact rendering")
         interactive.process("<123> tagged t2");
         CHECK(any_output_contains(collector, "<123>"));
 
-        interactive.process(".import arithmetic");
+        interactive.process(".import decimal-arithmetic");
         collector.clear();
         interactive.process("&42 tagged t3");
         CHECK(any_output_starts_with(collector, "&42 tagged t3")); });
@@ -134,7 +134,7 @@ TEST_CASE("node display: non-canonical digit lists render raw, not as &-literals
         // Decimal &105 - &98 internally yields the raw diff <007> (the
         // SC0 comment's own example); the canonnum bridge line now shows
         // the connection between both renderings explicitly.
-        interactive.process(".import arithmetic");
+        interactive.process(".import decimal-arithmetic");
         collector.clear();
         interactive.process("&105 - &98");
         interactive.run(true, false, false);

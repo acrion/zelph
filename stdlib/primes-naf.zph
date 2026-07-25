@@ -12,6 +12,9 @@
 # eagerly up to sqrt(N) -- the negation needs the full scan -- and in
 # return finds ALL divisors <= sqrt(N), not just the smallest.
 
+# Default arithmetic module import (maybe overruled by first importing a difference one):
+.import binary-arithmetic
+
 (N testprime N) => (&2 cmp N)
 (N testprime N, &2 == N) => (N isprime N)
 (N testprime N, &2 < N) => (&2 divisorcand N)

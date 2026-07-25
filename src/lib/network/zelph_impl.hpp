@@ -2008,6 +2008,39 @@ namespace zelph::network
         mutable std::shared_ptr<const ankerl::unordered_dense::set<Node>> _rel_types;
         mutable uint64_t                                                  _rel_types_gen{0};
 
+        // Template-variable store: for every node materialized through
+        // triple-level construction, the exact set of variables in its
+        // genuine structural closure. Entries exist ONLY for nodes whose
+        // set is nonempty (rule-template nodes), so while authoritative,
+        // absence means "provably no variables". Absorbs the former
+        // _var_closure flag set: a node is var-flagged iff its entry
+        // exists; var_in_closure and collect_variables both read this.
+        // Maintained eagerly by Zelph::fact bottom-up (children exist
+        // before parents; a node ID is its triple hash, so sets are final
+        // at creation). Deliberately covers subject == predicate facts,
+        // whose closure vars the reconstruction WALK cannot see (gfs reads
+        // s == p as empty) -- the exact answer is the safer one (template-
+        // leak prevention; accepted divergence class since the var-closure
+        // flag). Disarmed AND cleared only by the wholesale funnel
+        // (invalidate_fact_structures_cache).
+        mutable std::shared_mutex                                                           _template_vars_mtx;
+        ankerl::unordered_dense::map<Node, std::shared_ptr<const std::unordered_set<Node>>> _template_vars;
+        std::atomic<bool>                                                                   _template_vars_authoritative{true};
+
+        // Genuine-structure store: the exact (subject, predicate, objects)
+        // triple of every node materialized through triple-level
+        // construction (Zelph::fact), stored at creation as an immutable
+        // single-structure list. A node's ID is its triple hash, so an
+        // entry can never go stale through graph GROWTH -- unlike walked
+        // reconstructions, whose candidate readings evolve with the
+        // neighborhood (the reason the fs_cache needs invalidation at
+        // all). Disarmed and cleared ONLY by the wholesale funnel
+        // (invalidate_fact_structures_cache): trusted imports, binary
+        // loads, removals, merges. Growth-only clears never touch it.
+        mutable std::shared_mutex                                    _genuine_mtx;
+        mutable ankerl::unordered_dense::map<Node, FactStructurePtr> _genuine;
+        std::atomic<bool>                                            _genuine_authoritative{true};
+
         mutable std::shared_mutex                                                         _pred_idx_mtx;
         mutable ankerl::unordered_dense::map<Node, std::shared_ptr<const PredicateIndex>> _pred_idx_cache;
         mutable std::atomic<bool>                                                         _pred_idx_has_entries{false};

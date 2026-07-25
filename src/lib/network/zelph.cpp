@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "zelph.hpp"
+#include "fact_structure.hpp"
 #include "io/mermaid.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
@@ -77,6 +78,28 @@ namespace
             frontier = std::move(next);
         }
         return result;
+    }
+
+    // Reconstruction-based reference walk -- the pre-flag implementation
+    // of unification.cpp's contains_variable_deep, kept verbatim so the
+    // fallback after binary loads / trusted imports / removals is exactly
+    // the historical semantics. Depth is fixed at 1 (logging only).
+    bool var_in_closure_walk(const Zelph* n, const Node nd, std::unordered_set<Node>& visited)
+    {
+        if (nd == 0) return false;
+        if (Zelph::is_var(nd)) return true;
+        if (!Zelph::is_hash(nd)) return false;        // plain atom -> no internal structure
+        if (!visited.insert(nd).second) return false; // cycle protection
+
+        const auto structs = get_fact_structures(n, nd, 1);
+        for (const auto& fs : *structs)
+        {
+            if (var_in_closure_walk(n, fs.subject, visited)) return true;
+            if (var_in_closure_walk(n, fs.predicate, visited)) return true;
+            for (const Node o : fs.objects)
+                if (var_in_closure_walk(n, o, visited)) return true;
+        }
+        return false;
     }
 }
 
@@ -542,6 +565,64 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         // clear left that window open. See invalidate_fact_structures_for.
         invalidate_fact_structures_for(subject, predicate, objects, answer.relation());
 
+        // Maintain the template-variable store from the ACTUAL triple
+        // (see Impl's _template_vars). Data facts -- the overwhelming
+        // majority -- cost three store misses and allocate nothing.
+        if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
+        {
+            std::shared_ptr<std::unordered_set<Node>> vars; // lazily allocated
+
+            const auto add_component = [&](const Node c)
+            {
+                if (Impl::is_var(c))
+                {
+                    if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+                    vars->insert(c);
+                }
+                else if (Impl::is_hash(c))
+                {
+                    std::shared_ptr<const std::unordered_set<Node>> sub;
+                    if (try_get_template_vars(c, sub) && sub)
+                    {
+                        if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+                        vars->insert(sub->begin(), sub->end());
+                    }
+                }
+            };
+
+            add_component(subject);
+            add_component(predicate);
+            for (const Node t : objects)
+                add_component(t);
+
+            if (vars)
+            {
+                std::unique_lock lock(_pImpl->_template_vars_mtx);
+                _pImpl->_template_vars.emplace(answer.relation(),
+                                               std::shared_ptr<const std::unordered_set<Node>>(std::move(vars)));
+            }
+        }
+
+        // Record the genuine structure (reconstruction bypass): the exact
+        // triple, known right here and immutable forever -- the node ID is
+        // its hash. subject == predicate is deliberately excluded: the
+        // reconstruction walk yields EMPTY for those (the subject loop
+        // skips s == p), and unification's atom treatment of them must not
+        // change. Self-facts arrive with objects == {subject}, matching
+        // the walk's self-referential repair exactly.
+        if (subject != predicate
+            && _pImpl->_genuine_authoritative.load(std::memory_order_acquire))
+        {
+            auto           list = std::make_shared<FactStructureList>(1);
+            FactStructure& fs   = list->front();
+            fs.subject          = subject;
+            fs.predicate        = predicate;
+            fs.objects          = objects;
+
+            std::unique_lock lock(_pImpl->_genuine_mtx);
+            _pImpl->_genuine.emplace(answer.relation(), FactStructurePtr(std::move(list)));
+        }
+
         if (_on_fact_created) _on_fact_created(answer.relation(), predicate);
     }
 
@@ -996,6 +1077,11 @@ Network::ReadScope Zelph::read_scope() const
     return Network::ReadScope(*_pImpl);
 }
 
+void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
+{
+    _pImpl->collect_anchored_facts(anchor, relation, out);
+}
+
 // Semantic caveat, deliberate: parse_relation's exact probe uses
 // is_correct(), which additionally rejects declarations with
 // probability < 0.5 -- a state nothing produces. get_fact_structures'
@@ -1087,7 +1173,13 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 {
     if (logging_active()) _fs_cache_full_clears.fetch_add(1, std::memory_order_relaxed);
 
-    invalidate_relation_type_set();
+    // Disarm and clear the fact-path stores. Single implementation shared
+    // with the .fact-stores command: every path through this funnel either
+    // bypasses triple-level construction (trusted imports, binary loads)
+    // or destroys topology (removals, merges, name-merge) -- stale store
+    // entries must never resurface afterwards.
+    disable_fact_stores();
+
     _pImpl->invalidate_predicate_index();
 
     // If cache already empty, do nothing (avoid lock)
@@ -1258,6 +1350,117 @@ void Zelph::reset_fs_cache_stats() const
     _fs_cache_misses.store(0, std::memory_order_relaxed);
     _fs_cache_full_clears.store(0, std::memory_order_relaxed);
     _fs_cache_stale_erased.store(0, std::memory_order_relaxed);
+}
+
+bool Zelph::var_in_closure(const Node nd) const
+{
+    if (nd == 0) return false;
+    if (Impl::is_var(nd)) return true;
+    if (!Impl::is_hash(nd)) return false;
+
+    if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
+    {
+        if (logging_active()) _var_flag_queries.fetch_add(1, std::memory_order_relaxed);
+        std::shared_lock lock(_pImpl->_template_vars_mtx);
+        return _pImpl->_template_vars.find(nd) != _pImpl->_template_vars.end();
+    }
+
+    if (logging_active()) _var_flag_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    std::unordered_set<Node> visited;
+    return var_in_closure_walk(this, nd, visited);
+}
+
+Zelph::VarClosureStats Zelph::var_closure_stats() const
+{
+    return {_var_flag_queries.load(std::memory_order_relaxed),
+            _var_flag_fallbacks.load(std::memory_order_relaxed)};
+}
+
+void Zelph::reset_var_closure_stats() const
+{
+    _var_flag_queries.store(0, std::memory_order_relaxed);
+    _var_flag_fallbacks.store(0, std::memory_order_relaxed);
+}
+
+bool Zelph::try_get_template_vars(const Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const
+{
+    if (!_pImpl->_template_vars_authoritative.load(std::memory_order_acquire)) return false;
+
+    if (logging_active()) _tvars_hits.fetch_add(1, std::memory_order_relaxed);
+    std::shared_lock lock(_pImpl->_template_vars_mtx);
+    const auto       it = _pImpl->_template_vars.find(nd);
+    out                 = it == _pImpl->_template_vars.end() ? nullptr : it->second;
+    return true;
+}
+
+void Zelph::count_template_vars_walk() const
+{
+    if (logging_active()) _tvars_walks.fetch_add(1, std::memory_order_relaxed);
+}
+
+Zelph::TemplateVarsStats Zelph::template_vars_stats() const
+{
+    return {_tvars_hits.load(std::memory_order_relaxed),
+            _tvars_walks.load(std::memory_order_relaxed)};
+}
+
+void Zelph::reset_template_vars_stats() const
+{
+    _tvars_hits.store(0, std::memory_order_relaxed);
+    _tvars_walks.store(0, std::memory_order_relaxed);
+}
+
+bool Zelph::try_get_genuine_structure(const Node fact, FactStructurePtr& out) const
+{
+    if (!_pImpl->_genuine_authoritative.load(std::memory_order_acquire)) return false;
+
+    std::shared_lock lock(_pImpl->_genuine_mtx);
+    const auto       it = _pImpl->_genuine.find(fact);
+    if (it == _pImpl->_genuine.end()) return false;
+
+    if (logging_active()) _genuine_hits.fetch_add(1, std::memory_order_relaxed);
+    out = it->second; // shared_ptr copy: one atomic increment, no allocation
+    return true;
+}
+
+void Zelph::count_genuine_walk() const
+{
+    if (logging_active()) _genuine_walks.fetch_add(1, std::memory_order_relaxed);
+}
+
+Zelph::GenuineStats Zelph::genuine_stats() const
+{
+    return {_genuine_hits.load(std::memory_order_relaxed),
+            _genuine_walks.load(std::memory_order_relaxed)};
+}
+
+void Zelph::reset_genuine_stats() const
+{
+    _genuine_hits.store(0, std::memory_order_relaxed);
+    _genuine_walks.store(0, std::memory_order_relaxed);
+}
+
+bool Zelph::fact_stores_enabled() const
+{
+    return _pImpl->_template_vars_authoritative.load(std::memory_order_acquire)
+        && _pImpl->_genuine_authoritative.load(std::memory_order_acquire);
+}
+
+void Zelph::disable_fact_stores() const
+{
+    _pImpl->_template_vars_authoritative.store(false, std::memory_order_release);
+    {
+        // Clear, not just disarm: entries may later reference removed
+        // nodes, and freeing the memory is the point of the switch.
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        _pImpl->_template_vars.clear();
+    }
+
+    _pImpl->_genuine_authoritative.store(false, std::memory_order_release);
+    {
+        std::unique_lock lock(_pImpl->_genuine_mtx);
+        _pImpl->_genuine.clear();
+    }
 }
 
 // Extracts the components (subject, predicate, objects) from a relation node.

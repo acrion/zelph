@@ -632,7 +632,7 @@ TEST_CASE("numbers: result query (A / B) = X is repeatable")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process(".import arithmetic");
+        interactive.process(".import decimal-arithmetic");
 
         collector.clear();
         interactive.process("(&17 / &5) = X");
@@ -656,7 +656,7 @@ TEST_CASE("numbers: subtraction and division results are canonical (no leading z
     // distinction) by disabling the digit alphabet first.
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process(".import arithmetic");
+        interactive.process(".import decimal-arithmetic");
         interactive.process("%(zelph/set-number-digits [])");
 
         SUBCASE("105 - 98 = 7 yields no leading zeros")

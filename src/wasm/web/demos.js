@@ -82,9 +82,8 @@ export const DEMO_GROUPS = [
       {
         id: "2.1",
         label: "Load primality test",
-        requires: ["1.1"],
         command: ".import primes-naf",
-        info: `Loads the primality module (requires the arithmetic button above). It contributes no arithmetic of its own &mdash; trial division up to the square bound is expressed by asserting ordinary <code>+</code>, <code>*</code>, <code>mod</code> and <code>cmp</code> facts, which the arithmetic modules answer. The textbook rule "N is prime if it has no divisor" is written literally, using negation-as-failure. (This module also works on top of <code>.import arithmetic</code>, which computes in base 10 &mdash; the recursion rules are byte-identical, only the digit tables differ. Try typing it!)`,
+        info: `Loads the primality module. It contributes no arithmetic of its own &mdash; trial division up to the square bound is expressed by asserting ordinary <code>+</code>, <code>*</code>, <code>mod</code> and <code>cmp</code> facts, which the arithmetic modules answer. The textbook rule "N is prime if it has no divisor" is written literally, using negation-as-failure. (This module also works on top of <code>.import decimal-arithmetic</code>, which computes in base 10 &mdash; the recursion rules are byte-identical, only the digit tables differ. Try typing it!)`,
       },
       {
         id: "2.2",
@@ -306,7 +305,6 @@ export const DEMO_GROUPS = [
       {
         id: "5.7",
         label: "Load differentiation",
-        requires: ["5.4"],
         command: ".import diff",
         info: `Symbolic differentiation in the same architecture. Derivatives of function symbols are facts (<code>exp hasderivative exp</code>) consumed by one generic chain rule, and constancy is the textbook definition made executable: T is constant w.r.t. x if T does not contain x &mdash; a containment recursion plus negation-as-failure.`,
       },
@@ -321,7 +319,6 @@ export const DEMO_GROUPS = [
       {
         id: "5.9",
         label: "Load EML",
-        requires: ["5.4"],
         command: ".import eml",
         info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). This module wires eml into the simplifier as an ordinary binary operator with a three-rule identity table.`,
       },

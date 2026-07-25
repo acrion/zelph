@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -285,5 +286,12 @@ namespace zelph::string
                 result.erase(result.size() - it->size());
         }
         return result;
+    }
+
+    inline std::string to_lower_ascii(std::string s)
+    {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                       { return static_cast<char>(std::tolower(c)); });
+        return s;
     }
 }

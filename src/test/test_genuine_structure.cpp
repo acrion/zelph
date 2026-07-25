@@ -1,0 +1,187 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include <doctest/doctest.h>
+
+#include "io/output.hpp"
+#include "network/fact_structure.hpp"
+#include "network/zelph.hpp"
+#include "test_helpers.hpp"
+
+using namespace zelph::network;
+
+// ---------------------------------------------------------------------------
+// Genuine-structure store: fact() records the exact triple of every node it
+// creates; get_fact_structures answers fs_cache misses from that store and
+// walks the adjacency only for nodes without an entry. Pins:
+//  (1) the stored reading IS the genuine triple across shapes;
+//  (2) subject == predicate facts are NOT stored (walk stays EMPTY);
+//  (3) the disarm funnel (trusted import): later queries AND later-created
+//      facts are answered by the walk, with identical readings;
+//  (4) growth-only full clears (relation-type declarations) do NOT disarm.
+// Reading equivalence end-to-end is co-pinned by the whole suite (every
+// gfs consumer now runs through the store) plus `.semi-naive check`.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    zelph::io::OutputHandler null_handler()
+    {
+        return [](const zelph::io::OutputEvent&) {};
+    }
+
+    bool has_reading(const FactStructureList& structs, const Node subject, const Node object)
+    {
+        for (const auto& fs : structs)
+            if (fs.subject == subject && fs.objects.count(object) == 1) return true;
+        return false;
+    }
+} // namespace
+
+TEST_CASE("genuine store: created facts answer with their exact triple")
+{
+    Zelph      z(null_handler());
+    const Node a  = z.node("a");
+    const Node b  = z.node("b");
+    const Node c  = z.node("c");
+    const Node op = z.node("op");
+
+    z.set_logging(-1); // counter-only mode
+
+    const Node f = z.fact(a, op, {b, c});
+    {
+        const auto s = get_fact_structures(&z, f, 1);
+        REQUIRE(s->size() == 1);
+        CHECK((*s)[0].subject == a);
+        CHECK((*s)[0].predicate == op);
+        CHECK((*s)[0].objects.count(b) == 1);
+        CHECK((*s)[0].objects.count(c) == 1);
+        CHECK((*s)[0].objects.size() == 2);
+    }
+
+    // Self-fact: stored objects arrive as {subject} -- identical to the
+    // walk's self-referential repair.
+    const Node self = z.fact(a, op, {a});
+    {
+        const auto s = get_fact_structures(&z, self, 1);
+        REQUIRE(s->size() == 1);
+        CHECK((*s)[0].subject == a);
+        CHECK((*s)[0].objects.count(a) == 1);
+    }
+
+    // Same-predicate parent (the masquerade shape): both readings exact.
+    const Node mid = z.fact(f, op, {c});
+    CHECK(has_reading(*get_fact_structures(&z, mid, 1), f, c));
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b));
+
+    CHECK(z.genuine_stats().hits > 0);
+}
+
+TEST_CASE("genuine store: subject == predicate facts stay walk-reconstructed and EMPTY")
+{
+    Zelph      z(null_handler());
+    const Node b   = z.node("b");
+    const Node op3 = z.node("op3");
+
+    const Node f3 = z.fact(op3, op3, {b});
+    CHECK(get_fact_structures(&z, f3, 1)->empty()); // red if the genuine triple were stored
+    CHECK(z.parse_relation(f3) == op3);             // subject==predicate fallback untouched
+}
+
+TEST_CASE("genuine store: trusted import disarms; walk keeps readings identical")
+{
+    Zelph      z(null_handler());
+    const Node a  = z.node("a");
+    const Node b  = z.node("b");
+    const Node c  = z.node("c");
+    const Node op = z.node("op");
+
+    const Node f = z.fact(a, op, {b});
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b)); // via store
+
+    z.fact_import_trusted_single_object(a, op, c); // funnel: disarm + clear
+
+    z.set_logging(-1);
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b)); // via walk now
+
+    // Created AFTER the disarm: no store maintenance happens, only the
+    // walk can answer -- red if the query still trusted the (empty) store.
+    const Node g = z.fact(b, op, {a});
+    CHECK(has_reading(*get_fact_structures(&z, g, 1), b, a));
+
+    CHECK(z.genuine_stats().hits == 0);
+    CHECK(z.genuine_stats().walks > 0);
+}
+
+TEST_CASE("genuine store: growth-only full clears do not disarm")
+{
+    Zelph      z(null_handler());
+    const Node a  = z.node("a");
+    const Node b  = z.node("b");
+    const Node op = z.node("op");
+
+    const Node f = z.fact(a, op, {b});
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b));
+
+    // Relation-type declaration: wholesale fs_cache clear -- but the
+    // genuine store is growth-immune and must keep answering.
+    z.fact(z.node("p2"), z.core.IsA, {z.core.RelationTypeCategory});
+
+    z.set_logging(-1);
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b));
+    CHECK(z.genuine_stats().hits == 1);  // answered by the store...
+    CHECK(z.genuine_stats().walks == 0); // ...not by the walk
+}
+
+TEST_CASE("command: .fact-stores reports, disarms one-way, reasoning stays correct on the walk path")
+{
+    using namespace zelph::test;
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process(".fact-stores");
+        CHECK(any_output_contains(collector, "Fact-path stores: on"));
+
+        collector.clear();
+        interactive.process(".fact-stores off");
+        CHECK(any_output_contains(collector, "Fact-path stores: off"));
+
+        // Rules and facts created AFTER the switch have no store entries
+        // anywhere; every consumer must fall back to the walks and stay
+        // complete (co-pinned suite-wide by `.semi-naive check`).
+        process_lines(interactive, R"(
+(A foo B) => (A linked B)
+p foo q
+)");
+        CHECK(any_output_starts_with(collector, "( p linked q )"));
+
+        CHECK_THROWS_AS(interactive.process(".fact-stores on"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".fact-stores banana"), std::runtime_error); 
+
+        interactive.process(".new"); // fresh engine instance -> stores re-armed
+        collector.clear();
+        interactive.process(".fact-stores");
+        CHECK(any_output_contains(collector, "Fact-path stores: on")); });
+}

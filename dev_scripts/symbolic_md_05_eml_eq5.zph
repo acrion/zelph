@@ -1,5 +1,5 @@
 # Validates the Eq.-(5) derivation in "Case Study: The EML Sheffer Operator"
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 .import eml
 x ~ symvar

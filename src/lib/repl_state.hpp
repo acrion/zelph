@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -67,6 +68,18 @@ namespace zelph::console
         // the wasm playground polls it after every command batch instead of
         // parsing file:// links out of the terminal output.
         std::string last_graph_html_path;
+
+        // Depth of nested .import processing. 0 = interactive input. Managed
+        // strictly by RAII in CommandExecutor::import_file; deliberately NOT
+        // reset by .new (the guards on the stack restore it correctly even
+        // when .new is issued from inside a script).
+        int import_depth{0};
+
+        // Import guard ("import once"): maps every registered module ID to
+        // the default ID (lowercase filename stem) of the script that
+        // registered it. A script registers its default ID plus all IDs it
+        // declares via .provides. Cleared by .new.
+        std::map<std::string, std::string> imported_module_ids;
     };
 
     // Helper RAII struct to temporarily suspend auto-run

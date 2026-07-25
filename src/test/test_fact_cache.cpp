@@ -244,26 +244,50 @@ TEST_CASE("fact cache: hits share one immutable list and held pointers are stabl
     const Node g = z.fact(a, op, {c});
     (void)g;
     const auto s3 = get_fact_structures(&z, f, 1);
-    CHECK(s3.get() != s1.get()); // entry was reconstructed
+    CHECK(s3.get() == s1.get()); // the genuine store hands out ONE immutable
+                                 // list forever; invalidation only dropped
+                                 // the fs_cache COPY of it, which this probe
+                                 // silently re-promoted
     CHECK(has_reading(*s1, a, b));
     CHECK(has_reading(*s3, a, b));
 }
 
-TEST_CASE("fact cache: empty results are cached and answered as hits")
+TEST_CASE("fact cache: structureless classes bypass the cache; walk-empty hash nodes still cache")
 {
     Zelph      z(null_handler());
     const Node atom = z.node("plain-atom");
+    const Node V    = z.var();
 
     z.set_logging(-1);
-    const auto e1 = get_fact_structures(&z, atom, 1); // miss: probes + stores
-    CHECK(e1->empty());
-    const auto e2 = get_fact_structures(&z, atom, 1); // hit on the negative entry
-    CHECK(e2->empty());
-    CHECK(e1.get() == e2.get()); // all empty results share one instance
 
+    // Atoms and variables answer lock-free with the shared empty
+    // instance: no cache probe, no counter movement. Red if the bit-test
+    // gate is missing (the old behaviour counted a miss and a hit here).
+    const auto e1 = get_fact_structures(&z, atom, 1);
+    const auto e2 = get_fact_structures(&z, atom, 1);
+    CHECK(e1->empty());
+    CHECK(e1.get() == e2.get());
+    CHECK(get_fact_structures(&z, V, 1)->empty());
+    {
+        const auto s = z.fs_cache_stats();
+        CHECK(s.hits == 0);
+        CHECK(s.misses == 0);
+    }
+
+    // subject == predicate facts are the surviving walk-to-empty HASH
+    // class: excluded from the genuine store, reconstructed empty by the
+    // walk, and cached like any reconstruction result.
+    const Node b   = z.node("b");
+    const Node op3 = z.node("op3");
+    const Node f3  = z.fact(op3, op3, {b});
+    const auto w1  = get_fact_structures(&z, f3, 1); // miss: walk + store
+    CHECK(w1->empty());
+    const auto w2 = get_fact_structures(&z, f3, 1); // hit on the stored entry
+    CHECK(w1.get() == w2.get());
     const auto s = z.fs_cache_stats();
     CHECK(s.misses == 1);
     CHECK(s.hits == 1);
+    CHECK(z.genuine_stats().walks == 1);
 }
 
 TEST_CASE("fact cache: relation-type memo is refreshed by new declarations")

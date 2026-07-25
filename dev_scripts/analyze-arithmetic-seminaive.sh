@@ -7,7 +7,7 @@ run_variant() {
   local mode="$1" a="$2" b="$3" label="$4"
   local log_file
   log_file=$(mktemp "/tmp/zelph-mul-${label}-${mode}-XXXXXX.log")
-  printf '.import arithmetic\n.semi-naive %s\n.log -1\n&%s * &%s\n.quit\n' "$mode" "$a" "$b" \
+  printf '.import decimal-arithmetic\n.semi-naive %s\n.log -1\n&%s * &%s\n.quit\n' "$mode" "$a" "$b" \
     | build-release/bin/zelph >"$log_file" 2>&1 || {
       echo "ERROR (${label}, ${mode}), see $log_file" >&2
       return 1

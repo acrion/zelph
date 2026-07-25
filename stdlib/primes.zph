@@ -1,11 +1,5 @@
 # Trial-division primality test on top of the arithmetic modules.
 #
-# Requires one arithmetic module to be loaded first (the rules are
-# base-agnostic, both work):
-#
-#   .import arithmetic            # or: .import binary-arithmetic
-#   .import primes
-#
 # Usage (repeatable result queries, uniform with the arithmetic idiom):
 #
 #   (&13 testprime &13) = X       # answers: prime
@@ -48,6 +42,9 @@
 # Companion script: primes-naf.zph solves the same problem via
 # negation-as-failure (stratified evaluation), scanning eagerly and
 # finding ALL divisors up to the square bound.
+
+# Default arithmetic module import (maybe overruled by first importing a difference one):
+.import binary-arithmetic
 
 # ---------------------------------------------------------------------------
 # Rule PT1 -- Trigger: classify N against 2 (the smallest prime)

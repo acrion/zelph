@@ -37,6 +37,33 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
+    // Rule-static decomposition of a leaf condition's pattern: everything
+    // the Unification constructor derives from the condition node ALONE,
+    // independent of current bindings -- the relation/subject/objects
+    // reading plus the subject predicate hint. Built once per (rule, leaf)
+    // by the semi-naive index and reused for every seed instance;
+    // recomputing it per instance made the constructor the largest
+    // self-time item of the Jacobian profiles (8.6%, ~412k constructions
+    // per phase, ~72% of them semi-naive seeds).
+    //
+    // Binding-DEPENDENT work stays per-instance in the constructor:
+    // relation-variable resolution, bound-pattern grounding, boundness
+    // analysis, partial-pattern anchoring, snapshot launches, and the
+    // Unequal side effects.
+    //
+    // relation == 0 means the decomposition failed; the constructor then
+    // logs the fallback and leaves the relation list empty, as before.
+    struct PatternInfo
+    {
+        Node          condition{0};
+        Node          relation{0}; // raw pattern predicate; may be a variable
+        Node          subject{0};
+        adjacency_set objects;
+        Node          subject_pred_hint{0};
+    };
+
+    ZELPH_EXPORT PatternInfo build_pattern_info(const Zelph* n, Node condition, int log_depth);
+
     class Unification
     {
     public:
@@ -51,6 +78,26 @@ namespace zelph::network
             ReasoningProfiler&                profiler,
             Node                              seed_fact      = 0,
             Node                              seed_predicate = 0);
+
+        // Hoisted-pattern overload (semi-naive seeding): consumes a
+        // precomputed rule-static decomposition instead of re-deriving it
+        // from the condition node. The condition-taking constructor above
+        // DELEGATES here, so both entry points share one body -- path
+        // divergence is structurally impossible. By-value sink parameter:
+        // callers with a cached PatternInfo pay exactly the one objects
+        // copy the old constructor paid; the delegating path moves.
+        Unification(
+            Zelph*                            n,
+            PatternInfo                       pattern,
+            Node                              parent,
+            const std::shared_ptr<Variables>& variables,
+            const std::shared_ptr<Variables>& unequals,
+            concurrency::ThreadPool*          pool,
+            int                               log_depth,
+            ReasoningProfiler&                profiler,
+            Node                              seed_fact      = 0,
+            Node                              seed_predicate = 0);
+
         std::shared_ptr<Variables> Next();
         std::shared_ptr<Variables> Unequals();
         bool                       uses_parallel() const { return _use_parallel; }
@@ -108,5 +155,11 @@ namespace zelph::network
         adjacency_set::iterator _fact_index;
         adjacency_set           _facts_snapshot;
         bool                    _fact_index_initialized{false};
+        bool                    _snapshot_prefiltered{false}; // snapshot provably contains no
+                                                              // facts that use the relation as
+                                                              // their SUBJECT (anchored/partial
+                                                              // paths); the per-fact
+                                                              // has_left_edge skip in the scan
+                                                              // loop is redundant then
     };
 }

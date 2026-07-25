@@ -2,11 +2,11 @@
 # negation (neg of ...) -- the follow-up anticipated in eml.zph's header,
 # which introduced both as term formers for the compiler only.
 #
-# PREREQUISITES (import order):
-#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
+# PREREQUISITES:
+#   .import decimal-arithmetic # or binary-arithmetic / binary-nand-arithmetic
 #   .import symbolic-core
-#   .import diff              # OPTIONAL -- the differentiation rules below
-#   .import symbolic-minus    # are inert without it (no dstate facts exist)
+#   .import diff               # OPTIONAL -- the differentiation rules below
+#   .import symbolic-minus     # are inert without it (no dstate facts exist)
 #
 # OPERATOR EXTENSION PROTOCOL contributions for the binary operator -:
 # decompose, congruence, rewrites. neg needs NO decompose/congruence of
@@ -30,6 +30,8 @@
 # normal-form layer's job, not a local rewrite's.
 #
 # Identities are FORMAL (domain caveats as in symbolic-core.zph).
+
+.import symbolic-core
 
 # ---------------------------------------------------------------------------
 # neg is its own inverse: -(-u) = u, via the generic inverse-pair rule

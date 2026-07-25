@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "io/output.hpp"
+#include "network/unification.hpp"
 #include "network/zelph.hpp"
 
 #include <string>
@@ -168,4 +169,110 @@ TEST_CASE("parse_relation_scoped: agrees with parse_relation across branch shape
     CHECK(z.parse_relation_scoped(scope, *rel_types, a) == 0); // atom: no relation
     CHECK(scope.exists(f1));
     CHECK_FALSE(scope.exists(Node{0}));
+}
+
+TEST_CASE("collect_anchored_facts: exact anchored-candidate semantics")
+{
+    Zelph      z(null_handler());
+    const Node a   = z.node("a");
+    const Node b   = z.node("b");
+    const Node c   = z.node("c");
+    const Node op  = z.node("op");
+    const Node op2 = z.node("op2");
+    const Node op3 = z.node("op3");
+
+    const Node f1 = z.fact(a, op, {b});
+    const Node f2 = z.fact(a, op2, {c});
+
+    adjacency_set out;
+    z.collect_anchored_facts(a, op, out); // subject-driven
+    CHECK(out.count(f1) == 1);
+    CHECK(out.count(f2) == 0); // different predicate
+    CHECK(out.size() == 1);
+
+    z.collect_anchored_facts(b, op, out); // object-driven
+    CHECK(out.count(f1) == 1);
+
+    // Subject-role exclusion: g uses op2 as its SUBJECT (bidirectional),
+    // so for relation op2 it must be filtered even though g -> op2 exists.
+    const Node g = z.fact(op2, op3, {b});
+    const Node h = z.fact(c, op2, {b});
+    z.collect_anchored_facts(b, op2, out);
+    CHECK(out.count(h) == 1);
+    CHECK(out.count(g) == 0);
+
+    z.collect_anchored_facts(Node{0}, op, out); // nonexistent anchor
+    CHECK(out.empty());
+}
+
+// ---------------------------------------------------------------------------
+// PatternInfo / build_pattern_info: rule-static hoisting of the Unification
+// constructor's pattern decomposition (semi-naive seeding). The condition-
+// taking constructor DELEGATES to the PatternInfo overload, so equivalence
+// of the two entry points reduces to build_pattern_info reproducing the
+// former inline decomposition exactly -- pinned here across pattern shapes.
+// End-to-end completeness of hoisted seeding is co-pinned suite-wide by
+// `.semi-naive check`.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("build_pattern_info: decomposition matches the get_fact_structures reading across pattern shapes")
+{
+    Zelph      z(null_handler());
+    const Node A  = z.var();
+    const Node B  = z.var();
+    const Node C  = z.var();
+    const Node op = z.node("op");
+
+    // Flat pattern (A op B): variable subject -> no subject hint.
+    const Node cond = z.fact(A, op, {B});
+    {
+        const PatternInfo pi = build_pattern_info(&z, cond, 1);
+        CHECK(pi.condition == cond);
+        CHECK(pi.relation == op);
+        CHECK(pi.subject == A);
+        CHECK(pi.objects.size() == 1);
+        CHECK(pi.objects.count(B) == 1);
+        CHECK(pi.subject_pred_hint == 0);
+    }
+
+    // Structured subject ((A f B) g C): the hint is the inner predicate.
+    const Node f     = z.node("f");
+    const Node g     = z.node("g");
+    const Node inner = z.fact(A, f, {B});
+    const Node cond2 = z.fact(inner, g, {C});
+    {
+        const PatternInfo pi = build_pattern_info(&z, cond2, 1);
+        CHECK(pi.relation == g);
+        CHECK(pi.subject == inner);
+        CHECK(pi.subject_pred_hint == f);
+        CHECK(pi.objects.count(C) == 1);
+    }
+
+    // Variable predicate (A W B): the raw variable is preserved -- the
+    // constructor's relation-variable machinery must keep seeing it.
+    const Node W     = z.var();
+    const Node cond3 = z.fact(A, W, {B});
+    {
+        const PatternInfo pi = build_pattern_info(&z, cond3, 1);
+        CHECK(pi.relation == W);
+        CHECK(Zelph::is_var(pi.relation));
+        CHECK(pi.subject == A);
+    }
+
+    // Multi-object pattern: the full object set is captured.
+    const Node cond4 = z.fact(A, op, {B, C});
+    {
+        const PatternInfo pi = build_pattern_info(&z, cond4, 1);
+        CHECK(pi.objects.size() == 2);
+        CHECK(pi.objects.count(B) == 1);
+        CHECK(pi.objects.count(C) == 1);
+    }
+
+    // Atom: no decomposable structure -> relation stays 0 (the constructor
+    // then logs the fallback and leaves the relation list empty).
+    {
+        const PatternInfo pi = build_pattern_info(&z, op, 1);
+        CHECK(pi.condition == op);
+        CHECK(pi.relation == 0);
+    }
 }

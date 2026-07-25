@@ -1,5 +1,5 @@
 # Validates the intro example of mkdocs/docs/symbolic.md
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 .import diff
 .run

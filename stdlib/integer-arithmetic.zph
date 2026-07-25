@@ -1,9 +1,5 @@
 # Signed integer arithmetic (Z) on top of the natural-number modules.
 #
-# PREREQUISITES (import order, like symbolic-core):
-#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
-#   .import integer-arithmetic
-#
 # REPRESENTATION: an integer is the ordinary term (pos zint N) or
 # (neg zint N), where N is a natural-number cons list of the loaded
 # module and pos/neg are plain atoms. No new machinery: the pair is a
@@ -39,6 +35,9 @@
 # invalid one, and the cmp guards select the matching connect rule.
 # Euclidean division on Z (floor vs. truncation is a genuine design
 # choice) is deliberately left to a follow-up.
+
+# Default arithmetic module import (maybe overruled by first importing a difference one):
+.import binary-arithmetic
 
 %
 (defn zelph/int

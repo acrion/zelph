@@ -97,6 +97,15 @@ namespace zelph
         using CommandHandler = std::function<void(const std::vector<std::string>& cmd)>;
         void set_command_handler(CommandHandler handler);
 
+        // Predicate consulted before echoing input back: the parsed form of a
+        // zelph statement and the result value of inline Janet code. Set by
+        // Interactive to suppress these echoes inside imported scripts while
+        // keeping them for interactive input. Query answers (apply_rule),
+        // deductions, keyword-handler output and explicit printing (print, ...)
+        // are not affected. Unset means: always echo.
+        using EchoPredicate = std::function<bool()>;
+        void set_echo_predicate(EchoPredicate predicate);
+
         void toggle_janet_logging();
 
         std::string get_janet_logging_status() const;

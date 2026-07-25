@@ -2,8 +2,8 @@
 # that COMPLETES natural partiality: subtraction results and negations
 # that do not exist over the naturals become zint terms.
 #
-# PREREQUISITES (import order):
-#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
+# PREREQUISITES:
+#   .import decimal-arithmetic  # or binary-arithmetic / binary-nand-arithmetic
 #   .import integer-arithmetic  # incl. the uniform operator facade
 #   .import symbolic-core
 #   .import symbolic-minus
@@ -23,6 +23,9 @@
 # unchanged over Z coefficients: d((neg zint &3) * x)/dx assembles
 # ((&0 * x) + ((neg zint &3) * &1)), and the NATURAL identities reduce
 # it to (neg zint &3).
+
+.import integer-arithmetic
+.import symbolic-minus
 
 # ---------------------------------------------------------------------------
 # Rule ZL1 -- zint leaves are their own normal forms (the SB pattern;

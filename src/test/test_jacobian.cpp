@@ -77,7 +77,7 @@ namespace
     template <typename Interactive>
     void import_jacobian_stack(Interactive& interactive, const bool with_diff)
     {
-        interactive.process(".import arithmetic");
+        interactive.process(".import binary-arithmetic");
         interactive.process(".import integer-arithmetic");
         interactive.process(".import polynomial");
         interactive.process(".import topoly");
@@ -98,7 +98,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("jacobian: three distinct points collide on (-8, 0, 0) (decimal substrate)")
+TEST_CASE("jacobian: three distinct points collide on (-8, 0, 0) (binary substrate)")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -133,7 +133,7 @@ TEST_CASE("jacobian: three distinct points collide on (-8, 0, 0) (decimal substr
         CHECK(any_output_contains(collector, "JB-NOTPOS-false")); });
 }
 
-TEST_CASE("jacobian: det J_G is the constant -512 as a polynomial identity (decimal substrate)")
+TEST_CASE("jacobian: det J_G is the constant -512 as a polynomial identity (binary substrate)")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

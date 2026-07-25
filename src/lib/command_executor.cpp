@@ -48,6 +48,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <kj/io.h>
 #endif
 
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -101,6 +102,40 @@ static std::string resolve_script_path(const std::string& raw)
     }
 
     throw std::runtime_error("Script '" + raw + "' not found (searched the given path and the zelph standard library; see '.help .import')");
+}
+
+// Default module ID of a script: the lowercase filename stem, e.g.
+// "binary-arithmetic" for /path/binary-arithmetic.zph. ASCII lowercasing
+// is sufficient -- module IDs are file names under the script author's
+// control.
+static std::string default_module_id(const std::string& resolved_path)
+{
+    return string::to_lower_ascii(std::filesystem::path(resolved_path).stem().string());
+}
+
+// Collect the module IDs a .zph script registers: its default ID plus
+// every ID declared by a ".provides" line. The pre-scan runs BEFORE the
+// script is executed, so substitutability works in both directions: a
+// script whose .provides alias is already claimed by an alternative
+// implementation is skipped without loading anything. Convention:
+// .provides belongs at the top of a script (the scan is line-based and
+// would also pick up a ".provides" line inside a Janet block).
+static std::vector<std::string> scan_module_ids(const std::string& resolved)
+{
+    std::vector<std::string> ids;
+    ids.push_back(default_module_id(resolved));
+
+    std::ifstream stream(resolved);
+    for (std::string line; std::getline(stream, line);)
+    {
+        const std::vector<std::string> parts = zelph::string::tokenize_quoted(line);
+        if (parts.size() >= 2 && parts[0] == ".provides")
+        {
+            for (size_t i = 1; i < parts.size(); ++i)
+                ids.push_back(string::to_lower_ascii(parts[i]));
+        }
+    }
+    return ids;
 }
 
 class console::CommandExecutor::Impl
@@ -230,6 +265,8 @@ private:
 #endif
         _command_map[".import"] = [this](auto& c)
         { cmd_import(c); };
+        _command_map[".provides"] = [this](auto& c)
+        { cmd_provides(c); };
         _command_map[".auto-run"] = [this](auto& c)
         { cmd_auto_run(c); };
         _command_map[".deductions"] = [this](auto& c)
@@ -244,6 +281,8 @@ private:
         { cmd_anchors(c); };
         _command_map[".semi-naive"] = [this](auto& c)
         { cmd_semi_naive(c); };
+        _command_map[".fact-stores"] = [this](auto& c)
+        { cmd_fact_stores(c); };
         _command_map[".cluster"] = [this](auto& c)
         { cmd_cluster(c); };
         _command_map[".cluster-drop"] = [this](auto& c)
@@ -953,6 +992,57 @@ public:
         // here), so `zelph examples/english` works like `.import`.
         const std::string resolved = resolve_script_path(file);
 
+        // Import guard for .zph scripts (Janet scripts are runnable programs
+        // that may legitimately be executed repeatedly, e.g. with different
+        // arguments -- they are exempt).
+        if (std::filesystem::path(resolved).extension() != ".janet")
+        {
+            const std::vector<std::string> module_ids = scan_module_ids(resolved);
+            const std::string&             self       = module_ids.front(); // default ID
+
+            for (const auto& id : module_ids)
+            {
+                const auto it = _repl_state->imported_module_ids.find(id);
+                if (it == _repl_state->imported_module_ids.end()) continue;
+
+                if (it->second == self)
+                {
+                    // Plain re-import of the same script.
+                    _n->diagnostic_stream() << "Skipping already imported " << resolved << std::endl;
+                }
+                else if (_repl_state->import_depth == 0)
+                {
+                    // The user explicitly asked for THIS script, but an
+                    // alternative implementation already claimed the ID.
+                    _n->error("Warning: skipping import of '" + file + "': module ID '" + id
+                                  + "' is already provided by '" + it->second + "'",
+                              true);
+                }
+                else
+                {
+                    // Nested import: an alternative provider being present is
+                    // the intended substitution mechanism -- inform, don't warn.
+                    _n->diagnostic_stream() << "Skipping " << resolved << ": module ID '" << id
+                                            << "' is already provided by '" << it->second << "'" << std::endl;
+                }
+                return;
+            }
+
+            // Register BEFORE executing: a second import request -- including an
+            // import cycle -- terminates immediately.
+            for (const auto& id : module_ids)
+                _repl_state->imported_module_ids.emplace(id, self);
+        }
+
+        // Nesting depth: suppresses the input echo inside imported scripts and
+        // distinguishes direct from nested import requests (see the guard above).
+        struct ImportDepthGuard
+        {
+            ReplState& state;
+            explicit ImportDepthGuard(ReplState& s) : state(s) { ++state.import_depth; }
+            ~ImportDepthGuard() { --state.import_depth; }
+        } depth_guard{*_repl_state};
+
         AutoRunSuspender suspend(_repl_state);
 
         // RAII so the exception path releases suppression too; the depth
@@ -1192,62 +1282,82 @@ private:
             "",
             "Available Commands",
             "──────────────────",
-            ".help [command]             – Show this help or detailed help for a specific command",
-            ".quit                       – Exit REPL (quits zelph)",
-            ".lang [code]                – Show or set current language",
-            ".name <node|id> <new_name>         – Set name in current language",
-            ".name <node|id> <lang> <new_name>  – Set name in specific language",
-            ".delname <node|id> [lang]          – Delete name in current language (or specified language)",
-            ".node [<name|id>]                  – Show detailed node information (names, connections, representation, Wikidata URL); defaults to last output node",
-            ".list <count>                      – List first N existing nodes (internal map order, with details)",
-            ".clist <count>                     – List first N nodes named in current language (sorted by ID if reasonable size, otherwise map order)",
-            ".out <name|id> [count]             – List details of outgoing connected nodes (default 20)",
-            ".in <name|id> [count]              – List details of incoming connected nodes (default 20)",
-            ".mermaid <node_name> [max_depth]   – Generate Mermaid HTML file for a node",
-            ".run                        – Run full inference",
-            ".run-once                   – Run a single inference pass",
+            "",
+            "Session",
+            "  .help [command]                           – Show this help or detailed help for a specific command",
+            "  .quit                                     – Exit REPL (quits zelph)",
+            "  .licenses                                 – Show third-party libraries and licenses",
+            "",
+            "Scripts, Loading & Saving",
+            "  .import <script> [args...]                – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library",
+            "  .provides <id> [id2 ...]                  – Claim module IDs in the import registry",
 #ifndef __EMSCRIPTEN__
-            ".run-md <subdir>            – Run inference and export results as Markdown",
-            ".run-file <file>            – Run inference, write deduced facts (reversed order) to <file> (encoded if lang=wikidata)",
-            ".decode <file>              – Decode an encoded/plain file and print readable facts",
+            "  .load <file>                              – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
+            "  .load-partial <file|manifest> [...]       – Load selected chunks as a read-only partial view (see .help .load-partial)",
+            "  .save <file.bin>                          – Save the current network to a binary file",
+            "  .stat-file <file.bin>                     – Show serialized-file chunk statistics without loading the network",
+            "  .index-file <file.bin> <json>             – Emit a JSON byte-offset index for a serialized .bin file",
 #endif
-            ".list-rules                 – List all defined inference rules",
-            ".list-predicate-usage [max] – Show predicate usage statistics (top N most frequent predicates)",
-            ".list-predicate-value-usage <pred> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
-            ".remove-rules               – Remove all inference rules",
-            ".remove <name|id>           – Remove a node (destructive: disconnects all edges and cleans names)",
-            ".import <script> [args...]  – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library",
+            "",
+            "Languages & Names",
+            "  .lang [code]                              – Show or set current language (e.g. en, de, wikidata)",
+            "  .name <node|id> <new_name>                – Set name in current language",
+            "  .name <node|id> <lang> <new_name>         – Set name in specific language",
+            "  .delname <node|id> [lang]                 – Delete name in current language (or specified language)",
+            "",
+            "Exploring the Network",
+            "  .stat                                     – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            "  .list <count>                             – List first N existing nodes (internal map order, with details)",
+            "  .clist <count>                            – List first N nodes named in current language (sorted by ID if feasible)",
+            "  .node [<name|id>]                         – Show detailed node information; defaults to last output node",
+            "  .out <name|id> [count]                    – List details of outgoing connected nodes (default 20)",
+            "  .in <name|id> [count]                     – List details of incoming connected nodes (default 20)",
+            "  .mermaid <node_name> [max_depth]          – Generate Mermaid HTML file for a node (default depth 3)",
+            "  .list-predicate-usage [max]               – Show predicate usage statistics (top N most frequent predicates)",
+            "  .list-predicate-value-usage <pred> [max]  – Show object/value usage statistics for a specific predicate (top N most frequent values)",
+            "",
+            "Inference & Rules",
+            "  .run                                      – Run full inference",
+            "  .run-once                                 – Run a single inference pass",
 #ifndef __EMSCRIPTEN__
-            ".load <file>                – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
-            ".load-partial <file.bin|manifest.json> [left=...] [right=...] [nameOfNode=...] [nodeOfName=...] [route-node=...] [route-name=...] [route-lang=<lang>] [manifest=<path>] [source-bin=<path>] [shard-root=<path>] [meta-only] – Load selected chunks by manifest, or selected chunks from an explicit .bin when selectors are provided; omit selectors to load all.",
-            ".save <file.bin>            – Save the current network to a binary file",
+            "  .run-md <subdir>                          – Run inference and export results as Markdown",
+            "  .run-file <file>                          – Run inference, write deduced facts in reversed order to a file (encoded if lang=wikidata)",
+            "  .decode <file>                            – Decode an encoded/plain file and print readable facts",
 #endif
-            ".prune-facts <pattern>      – Remove all facts matching the query pattern (only statements)",
-            ".prune-nodes <pattern>      – Remove matching facts AND all involved subject/object nodes",
-            ".cleanup                    – Remove isolated nodes and clean name mappings",
-            ".new                        – Clear the complete network and re-initialize the core nodes",
-            ".stat                       – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            "  .auto-run                                 – Toggle automatic execution of .run after each input (default: on)",
+            "  .deductions [all|focus|off]               – Set the deduction printing mode (default: focus)",
+            "  .list-rules                               – List all defined inference rules",
+            "  .remove-rules                             – Remove all inference rules",
+            "",
+            "Editing & Removing",
+            "  .remove <name|id>                         – Remove a node (destructive: disconnects all edges and cleans names)",
+            "  .prune-facts <pattern>                    – Remove all facts matching the query pattern (only statements)",
+            "  .prune-nodes <pattern>                    – Remove matching facts AND all involved subject/object nodes",
+            "  .cleanup                                  – Remove isolated nodes and clean name mappings",
+            "  .new                                      – Clear the complete network and re-initialize the core nodes",
+            "",
+            "Clusters",
+            "  .cluster [name]                           – Show clusters, or activate one ('default' = no cluster)",
+            "  .cluster-drop <name>                      – Remove a cluster INCLUDING all nodes created in it (rollback)",
+            "  .cluster-merge <from> <to>                – Move a cluster's membership into another ('default' = keep nodes, forget cluster)",
 #ifndef __EMSCRIPTEN__
-            ".stat-file <file.bin>       – Show serialized-file chunk statistics without loading the network",
-            ".index-file <file.bin> <json> – Emit a JSON byte-offset index for a serialized .bin file",
+            "",
+            "Wikidata",
+            "  .wikidata-constraints <json> <dir>        – Export property constraints as zelph scripts to a directory",
+            "  .wikidata-qualifiers <json> [P1 P2 ...]   – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
+            "  .export-wikidata <json> <id1> [id2 ...]   – Extract exact JSON lines for Q-IDs (no import)",
 #endif
-            ".licenses                   – Show third-party libraries and licenses",
-            ".log <max-depth>            – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = only statistics)",
-            ".log-janet                  – Toggle logging of Janet function calls (inputs/outputs)",
-            ".prof [reset]               – Dump reasoning profiler counters (requires .log -1 or .log N); 'reset' starts a fresh window",
-            ".auto-run                   – Toggle automatic execution of .run after each input",
-            ".deductions [all|focus|off] – Set the deduction printing mode (default: focus)",
-            ".parallel                   – Toggle parallel processing (default: on)",
-            ".anchors [on|off]           – Show or set anchor-based candidate lookups in unification (default: on)",
-            ".semi-naive [on|off|check]  – Show or set the fixpoint evaluation strategy (default: on)",
-#ifndef __EMSCRIPTEN__
-            ".wikidata-constraints <json> <dir> – Export constraints to a directory",
-            ".wikidata-qualifiers <json> [P1 P2 ...] – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)",
-            ".export-wikidata <json> <id1> [id2 ...] – Extracts exact JSON lines for Q-IDs (no import)",
-#endif
-            ".cluster [name]             – Show clusters, or activate one ('default' = no cluster)",
-            ".cluster-drop <name>        – Remove a cluster INCLUDING all nodes created in it",
-            ".cluster-merge <from> <to>  – Move a cluster's membership into another ('default' = keep nodes, forget cluster)",
+            "",
+            "Engine Behaviour",
+            "  .parallel                                 – Toggle parallel processing (default: on)",
+            "  .anchors [on|off]                         – Show or set anchor-based candidate lookups in unification (default: on)",
+            "  .semi-naive [on|off|check]                – Show or set the fixpoint evaluation strategy (default: on)",
+            "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
+            "",
+            "Logging & Profiling",
+            "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
+            "  .log-janet                                – Toggle logging of Janet function calls (inputs/outputs)",
+            "  .prof [reset]                             – Dump reasoning profiler counters (requires .log -1 or .log N); 'reset' starts a fresh window",
             "",
             "Type \".help <command>\" for detailed information about a specific command.",
             "",
@@ -1343,15 +1453,6 @@ private:
                       "The argument can be a name (in current language) or a numeric node ID.\n"
                       "If no argument is given, the node from the last output is used."},
 
-            {".nodes", ".nodes <count>\n"
-                       "Lists the first N named nodes (nodes that have at least one name in any language),\n"
-                       "sorted by node ID. For each node: ID, non-empty names in all languages,\n"
-                       "incoming/outgoing connection counts, and Wikidata URL if available."},
-
-            {".clist", ".clist <count>\n"
-                       "Lists the first N nodes that have a name in the current language, sorted by node ID.\n"
-                       "Output format is identical to .list (names in all languages, connection counts, Wikidata URL)."},
-
             {".mermaid", ".mermaid <node_name> [max_depth]\n"
                          "Generates a Mermaid HTML file visualizing the specified node and its connections\n"
                          "up to the given depth (default 3). The file is named <node_name>.html in the system temp dir.\n"
@@ -1363,11 +1464,10 @@ private:
 
             {".run-once", ".run-once\n"
                           "Performs a single inference pass."},
-
+#ifndef __EMSCRIPTEN__
             {".run-md", ".run-md <subdir>\n"
                         "Runs full inference and exports all deductions and contradictions as Markdown files\n"
                         "in the directory mkdocs/docs/<subdir> for use with MkDocs."},
-#ifndef __EMSCRIPTEN__
             {".run-file", ".run-file <file>\n"
                           "Performs full inference. Deduced facts (positive conclusions and contradictions) are written to <file>\n"
                           "in reversed order (reasons first, then ⇒ conclusion), without any brackets or markup.\n"
@@ -1426,10 +1526,26 @@ private:
                         "\n"
                         "Standard library scripts are addressed without path or extension:\n"
                         "  .import sparql\n"
-                        "  .import arithmetic\n"
+                        "  .import decimal-arithmetic\n"
                         "Subdirectories must be given explicitly:\n"
                         "  .import examples/english\n"
                         "  .import examples/neural/nn-wikidata-demo"},
+
+            {".provides", ".provides <id> [id2 ...]\n"
+                          "Claims one or more module IDs (lowercased) in the import registry.\n"
+                          "Placed at the top of a script, it declares IDs the script provides\n"
+                          "IN ADDITION to its default ID (its lowercase file name without\n"
+                          "extension). Scripts claiming the same ID are interchangeable,\n"
+                          "mutually exclusive implementations of one capability: whichever is\n"
+                          "imported first wins; importing another provider of that ID is\n"
+                          "skipped. Example: the arithmetic substrates (decimal-arithmetic,\n"
+                          "binary-arithmetic, binary-nand-arithmetic) all declare\n"
+                          "'.provides arithmetic' -- loading one satisfies every dependent\n"
+                          "script's '.import binary-arithmetic' line, and loading a second\n"
+                          "substrate is prevented.\n"
+                          "Used interactively, .provides claims an ID without loading\n"
+                          "anything, blocking all scripts that provide it.\n"
+                          "The registry is cleared by .new."},
 #ifndef __EMSCRIPTEN__
             {".load", ".load <file>\n"
                       "Loads a previously saved network state.\n"
@@ -1504,7 +1620,8 @@ private:
                          "Also cleans up associated entries in name mappings."},
 
             {".new", ".new\n"
-                     "Clears the complete network, including node names. Re-initializes core nodes."},
+                     "Clears the complete network, including node names. Re-initializes core nodes.\n"
+                     "Also clears the import registry, so all scripts can be imported again."},
 
             {".stat", ".stat\n"
                       "Shows current network statistics:\n"
@@ -1530,6 +1647,7 @@ private:
 
             {".log", ".log <max-depth>\n"
                      "Enables detailed reasoning logging up to the given recursion depth.\n"
+                     "-1 collects counters without log output - dump them with .prof\n"
                      "0 disables it.\n"
                      "Every line is correctly indented according to depth."},
 
@@ -1604,6 +1722,23 @@ private:
                             "          and then fails with a completeness-violation error. Intended\n"
                             "          for tests and debugging; the test suite always enables it.\n"
                             "Single-pass runs (.run-once) and queries are unaffected by this setting."},
+
+            {".fact-stores", ".fact-stores [on|off]\n"
+                             "Shows or disables the fact-path acceleration stores: the genuine-\n"
+                             "structure store (exact triple per created fact node) and the\n"
+                             "template-variable store (exact variable set per rule-template node).\n"
+                             "They make structure and variable lookups O(1) but grow by roughly\n"
+                             "150 bytes per fact created through the normal fact() path.\n"
+                             "  (no argument) – show the current state\n"
+                             "  off – disarm and free the stores; all lookups fall back to the\n"
+                             "        slower, semantically identical reconstruction walks. Use\n"
+                             "        BEFORE bulk-building large graphs through the fact() API,\n"
+                             "        e.g. a Janet mass importer. Trusted imports and binary\n"
+                             "        loads (.load) disable the stores automatically.\n"
+                             "  on  – valid only while the stores are still enabled: they cannot\n"
+                             "        be re-armed retroactively, because ABSENCE of an entry is\n"
+                             "        meaningful while a store is authoritative.\n"
+                             "Restart zelph to start with stores enabled again."},
 #ifndef __EMSCRIPTEN__
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
@@ -1643,7 +1778,7 @@ private:
                                  "from the dump and writes it to <id>.json in the current directory.\n"
                                  "The dump can be .json or .json.bz2.\n"
                                  "No import, no .bin cache, no network – pure extraction."},
-
+#endif
             {".cluster", ".cluster [name]\n"
                          "Without argument: lists all clusters with node counts and shows the active one.\n"
                          "With argument: activates the named cluster (created if needed). All nodes and\n"
@@ -1652,7 +1787,7 @@ private:
                          "already existed before are never recorded.\n"
                          "'.cluster default' deactivates cluster tracking.\n"
                          "Note: clusters are session state and are not persisted by .save."},
-#endif
+
             {".cluster-drop", ".cluster-drop <name>\n"
                               "Removes every node recorded in the cluster, including all edges and names\n"
                               "(rollback semantics). Pre-existing knowledge is untouched, but facts created\n"
@@ -2664,6 +2799,21 @@ private:
         // Tokens after the script path are passed to the script as arguments.
         import_file(cmd[1], std::vector<std::string>(cmd.begin() + 2, cmd.end()));
     }
+    void cmd_provides(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() < 2) throw std::runtime_error("Command .provides: missing module ID");
+
+        // Inside an imported script this is effectively a no-op: import_file
+        // pre-scans .provides lines and registers the IDs before execution
+        // (attributed to the script's default ID). The command still needs a
+        // handler so the line is not rejected -- and interactively it claims
+        // an ID directly, which blocks all scripts providing that ID.
+        for (size_t i = 1; i < cmd.size(); ++i)
+        {
+            const std::string id = string::to_lower_ascii(cmd[i]);
+            _repl_state->imported_module_ids.emplace(id, id);
+        }
+    }
     void cmd_auto_run(const std::vector<std::string>&)
     {
         _repl_state->auto_run = !_repl_state->auto_run;
@@ -2761,6 +2911,31 @@ private:
         }
 
         _n->out("Semi-naive evaluation: " + status(), true);
+    }
+
+    void cmd_fact_stores(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() == 1)
+        {
+            _n->out(std::string("Fact-path stores: ") + (_n->fact_stores_enabled() ? "on" : "off"), true);
+            return;
+        }
+        if (cmd.size() != 2 || (cmd[1] != "on" && cmd[1] != "off"))
+            throw std::runtime_error("Usage: .fact-stores [on|off]");
+
+        if (cmd[1] == "off")
+        {
+            _n->disable_fact_stores();
+            _n->out("Fact-path stores: off", true);
+            return;
+        }
+
+        if (_n->fact_stores_enabled())
+            _n->out("Fact-path stores: on", true);
+        else
+            throw std::runtime_error(".fact-stores on: the stores cannot be re-armed once disabled, "
+                                     "because absence of an entry is meaningful while a store is "
+                                     "authoritative. Use .new to start with a fresh engine and stores enabled again.");
     }
 
     void cmd_cluster(const std::vector<std::string>& cmd)

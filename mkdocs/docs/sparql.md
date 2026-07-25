@@ -23,7 +23,6 @@ Load a network, import the script, then type `sparql` and paste your query. An e
 ```
 zelph> .load /path/to/wikidata-20260309-all-pruned.bin
 zelph> .import sparql
-"SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
 zelph-> sparql
 SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
 
@@ -130,7 +129,6 @@ Rules: 0
 ------------------------
 zelph-> .import sparql
 Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/sparql.zph...
-"SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
 -- 23 ms --
 zelph-> %(set sparql-profile true)
 true

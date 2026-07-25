@@ -1,11 +1,6 @@
 # Symbolic differentiation as forward-chaining rules, following the
 # Trigger / Decompose / Assemble / Connect architecture.
 #
-# PREREQUISITES (import order, like the primes modules):
-#   .import arithmetic        # or binary-arithmetic / binary-nand-arithmetic
-#   .import symbolic-core
-#   .import diff
-#
 # Usage:
 #   x ~ symvar
 #   (x * x) diffby x
@@ -28,6 +23,8 @@
 # rule is guarded by X ~ symvar, so a forgotten declaration results in
 # silence instead of everything counting as constant. Operators outside
 # {+, *, of} get no derivative -- partiality by absence.
+
+.import symbolic-core
 
 # ---------------------------------------------------------------------------
 # Function-symbol derivatives: F hasderivative G means d F(u)/du = G(u).

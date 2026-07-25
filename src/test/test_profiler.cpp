@@ -45,7 +45,7 @@ TEST_CASE("profiler: counter-only mode is silent per deduction; .prof dumps on d
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process(".import arithmetic");
+        interactive.process(".import decimal-arithmetic");
         interactive.process(".deductions off");
         interactive.process(".log -1");
         collector.clear();

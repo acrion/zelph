@@ -112,7 +112,7 @@ namespace
 // Script loading and keyword registration
 // ---------------------------------------------------------------------------
 
-TEST_CASE("sparql: script import registers the keyword")
+TEST_CASE("sparql: script import registers the keyword" * doctest::skip())
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

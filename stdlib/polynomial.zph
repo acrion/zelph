@@ -3,11 +3,6 @@
 # addition, negation, subtraction and multiplication. The
 # term-to-polynomial compiler (topoly) is a separate follow-up module.
 #
-# PREREQUISITES (import order):
-#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
-#   .import integer-arithmetic  # incl. the uniform operator facade
-#   .import polynomial
-#
 # The module is independent of symbolic-core: it is a DATA layer, like
 # the arithmetic modules. The compiler bridging symbolic terms to this
 # layer is a separate follow-up module.
@@ -76,6 +71,9 @@
 # plcanon, pzcheck, pnonzero) stay unregistered on purpose: they are
 # genuine self-facts. lscale/lprod need no entry -- a scalar and a
 # cons list are never the same node.
+
+.import integer-arithmetic
+
 %(zelph/no-selffact-sugar "padd" "psub" "ladd" "pmul")
 
 # ---------------------------------------------------------------------------

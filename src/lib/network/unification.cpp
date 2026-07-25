@@ -246,38 +246,6 @@ static bool unify_nodes(
     return result;
 }
 
-// Returns true if nd is a VAR, or if its structural closure (subject,
-// predicate, objects at any depth) contains a VAR node.
-//
-// Rationale: the subject/object-driven snapshot anchors on a node and scans
-// only its adjacency. That is correct for concrete nodes (atoms or fully
-// concrete structures), because data facts referencing them are directly
-// adjacent. A pattern node with variables at ANY depth, however, must match
-// OTHER graph nodes via structural unification -- its own adjacency contains
-// only rule topology, so an anchor lookup would silently miss all data.
-// The shallow check is not sufficient here: e.g. the rule subject
-// ((A cons R) add (B cons S)) has no variables in its immediate structure;
-// the variables sit one level deeper inside the cons cells. This is exactly
-// the case the former BFS-based template check was introduced for
-// ("extend parallel reasoning to cover cons cells").
-static bool contains_variable_deep(Zelph* n, Node nd, const int depth, std::unordered_set<Node>& visited)
-{
-    if (nd == 0) return false;
-    if (Zelph::Impl::is_var(nd)) return true;
-    if (!Zelph::Impl::is_hash(nd)) return false;  // plain atom -> no internal structure
-    if (!visited.insert(nd).second) return false; // cycle protection
-
-    auto structs = get_fact_structures(n, nd, depth);
-    for (const auto& fs : *structs)
-    {
-        if (contains_variable_deep(n, fs.subject, depth, visited)) return true;
-        if (contains_variable_deep(n, fs.predicate, depth, visited)) return true;
-        for (Node o : fs.objects)
-            if (contains_variable_deep(n, o, depth, visited)) return true;
-    }
-    return false;
-}
-
 // --- Bound-pattern grounding -------------------------------------------------
 //
 // A structured rule pattern whose variables are all bound by earlier
@@ -336,8 +304,7 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
         history.pop_back();
         // Hash node without decomposable structure (e.g. a set node):
         // concrete iff it contains no variables.
-        std::unordered_set<Node> visited;
-        if (contains_variable_deep(n, pattern, depth, visited)) return GroundResult::Unbound;
+        if (n->var_in_closure(pattern)) return GroundResult::Unbound;
         out = pattern;
         return GroundResult::Grounded;
     }
@@ -455,8 +422,7 @@ static void collect_partial_anchors(
             // Mirror is_concrete_lookup_node: a bound value containing
             // variables at any depth (template leak) is not a data node;
             // anchoring on it would break the identity argument.
-            std::unordered_set<Node> vc;
-            if (contains_variable_deep(n, bound, log_depth, vc)) return;
+            if (n->var_in_closure(bound)) return;
         }
         out.push_back({bound, chain});
         return;
@@ -469,14 +435,11 @@ static void collect_partial_anchors(
         return;
     }
 
+    if (!n->var_in_closure(pattern))
     {
-        std::unordered_set<Node> vc;
-        if (!contains_variable_deep(n, pattern, log_depth, vc))
-        {
-            if (pattern != parent_rule)
-                out.push_back({pattern, chain}); // fully concrete subterm
-            return;
-        }
+        if (pattern != parent_rule)
+            out.push_back({pattern, chain}); // fully concrete subterm
+        return;
     }
 
     if (depth_left <= 0) return;
@@ -511,6 +474,10 @@ static bool climb_partial_anchor(
     const size_t           work_budget,
     adjacency_set&         out)
 {
+    // ONE lock scope for the whole climb: formerly one full adjacency copy
+    // per frontier node plus two locked edge probes per parent.
+    const Network::ReadScope scope = n->read_scope();
+
     adjacency_set frontier;
     frontier.insert(anchor.node);
     size_t work = 0;
@@ -522,7 +489,7 @@ static bool climb_partial_anchor(
         adjacency_set next;
         for (const Node c : frontier)
         {
-            const adjacency_set parents = n->get_right(c);
+            const adjacency_set& parents = scope.right(c);
             work += parents.size();
             if (work > work_budget) return false;
 
@@ -530,8 +497,8 @@ static bool climb_partial_anchor(
             {
                 if (filter != 0)
                 {
-                    if (!n->has_right_edge(f, filter)) continue; // wrong predicate
-                    if (n->has_left_edge(f, filter)) continue;   // filter node is f's subject, not its predicate
+                    if (scope.right(f).count(filter) == 0) continue; // wrong predicate
+                    if (scope.left(f).count(filter) != 0) continue;  // filter node is f's subject, not its predicate
                 }
                 next.insert(f);
             }
@@ -544,9 +511,50 @@ static bool climb_partial_anchor(
     return true;
 }
 
+zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, const Node condition, const int log_depth)
+{
+    PatternInfo pi;
+    pi.condition = condition;
+
+    // Decompose the RULE PATTERN via the shared structure list: the former
+    // get_preferred_structure calls copied the full FactStructure
+    // (including its object adjacency_set) once for the condition and once
+    // more for the subject hint -- two heap allocations per call.
+    const auto condition_structs = get_fact_structures(n, condition, log_depth);
+    if (condition_structs->empty() || condition_structs->front().predicate == 0)
+        return pi; // relation stays 0: decomposition failed
+
+    const FactStructure& fs = condition_structs->front();
+    pi.relation             = fs.predicate;
+    pi.subject              = fs.subject;
+    pi.objects              = fs.objects;
+
+    {
+        const auto subject_structs = get_fact_structures(n, pi.subject, log_depth);
+        pi.subject_pred_hint       = subject_structs->empty() ? Node{0} : subject_structs->front().predicate;
+    }
+
+    return pi;
+}
+
 Unification::Unification(
     Zelph*                            n,
     Node                              condition,
+    Node                              parent,
+    const std::shared_ptr<Variables>& variables,
+    const std::shared_ptr<Variables>& unequals,
+    concurrency::ThreadPool*          pool,
+    int                               log_depth,
+    ReasoningProfiler&                profiler,
+    Node                              seed_fact,
+    Node                              seed_predicate)
+    : Unification(n, build_pattern_info(n, condition, log_depth), parent, variables, unequals, pool, log_depth, profiler, seed_fact, seed_predicate)
+{
+}
+
+Unification::Unification(
+    Zelph*                            n,
+    PatternInfo                       pattern,
     Node                              parent,
     const std::shared_ptr<Variables>& variables,
     const std::shared_ptr<Variables>& unequals,
@@ -568,22 +576,17 @@ Unification::Unification(
     if (_n->logging_active())
         _prof.unification_instances.fetch_add(1, std::memory_order_relaxed);
 
-    // Use get_preferred_structure to robustly decompose the RULE PATTERN (condition).
-    // This handles cases where the pattern itself is a complex structure (like (A cons R)).
-    FactStructure fs = get_preferred_structure(_n, condition, _log_depth);
-
-    if (fs.predicate != 0)
+    if (pattern.relation != 0)
     {
-        Node relation = fs.predicate;
-        _subject      = fs.subject;
-        _objects      = fs.objects;
-
-        _subject_pred_hint = get_preferred_structure(_n, _subject, _log_depth).predicate;
+        Node relation      = pattern.relation;
+        _subject           = pattern.subject;
+        _objects           = std::move(pattern.objects); // sink: the by-value parameter is ours
+        _subject_pred_hint = pattern.subject_pred_hint;
 
         if (_n->logging_active() && !Zelph::Impl::is_var(relation))
             _current_rel_ctx = relation;
 
-        U_LOG(_log_depth, "Init Unification: " + U_NODE(condition));
+        U_LOG(_log_depth, "Init Unification: " + U_NODE(pattern.condition));
 
         if (Zelph::Impl::is_var(relation))
         {
@@ -625,7 +628,7 @@ Unification::Unification(
     {
         // Fallback or error logging if structure cannot be determined
         if (_n->should_log(1))
-            _n->log(1, "Unify", "get_preferred_structure failed for rule condition: " + _n->format(condition));
+            _n->log(1, "Unify", "get_preferred_structure failed for rule condition: " + _n->format(pattern.condition));
     }
 
     if (_relation_variable != 0)
@@ -655,8 +658,7 @@ Unification::Unification(
     if (!_relation_list.empty() && _subject != 0
         && Zelph::Impl::is_hash(_subject) && !Zelph::Impl::is_var(_subject))
     {
-        std::unordered_set<Node> visited;
-        if (contains_variable_deep(_n, _subject, _log_depth, visited))
+        if (_n->var_in_closure(_subject))
         {
             Node              grounded = 0;
             std::vector<Node> ground_history;
@@ -681,7 +683,7 @@ Unification::Unification(
         std::string rels_str;
         for (Node r : _relation_list)
             rels_str += " " + U_NODE(r);
-        u_log(_n, _log_depth, "Unification: condition=" + _n->format(condition) + "subject=" + U_NODE(_subject) + " relations: [" + rels_str + "] objects=" + std::to_string(_objects.size()) + " parent=" + _n->format(parent));
+        u_log(_n, _log_depth, "Unification: condition=" + _n->format(pattern.condition) + "subject=" + U_NODE(_subject) + " relations: [" + rels_str + "] objects=" + std::to_string(_objects.size()) + " parent=" + _n->format(parent));
     }
 
     if (_relation_list.empty()) return;
@@ -922,6 +924,7 @@ bool Unification::increment_fact_index()
             bool optimized_snapshot = false;
             bool partial_used       = false;
             Node current_rel        = *_relation_index;
+            _snapshot_prefiltered   = false;
 
             if (_seed_fact != 0)
             {
@@ -944,6 +947,10 @@ bool Unification::increment_fact_index()
                 _partial_snapshot_valid = false;
                 partial_used            = true;
                 optimized_snapshot      = true;
+                _snapshot_prefiltered   = true; // climb's top-level filter is
+                                                // always the fixed relation and
+                                                // applies exactly the predicate-
+                                                // vs-subject exclusion below
             }
             else if (_n->use_anchors())
             {
@@ -977,8 +984,7 @@ bool Unification::increment_fact_index()
                     if (nd == 0 || Zelph::Impl::is_var(nd) || !_n->exists(nd))
                         return false;
 
-                    std::unordered_set<Node> visited;
-                    if (nd == _parent || contains_variable_deep(_n, nd, _log_depth, visited))
+                    if (nd == _parent || _n->var_in_closure(nd))
                     {
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                             u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
@@ -995,23 +1001,12 @@ bool Unification::increment_fact_index()
                 if (is_concrete_lookup_node(s))
                 {
                     // Strategy: Subject Driven
-                    // Zelph::fact -> connect(Subject, Fact). Subject points to Fact (Source->Fact).
-                    // So get_right(Subject) contains the Facts involving this subject.
-                    adjacency_set candidates = _n->get_right(s);
-                    _facts_snapshot.clear();
-                    // Filter candidates: we only want facts that are of type 'current_rel'
-                    for (Node fact : candidates)
-                    {
-                        if (_n->has_left_edge(fact, current_rel)) continue;
-
-                        // Zelph::fact -> connect(Fact, RelationType). Fact points to RelationType.
-                        // So get_right(Fact) contains RelationType.
-                        if (_n->has_right_edge(fact, current_rel))
-                        {
-                            _facts_snapshot.insert(fact);
-                        }
-                    }
-                    optimized_snapshot = true;
+                    // One lock scope filters the anchor's adjacency straight
+                    // into the snapshot (Zelph::collect_anchored_facts).
+                    _n->collect_anchored_facts(s, current_rel, _facts_snapshot);
+                    optimized_snapshot    = true;
+                    _snapshot_prefiltered = true;
+                    optimized_snapshot    = true;
                     if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                     {
                         u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
@@ -1026,19 +1021,12 @@ bool Unification::increment_fact_index()
                     if (is_concrete_lookup_node(o))
                     {
                         // Strategy: Object Driven
-                        // Zelph::fact -> connect(Object, Fact). Object points to Fact.
-                        adjacency_set candidates = _n->get_right(o);
-                        _facts_snapshot.clear();
-                        for (Node fact : candidates)
-                        {
-                            if (_n->has_left_edge(fact, current_rel)) continue;
-
-                            if (_n->has_right_edge(fact, current_rel))
-                            {
-                                _facts_snapshot.insert(fact);
-                            }
-                        }
-                        optimized_snapshot = true;
+                        // One lock scope filters the anchor's adjacency straight
+                        // into the snapshot (Zelph::collect_anchored_facts).
+                        _n->collect_anchored_facts(o, current_rel, _facts_snapshot);
+                        optimized_snapshot    = true;
+                        _snapshot_prefiltered = true;
+                        optimized_snapshot    = true;
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                         {
                             u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
@@ -1103,7 +1091,7 @@ bool Unification::increment_fact_index()
         {
             return false;
         }
-    } while (_n->has_left_edge(*_fact_index, *_relation_index)); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
+    } while (!_snapshot_prefiltered && _n->has_left_edge(*_fact_index, *_relation_index)); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
 
     return true;
 }
@@ -1255,8 +1243,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // This exact shape slipped through the former shallow check and caused
     // the multiplication junk-fact regression.
     {
-        std::unordered_set<Node> visited;
-        if (contains_variable_deep(_n, subject, depth, visited))
+        if (_n->var_in_closure(subject))
         {
             if (_n->logging_active())
             {
@@ -1268,8 +1255,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     }
     for (Node o : objects)
     {
-        std::unordered_set<Node> visited;
-        if (contains_variable_deep(_n, o, depth, visited))
+        if (_n->var_in_closure(o))
         {
             if (_n->logging_active())
             {

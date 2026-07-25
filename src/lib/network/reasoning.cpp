@@ -764,6 +764,27 @@ void zelph::network::collect_variables(Zelph* z, Node pattern, std::unordered_se
         return;
     }
 
+    // Atoms carry no variables and no structure (same classification as
+    // the lock-free gate in get_fact_structures) -- historically this
+    // returned via an empty get_preferred_structure probe.
+    if (!Zelph::Impl::is_hash(pattern)) return;
+
+    // O(1) store path: the exact variable set recorded at creation. On
+    // authoritative stores this is IDENTICAL to the walk below: the walk
+    // recurses over genuine preferred structures, and hash-consed DAGs
+    // are acyclic, so both compute the same union.
+    {
+        std::shared_ptr<const std::unordered_set<Node>> stored;
+        if (z->try_get_template_vars(pattern, stored))
+        {
+            if (stored) vars.insert(stored->begin(), stored->end());
+            return;
+        }
+    }
+
+    z->count_template_vars_walk();
+
+    // Historical reconstruction walk (fallback after bulk paths):
     // Cycle check
     for (Node visited : history)
     {

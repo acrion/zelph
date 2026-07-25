@@ -32,6 +32,9 @@ nav:
   - Sharding and Partial Loading: sharding.md
   - Use Case - Wikidata: wikidata.md
   - Wikidata Qualifiers: qualifiers.md
+  - Internals:
+      - Performance Architecture: internals/performance.md
+      - Measurement Methodology: internals/measurement.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

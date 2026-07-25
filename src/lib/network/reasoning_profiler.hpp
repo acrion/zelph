@@ -206,6 +206,9 @@ namespace zelph::network
 #undef RZ
 
             _zelph->reset_fs_cache_stats();
+            _zelph->reset_var_closure_stats();
+            _zelph->reset_genuine_stats();
+            _zelph->reset_template_vars_stats();
 
             // maps
             {
@@ -299,6 +302,24 @@ namespace zelph::network
                     << " misses=" << fs.misses
                     << " full_clears=" << fs.full_clears
                     << " stale_erased=" << fs.stale_erased << "\n";
+            }
+
+            {
+                const auto vc = _zelph->var_closure_stats();
+                oss << "  var_closure: queries=" << vc.flag_queries
+                    << " walk_fallbacks=" << vc.walk_fallbacks << "\n";
+            }
+
+            {
+                const auto tv = _zelph->template_vars_stats();
+                oss << "  template_vars: hits=" << tv.hits
+                    << " walks=" << tv.walks << "\n";
+            }
+
+            {
+                const auto gs = _zelph->genuine_stats();
+                oss << "  genuine: hits=" << gs.hits
+                    << " walks=" << gs.walks << "\n";
             }
 
             oss << "  check_fact: known=" << load(check_fact_known)

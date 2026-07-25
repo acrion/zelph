@@ -10,7 +10,7 @@ The modules live in the standard library:
 Both expose the identical user interface:
 
 ```
-zelph> .import arithmetic
+zelph> .import decimal-arithmetic
 zelph> (&128 + &53) = X
 ((&128  +  &53)  =  &181) ⇐ ...
 zelph> &42 cmp &9
@@ -165,7 +165,7 @@ Both load on top of either arithmetic module and expose the same repeatable
 query idiom:
 
 ```
-.import arithmetic            # or: .import binary-arithmetic
+.import decimal-arithmetic            # or: .import binary-arithmetic
 .import primes                # or: .import primes-naf
 (:testprime &113) = X
 Answer: (:testprime &113) = prime

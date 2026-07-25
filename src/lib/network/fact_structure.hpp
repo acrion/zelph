@@ -63,6 +63,22 @@ namespace zelph::network
 
         if (fact == 0) return shared_empty;
 
+        // ---- Structureless node classes: answer without any lock ----
+        // Atoms (sequential IDs) and variables can never decompose: a
+        // structure requires a declared relation type among the node's
+        // right neighbors; every edge out of a non-fact node leads to a
+        // fact (hash) node by construction of connect(), and hash nodes
+        // enter the relation-type set only through an explicit
+        // (hashnode ~ ->) declaration, which neither the parser, the
+        // stdlib, nor any import produces (the same accepted-exotic
+        // configuration as the genuine store's predicate-user divergence;
+        // `.semi-naive check` backstops). These probes were the atom share
+        // of ~17M fs_cache hits per Jacobian phase, each paying a rwlock
+        // pair plus a map find; the classification is two bit tests.
+        // Holds independently of the authoritative bits, i.e. also after
+        // binary loads and trusted imports.
+        if (!Zelph::is_hash(fact) || Zelph::is_var(fact)) return shared_empty;
+
         // ---- Cache lookup FIRST (ignores depth; depth is only for logging) ----
         // A hit answers without touching the adjacency locks: the former
         // exists() probe before the lookup cost one _smtx_left rwlock pair
@@ -78,6 +94,26 @@ namespace zelph::network
             }
             return cached;
         }
+
+        // ---- Genuine-structure fast path ----
+        // Every triple-created node answers with its exact stored triple:
+        // no adjacency locks, no O(deg^2) walk over hub neighborhoods.
+        // The entry is promoted into the fs_cache so subsequent probes pay
+        // a single lock pair; per-node invalidation may erase that copy at
+        // any time -- harmless, the next probe re-promotes the same
+        // immutable list.
+        FactStructurePtr genuine;
+        if (n->try_get_genuine_structure(fact, genuine))
+        {
+            n->store_fact_structures_cached(fact, genuine);
+            if (n->should_log(depth))
+            {
+                n->log(depth, "get_fact_structures", "Genuine-store HIT for fact: " + n->format(fact));
+            }
+            return genuine;
+        }
+
+        n->count_genuine_walk(); // everything below is the historical reconstruction
 
         // Predicate-detection memo for the whole reconstruction (see
         // Zelph::relation_type_set). MUST be fetched before the ReadScope
@@ -384,7 +420,7 @@ namespace zelph::network
             }
         }
 
-            auto result = std::make_shared<FactStructureList>(std::move(structures));
+        auto result = std::make_shared<FactStructureList>(std::move(structures));
         n->store_fact_structures_cached(fact, result);
 
         if (n->should_log(depth))

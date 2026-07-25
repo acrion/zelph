@@ -14,6 +14,9 @@
 #
 # Digit-level table data in binary-arithmetic.zph: 52 facts.
 # Digit-level table data here: 1 gate fact (plus the digit alphabet).
+
+.provides arithmetic
+
 %
 (defn- half-decimal
   "Halve a decimal digit string. Returns [quotient remainder-bit]."

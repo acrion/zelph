@@ -6,7 +6,7 @@ run_test() {
   local log_file
   log_file=$(mktemp "/tmp/zelph-mul-${label}-XXXXXX.log")
 
-  printf '.import arithmetic\n.log -1\n&%s * &%s\n.quit\n' "$a" "$b" \
+  printf '.import decimal-arithmetic\n.log -1\n&%s * &%s\n.quit\n' "$a" "$b" \
     | build-release/bin/zelph >"$log_file" 2>&1 || {
       echo "ERROR: zelph failed for ${label}, see $log_file" >&2
       return 1

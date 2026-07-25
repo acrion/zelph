@@ -556,6 +556,35 @@ namespace zelph::network
             return true;
         }
 
+        // Anchored-candidate filter for Unification::increment_fact_index:
+        // from the outgoing edges of `anchor`, collect the facts that use
+        // `relation` as their PREDICATE (fact -> relation edge present,
+        // relation -> fact edge absent -- the latter would make the
+        // relation the fact's SUBJECT). All checks under ONE shared lock
+        // pair on references; the former implementation copied the
+        // anchor's full adjacency and paid two locked edge probes per
+        // candidate.
+        void collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
+        {
+            // Same lock order as writers (connect): left before right.
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            out.clear();
+
+            const auto anchor_it = _left.find(anchor);
+            if (anchor_it == _left.end()) return;
+
+            for (const Node fact : anchor_it->second)
+            {
+                const auto fl = _left.find(fact);
+                if (fl == _left.end() || fl->second.count(relation) == 0) continue; // not this predicate
+                const auto fr = _right.find(fact);
+                if (fr != _right.end() && fr->second.count(relation) != 0) continue; // relation is the fact's subject
+                out.insert(fact);
+            }
+        }
+
         bool has_left_edge(Node b, Node a) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_right);

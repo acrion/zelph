@@ -3,8 +3,8 @@
 # polynomial.zph -- pure forward-chaining rules, Trigger / Decompose /
 # Assemble / Connect.
 #
-# PREREQUISITES (import order):
-#   .import arithmetic          # or binary-arithmetic / binary-nand-arithmetic
+# PREREQUISITES:
+#   .import decimal-arithmetic  # or binary-arithmetic / binary-nand-arithmetic
 #   .import integer-arithmetic  # incl. the uniform operator facade
 #   .import polynomial
 #   .import topoly
@@ -59,6 +59,8 @@
 # request (:topoly T), needstopoly is a marker, and (P aspoly P) for a
 # leaf genuinely reads "P is its own polynomial form" -- exactly like
 # (T canon T).
+
+.import polynomial
 
 # ---------------------------------------------------------------------------
 # Rule TT0 -- Trigger

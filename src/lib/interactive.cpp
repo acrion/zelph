@@ -90,6 +90,13 @@ public:
             [this](const std::vector<std::string>& cmd)
             { _command_executor->execute(cmd); });
 
+        // Suppress the input echo (parsed statements, inline Janet results)
+        // inside imported scripts; interactive input keeps it. Reasoning
+        // output, query answers and import diagnostics are unaffected.
+        _script_engine->set_echo_predicate(
+            [this]
+            { return _repl_state->import_depth == 0; });
+
         _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
     }
 
@@ -114,6 +121,7 @@ public:
         _repl_state->active_keyword.clear();
         _repl_state->keyword_buffer.clear();
         _repl_state->last_graph_html_path.clear();
+        _repl_state->imported_module_ids.clear();
 
         zelph::string::reset_last_node();
 

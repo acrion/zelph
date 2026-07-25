@@ -139,6 +139,7 @@ namespace zelph::network
         // here because only zelph.cpp sees the complete Impl type -- this
         // is the visibility-correct path (Cap'n-Proto layering).
         Network::ReadScope read_scope() const;
+        void               collect_anchored_facts(Node anchor, Node relation, adjacency_set& out) const;
 
         // parse_relation for code running under a live ReadScope: all
         // adjacency reads via scope references, predicate detection via
@@ -176,8 +177,83 @@ namespace zelph::network
             uint64_t full_clears{0};
             uint64_t stale_erased{0};
         };
-        FsCacheStats      fs_cache_stats() const;
-        void              reset_fs_cache_stats() const;
+        FsCacheStats fs_cache_stats() const;
+        void         reset_fs_cache_stats() const;
+
+        // --- Variable-closure flag (rule-template detection) ---
+        // True iff nd is a variable or its GENUINE structural closure
+        // (subject, predicate, objects at any depth) contains one -- the
+        // criterion separating rule-template nodes from data nodes
+        // (template rejection in extract_bindings, anchor eligibility,
+        // bound-pattern grounding). O(1): maintained eagerly by fact()
+        // from the actual triple arguments -- hash-consing materializes
+        // children before parents, so child flags are final when the
+        // parent is created, and a node's ID is its triple hash, so the
+        // flag can never change afterwards. Unlike the former
+        // reconstruction-based walk this cannot be misled by ambiguous
+        // adjacency readings. Paths that bypass triple construction or
+        // destroy topology clear the authoritative bit (see Impl); the
+        // query then falls back to the historical walk -- never unsound,
+        // never worse than the pre-flag behaviour.
+        bool var_in_closure(Node nd) const;
+
+        struct VarClosureStats
+        {
+            uint64_t flag_queries{0};
+            uint64_t walk_fallbacks{0};
+        };
+        VarClosureStats var_closure_stats() const;
+        void            reset_var_closure_stats() const;
+
+        // O(1) variable-set lookup for fact()-created nodes (see Impl's
+        // _template_vars). Returns true while the store is authoritative;
+        // out is then the node's variable set (nullptr = provably none).
+        // Returns false after bulk paths disarmed the store -- callers
+        // run the historical reconstruction walk then.
+        bool try_get_template_vars(Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const;
+        void count_template_vars_walk() const;
+
+        struct TemplateVarsStats
+        {
+            uint64_t hits{0};
+            uint64_t walks{0};
+        };
+        TemplateVarsStats template_vars_stats() const;
+        void              reset_template_vars_stats() const;
+
+        // --- Genuine-structure store (reconstruction bypass) ---
+        // get_fact_structures consults this on every fs_cache miss and
+        // walks the adjacency only for nodes without an entry: atoms
+        // (negative entries), subject == predicate facts (deliberately
+        // not stored -- the walk reconstructs those as EMPTY and
+        // unification's atom treatment of them must not change), and
+        // everything after the store is disarmed. Ends the O(deg^2)
+        // re-reconstruction of hub nodes.
+        bool try_get_genuine_structure(Node fact, FactStructurePtr& out) const;
+        void count_genuine_walk() const; // profiler hook for get_fact_structures
+
+        struct GenuineStats
+        {
+            uint64_t hits{0};
+            uint64_t walks{0};
+        };
+        GenuineStats genuine_stats() const;
+        void         reset_genuine_stats() const;
+
+        // --- Fact-path store control (.fact-stores) ---
+        // The genuine-structure and template-variable stores grow with
+        // every fact() call (~130-180 bytes per fact for the genuine
+        // store). Bulk paths (trusted imports, binary loads, removals,
+        // merges) disarm them automatically via
+        // invalidate_fact_structures_cache; this switch offers the same
+        // for API-driven bulk building, e.g. a Janet mass importer.
+        // One-way per engine instance: re-arming cannot be made sound
+        // retroactively, because ABSENCE of an entry is meaningful while
+        // a store is authoritative (.new creates a fresh engine with
+        // stores enabled).
+        bool fact_stores_enabled() const;
+        void disable_fact_stores() const;
+
         FactComponents    extract_fact_components(Node relation) const;
         void              set_output_handler(io::OutputHandler output) const;
         io::OutputHandler get_output_handler() const;
@@ -318,6 +394,12 @@ namespace zelph::network
         mutable std::atomic<uint64_t>                             _fs_cache_misses{0};
         mutable std::atomic<uint64_t>                             _fs_cache_full_clears{0};
         mutable std::atomic<uint64_t>                             _fs_cache_stale_erased{0};
+        mutable std::atomic<uint64_t>                             _var_flag_queries{0};
+        mutable std::atomic<uint64_t>                             _var_flag_fallbacks{0};
+        mutable std::atomic<uint64_t>                             _genuine_hits{0};
+        mutable std::atomic<uint64_t>                             _genuine_walks{0};
+        mutable std::atomic<uint64_t>                             _tvars_hits{0};
+        mutable std::atomic<uint64_t>                             _tvars_walks{0};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
         std::unordered_set<Node>                                  _verbose_selffact_preds;
