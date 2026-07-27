@@ -548,11 +548,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     }
 
     // 5. Proxy / Instance Detection
-    // If a node is anonymous and not a container, check if it is an instance of a concept (IsA).
-    // If so, display the concept instead of the structural fact "network::Node IsA Concept".
+    // An ANONYMOUS, STRUCTURELESS node that is an instance of a concept is
+    // shown as that concept -- a node a rule created for a fresh variable
+    // has nothing else to show.
+    //
+    // A node with a structure of its OWN is never substituted: (x + y)
+    // stays (x + y) after (x + y) ~ t, because "is an instance of" is not
+    // "is". Substituting it hid every tagged term behind its concept and
+    // echoed the statement as "t ~ t", which is not re-enterable input.
     bool is_negation = false;
     if (z->exists(resolved))
     {
+        // Exactly the condition under which the structural path below can
+        // produce a rendering (it falls back on parse_relation too).
+        const bool has_own_structure = z->parse_relation(resolved) != 0;
+
         for (network::Node rel : z->get_right(resolved))
         {
             if (z->parse_relation(rel) == z->core.IsA)
@@ -574,16 +584,12 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             continue; // Skip metadata, we will format it structurally below
                         }
 
-#ifdef DEBUG_FORMAT_FACT
-                        z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found IsA proxy to concept=" << concept_node << std::endl;
-#endif
-                        string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history, ctx);
+                        if (has_own_structure) continue; // structure wins over the concept
+
+                        string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history);
 
                         if (!result.empty() && result != "?")
                         {
-#ifdef DEBUG_FORMAT_FACT
-                            z->diagnostic_stream() << indent << "[DEBUG node_to_string] Proxy resolved to: " << result << std::endl;
-#endif
                             return;
                         }
                     }
@@ -600,7 +606,27 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 #endif
 
     network::adjacency_set objects;
-    network::Node          subject = z->parse_fact(resolved, objects, parent);
+    network::Node          subject = 0;
+
+    // Prefer the RECORDED structure over any reconstruction: the genuine-
+    // structure store holds the exact triple fact() was called with, so
+    // there is no ambiguity from the facts this node is merely PART of.
+    // Without it, z->parse_fact's candidate filter discards a structured
+    // subject as soon as it carries predicates of its own (a term that
+    // topoly has compiled acquires aspoly/needstopoly/mul), and the
+    // hand-rolled walk below then picks an arbitrary bidirectional
+    // neighbour -- including the very parent being rendered, which the
+    // history check turns into "?".
+    {
+        const network::FactStructure fs = network::get_preferred_structure(z, resolved, 3);
+        if (fs.predicate != 0 && fs.subject != 0 && fs.subject != parent && !fs.objects.empty())
+        {
+            subject = fs.subject;
+            objects = fs.objects;
+        }
+    }
+
+    if (subject == 0) subject = z->parse_fact(resolved, objects, parent);
 
     bool is_condition = false;
 
@@ -624,8 +650,12 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             for (network::Node nd : z->get_right(resolved))
             {
                 // nd is the subject iff it is bidirectional with resolved (in both left and right)
-                // and is not the predicate itself.
-                if (nd != fallback_pred && z->has_left_edge(resolved, nd))
+                // and is neither the predicate itself nor the fact currently being rendered.
+                // The parent exclusion mirrors z->parse_fact: `resolved` is bidirectional with
+                // EVERY fact it is the subject of, including its own parent, so without this
+                // guard the walk can pick the ancestor -- which the history check then renders
+                // as '?'.
+                if (nd != fallback_pred && nd != parent && z->has_left_edge(resolved, nd))
                 {
                     fallback_subj = nd;
                     break;

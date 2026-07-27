@@ -143,3 +143,90 @@ TEST_CASE("node display: non-canonical digit lists render raw, not as &-literals
         CHECK(any_output_contains(collector, "((&105 - &98) = &7)"));
         CHECK_FALSE(any_output_contains(collector, "diff &7")); });
 }
+
+TEST_CASE("display: tagging a structured term does not hide it behind the concept")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("(x + y) ~ t");
+        // "is an instance of" is not "is": the term keeps its own structure,
+        // so the echo stays re-enterable input.
+        CHECK(any_output_contains(collector, "(x + y) ~ t"));
+        CHECK_FALSE(any_output_contains(collector, "t ~ t")); });
+}
+
+TEST_CASE("display: a compiled term renders in full as a nested subterm")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // A term that has been through topoly acquires predicates of its
+        // own (aspoly, needstopoly, mul). z->parse_fact's candidate filter
+        // discards such a subject, and the fallback walk used to take the
+        // first bidirectional neighbour of the fact node -- which includes
+        // every fact the node is the SUBJECT of, among them the parent
+        // currently being rendered. The history check then printed '?'.
+        // Only the nested position was affected: at top level parent == 0,
+        // so there was no ancestor to pick wrongly.
+        interactive.process(".import topoly");
+        process_lines(interactive, R"(
+x ~ symvar
+y ~ symvar
+x pouter y
+:topoly (((x * x) * y) + x)
+)");
+        collector.clear();
+        interactive.process("((x * x) * y) foo probe");
+        CHECK(any_output_contains(collector, "((x * x) * y) foo probe"));
+        // Both failure shapes seen in practice: the ancestor collapsing to
+        // '?', and a fallback that finds no candidate at all ('??').
+        CHECK_FALSE(any_output_contains(collector, "(? * y)"));
+        CHECK_FALSE(any_output_contains(collector, "(?? * y)")); });
+}
+
+TEST_CASE("display: a compiled term keeps its structure across several parents")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // The wrong subject was picked from an unordered adjacency set, so
+        // which foreign fact won depended on how many facts the term was
+        // part of. Rendering the same term under several different parents
+        // pins that the recorded structure wins every time.
+        interactive.process(".import topoly");
+        process_lines(interactive, R"(
+x ~ symvar
+y ~ symvar
+x pouter y
+:topoly (((x * x) * y) + x)
+((x * x) * y) foo probe
+)");
+        collector.clear();
+        interactive.process("((x * x) * y) bar probe2");
+        interactive.process("(x * x) qux probe3");
+        CHECK(any_output_contains(collector, "((x * x) * y) bar probe2"));
+        CHECK(any_output_contains(collector, "(x * x) qux probe3"));
+        CHECK_FALSE(any_output_contains(collector, "?")); });
+}
+
+TEST_CASE("display: rendering under active logging does not recurse")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Rendering consults get_fact_structures, whose log messages are
+        // built with format() -- which renders again. With logging on,
+        // that pair recursed without bound and overflowed the stack, so
+        // should_log() suppresses log output while a rendering is in
+        // progress. Reaching the CHECKs at all is half the assertion here.
+        interactive.process(".import topoly");
+        process_lines(interactive, R"(
+x ~ symvar
+y ~ symvar
+x pouter y
+:topoly (((x * x) * y) + x)
+)");
+        interactive.process(".log 3");
+        collector.clear();
+        interactive.process("((x * x) * y) foo probe");
+        interactive.process(".log 0");
+        CHECK(any_output_contains(collector, "((x * x) * y) foo probe")); });
+}

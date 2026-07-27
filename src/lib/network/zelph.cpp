@@ -1747,7 +1747,17 @@ void Zelph::set_logging(int max_depth) const
 
 bool Zelph::should_log(int depth) const
 {
-    return _pImpl->_logging && depth <= _pImpl->_max_log_depth;
+    if (!_pImpl->_logging || depth > _pImpl->_max_log_depth) return false;
+
+    // Never log from inside a rendering. Log messages are built with
+    // format(), which runs node_to_string, which itself consults
+    // get_fact_structures -- and that logs. Without this guard the pair
+    // recurses without bound (log -> format -> log), overflowing the
+    // stack. Same re-entrancy criterion as the collision diagnostic in
+    // check_fact; a log line about the node currently being printed would
+    // be self-referential noise in any case. Checked last so that the
+    // common case -- logging off -- costs exactly what it did before.
+    return !string::is_inside_node_to_wstring();
 }
 
 bool Zelph::logging_active() const
