@@ -66,9 +66,17 @@ namespace zelph::network
         std::string name_chars;          // characters a leaf name may consist of
     };
 
-    struct InfixOperator
+    struct OperatorDisplay
     {
+        // How a fact (S P O) is written in the scheme.
+        enum class Form
+        {
+            Infix,      // "S P O" -- parenthesized according to precedence
+            Application // "S(O)"  -- self-delimiting; S must be a bare name
+        };
+
         std::size_t scheme{0};
+        Form        form{Form::Infix};
         int         precedence{0};
         int         assoc{-1}; // -1 left, 0 non-associative, +1 right
     };
@@ -82,8 +90,8 @@ namespace zelph::network
 
     struct DisplayTables
     {
-        std::vector<DisplayScheme>              schemes;
-        std::unordered_map<Node, InfixOperator> operators;
+        std::vector<DisplayScheme>                schemes;
+        std::unordered_map<Node, OperatorDisplay> operators;
     };
 
     // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
@@ -368,6 +376,14 @@ namespace zelph::network
         // own parser could not read it back.
         void set_infix_display(std::size_t scheme, const std::vector<InfixEntry>& operators);
 
+        // Register application-form predicates: a fact (S P O) is written
+        // "S(O)", and the predicate name does not appear at all. The head S
+        // must render as a bare name matching the scheme's leaf grammar --
+        // a composite head has no call notation, so such a term falls back
+        // to the default rendering. Shares the one-scheme-per-predicate
+        // namespace with set_infix_display.
+        void set_application_display(std::size_t scheme, const std::vector<Node>& predicates);
+
         std::shared_ptr<const DisplayTables> display_tables() const;
 
         // Display control for self-fact sugar (":pred X"): predicates
@@ -483,5 +499,6 @@ namespace zelph::network
     private:
         zelph::io::OutputStream locked_stream(zelph::io::OutputChannel channel) const;
         void                    invalidate_relation_type_set() const;
+        void                    register_operator_display(std::size_t scheme, const std::vector<std::pair<Node, OperatorDisplay>>& entries);
     };
 }

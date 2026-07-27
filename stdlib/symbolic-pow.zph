@@ -1,0 +1,75 @@
+# Simplifier and differentiation support for exponentiation (^) -- the
+# operator extension protocol, exactly as symbolic-minus.zph applies it
+# to - and neg.
+#
+# PREREQUISITES:
+#   .import decimal-arithmetic # or binary-arithmetic / binary-nand-arithmetic
+#   .import symbolic-core
+#   .import diff               # OPTIONAL -- the differentiation rules below
+#   .import symbolic-pow       # are inert without it (no dstate facts exist)
+#
+# THE EXPONENT IS NOT A SUBTERM. (U ^ N) decomposes only its base: N is a
+# numeral literal, and rewriting it would be meaningless. That also keeps
+# the congruence rule single-conditioned.
+#
+# NUMERIC FOLDING is inherited, not implemented: a red form (&2 ^ &10) IS
+# an ordinary ^ fact, common-arithmetic derives its = result, and the SN
+# bridge adopts it. Conflict-free with the rewrites below on every
+# overlap -- (X ^ &1) and (X ^ &0) for numeral X fold to the same nodes
+# the rules produce.
+#
+# WHAT ^ NO LONGER GIVES AWAY: x^2 and x*x are different nodes now.
+# Their equality is a statement of the polynomial layer (topoly),
+# not an assumption of the parser. Local rewrites deliberately do NOT
+# expand powers into products -- that would reintroduce the blow-up ^
+# exists to avoid.
+#
+# Identities are FORMAL (domain caveats as in symbolic-core.zph): X ^ &0
+# is &1 for every X, including &0 -- the empty-product convention shared
+# with common-arithmetic.
+
+.import symbolic-core
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (1): decompose -- base only
+# ---------------------------------------------------------------------------
+((U ^ N) needssimp (U ^ N)) => (U needssimp U)
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (2): congruence
+# ---------------------------------------------------------------------------
+((U ^ N) needssimp (U ^ N), U simp P) => ((U ^ N) red (P ^ N))
+
+# ---------------------------------------------------------------------------
+# Simplifier extension (3): rewrites on reduced forms
+# ---------------------------------------------------------------------------
+(T red (X ^ &1)) => (T rw X)
+(T red (X ^ &0)) => (T rw &1)
+(T red (&1 ^ X)) => (T rw &1)
+
+# ---------------------------------------------------------------------------
+# Differentiation extension: the power rule,
+#   d(u^n)/dx = n * u^(n-1) * du/dx
+# The exponent-zero case gets its own rule: n-1 has no natural value
+# there, so the general rule stays silent, and the constant fallback
+# cannot step in either -- (x ^ &0) does contain x structurally. The
+# in-system comparison makes the two cases mutually exclusive, so deriv
+# stays single-valued.
+#
+# n = 1 needs no special rule: it composes. The assembled derivative
+# carries (U ^ &0), which the rewrite above reduces to &1, and the
+# surrounding (&1 * ...) falls to symbolic-core's neutral-element rule.
+# ---------------------------------------------------------------------------
+((U ^ N) dstate X) => (U dstate X)
+((U ^ N) dstate X, U contains X) => ((U ^ N) contains X)
+
+((U ^ N) dstate X) => (N cmp &0)
+
+((U ^ N) dstate X, N == &0) => (((U ^ N) wrt X) deriv &0)
+
+((U ^ N) dstate X, N > &0) => (N - &1)
+
+((U ^ N) dstate X, N > &0,
+ (U wrt X) deriv P,
+ (N - &1) = M)
+=> (((U ^ N) wrt X) deriv ((N * (U ^ M)) * P))

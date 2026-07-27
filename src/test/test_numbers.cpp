@@ -128,19 +128,19 @@ TEST_CASE("numbers: multi-digit addition via rules")
         {
             interactive.process("<98> + <13>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<98> + <13>) = <111>)"));
+            CHECK(any_output_starts_with(collector, "((<8 9> + <3 1>) = <1 1 1>)"));
         }
         SUBCASE("8 + 23 = 31")
         {
             interactive.process("<8> + <23>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<8> + <23>) = <31>)"));
+            CHECK(any_output_starts_with(collector, "((<8> + <3 2>) = <1 3>)"));
         }
         SUBCASE("67 + 45 = 112")
         {
             interactive.process("<67> + <45>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<67> + <45>) = <112>)"));
+            CHECK(any_output_starts_with(collector, "((<7 6> + <5 4>) = <2 1 1>)"));
         } });
 }
 
@@ -208,19 +208,19 @@ TEST_CASE("numbers: binary addition via rules (full-adder axioms, no generated t
         {
             interactive.process("<101> + <11>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<101> + <11>) = <1000>)"));
+            CHECK(any_output_starts_with(collector, "((<1 0 1> + <1 1>) = <0 0 0 1>)"));
         }
         SUBCASE("1111 + 1 = 10000 (carry chain through all positions)")
         {
             interactive.process("<1111> + <1>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<1111> + <1>) = <10000>)"));
+            CHECK(any_output_starts_with(collector, "((<1 1 1 1> + <1>) = <0 0 0 0 1>)"));
         }
         SUBCASE("1010 + 110 = 10000 (10 + 6 = 16, mixed lengths)")
         {
             interactive.process("<1010> + <110>");
             interactive.run(true, false, false);
-            CHECK(any_output_starts_with(collector, "((<1010> + <110>) = <10000>)"));
+            CHECK(any_output_starts_with(collector, "((<0 1 0 1> + <0 1 1>) = <0 0 0 0 1>)"));
         } });
 }
 
@@ -240,13 +240,13 @@ TEST_CASE("number literals: $ delegates to redefinable zelph/number")
                        interactive.process("%(defn zelph/number [s] (zelph/list-chars s))");
                        collector.clear();
                        interactive.process("&42 result_of test1");
-                       CHECK(any_output_starts_with(collector, "<42> result_of test1"));
+                       CHECK(any_output_starts_with(collector, "<2 4> result_of test1"));
 
                        // Binary representation: numeric variant suffices for test range.
                        interactive.process(R"(%(defn zelph/number [s] (var n (scan-number s)) (def bits @"") (while (> n 0) (buffer/push-string bits (string (% n 2))) (set n (math/floor (/ n 2)))) (zelph/list-chars (if (empty? bits) "0" (string/reverse (string bits))))))");
                        collector.clear();
                        interactive.process("&5 result_of test2");
-                       CHECK(any_output_starts_with(collector, "<101> result_of test2"));
+                       CHECK(any_output_starts_with(collector, "<1 0 1> result_of test2"));
 
                        // Existing atoms starting with $ semantics: plain atom untouched?
                        // ($foo is not a number literal because zelph/number rejects it --
@@ -274,7 +274,7 @@ TEST_CASE("number display: registered digits render lists as decimal &-literals"
         // Cons lists with unregistered elements keep the generic display.
         collector.clear();
         interactive.process("<ab> tagged testd2");
-        CHECK(any_output_contains(collector, "<ab>"));
+        CHECK(any_output_contains(collector, "<b a>"));
 
         // Binary representation: display converts back to decimal (&5 <-> <101>).
         interactive.process(R"(%(defn zelph/number [s] (var n (scan-number s)) (def bits @"") (while (> n 0) (buffer/push-string bits (string (% n 2))) (set n (math/floor (/ n 2)))) (zelph/list-chars (if (empty? bits) "0" (string/reverse (string bits))))))");
@@ -287,7 +287,7 @@ TEST_CASE("number display: registered digits render lists as decimal &-literals"
         interactive.process("%(zelph/set-number-digits [])");
         collector.clear();
         interactive.process("&5 result_of testd4");
-        CHECK(any_output_starts_with(collector, "<101> result_of testd4")); });
+        CHECK(any_output_starts_with(collector, "<1 0 1> result_of testd4")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -665,7 +665,7 @@ TEST_CASE("numbers: subtraction and division results are canonical (no leading z
             interactive.process("(&105 - &98) = X");
             interactive.run(true, false, false);
             CHECK(any_output_contains(collector, "= <7>"));
-            CHECK_FALSE(any_output_contains(collector, "= <007>"));
+            CHECK_FALSE(any_output_contains(collector, "= <7 0 0>"));
         }
 
         SUBCASE("123 / 456 = 0 yields no leading zeros")
@@ -690,8 +690,8 @@ TEST_CASE("numbers: subtraction and division results are canonical (no leading z
             interactive.run(true, false, false);
             // Both subtractions must connect to the same canonical <7>; the
             // seen-marker fires for it, and no <007> variant appears.
-            CHECK(any_output_contains(collector, "((<105> - <98>) = <7>)"));
-            CHECK(any_output_contains(collector, "((<10> - <3>) = <7>)"));
+            CHECK(any_output_contains(collector, "((<5 0 1> - <8 9>) = <7>)"));
+            CHECK(any_output_contains(collector, "((<0 1> - <3>) = <7>)"));
         } });
 }
 

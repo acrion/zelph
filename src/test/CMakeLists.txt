@@ -55,6 +55,7 @@ add_executable(zelph_tests
     test_inline_keyword.cpp
     test_integers.cpp
     test_jacobian.cpp
+    test_math.cpp
     test_math_syntax.cpp
     test_nand_arithmetic.cpp
     test_neural.cpp
@@ -63,6 +64,7 @@ add_executable(zelph_tests
     test_output.cpp
     test_partial_anchor.cpp
     test_polynomial.cpp
+    test_pow.cpp
     test_primes.cpp
     test_profiler.cpp
     test_reasoning.cpp

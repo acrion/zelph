@@ -83,7 +83,9 @@ TEST_CASE("parsing: compact sequence")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "seq_compact is_defined_as <123>");
-        CHECK(any_output_contains(collector, "<123>")); });
+        // Compact input builds the list LSB-first; the display no longer
+        // reverses it -- that convention belongs to registered numerals.
+        CHECK(any_output_contains(collector, "<3 2 1>")); });
 }
 
 TEST_CASE("parsing: spaced sequence")
@@ -94,12 +96,12 @@ TEST_CASE("parsing: spaced sequence")
         CHECK(any_output_contains(collector, "<seqItem1 seqItem2 seqItem3>")); });
 }
 
-TEST_CASE("parsing: quoted sequence is reversed")
+TEST_CASE("parsing: quoted sequence keeps its order")
 {
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(quoted_sequence ~ < "a" "b" "c" >)");
-        CHECK(any_output_contains(collector, "<cba>")); });
+        CHECK(any_output_contains(collector, "<a b c>")); });
 }
 
 // ---------------------------------------------------------------------------

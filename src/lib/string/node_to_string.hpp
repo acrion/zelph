@@ -57,6 +57,10 @@ namespace zelph::string
         bool        right_side{false};
         bool        active{false};
 
+        // IN: the parent supplies delimiters of its own around this operand
+        // (an application's argument list), so no parentheses may be added.
+        bool enclosed{false};
+
         // IN: forbid scheme rendering for this node (bail-out re-render).
         bool no_scheme{false};
 
@@ -67,6 +71,9 @@ namespace zelph::string
         bool deviated{false};
         // OUT: the result is a self-delimiting token; do not parenthesize it.
         bool self_delimited{false};
+        // OUT: the result is a bare identifier -- required in the head
+        // position of an application form.
+        bool atomic{false};
     };
 
     network::Node last_node_to_string_node();

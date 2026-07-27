@@ -487,6 +487,12 @@ public:
                                                                                                                    "across calls. A predicate already claimed by any scheme is an error -- otherwise a term's rendering would depend on load order. "
                                                                                                                    "Registered operators are excluded from the self-fact display sugar (see zelph/no-selffact-sugar).");
 
+        janet_def(_janet_env, "zelph/set-application-display", wrap((JanetCFunction)janet_cfun_zelph_set_application_display), "(zelph/set-application-display scheme predicates)\nRegister predicates whose facts are written in call notation: (S P O) renders as "
+                                                                                                                               "\"S(O)\", and the predicate name does not appear. The result is self-delimiting -- it never takes parentheses, and its "
+                                                                                                                               "argument never needs any. The head S must render as a bare name matching the scheme's leaf grammar; a composite head has "
+                                                                                                                               "no call notation, so such a term falls back to the default rendering. Shares the one-scheme-per-predicate namespace with "
+                                                                                                                               "zelph/set-infix-display, and excludes the predicates from the self-fact display sugar.");
+
         janet_def(_janet_env, "zelph/out", wrap((JanetCFunction)janet_cfun_zelph_out), "(zelph/out text)\nEmit text through zelph's output pipeline (Out channel). Unlike Janet's "
                                                                                        "print (raw stdout), the text reaches the REPL, the playground and test collectors, and is "
                                                                                        "not subject to the input-echo suppression inside imported scripts -- use it for import-time notices.");
@@ -1480,6 +1486,49 @@ public:
             err = e.what();
         }
         janet_panicf("zelph/set-infix-display: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Register application-form predicates in a scheme: (S P O) is written
+    // "S(O)". Shares the scheme's predicate namespace with the infix form.
+    static Janet janet_cfun_zelph_set_application_display(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-application-display", argc, argv, true);
+
+        const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+
+        std::size_t scheme = 0;
+        if (!s_instance->_n->find_display_scheme(name, scheme))
+            janet_panicf("zelph/set-application-display: unknown display scheme '%s' (register it first)", name.c_str());
+
+        const Janet* rows;
+        int32_t      row_count;
+        if (!janet_indexed_view(argv[1], &rows, &row_count))
+            janet_panicf("zelph/set-application-display: expected an array of predicates");
+
+        std::vector<network::Node> preds;
+        preds.reserve(static_cast<size_t>(row_count));
+        for (int32_t i = 0; i < row_count; ++i)
+        {
+            // Creating the node is intentional, as in set-infix-display.
+            network::Node p = s_instance->resolve_janet_arg(rows[i]);
+            if (!p) janet_panicf("zelph/set-application-display: predicate %d could not be resolved", i);
+            preds.push_back(p);
+        }
+
+        std::string err;
+        try
+        {
+            s_instance->_n->set_application_display(scheme, preds);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/set-application-display: %s", err.c_str());
         return janet_wrap_nil(); // unreachable
     }
 

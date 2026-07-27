@@ -224,7 +224,10 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found name '" << name << "' for node " << resolved << std::endl;
 #endif
         if (ctx->active && scheme_name_ok(ctx->tables->schemes[ctx->scheme], name))
+        {
             ctx->expressible = true;
+            ctx->atomic      = true;
+        }
 
         result = string::mark_identifier(name);
         return;
@@ -396,10 +399,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                     }
                 }
 
-                // Check whether all elements are single-character named nodes (digit-like).
-                // Ensure no variable is present, so we don't accidentally contract variable lists.
-                bool all_single_char = true;
-                bool has_var         = false;
+                // The reversal below is the NUMERAL convention (LSB-first
+                // storage, MSB-first display) and is correct only for
+                // numerals. A list of single-character nodes that are not
+                // registered digits is an ordinary node list and must echo
+                // in storage order, like every other one.
+                bool       all_single_char = true;
+                bool       has_var         = false;
+                bool       all_digits      = true;
+                const auto digit_values    = z->number_digit_values();
+
                 for (network::Node e : list_elements)
                 {
                     network::Node eff = resolve_var(e);
@@ -412,9 +421,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                     {
                         has_var = true;
                     }
+                    if (!digit_values || digit_values->find(eff) == digit_values->end())
+                    {
+                        all_digits = false;
+                    }
                 }
 
-                if (all_single_char && !has_var)
+                if (all_single_char && all_digits && !has_var)
                 {
                     // Reverse for display: stored order is LSB-first (e.g.[3,2,1] for 123),
                     // conventional display is MSB-first. Omit spaces to match input syntax.
@@ -706,27 +719,30 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // unchanged. The check is not a separate traversal: children report
     // back through the context, and a boundary node that learns its subtree
     // is not writable re-renders itself once with the scheme disabled.
-    const network::InfixOperator* infix = nullptr;
+    const network::OperatorDisplay* op = nullptr;
     if (scheme_enabled && !is_negation && subject != 0 && objects.size() == 1 && !self_fact_sugar)
     {
         const network::Node pred = resolve_var(z->parse_relation(resolved));
         const auto          it   = ctx->tables->operators.find(pred);
-        if (it != ctx->tables->operators.end()) infix = &it->second;
+        if (it != ctx->tables->operators.end()) op = &it->second;
     }
 
-    const bool in_scheme     = infix && ctx->active && ctx->scheme == infix->scheme;
-    const bool scheme_render = infix != nullptr;
+    const bool in_scheme     = op && ctx->active && ctx->scheme == op->scheme;
+    const bool scheme_render = op != nullptr;
+    const bool application   = op && op->form == network::OperatorDisplay::Form::Application;
 
     auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
     child_history->insert(resolved);
 
     SchemeContext child_ctx;
     child_ctx.tables     = ctx->tables;
-    child_ctx.scheme     = infix ? infix->scheme : 0;
-    child_ctx.precedence = infix ? infix->precedence : 0;
-    child_ctx.assoc      = infix ? infix->assoc : -1;
+    child_ctx.scheme     = op ? op->scheme : 0;
+    child_ctx.precedence = op ? op->precedence : 0;
+    child_ctx.assoc      = op ? op->assoc : -1;
     child_ctx.active     = scheme_render;
+    child_ctx.enclosed   = application; // the call notation brings its own
     bool children_ok     = true;
+    bool subject_atomic  = false;
 
     std::string subject_name, relation_name;
 
@@ -736,8 +752,10 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         child_ctx.expressible    = false;
         child_ctx.self_delimited = false;
         child_ctx.right_side     = false;
+        child_ctx.atomic         = false;
         node_to_string(z, s_str, lang, subject, max_objects, variables, resolved, child_history, &child_ctx);
         children_ok            = children_ok && child_ctx.expressible;
+        subject_atomic         = child_ctx.atomic;
         const bool s_delimited = child_ctx.self_delimited;
 
         bool needs_parens = false;
@@ -809,6 +827,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             std::string o_str;
             child_ctx.expressible    = false;
             child_ctx.self_delimited = false;
+            child_ctx.atomic         = false;
             node_to_string(z, o_str, lang, object, max_objects, variables, resolved, child_history, &child_ctx);
             children_ok            = children_ok && child_ctx.expressible;
             const bool o_delimited = child_ctx.self_delimited;
@@ -838,9 +857,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         if (objects_name.empty()) objects_name = string::mark_identifier("?");
     }
 
+    // An application's head must be a bare name: "f(u)" is readable, a
+    // composite head is not. Falling back is the honest outcome -- the term
+    // simply is not writable in this scheme.
+    if (application && !subject_atomic) children_ok = false;
+
     // The components (subject_name, relation_name, objects_name) are already marked.
     if (self_fact_sugar)
         result = string::mark_identifier(":" + self_fact_pred) + " " + subject_name;
+    else if (application)
+        result = subject_name + "(" + objects_name + ")";
     else
         result = subject_name + " " + relation_name + " " + objects_name;
 
@@ -862,15 +888,26 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     }
     else if (scheme_render && in_scheme)
     {
-        const bool need = infix->precedence < ctx->precedence
-                       || (infix->precedence == ctx->precedence
-                           && (ctx->assoc == 0
-                               || (ctx->assoc < 0 && ctx->right_side)
-                               || (ctx->assoc > 0 && !ctx->right_side)));
-        if (need)
-            result = "(" + result + ")";
+        if (application)
+        {
+            // "f(u)" is self-delimiting at every precedence, and the default
+            // renderer would have printed parentheses -- a deviation by
+            // construction.
+            ctx->deviated = true;
+        }
         else
-            ctx->deviated = true; // the default renderer would have printed them
+        {
+            const bool need = !ctx->enclosed
+                           && (op->precedence < ctx->precedence
+                               || (op->precedence == ctx->precedence
+                                   && (ctx->assoc == 0
+                                       || (ctx->assoc < 0 && ctx->right_side)
+                                       || (ctx->assoc > 0 && !ctx->right_side))));
+            if (need)
+                result = "(" + result + ")";
+            else
+                ctx->deviated = true; // the default renderer would have printed them
+        }
 
         if (child_ctx.deviated) ctx->deviated = true;
         ctx->expressible = true;
@@ -880,9 +917,14 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // Scheme boundary: seal a deviating rendering with the scheme's own
         // delimiters, so it stays readable by the scheme's parser. Without a
         // deviation the result IS the default form and keeps its rules.
-        if (child_ctx.deviated)
+        //
+        // An application deviates by construction: call notation is never
+        // what the default renderer produces. Its own deviation is reported
+        // upwards through ctx, which has no scheme parent here -- so it must
+        // be accounted for separately from the children's.
+        if (child_ctx.deviated || application)
         {
-            const network::DisplayScheme& sch = ctx->tables->schemes[infix->scheme];
+            const network::DisplayScheme& sch = ctx->tables->schemes[op->scheme];
             result                            = sch.open + result + sch.close;
             ctx->self_delimited               = true;
         }

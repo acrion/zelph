@@ -84,7 +84,7 @@ TEST_CASE("display: proper lists keep their compact rendering")
                    {
         collector.clear();
         interactive.process("<123> tagged t2");
-        CHECK(any_output_contains(collector, "<123>"));
+        CHECK(any_output_contains(collector, "<3 2 1>"));
 
         interactive.process(".import decimal-arithmetic");
         collector.clear();

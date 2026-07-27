@@ -482,3 +482,37 @@
 # ---------------------------------------------------------------------------
 (T needscanon T, T canon S, S != nil) => (T canonnum S)
 (T needscanon T, T canon nil) => (T canonnum (0 cons nil))
+
+# ===========================================================================
+# Exponentiation (N ^ M) -- repeated multiplication over the naturals.
+# Base-agnostic like everything here: the recursion peels one off the
+# exponent via subtraction and delegates the accumulation to the
+# multiplication module (the MA1/MA2 cross-module pattern). Linear in the
+# exponent; every intermediate power is a hash-consed node and is shared
+# by every later computation that needs it.
+#
+# NUMERALS WITHOUT &-LITERALS: this module is imported BY the substrates,
+# so zelph/number is not necessarily defined when these lines are parsed.
+# Zero and one are therefore written structurally, exactly as the
+# canonicalization block already writes (0 cons nil). Every base has the
+# digits 0 and 1, so both forms are canonical in all three substrates.
+#
+# N ^ &0 is &1 for every N including &0 (the empty-product convention the
+# polynomial layer needs). Non-numeral exponents derive nothing --
+# partiality by absence, as everywhere.
+# ===========================================================================
+
+%(zelph/no-selffact-sugar "^")
+
+(N ^ M) => (M cmp (0 cons nil))
+
+(N ^ M, M == (0 cons nil)) => ((N ^ M) = (1 cons nil))
+
+(N ^ M, M > (0 cons nil)) => (M - (1 cons nil))
+
+(N ^ M, M > (0 cons nil), (M - (1 cons nil)) = K) => (N ^ K)
+
+(N ^ M, M > (0 cons nil), (M - (1 cons nil)) = K, (N ^ K) = Q) => (N * Q)
+
+(N ^ M, M > (0 cons nil), (M - (1 cons nil)) = K, (N ^ K) = Q, (N * Q) = R)
+=> ((N ^ M) = R)

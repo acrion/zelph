@@ -39,6 +39,14 @@ using namespace zelph::test;
 
 namespace
 {
+    // The policy notation plus a call form: (F over U) is written "F(U)".
+    const char* const policy_with_application =
+        "%(do (zelph/register-display-scheme \"policy\" \"[[\" \"]]\" "
+        "{:name-first \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_\" "
+        ":name-chars \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_\"}) "
+        "(zelph/set-infix-display \"policy\" [[\"unless\" 10 :left] [\"andthen\" 20 :left]]) "
+        "(zelph/set-application-display \"policy\" [\"over\"]))";
+
     // A policy notation: "andthen" binds tighter than "unless", both left-
     // associative, enclosed in [[ ]] wherever the rendering deviates.
     const char* const policy_scheme =
@@ -160,4 +168,36 @@ TEST_CASE("display scheme: an unknown scheme name is rejected")
     run_both_modes([](auto& collector, auto& interactive)
                    { CHECK_THROWS_AS(interactive.process("%(zelph/set-infix-display \"nope\" [[\"x\" 1 :left]])"),
                                      std::runtime_error); });
+}
+
+TEST_CASE("display scheme: the application form writes call notation")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(policy_with_application);
+
+        SUBCASE("a call is self-delimiting wherever it stands")
+        {
+            collector.clear();
+            interactive.process("(audit over doc) andthen b");
+            CHECK(any_output_contains(collector, "[[audit(doc) andthen b]]"));
+        }
+        SUBCASE("the argument needs no parentheses of its own")
+        {
+            collector.clear();
+            interactive.process("audit over (a andthen b)");
+            CHECK(any_output_contains(collector, "[[audit(a andthen b)]]"));
+        }
+        SUBCASE("a composite head has no call notation and falls back")
+        {
+            collector.clear();
+            interactive.process("(a andthen b) over doc");
+            CHECK(any_output_contains(collector, "(a andthen b) over doc"));
+            CHECK_FALSE(any_event_contains(collector, "[["));
+        }
+        SUBCASE("the two registration functions share one predicate namespace")
+        {
+            CHECK_THROWS_AS(interactive.process("%(zelph/set-infix-display \"policy\" [[\"over\" 5 :left]])"),
+                            std::runtime_error);
+        } });
 }

@@ -369,3 +369,27 @@
  ((V poly (B cons (C cons S))) pmul (V poly M)) = (V poly K),
  (H padd (V poly ((pos zint &0) cons K))) = R)
 => (((V poly (A cons (B cons (C cons S)))) pmul (V poly M)) = R)
+
+# ===========================================================================
+# Exponentiation (P ppow N) -- the same recursion shape as the naturals'
+# ^, with pmul in place of *. N is a NATURAL numeral: the exponent is not
+# a polynomial. A zint, symbolic or composite exponent derives nothing.
+#
+# Canonicity: (pos zint &1) is canonical and pmul preserves canonicity,
+# so every ppow result is canonical -- no strip stage of its own.
+#
+# ppow needs no self-fact registration: its two operands are a polynomial
+# and a natural numeral, which are never the same node.
+# ===========================================================================
+(P ppow N) => (N cmp &0)
+
+(P ppow N, N == &0) => ((P ppow N) = (pos zint &1))
+
+(P ppow N, N > &0) => (N - &1)
+
+(P ppow N, N > &0, (N - &1) = K) => (P ppow K)
+
+(P ppow N, N > &0, (N - &1) = K, (P ppow K) = Q) => (P pmul Q)
+
+(P ppow N, N > &0, (N - &1) = K, (P ppow K) = Q, (P pmul Q) = R)
+=> ((P ppow N) = R)

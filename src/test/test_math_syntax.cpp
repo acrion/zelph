@@ -77,7 +77,7 @@ TEST_CASE("math-syntax: numeric literals and unary minus (all arithmetic modules
         CHECK(any_output_contains(collector, "MS-NEGNUM-true")); });
 }
 
-TEST_CASE("math-syntax: powers desugar to left-nested products (all arithmetic modules)")
+TEST_CASE("math-syntax: powers build a ^ term (all arithmetic modules)")
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -85,19 +85,20 @@ TEST_CASE("math-syntax: powers desugar to left-nested products (all arithmetic m
 
         interactive.process("$( x^3 ) ~ w1");
         interactive.process("$( x^1 ) ~ w2");
-        interactive.process("$( (a+b)^2 ) ~ w3");
-        interactive.process("$( 2*x^2 ) ~ w4");
+        interactive.process("$( x^0 ) ~ w3");
+        interactive.process("$( (a+b)^2 ) ~ w4");
+        interactive.process("$( 2*x^2 ) ~ w5");
         collector.clear();
-        interactive.process(R"js(%(string "MS-POW3-" (zelph/exists (zelph/fact (zelph/fact "x" "*" "x") "*" "x") "~" "w1")))js");
-        interactive.process(R"js(%(string "MS-POW1-" (zelph/exists "x" "~" "w2")))js");
-        interactive.process(R"js(%(let [s (zelph/fact "a" "+" "b")] (string "MS-POWP-" (zelph/exists (zelph/fact s "*" s) "~" "w3"))))js");
-        interactive.process(R"js(%(string "MS-POWPREC-" (zelph/exists (zelph/fact (zelph/number "2") "*" (zelph/fact "x" "*" "x")) "~" "w4")))js");
+        interactive.process(R"js(%(string "MS-POW3-" (zelph/exists (zelph/fact "x" "^" (zelph/number "3")) "~" "w1")))js");
+        interactive.process(R"js(%(string "MS-POW1-" (zelph/exists (zelph/fact "x" "^" (zelph/number "1")) "~" "w2")))js");
+        interactive.process(R"js(%(string "MS-POW0-" (zelph/exists (zelph/fact "x" "^" (zelph/number "0")) "~" "w3")))js");
+        interactive.process(R"js(%(let [s (zelph/fact "a" "+" "b")] (string "MS-POWP-" (zelph/exists (zelph/fact s "^" (zelph/number "2")) "~" "w4"))))js");
+        interactive.process(R"js(%(string "MS-POWPREC-" (zelph/exists (zelph/fact (zelph/number "2") "*" (zelph/fact "x" "^" (zelph/number "2"))) "~" "w5")))js");
         CHECK(any_output_contains(collector, "MS-POW3-true"));
         CHECK(any_output_contains(collector, "MS-POW1-true"));
+        CHECK(any_output_contains(collector, "MS-POW0-true"));
         CHECK(any_output_contains(collector, "MS-POWP-true"));
-        CHECK(any_output_contains(collector, "MS-POWPREC-true"));
-
-        CHECK_THROWS_AS(interactive.process("$( x^0 ) ~ bad"), std::runtime_error); });
+        CHECK(any_output_contains(collector, "MS-POWPREC-true")); });
 }
 
 TEST_CASE("math-syntax: function application; nested parens exercise the veto")
@@ -204,7 +205,7 @@ TEST_CASE("math-syntax: polynomial identity with islands and the ? prefix (all a
         interactive.process("? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )");
         CHECK_FALSE(any_output_contains(collector, "⇐"));
         collector.clear();
-        interactive.process(R"js(%(let [l (zelph/fact (zelph/fact (zelph/number "1") "+" "x") "*" (zelph/fact (zelph/number "1") "-" "x")) r (zelph/fact (zelph/number "1") "-" (zelph/fact "x" "*" "x"))] (string "MSI-PROVEN-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
+        interactive.process(R"js(%(let [l (zelph/fact (zelph/fact (zelph/number "1") "+" "x") "*" (zelph/fact (zelph/number "1") "-" "x")) r (zelph/fact (zelph/number "1") "-" (zelph/fact "x" "^" (zelph/number "2")))] (string "MSI-PROVEN-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
         CHECK(any_output_contains(collector, "MSI-PROVEN-true")); });
 }
 
@@ -232,15 +233,18 @@ TEST_CASE("math-syntax: terms render in island form exactly where it is needed (
             CHECK(any_output_contains(collector, "((&1 + x) * (&1 - x)) marker r2"));
             CHECK_FALSE(any_event_contains(collector, "$("));
         }
-        SUBCASE("a term outside the island grammar keeps the default rendering")
+        SUBCASE("function application renders in call notation")
         {
-            // (f of u) is an application, not an infix operator: rendering it
-            // inside an island would produce input this grammar cannot read,
-            // so the whole term falls back.
             collector.clear();
             interactive.process("$( exp(x) + 1 ) marker r3");
-            CHECK(any_output_contains(collector, "((exp of x) + &1) marker r3"));
-            CHECK_FALSE(any_event_contains(collector, "$("));
+            CHECK(any_output_contains(collector, "$( exp(x) + &1 ) marker r3"));
+        }
+        SUBCASE("unary minus reads back as its application form")
+        {
+            // $( -x ) builds (neg of x); neg(x) is what this grammar parses.
+            collector.clear();
+            interactive.process("$( -x + 1 ) marker r4");
+            CHECK(any_output_contains(collector, "$( neg(x) + &1 ) marker r4"));
         } });
 }
 
@@ -292,4 +296,29 @@ TEST_CASE("math-syntax: the '&' sigil is optional inside islands (all arithmetic
         collector.clear();
         interactive.process(R"js(%(let [t (zelph/fact (zelph/number "6") "+" (zelph/number "7"))] (string "MSD-AMP-" (and (zelph/exists t "marker" "s1") (zelph/exists t "marker" "s2") (zelph/exists t "marker" "s3")))))js");
         CHECK(any_output_contains(collector, "MSD-AMP-true")); });
+}
+
+TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import math-syntax");
+
+        collector.clear();
+        interactive.process("$( exp(x) + 1 )");
+        std::string rendered;
+        for (const auto& e : collector.events())
+        {
+            if (e.channel == zelph::io::OutputChannel::Out && !e.text.empty())
+            {
+                rendered = normalize(e.text);
+                break;
+            }
+        }
+        REQUIRE_FALSE(rendered.empty());
+
+        interactive.process(rendered + " marker approundtrip");
+        collector.clear();
+        interactive.process(R"js(%(let [t (zelph/fact (zelph/fact "exp" "of" "x") "+" (zelph/number "1"))] (string "MSD-APP-" (zelph/exists t "marker" "approundtrip"))))js");
+        CHECK(any_output_contains(collector, "MSD-APP-true")); });
 }

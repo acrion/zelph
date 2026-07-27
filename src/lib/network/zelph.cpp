@@ -777,43 +777,64 @@ std::size_t Zelph::register_display_scheme(const DisplayScheme& scheme)
     return tables->schemes.size() - 1;
 }
 
-void Zelph::set_infix_display(const std::size_t scheme, const std::vector<InfixEntry>& operators)
+void Zelph::register_operator_display(const std::size_t scheme, const std::vector<std::pair<Node, OperatorDisplay>>& entries)
 {
     std::vector<Node> preds;
-    preds.reserve(operators.size());
+    preds.reserve(entries.size());
 
     {
         std::unique_lock lock(_smtx_display_tables);
 
         if (!_display_tables || scheme >= _display_tables->schemes.size())
-            throw std::invalid_argument("set_infix_display(): unknown display scheme");
+            throw std::invalid_argument("display scheme: unknown scheme index");
 
         auto tables = std::make_shared<DisplayTables>(*_display_tables);
 
-        for (const InfixEntry& op : operators)
+        for (const auto& [predicate, display] : entries)
         {
-            if (op.predicate == 0)
-                throw std::invalid_argument("set_infix_display(): predicate must not be 0");
+            if (predicate == 0)
+                throw std::invalid_argument("display scheme: predicate must not be 0");
 
-            const auto it = tables->operators.find(op.predicate);
+            const auto it = tables->operators.find(predicate);
             if (it != tables->operators.end())
             {
-                throw std::runtime_error("set_infix_display(): predicate '"
-                                         + get_name(op.predicate, _lang, true)
-                                         + "' is already registered in display scheme '"
+                throw std::runtime_error("display scheme: predicate '"
+                                         + get_name(predicate, _lang, true)
+                                         + "' is already registered in scheme '"
                                          + tables->schemes[it->second.scheme].name + "'");
             }
 
-            tables->operators.emplace(op.predicate, InfixOperator{scheme, op.precedence, op.assoc});
-            preds.push_back(op.predicate);
+            OperatorDisplay entry = display;
+            entry.scheme          = scheme;
+            tables->operators.emplace(predicate, entry);
+            preds.push_back(predicate);
         }
 
         _display_tables = tables;
     }
 
-    // See the header: the self-fact sugar would render (X op X) as ":op X",
-    // which the scheme's parser cannot read back.
+    // The self-fact sugar would render (X op X) as ":op X", which no
+    // scheme's parser can read back.
     add_verbose_selffact_predicates(preds);
+}
+
+void Zelph::set_infix_display(const std::size_t scheme, const std::vector<InfixEntry>& operators)
+{
+    std::vector<std::pair<Node, OperatorDisplay>> entries;
+    entries.reserve(operators.size());
+    for (const InfixEntry& op : operators)
+        entries.emplace_back(op.predicate,
+                             OperatorDisplay{scheme, OperatorDisplay::Form::Infix, op.precedence, op.assoc});
+    register_operator_display(scheme, entries);
+}
+
+void Zelph::set_application_display(const std::size_t scheme, const std::vector<Node>& predicates)
+{
+    std::vector<std::pair<Node, OperatorDisplay>> entries;
+    entries.reserve(predicates.size());
+    for (const Node p : predicates)
+        entries.emplace_back(p, OperatorDisplay{scheme, OperatorDisplay::Form::Application, 0, -1});
+    register_operator_display(scheme, entries);
 }
 
 // Register predicates whose self-facts must always render in the verbose

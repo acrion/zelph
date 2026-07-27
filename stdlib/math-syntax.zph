@@ -38,6 +38,10 @@
 #   t^n      -> left-nested products ((t*t)*t)...; a dedicated pow
 #               module may later replace this desugaring. t^1 is t;
 #               t^0 is rejected.
+#   t^n      -> (t ^ &n); ^ is a term former, not sugar for a product.
+#               n >= 0, integer literal. t^0 is a valid term compiling to
+#               the polynomial 1; t^1 simplifies to t. Symbolic or
+#               negative exponents need the verbose syntax (t ^ n).
 #
 # DELIBERATE OMISSIONS (v1): no implicit multiplication (2x is an error,
 # write 2*x), no unquote inside islands, no comparison operators, no
@@ -66,7 +70,7 @@
     :primary (choice :int :funcall :leaf :paren)
 
     :power (group (* (constant :pow) :primary
-                     (? (* :s* "^" :s* (capture (some (range "09")))))))
+                     (? (* :s* "^" :s* (? "&") (capture (some (range "09")))))))
 
     :factor (choice (group (* (constant :neg) "-" :s* :factor)) :power)
 
@@ -103,13 +107,7 @@
     :pow (let [base (build (ast 1))]
            (if (= 2 (length ast))
              base
-             (let [n (scan-number (ast 2))]
-               (when (< n 1)
-                 (error "math-syntax: exponent must be a positive integer (t^0 needs a pow module)"))
-               (var acc base)
-               (loop [_ :range [1 n]]
-                 (set acc (zelph/fact acc "*" base)))
-               acc)))
+             (zelph/fact base "^" (zelph/number (ast 2)))))
     :chain (do
              (var acc (build (ast 1)))
              (var i 2)
@@ -153,20 +151,22 @@
 # actually removes parentheses, or where a numeral drops its sigil.
 # Everything else keeps the form it has today.
 #
-# 'of' is deliberately NOT registered: (f of u) is an application, not an
-# infix operator, and rendering it as "f of u" would produce something
-# this grammar cannot read back. A term containing one falls back to the
-# default rendering -- correct, just not in island form. The same holds
-# for '=', which belongs to the arithmetic modules and has no place in
-# this grammar; a result fact therefore renders its operand term as an
-# island and keeps '=' outside it.
+# 'of' is registered in APPLICATION form: (f of u) is what this module's
+# f(u) builds, and call notation is how it reads back. That also covers
+# unary minus -- $( -x ) builds (neg of x) and renders as neg(x), which
+# this grammar parses; a '-x' rendering would need a third form (prefix)
+# and is not worth it. '=' stays unregistered: it belongs to the
+# arithmetic modules and has no place in this grammar, so a result fact
+# keeps '=' outside the island.
 (zelph/register-display-scheme "math-syntax" "$( " " )"
   {:numeral-prefix "&"
    :name-first "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
    :name-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"})
 
 (zelph/set-infix-display "math-syntax"
-  [["+" 10 :left] ["-" 10 :left] ["*" 20 :left] ["/" 20 :left]])
+  [["+" 10 :left] ["-" 10 :left] ["*" 20 :left] ["/" 20 :left] ["^" 30 :right]])
+
+(zelph/set-application-display "math-syntax" ["of"])
 
 (zelph/register-keyword "$(" ")" math-term-handler)
 

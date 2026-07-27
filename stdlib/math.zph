@@ -1,0 +1,55 @@
+# math.zph -- the entry point for mathematics in zelph.
+#
+# One import instead of six, plus a declaration form for the
+# indeterminates of a polynomial ring, written in ordinary zelph syntax:
+#
+#     .import math
+#     <x y z> ~ polyring
+#     ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
+#
+# WHAT polyring DECLARES. The subject is a cons list of the ring's
+# indeterminates, OUTERMOST FIRST. The rules below derive, for every
+# element, its sort declaration (X ~ symvar), and for every ADJACENT
+# pair, the nesting order polynomial.zph consumes (A pouter B) --
+# transitivity is already provided there, so adjacent pairs suffice.
+# Constants that should stay opaque are declared as usual with
+# ~ symconst and do not belong in the list.
+#
+# WHY A LIST AND NOT A JANET HELPER. The declaration is an ordinary fact
+# about an ordinary node, so it is visible to inference like everything
+# else: rules can quantify over rings, further facts attach to the same
+# list node, and it survives .save. A Janet helper would have produced
+# the same facts and left nothing to reason ABOUT.
+
+.import topoly
+.import math-syntax
+.import symbolic-core
+.import symbolic-minus
+.import symbolic-pow
+.import symbolic-integers
+.import diff
+
+# ---------------------------------------------------------------------------
+# Rule RT0 -- Trigger: a declared ring seeds the walk over its list.
+# ---------------------------------------------------------------------------
+(L ~ polyring) => (L needsring L)
+
+# ---------------------------------------------------------------------------
+# Rule RD1 -- Decompose. Guarded like MD1/KD1/VD1 so that no marker state
+# on nil is ever created (nil is the graph's biggest hub).
+# ---------------------------------------------------------------------------
+((A cons R) needsring (A cons R), R != nil) => (R needsring R)
+
+# ---------------------------------------------------------------------------
+# Rule RS1 -- Sorts: every element of the list is an indeterminate.
+# ---------------------------------------------------------------------------
+((A cons R) needsring (A cons R)) => (A ~ symvar)
+
+# ---------------------------------------------------------------------------
+# Rule RO1 -- Order: adjacent elements fix the nesting order. Matching two
+# cells deep is ordinary deep unification -- the same shape polynomial.zph
+# uses for its schoolbook recursion.
+# ---------------------------------------------------------------------------
+((A cons (B cons S)) needsring (A cons (B cons S))) => (A pouter B)
+
+%(zelph/out "math loaded: declare indeterminates with <x y z> ~ polyring")

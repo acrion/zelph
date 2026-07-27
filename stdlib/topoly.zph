@@ -28,7 +28,7 @@
 #   - natural numerals    promote to (pos zint N) -- so subtraction that
 #                         is partial over the naturals is total here:
 #                         (:topoly (&3 - &5)) = (neg zint &2)
-#   - (U + V), (U - V), (U * V), (neg of U)
+#   - (U + V), (U - V), (U * V), (U ^ N), (neg of U)
 #                         delegate to padd / psub / pmul / pneg
 # Anything else -- division, other function applications, undeclared
 # atoms -- gets no aspoly fact, and the request stays silently
@@ -76,6 +76,7 @@
 ((U - V) needstopoly (U - V)) => (V needstopoly V)
 ((U * V) needstopoly (U * V)) => (U needstopoly U)
 ((U * V) needstopoly (U * V)) => (V needstopoly V)
+((U ^ N) needstopoly (U ^ N)) => (U needstopoly U)
 ((neg of U) needstopoly (neg of U)) => (U needstopoly U)
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,9 @@
 ((U * V) needstopoly (U * V), U aspoly P, V aspoly Q) => (P pmul Q)
 ((U * V) needstopoly (U * V), U aspoly P, V aspoly Q, (P pmul Q) = R)
 => ((U * V) aspoly R)
+
+((U ^ N) needstopoly (U ^ N), U aspoly P) => (P ppow N)
+((U ^ N) needstopoly (U ^ N), U aspoly P, (P ppow N) = R) => ((U ^ N) aspoly R)
 
 ((neg of U) needstopoly (neg of U), U aspoly P) => (P pneg P)
 ((neg of U) needstopoly (neg of U), U aspoly P, (P pneg P) = R)
