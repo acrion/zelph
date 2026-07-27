@@ -80,6 +80,11 @@ namespace zelph::console
         // registered it. A script registers its default ID plus all IDs it
         // declares via .provides. Cleared by .new.
         std::map<std::string, std::string> imported_module_ids;
+
+        // Depth of quiet processing scopes (the '?' result-query pre-pass):
+        // while > 0, the input echo is suppressed like inside imports.
+        // Managed strictly by RAII in Interactive::process.
+        int quiet_depth{0};
     };
 
     // Helper RAII struct to temporarily suspend auto-run

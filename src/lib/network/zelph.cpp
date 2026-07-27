@@ -491,6 +491,36 @@ Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacen
     }
 }
 
+Node Zelph::predicate_of(const Node nd) const
+{
+    if (nd == 0 || !Impl::is_hash(nd) || Impl::is_var(nd)) return 0;
+
+    FactStructurePtr genuine;
+    if (try_get_genuine_structure(nd, genuine) && genuine && !genuine->empty())
+        return genuine->front().predicate;
+
+    // No store entry: either a subject == predicate fact (never stored), or
+    // the stores were disarmed by a bulk path. parse_relation resolves both;
+    // for subject == predicate it returns the subject, which IS the predicate.
+    return parse_relation(nd);
+}
+
+Answer Zelph::check_fact(const Node relation) const
+{
+    if (relation == 0
+        || !Impl::is_hash(relation)
+        || Impl::is_var(relation)
+        || !_pImpl->exists(relation))
+    {
+        return Answer(relation); // unknown
+    }
+
+    const Node predicate = predicate_of(relation);
+    if (predicate == 0) return Answer(relation); // structure unreadable -> unknown
+
+    return {_pImpl->probability(relation, predicate), relation};
+}
+
 Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& objects, const long double probability)
 {
     const Answer answer = check_fact(subject, predicate, objects);
@@ -694,6 +724,96 @@ std::shared_ptr<const std::unordered_map<Node, uint32_t>> Zelph::number_digit_va
 {
     std::shared_lock lock(_smtx_number_digits);
     return _number_digits;
+}
+
+std::shared_ptr<const DisplayTables> Zelph::display_tables() const
+{
+    std::shared_lock lock(_smtx_display_tables);
+    return _display_tables;
+}
+
+bool Zelph::find_display_scheme(const std::string& name, std::size_t& index) const
+{
+    const auto tables = display_tables();
+    if (!tables) return false;
+
+    for (std::size_t i = 0; i < tables->schemes.size(); ++i)
+    {
+        if (tables->schemes[i].name == name)
+        {
+            index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t Zelph::register_display_scheme(const DisplayScheme& scheme)
+{
+    if (scheme.name.empty())
+        throw std::invalid_argument("register_display_scheme(): the scheme name must not be empty");
+
+    std::unique_lock lock(_smtx_display_tables);
+
+    // Copy-on-write: readers hold an immutable snapshot for the duration of
+    // a rendering and are never disturbed by a concurrent registration.
+    auto tables = _display_tables
+                    ? std::make_shared<DisplayTables>(*_display_tables)
+                    : std::make_shared<DisplayTables>();
+
+    for (std::size_t i = 0; i < tables->schemes.size(); ++i)
+    {
+        if (tables->schemes[i].name == scheme.name)
+        {
+            // Update in place: operator entries reference schemes by index.
+            tables->schemes[i] = scheme;
+            _display_tables    = tables;
+            return i;
+        }
+    }
+
+    tables->schemes.push_back(scheme);
+    _display_tables = tables;
+    return tables->schemes.size() - 1;
+}
+
+void Zelph::set_infix_display(const std::size_t scheme, const std::vector<InfixEntry>& operators)
+{
+    std::vector<Node> preds;
+    preds.reserve(operators.size());
+
+    {
+        std::unique_lock lock(_smtx_display_tables);
+
+        if (!_display_tables || scheme >= _display_tables->schemes.size())
+            throw std::invalid_argument("set_infix_display(): unknown display scheme");
+
+        auto tables = std::make_shared<DisplayTables>(*_display_tables);
+
+        for (const InfixEntry& op : operators)
+        {
+            if (op.predicate == 0)
+                throw std::invalid_argument("set_infix_display(): predicate must not be 0");
+
+            const auto it = tables->operators.find(op.predicate);
+            if (it != tables->operators.end())
+            {
+                throw std::runtime_error("set_infix_display(): predicate '"
+                                         + get_name(op.predicate, _lang, true)
+                                         + "' is already registered in display scheme '"
+                                         + tables->schemes[it->second.scheme].name + "'");
+            }
+
+            tables->operators.emplace(op.predicate, InfixOperator{scheme, op.precedence, op.assoc});
+            preds.push_back(op.predicate);
+        }
+
+        _display_tables = tables;
+    }
+
+    // See the header: the self-fact sugar would render (X op X) as ":op X",
+    // which the scheme's parser cannot read back.
+    add_verbose_selffact_predicates(preds);
 }
 
 // Register predicates whose self-facts must always render in the verbose

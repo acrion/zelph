@@ -444,4 +444,111 @@ namespace zelph::network
         out = get_preferred_structure(n, fact, depth);
         return out.predicate != 0;
     }
+
+    // --- Pattern resolution (bindings -> denoted node) --------------------
+    //
+    // Resolve a pattern under variable bindings to the concrete node it
+    // denotes, by pure hash lookups -- nothing is created. The read-only
+    // sibling of reasoning.cpp's instantiate_fact (which materializes) and
+    // of unification.cpp's ground_pattern (which stops at "denotable"):
+    //
+    //   Ok       the pattern denotes an EXISTING node
+    //   Unbound  an unbound variable, or a variable-carrying structure that
+    //            cannot be decomposed / is cyclic
+    //   Missing  every variable is bound, but the denoted fact does not exist
+    //
+    // Exact object-set semantics, as in ground_pattern: a graph fact
+    // carrying objects beyond the pattern's is a different node and is not
+    // found.
+    enum class Resolve
+    {
+        Ok,
+        Unbound,
+        Missing
+    };
+
+    inline Resolve resolve_pattern(const Zelph* n, const Node pattern, const Variables& vars, Node& out, std::vector<Node>& history)
+    {
+        if (pattern == 0) return Resolve::Unbound;
+
+        if (Zelph::is_var(pattern))
+        {
+            const auto it = vars.find(pattern);
+            if (it == vars.end() || it->second == 0 || Zelph::is_var(it->second)) return Resolve::Unbound;
+            out = it->second;
+            return Resolve::Ok;
+        }
+
+        if (!Zelph::is_hash(pattern))
+        {
+            out = pattern; // plain atom
+            return Resolve::Ok;
+        }
+
+        // Variable-free structure: hash-consing makes the pattern IDENTICAL
+        // to the node it denotes -- no decomposition, no lookup. O(1) via
+        // the closure flag, and it covers the overwhelming majority of
+        // subterms in a rendered answer.
+        if (!n->var_in_closure(pattern))
+        {
+            out = pattern;
+            return n->exists(pattern) ? Resolve::Ok : Resolve::Missing;
+        }
+
+        for (const Node visited : history)
+            if (visited == pattern) return Resolve::Unbound; // cyclic: be conservative
+        history.push_back(pattern);
+
+        const FactStructure fs = get_preferred_structure(n, pattern, 1);
+        if (fs.predicate == 0)
+        {
+            history.pop_back();
+            return Resolve::Unbound; // carries variables, but is undecomposable
+        }
+
+        Node    gs = 0;
+        Resolve r  = resolve_pattern(n, fs.subject, vars, gs, history);
+        if (r != Resolve::Ok)
+        {
+            history.pop_back();
+            return r;
+        }
+
+        Node gp = 0;
+        r       = resolve_pattern(n, fs.predicate, vars, gp, history);
+        if (r != Resolve::Ok)
+        {
+            history.pop_back();
+            return r;
+        }
+
+        adjacency_set gobjs;
+        for (const Node o : fs.objects)
+        {
+            Node go = 0;
+            r       = resolve_pattern(n, o, vars, go, history);
+            if (r != Resolve::Ok)
+            {
+                history.pop_back();
+                return r;
+            }
+            gobjs.insert(go);
+        }
+        history.pop_back();
+
+        const Answer ans = n->check_fact(gs, gp, gobjs);
+        out              = ans.relation(); // the hash is deterministic even for absent facts
+        return ans.is_known() ? Resolve::Ok : Resolve::Missing;
+    }
+
+    // Convenience for display code: the denoted node, or the pattern itself
+    // when the bindings do not resolve it. Free of charge without bindings.
+    inline Node resolve_pattern_node(const Zelph* n, const Node pattern, const Variables& vars)
+    {
+        if (n == nullptr || vars.empty()) return pattern;
+
+        Node              out = 0;
+        std::vector<Node> history;
+        return resolve_pattern(n, pattern, vars, out, history) == Resolve::Ok ? out : pattern;
+    }
 }

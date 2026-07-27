@@ -54,6 +54,20 @@ static std::string u_node_str(const Zelph* z, Node n)
     if (_n->should_log(depth)) { u_log(_n, depth, msg); }
 #define U_NODE(n) u_node_str(_n, n)
 
+// Counter updates go through PROF so that a missing profiler is a no-op
+// (reasoning_explain.cpp drives Unification standalone and passes nullptr).
+// Like U_LOG, the macro expects a variable named _prof in scope -- member or
+// parameter. do/while wrapper: unlike U_LOG this macro is used inside plain
+// if-blocks, where a bare if would be dangling-else bait.
+#define PROF(stmt)       \
+    do                   \
+    {                    \
+        if (_prof)       \
+        {                \
+            _prof->stmt; \
+        }                \
+    } while (false)
+
 // --- Helper Functions ---
 
 // Recursive Unification Algorithm with Cycle Detection
@@ -65,12 +79,12 @@ static bool unify_nodes(
     const Variables&                    global_bindings,
     std::vector<std::pair<Node, Node>>& history,
     int                                 depth,
-    ReasoningProfiler&                  prof)
+    ReasoningProfiler* const            _prof)
 {
-    if (_n->logging_active())
+    if (_prof && _n->logging_active())
     {
-        prof.unify_calls.fetch_add(1, std::memory_order_relaxed);
-        ReasoningProfiler::atomic_max(prof.max_unify_depth, (uint64_t)depth);
+        _prof->unify_calls.fetch_add(1, std::memory_order_relaxed);
+        ReasoningProfiler::atomic_max(_prof->max_unify_depth, (uint64_t)depth);
     }
 
     if (rule_node == 0 || graph_node == 0) return false;
@@ -86,7 +100,7 @@ static bool unify_nodes(
         {
             if (_n->logging_active())
             {
-                prof.unify_cycle_hits.fetch_add(1, std::memory_order_relaxed);
+                PROF(unify_cycle_hits.fetch_add(1, std::memory_order_relaxed));
 
                 U_LOG(depth, "  -> Cycle detected (already visiting), assuming match.");
             }
@@ -104,22 +118,22 @@ static bool unify_nodes(
         if (Zelph::Impl::is_var(rule_node))
         {
             if (_n->logging_active())
-                prof.unify_var_seen.fetch_add(1, std::memory_order_relaxed);
+                PROF(unify_var_seen.fetch_add(1, std::memory_order_relaxed));
 
             if (local_bindings.count(rule_node))
             {
                 if (_n->logging_active())
                 {
-                    prof.unify_var_local_recurse.fetch_add(1, std::memory_order_relaxed);
+                    PROF(unify_var_local_recurse.fetch_add(1, std::memory_order_relaxed));
                     U_LOG(depth, "  Var local bound -> recursing");
                 }
-                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, prof);
+                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, _prof);
                 break;
             }
             if (global_bindings.count(rule_node))
             {
                 if (_n->logging_active())
-                    prof.unify_var_global_recurse.fetch_add(1, std::memory_order_relaxed);
+                    PROF(unify_var_global_recurse.fetch_add(1, std::memory_order_relaxed));
 
                 Node bound = zelph::string::get(global_bindings, rule_node, Node{0});
                 if (bound == graph_node)
@@ -129,7 +143,7 @@ static bool unify_nodes(
                     break;
                 }
                 U_LOG(depth, "  Var global bound to " + U_NODE(bound) + " (id=" + std::to_string(bound) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
-                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, prof);
+                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, _prof);
                 if (_n->should_log(depth) && !result)
                 {
                     u_log(_n, depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
@@ -143,7 +157,7 @@ static bool unify_nodes(
 
             if (_n->logging_active())
             {
-                prof.unify_var_bound_new.fetch_add(1, std::memory_order_relaxed);
+                PROF(unify_var_bound_new.fetch_add(1, std::memory_order_relaxed));
                 U_LOG(depth, "  -> Bound " + U_NODE(rule_node) + " to " + U_NODE(graph_node));
             }
 
@@ -156,7 +170,7 @@ static bool unify_nodes(
         {
             if (_n->logging_active())
             {
-                prof.unify_identity_hits.fetch_add(1, std::memory_order_relaxed);
+                PROF(unify_identity_hits.fetch_add(1, std::memory_order_relaxed));
                 U_LOG(depth, "  -> Identical");
             }
             result = true;
@@ -181,7 +195,7 @@ static bool unify_nodes(
         }
 
         if (_n->logging_active())
-            prof.unify_struct_pair_attempts.fetch_add(1, std::memory_order_relaxed);
+            PROF(unify_struct_pair_attempts.fetch_add(1, std::memory_order_relaxed));
 
         for (const auto& rs : *rule_structs)
         {
@@ -190,10 +204,10 @@ static bool unify_nodes(
                 Variables attempt = local_bindings;
 
                 // A. Predicate
-                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, prof)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, _prof)) continue;
 
                 // B. Subject
-                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, prof)) continue;
+                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof)) continue;
 
                 // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
@@ -202,7 +216,7 @@ static bool unify_nodes(
                 Variables obj_bindings  = attempt;
 
                 if (_n->logging_active())
-                    prof.unify_object_try.fetch_add(1, std::memory_order_relaxed);
+                    PROF(unify_object_try.fetch_add(1, std::memory_order_relaxed));
 
                 // Greedy Match for Objects
                 for (Node r_obj : rs.objects)
@@ -211,14 +225,14 @@ static bool unify_nodes(
                     for (Node g_obj : gs.objects)
                     {
                         Variables try_obj = obj_bindings; // allow backtracking per object choice
-                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, prof))
+                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, _prof))
                         {
                             obj_bindings = std::move(try_obj);
                             found        = true;
 
                             if (_n->logging_active())
                             {
-                                prof.unify_object_success.fetch_add(1, std::memory_order_relaxed);
+                                PROF(unify_object_success.fetch_add(1, std::memory_order_relaxed));
                             }
                             break;
                         }
@@ -545,7 +559,7 @@ Unification::Unification(
     const std::shared_ptr<Variables>& unequals,
     concurrency::ThreadPool*          pool,
     int                               log_depth,
-    ReasoningProfiler&                profiler,
+    ReasoningProfiler*                profiler,
     Node                              seed_fact,
     Node                              seed_predicate)
     : Unification(n, build_pattern_info(n, condition, log_depth), parent, variables, unequals, pool, log_depth, profiler, seed_fact, seed_predicate)
@@ -560,7 +574,7 @@ Unification::Unification(
     const std::shared_ptr<Variables>& unequals,
     concurrency::ThreadPool*          pool,
     int                               log_depth,
-    ReasoningProfiler&                profiler,
+    ReasoningProfiler*                profiler,
     Node                              seed_fact,
     Node                              seed_predicate)
     : _n(n)
@@ -574,7 +588,7 @@ Unification::Unification(
     , _pool(pool)
 {
     if (_n->logging_active())
-        _prof.unification_instances.fetch_add(1, std::memory_order_relaxed);
+        PROF(unification_instances.fetch_add(1, std::memory_order_relaxed));
 
     if (pattern.relation != 0)
     {
@@ -851,11 +865,11 @@ Unification::Unification(
                     // NOTE: must run AFTER _snapshot_vec is assigned; the
                     // previous ordering attributed size 0 to parallel scans,
                     // hiding them from top_relations_by_scan entirely.
-                    _prof.unification_parallel_instances.fetch_add(1, std::memory_order_relaxed);
-                    _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
-                    _prof.snapshot_full_relation.fetch_add(1, std::memory_order_relaxed);
-                    _prof.snapshot_facts_total.fetch_add(_snapshot_vec.size(), std::memory_order_relaxed);
-                    if (_current_rel_ctx) _prof.note_relation_scan(_current_rel_ctx, _snapshot_vec.size());
+                    PROF(unification_parallel_instances.fetch_add(1, std::memory_order_relaxed));
+                    PROF(relation_snapshots.fetch_add(1, std::memory_order_relaxed));
+                    PROF(snapshot_full_relation.fetch_add(1, std::memory_order_relaxed));
+                    PROF(snapshot_facts_total.fetch_add(_snapshot_vec.size(), std::memory_order_relaxed));
+                    if (_current_rel_ctx) PROF(note_relation_scan(_current_rel_ctx, _snapshot_vec.size()));
                 }
 
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
@@ -896,7 +910,7 @@ Unification::Unification(
                                    }
                                    if (_n->logging_active())
                                    {
-                                       _prof.facts_scanned_parallel.fetch_add(local_scanned, std::memory_order_relaxed);
+                                       PROF(facts_scanned_parallel.fetch_add(local_scanned, std::memory_order_relaxed));
                                    }
                                    {
                                        std::lock_guard<std::mutex> l(_queue_mtx);
@@ -1067,21 +1081,21 @@ bool Unification::increment_fact_index()
                     u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
                 }
 
-                _prof.relation_snapshots.fetch_add(1, std::memory_order_relaxed);
-                _prof.snapshot_facts_total.fetch_add(_facts_snapshot.size(), std::memory_order_relaxed);
+                PROF(relation_snapshots.fetch_add(1, std::memory_order_relaxed));
+                PROF(snapshot_facts_total.fetch_add(_facts_snapshot.size(), std::memory_order_relaxed));
                 if (partial_used)
                 {
-                    _prof.snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed);
+                    PROF(snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed));
                 }
                 else if (optimized_snapshot)
                 {
-                    _prof.snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed);
+                    PROF(snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed));
                 }
                 else
                 {
-                    _prof.snapshot_full_relation.fetch_add(1, std::memory_order_relaxed);
+                    PROF(snapshot_full_relation.fetch_add(1, std::memory_order_relaxed));
                 }
-                if (current_rel) _prof.note_relation_scan(current_rel, _facts_snapshot.size());
+                if (current_rel) PROF(note_relation_scan(current_rel, _facts_snapshot.size()));
             }
 
             _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
@@ -1099,7 +1113,7 @@ bool Unification::increment_fact_index()
 std::shared_ptr<Variables> Unification::Next()
 {
     if (_n->logging_active())
-        _prof.unification_next_calls.fetch_add(1, std::memory_order_relaxed);
+        PROF(unification_next_calls.fetch_add(1, std::memory_order_relaxed));
 
     if (_relation_list.empty()) return nullptr;
 
@@ -1133,7 +1147,7 @@ std::shared_ptr<Variables> Unification::Next()
                 Node fact = *_fact_index;
 
                 if (_n->logging_active())
-                    _prof.facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed);
+                    PROF(facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed));
 
                 // Get all valid structural interpretations of the fact node.
                 // This allows matching facts that serve as subjects for other facts (nested structures).
@@ -1141,8 +1155,8 @@ std::shared_ptr<Variables> Unification::Next()
 
                 if (_n->logging_active())
                 {
-                    _prof.get_fact_structures_calls.fetch_add(1, std::memory_order_relaxed);
-                    _prof.structures_total.fetch_add(structs->size(), std::memory_order_relaxed);
+                    PROF(get_fact_structures_calls.fetch_add(1, std::memory_order_relaxed));
+                    PROF(structures_total.fetch_add(structs->size(), std::memory_order_relaxed));
                 }
 
                 std::shared_ptr<Variables> first = nullptr;
@@ -1191,7 +1205,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     std::vector<std::shared_ptr<Variables>> results;
 
     if (_n->logging_active())
-        _prof.extract_calls.fetch_add(1, std::memory_order_relaxed);
+        PROF(extract_calls.fetch_add(1, std::memory_order_relaxed));
 
     if (Zelph::Impl::is_var(subject))
     {
@@ -1203,7 +1217,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     }
     else if (_subject_pred_hint && !_n->has_right_edge(subject, _subject_pred_hint))
     {
-        if (_n->logging_active()) _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
+        if (_n->logging_active()) PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
         return results;
     }
 
@@ -1217,7 +1231,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
         if (_n->logging_active())
         {
             U_LOG(depth, "  -> Subject Failed");
-            _prof.extract_fail_subject.fetch_add(1, std::memory_order_relaxed);
+            PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
         }
         return results;
     }
@@ -1247,7 +1261,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
         {
             if (_n->logging_active())
             {
-                _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
+                PROF(template_rejects.fetch_add(1, std::memory_order_relaxed));
                 U_LOG(depth, "extract_bindings REJECT: subject " + U_NODE(subject) + " contains variable (rule template)");
             }
             return results;
@@ -1259,7 +1273,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
         {
             if (_n->logging_active())
             {
-                _prof.template_rejects.fetch_add(1, std::memory_order_relaxed);
+                PROF(template_rejects.fetch_add(1, std::memory_order_relaxed));
                 U_LOG(depth, "extract_bindings REJECT: object " + U_NODE(o) + " contains variable (rule template)");
             }
             return results;
@@ -1299,8 +1313,8 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
             if (_n->logging_active())
             {
-                _prof.extract_success.fetch_add(1, std::memory_order_relaxed);
-                if (_current_rel_ctx) _prof.note_relation_match(_current_rel_ctx);
+                PROF(extract_success.fetch_add(1, std::memory_order_relaxed));
+                if (_current_rel_ctx) PROF(note_relation_match(_current_rel_ctx));
 
                 U_LOG(depth, "extract_bindings SUCCESS (permutation " + std::to_string(results.size()) + ")");
                 if (_n->should_log(depth))
@@ -1333,7 +1347,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
     if (results.empty() && _n->logging_active())
     {
-        _prof.extract_fail_object.fetch_add(1, std::memory_order_relaxed);
+        PROF(extract_fail_object.fetch_add(1, std::memory_order_relaxed));
         U_LOG(depth, "extract_bindings FAIL: no object permutation matched");
     }
 

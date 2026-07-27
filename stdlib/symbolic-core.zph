@@ -8,6 +8,10 @@
 # agnostic: &0/&1 resolve to whatever the loaded module builds, so
 # symbolic results share their numeral nodes with numeric computation.
 
+# Default arithmetic substrate; import a different provider of
+# "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
+.import binary-arithmetic
+
 # TERMS are ordinary graph structure:
 #   - symbolic atoms: named nodes with declared sorts
 #       x ~ symvar        (variables)
@@ -50,9 +54,6 @@
 # DOMAIN CAVEAT: identities are FORMAL. exp inverseof ln (exp(ln u) = u)
 # assumes u > 0 over the reals; &0 / X ignores division by zero. Side
 # conditions are not tracked yet -- declare only directions you accept.
-
-# Default arithmetic module import (maybe overruled by first importing a difference one):
-.import binary-arithmetic
 
 # ---------------------------------------------------------------------------
 # Function-symbol properties: F inverseof G means F(G(u)) = u

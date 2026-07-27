@@ -324,7 +324,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             _prof.negated_conditions.fetch_add(1, std::memory_order_relaxed);
 
         std::unique_ptr<Unification> u = std::make_unique<Unification>(
-            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1, _prof);
+            this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1, &_prof);
 
         // --- Negation Handling ---
         // A condition tagged with `negation` succeeds if and only if

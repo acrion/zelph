@@ -116,3 +116,17 @@
 # Rule TC0 -- Connect: expose the result under =, testprime-style
 # ---------------------------------------------------------------------------
 (T topoly T, T aspoly P) => ((T topoly T) = P)
+
+# ---------------------------------------------------------------------------
+# Rules TI -- polynomial identity (A ≡ B): compile both sides and compare
+# normal forms. Canonical forms are unique hash-consed nodes, so the
+# comparison IS node identity -- expressed through unification: the SAME
+# variable P in both result conditions binds only if both compilations
+# reached the identical node. Repeatable query idiom: (A ≡ B) = proven.
+# Non-identity yields NO answer -- partiality by absence; a disproof
+# verdict would need negation-as-failure over the saturated compile
+# state and is left to a follow-up.
+# ---------------------------------------------------------------------------
+(A ≡ B) => (:topoly A)
+(A ≡ B) => (:topoly B)
+(A ≡ B, (:topoly A) = P, (:topoly B) = P) => ((A ≡ B) = proven)

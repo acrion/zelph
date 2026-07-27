@@ -75,7 +75,7 @@ namespace zelph::network
             const std::shared_ptr<Variables>& unequals,
             concurrency::ThreadPool*          pool,
             int                               log_depth,
-            ReasoningProfiler&                profiler,
+            ReasoningProfiler*                profiler,
             Node                              seed_fact      = 0,
             Node                              seed_predicate = 0);
 
@@ -94,7 +94,7 @@ namespace zelph::network
             const std::shared_ptr<Variables>& unequals,
             concurrency::ThreadPool*          pool,
             int                               log_depth,
-            ReasoningProfiler&                profiler,
+            ReasoningProfiler*                profiler,
             Node                              seed_fact      = 0,
             Node                              seed_predicate = 0);
 
@@ -135,11 +135,11 @@ namespace zelph::network
         adjacency_set _partial_snapshot;
         bool          _partial_snapshot_valid{false};
 
-        Node               _seed_fact{};      // semi-naive seed: the single candidate fact (0 = normal scan mode)
-        Node               _seed_predicate{}; // its relation type, known at creation time
-        int                _log_depth{};
-        ReasoningProfiler& _prof;
-        Node               _current_rel_ctx{};
+        Node                     _seed_fact{};      // semi-naive seed: the single candidate fact (0 = normal scan mode)
+        Node                     _seed_predicate{}; // its relation type, known at creation time
+        int                      _log_depth{};
+        ReasoningProfiler* const _prof; // nullptr = profiling disabled
+        Node                     _current_rel_ctx{};
 
         // Parallel mode
         concurrency::ThreadPool*               _pool{nullptr};

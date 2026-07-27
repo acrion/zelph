@@ -138,6 +138,36 @@ static std::vector<std::string> scan_module_ids(const std::string& resolved)
     return ids;
 }
 
+// True if the text is wrapped in ONE pair of parentheses enclosing the
+// whole string -- "(a done b)" but not "(a p b) mark ok". Quoted sections
+// are skipped, so a predicate like "is (not) father of" cannot mislead it.
+static bool is_fully_parenthesized(const std::string& s)
+{
+    if (s.size() < 2 || s.front() != '(' || s.back() != ')') return false;
+
+    int  depth    = 0;
+    bool in_quote = false;
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        if (s[i] == '"')
+        {
+            in_quote = !in_quote;
+            continue;
+        }
+        if (in_quote) continue;
+
+        if (s[i] == '(')
+        {
+            ++depth;
+        }
+        else if (s[i] == ')')
+        {
+            if (--depth == 0) return i + 1 == s.size();
+        }
+    }
+    return false;
+}
+
 class console::CommandExecutor::Impl
 {
 public:
@@ -289,6 +319,10 @@ private:
         { cmd_cluster_drop(c); };
         _command_map[".cluster-merge"] = [this](auto& c)
         { cmd_cluster_merge(c); };
+        _command_map[".explain"] = [this](auto& c)
+        { cmd_explain(c); };
+        _command_map[".why"] = [this](auto& c)
+        { cmd_explain(c); };
     }
 
 // --- Helpers ---
@@ -1307,6 +1341,7 @@ private:
             "",
             "Exploring the Network",
             "  .stat                                     – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            "  .explain [<fact>] [depth]                 – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth)",
             "  .list <count>                             – List first N existing nodes (internal map order, with details)",
             "  .clist <count>                            – List first N nodes named in current language (sorted by ID if feasible)",
             "  .node [<name|id>]                         – Show detailed node information; defaults to last output node",
@@ -1371,6 +1406,13 @@ private:
             "          Example:",
             "          _who \"is father of\" paul",
             "          Answer:  peter   is father of   paul",
+            "",
+            "Results:  ? <statement> asserts the statement, runs inference quietly,",
+            "          then queries its result (the stdlib-wide \"= idiom\"):",
+            "          ? (&17 mod &5)              Answer: (&17 mod &5) = &2",
+            "          ? :testprime &53            Answer: (:testprime &53) = prime",
+            "          ? $( x*x ) diffby x         Answer: ... = (x + x)",
+            "          No answer means no result was derivable (partiality by absence).",
             "",
             "Rules:    (condition1, condition2, ...) => (deduction)",
             "          Example:",
@@ -1464,6 +1506,28 @@ private:
 
             {".run-once", ".run-once\n"
                           "Performs a single inference pass."},
+
+            {".explain", ".explain [<fact pattern>] [max-depth]   (alias: .why)\n"
+                         "Reconstructs a justification for an asserted fact from the graph\n"
+                         "and prints it as a proof tree in the '⇐' notation. Without a\n"
+                         "pattern, the last output node is explained -- the natural\n"
+                         "companion of the '?' prefix:\n"
+                         "    .import binary-arithmetic\n"
+                         "    ? (&6 + &7)\n"
+                         "    .explain\n"
+                         "Nothing is recorded during inference: after quiescence, every\n"
+                         "derived fact has a rule instantiation whose conditions are all\n"
+                         "present, and .explain finds one by backward search (forward\n"
+                         "chaining keeps full provenance in the graph itself). Leaves are\n"
+                         "marked [axiom] (input facts); negation-as-failure premises show\n"
+                         "as ¬(...) [absent], verified against the CURRENT graph. A shared\n"
+                         "DERIVED subproof is expanded once and referenced afterwards\n"
+                         "([see above]); repeated axioms stay written out, since [axiom]\n"
+                         "is already their complete expansion.\n"
+                         "max-depth defaults to 3; 0 means unlimited. If several\n"
+                         "justifications exist, one is shown. Term islands work inside\n"
+                         "the pattern: .explain $( x*x ) diffby x = D is invalid, but\n"
+                         ".explain ($( x*x ) diffby x) = (x + x) resolves as usual."},
 #ifndef __EMSCRIPTEN__
             {".run-md", ".run-md <subdir>\n"
                         "Runs full inference and exports all deductions and contradictions as Markdown files\n"
@@ -2977,6 +3041,165 @@ private:
         if (!_n->merge_cluster(cmd[1], to))
             throw std::runtime_error(".cluster-merge: unknown cluster '" + cmd[1] + "'");
         _n->out("Merged cluster " + cmd[1] + " into " + cmd[2] + ".", true);
+    }
+
+    // parse_zelph_to_janet for a fact pattern: an unparsable pattern is a
+    // normal outcome here (see cmd_explain's unwrapping), not an error to
+    // propagate.
+    std::string try_parse_pattern(const std::string& pattern) const
+    {
+        try
+        {
+            return _script_engine->parse_zelph_to_janet(pattern);
+        }
+        catch (const std::exception&)
+        {
+            return {};
+        }
+    }
+
+    void restore_cluster(const std::string& name) const
+    {
+        if (name.empty() || name == "default")
+            _n->deactivate_cluster();
+        else
+            _n->set_active_cluster(name);
+    }
+
+    // Evaluating a statement MATERIALIZES it (the zelph AST calls
+    // zelph/fact), which would make every pattern "asserted" and turn
+    // .explain into an assertion command. The evaluation therefore runs
+    // inside a scratch cluster that is rolled back immediately: nodes that
+    // already existed are never recorded, so the drop removes exactly what
+    // this evaluation added -- and nothing else. The returned node ID is a
+    // structural hash and stays meaningful after the rollback, so
+    // check_fact() can answer honestly.
+    network::Node evaluate_pattern_read_only(const std::string& code)
+    {
+        static const std::string scratch  = "__explain";
+        const std::string        previous = _n->active_cluster_name();
+
+        _n->set_active_cluster(scratch);
+
+        network::Node target = 0;
+        try
+        {
+            target = _script_engine->evaluate_expression(code);
+        }
+        catch (...)
+        {
+            restore_cluster(previous);
+            _n->drop_cluster(scratch);
+            throw;
+        }
+
+        restore_cluster(previous);
+        _n->drop_cluster(scratch);
+        return target;
+    }
+
+    void cmd_explain(const std::vector<std::string>& cmd)
+    {
+        // Trailing all-digit token = depth; everything else re-joins to the pattern.
+        std::size_t              depth = 4;
+        std::vector<std::string> parts(cmd.begin() + 1, cmd.end());
+        if (!parts.empty() && !parts.back().empty()
+            && parts.back().find_first_not_of("0123456789") == std::string::npos)
+        {
+            depth = std::stoul(parts.back());
+            parts.pop_back();
+        }
+
+        network::Node target = 0;
+        if (parts.empty())
+        {
+            target = string::last_node_to_string_node();
+            if (!target)
+                throw std::runtime_error(".explain: no previous output node -- pass a fact pattern");
+        }
+        else
+        {
+            std::string pattern;
+            for (const auto& p : parts)
+            {
+                if (!pattern.empty()) pattern += ' ';
+                pattern += p;
+            }
+
+            // A pattern wrapped in a single pair of parentheses --
+            // ".explain ((&6 + &7) = &13)" -- is a TERM, which the statement
+            // grammar rejects; unwrapping yields the statement the user
+            // meant. Tried SECOND, so a pattern that parses as given keeps
+            // its original reading.
+            std::string code = try_parse_pattern(pattern);
+            if (code.empty() && is_fully_parenthesized(pattern))
+                code = try_parse_pattern(pattern.substr(1, pattern.size() - 2));
+            if (code.empty())
+                throw std::runtime_error(".explain: cannot parse fact pattern");
+
+            target = evaluate_pattern_read_only(code);
+            if (!target)
+                throw std::runtime_error(".explain: pattern does not denote a fact");
+        }
+
+        if (!_n->check_fact(target).is_known())
+        {
+            _n->out("Fact is not asserted -- nothing to explain.", true);
+            return;
+        }
+
+        std::set<network::Node> printed;
+        std::string             out;
+        render_proof(_n->explain(target, depth), "", true, printed, out);
+        _n->out(out, true);
+    }
+
+    // Indented proof tree in the established "⇐" notation. Shared subproofs
+    // (the DAG from hash-consing) are expanded once and referenced afterwards.
+    void render_proof(const std::shared_ptr<network::ProofNode>& p, const std::string& indent, const bool last, std::set<network::Node>& printed, std::string& out) const
+    {
+        std::string line;
+        zelph::string::node_to_string(_n, line, _n->lang(), p->fact, 3);
+        line = zelph::string::unmark_identifiers(line);
+
+        const std::string branch       = indent.empty() ? "" : indent + (last ? "└─ " : "├─ ");
+        const std::string child_indent = indent.empty() ? "   " : indent + (last ? "   " : "│  ");
+
+        switch (p->status)
+        {
+        case network::ProofNode::Status::Axiom:
+            out += branch + line + "  [axiom]\n";
+            return;
+        case network::ProofNode::Status::Unfounded:
+            out += branch + line + "  [no acyclic justification found in the current graph]\n";
+            return;
+        case network::ProofNode::Status::Truncated:
+            out += branch + line + "  … [depth limit -- use '.explain <pattern> 0' for the full proof]\n";
+            return;
+        case network::ProofNode::Status::Derived:
+            break;
+        }
+
+        if (printed.count(p->fact))
+        {
+            out += branch + line + "  [see above]\n";
+            return;
+        }
+        printed.insert(p->fact);
+
+        out += branch + line + "\n";
+
+        const std::size_t total = p->premises.size() + p->absent.size();
+        std::size_t       index = 0;
+        for (const auto& premise : p->premises)
+            render_proof(premise, child_indent, ++index == total, printed, out);
+        for (const network::Node neg : p->absent)
+        {
+            std::string nline;
+            zelph::string::node_to_string(_n, nline, _n->lang(), neg, 3);
+            out += child_indent + (++index == total ? "└─ " : "├─ ") + "¬("
+                 + zelph::string::unmark_identifiers(nline) + ")  [absent]\n";
+        }
     }
 };
 

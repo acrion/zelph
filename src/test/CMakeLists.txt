@@ -47,11 +47,15 @@ FetchContent_MakeAvailable(unordered_dense)
 add_executable(zelph_tests
     test_check_fact.cpp
     test_clusters.cpp
+    test_display_scheme.cpp
+    test_explain.cpp
     test_fact_cache.cpp
     test_genuine_structure.cpp
     test_hf_cache.cpp
+    test_inline_keyword.cpp
     test_integers.cpp
     test_jacobian.cpp
+    test_math_syntax.cpp
     test_nand_arithmetic.cpp
     test_neural.cpp
     test_node_display.cpp
@@ -62,6 +66,7 @@ add_executable(zelph_tests
     test_primes.cpp
     test_profiler.cpp
     test_reasoning.cpp
+    test_result_query.cpp
     test_seminaive.cpp
     test_sparql.cpp
     test_stratified.cpp

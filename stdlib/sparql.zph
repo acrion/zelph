@@ -1248,5 +1248,7 @@
 
 (zelph/register-keyword "sparql" sparql-handler)
 
-"SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line."
+# Import-time notice via the output pipeline: a bare string value would be
+# an input echo, which is suppressed inside imported scripts.
+(zelph/out "SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line.")
 %

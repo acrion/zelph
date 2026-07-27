@@ -846,6 +846,20 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 
 This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
 
+`zelph/register-keyword` has a second, three-argument form for **inline
+keywords** ("expression islands"): `(zelph/register-keyword open close handler)`.
+Whenever `open` appears inside a zelph statement (outside quoted atoms and
+comments), the raw text up to `close` is passed to `handler`, which must
+return a `zelph/node`; the node replaces the island in the statement and can
+therefore stand in any value position — subjects, objects, nested facts, rule
+conditions and consequences. The handler may return `:incomplete` to extend
+the island to the next occurrence of `close`, so delimiters nested inside the
+island's own grammar work naturally; handlers must not create graph structure
+before accepting their input. Variables created inside an island share the
+surrounding statement's scope. This is the host mechanism behind the stdlib's
+term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
+`.zph` module — the language grows in scripts, not in C++.
+
 ### Summary: zelph Syntax and Janet Equivalents
 
 | zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |

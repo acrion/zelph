@@ -1,0 +1,174 @@
+# math-syntax.zph - the $( ... ) term island: conventional infix notation
+# for building term graphs.
+#
+# PREREQUISITES: numeric literals inside islands delegate to zelph/number
+# (they are pure &-literal sugar), so an arithmetic substrate must be
+# loaded; the default import below takes care of that. Symbolic MEANING
+# (simplify, diffby, topoly, ...) comes from the symbolic modules as
+# usual; this module contributes syntax only.
+
+# Default arithmetic substrate; import a different provider of
+# "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
+.import binary-arithmetic
+
+#
+# An island desugars to exactly the graph structure the verbose syntax
+# builds -- hash-consing makes both spellings meet at identical nodes,
+# so sugar and verbose forms are freely mixable, in facts and in rules:
+#
+#   $( x^2 + 2*x + 1 ) diffby x
+#   (T red $( X * 1 )) => (T rw X)        # node-identical to (X * &1)
+#
+# GRAMMAR (v1):
+#   expr    := term  (('+'|'-') term)*            left-associative
+#   term    := factor (('*'|'/') factor)*         left-associative
+#   factor  := '-' factor | power
+#   power   := primary ('^' INTEGER)?             INTEGER >= 1
+#   primary := INTEGER | IDENT '(' expr ')' | IDENT | '(' expr ')'
+#
+#   INTEGER  -> (zelph/number "...")  (the &-literal representation)
+#   IDENT    -> a zelph variable if variable-shaped (single uppercase
+#               letter or leading '_', as in native syntax), otherwise a
+#               named node in the current language. Identifiers are
+#               [A-Za-z_][A-Za-z0-9_]* -- atoms outside this charset
+#               need the verbose syntax.
+#   f(u)     -> (f of u); single-argument application only
+#   -u       -> (neg of u); with symbolic-integers loaded, -3 promotes
+#               to (neg zint &3) through the existing machinery
+#   t^n      -> left-nested products ((t*t)*t)...; a dedicated pow
+#               module may later replace this desugaring. t^1 is t;
+#               t^0 is rejected.
+#
+# DELIBERATE OMISSIONS (v1): no implicit multiplication (2x is an error,
+# write 2*x), no unquote inside islands, no comparison operators, no
+# string literals.
+#
+# MECHANICS: the island is an inline keyword (3-argument
+# zelph/register-keyword). The host's close-delimiter scan is raw; this
+# handler arbitrates nested ')' via the :incomplete veto, keyed on
+# parenthesis balance. Per the inline-keyword contract, the handler is
+# side-effect-free until it accepts: PEG parse first, graph construction
+# only afterwards.
+
+%
+(def term-grammar
+  ~{:ws (set " \t\r\n")
+    :s* (any :ws)
+
+    :int (group (* (constant :num) (? "&") (capture (some (range "09")))))
+
+    :ident (capture (* (choice (range "az") (range "AZ") "_")
+                       (any (choice (range "az") (range "AZ") (range "09") "_"))))
+
+    :funcall (group (* (constant :call) :ident :s* "(" :s* :expr :s* ")"))
+    :leaf (group (* (constant :leaf) :ident))
+    :paren (* "(" :s* :expr :s* ")")
+    :primary (choice :int :funcall :leaf :paren)
+
+    :power (group (* (constant :pow) :primary
+                     (? (* :s* "^" :s* (capture (some (range "09")))))))
+
+    :factor (choice (group (* (constant :neg) "-" :s* :factor)) :power)
+
+    :term (group (* (constant :chain) :factor
+                    (any (* :s* (capture (set "*/")) :s* :factor))))
+    :expr (group (* (constant :chain) :term
+                    (any (* :s* (capture (set "+-")) :s* :term))))
+
+    :main (* :s* :expr :s* -1)})
+
+(def term-peg (peg/compile term-grammar))
+
+(defn- var-name?
+  "Variable-shaped identifier, mirroring native syntax: a single
+  uppercase letter, or a leading underscore."
+  [s]
+  (or (string/has-prefix? "_" s)
+      (and (= 1 (length s)) (<= 65 (get s 0) 90))))
+
+(defn- build
+  "AST -> zelph/fact argument: a zelph/node, or a Janet symbol for a
+  variable leaf (resolved into the statement's shared variable scope by
+  the zelph/fact machinery)."
+  [ast]
+  (case (first ast)
+    :num (zelph/number (ast 1))
+    :leaf (let [s (ast 1)]
+            (if (var-name? s) (symbol s) (zelph/resolve s)))
+    :call (let [head (ast 1)]
+            (zelph/fact (if (var-name? head) (symbol head) head)
+                        "of"
+                        (build (ast 2))))
+    :neg (zelph/fact "neg" "of" (build (ast 1)))
+    :pow (let [base (build (ast 1))]
+           (if (= 2 (length ast))
+             base
+             (let [n (scan-number (ast 2))]
+               (when (< n 1)
+                 (error "math-syntax: exponent must be a positive integer (t^0 needs a pow module)"))
+               (var acc base)
+               (loop [_ :range [1 n]]
+                 (set acc (zelph/fact acc "*" base)))
+               acc)))
+    :chain (do
+             (var acc (build (ast 1)))
+             (var i 2)
+             (while (< i (length ast))
+               (set acc (zelph/fact acc (ast i) (build (ast (+ i 1)))))
+               (+= i 2))
+             acc)
+    (error "math-syntax: internal error (unknown AST tag)")))
+
+(defn- balanced?
+  "Parenthesis balance -- the island's completeness criterion for the
+  host's close-delimiter scan. Balanced but unparsable content is an
+  ERROR, never :incomplete: a veto would swallow surrounding statement
+  text."
+  [t]
+  (var d 0)
+  (var ok true)
+  (each c t
+    (case c
+      40 (++ d)
+      41 (do (-- d) (when (< d 0) (set ok false)))))
+  (and ok (= d 0)))
+
+(defn- math-term-handler [text]
+  (if (not (balanced? text))
+    :incomplete
+    (do
+      (def parsed (peg/match term-peg text))
+      (unless parsed
+        (error (string "math-syntax: cannot parse term '" (string/trim text) "'")))
+      (def r (build (first parsed)))
+      (when (symbol? r)
+        (error "math-syntax: a lone variable is not a term; islands must build structure"))
+      r)))
+
+# --- Display: render terms the way this module's parser reads them ------
+#
+# Registered HERE and not in the arithmetic modules on purpose: the
+# notation is this module's, not theirs. A term appears in island form
+# only where the default rendering would deviate -- where precedence
+# actually removes parentheses, or where a numeral drops its sigil.
+# Everything else keeps the form it has today.
+#
+# 'of' is deliberately NOT registered: (f of u) is an application, not an
+# infix operator, and rendering it as "f of u" would produce something
+# this grammar cannot read back. A term containing one falls back to the
+# default rendering -- correct, just not in island form. The same holds
+# for '=', which belongs to the arithmetic modules and has no place in
+# this grammar; a result fact therefore renders its operand term as an
+# island and keeps '=' outside it.
+(zelph/register-display-scheme "math-syntax" "$( " " )"
+  {:numeral-prefix "&"
+   :name-first "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+   :name-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"})
+
+(zelph/set-infix-display "math-syntax"
+  [["+" 10 :left] ["-" 10 :left] ["*" 20 :left] ["/" 20 :left]])
+
+(zelph/register-keyword "$(" ")" math-term-handler)
+
+(zelph/out "math-syntax loaded: $( ... ) term islands (infix with precedence)")
+%

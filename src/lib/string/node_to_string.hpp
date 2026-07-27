@@ -27,20 +27,51 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/network_types.hpp"
 
+#include <memory>
+#include <string>
 #include <unordered_set>
 
 namespace zelph::network
 {
     class Zelph;
+    struct DisplayTables;
 }
 
 namespace zelph::string
 {
     static constexpr int default_display_max_neighbors{5};
 
+    // Per-node state for script-registered display schemes (see
+    // network::DisplayScheme). Callers of node_to_string never construct
+    // this -- the top-level call creates the root context and the recursion
+    // threads it through. The IN fields describe the PARENT; the OUT fields
+    // are the child's report back.
+    struct SchemeContext
+    {
+        const network::DisplayTables* tables{nullptr}; // snapshot, fetched once per top-level call
+
+        // IN: the parent operator, when the parent renders under a scheme.
+        std::size_t scheme{0};
+        int         precedence{0};
+        int         assoc{-1};
+        bool        right_side{false};
+        bool        active{false};
+
+        // IN: forbid scheme rendering for this node (bail-out re-render).
+        bool no_scheme{false};
+
+        // OUT: this node is writable in the parent's scheme.
+        bool expressible{false};
+        // OUT: the rendering used forms the default renderer would not have
+        // produced (elided parentheses, foreign numeral prefix).
+        bool deviated{false};
+        // OUT: the result is a self-delimiting token; do not parenthesize it.
+        bool self_delimited{false};
+    };
+
     network::Node last_node_to_string_node();
     void          reset_last_node();
-    void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr);
+    void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr, SchemeContext* ctx = nullptr);
     bool          is_inside_node_to_wstring();
     bool          is_var(std::string token);
 }

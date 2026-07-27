@@ -50,11 +50,220 @@ class ScriptEngine::Impl
 public:
     static Impl* s_instance; // Required for static Janet C-function callbacks
 
-    network::Reasoning*          _n;
-    JanetTable*                  _janet_env = nullptr;
-    Janet                        _zelph_peg{};
-    bool                         _log_janet_functions = false;
-    std::map<std::string, Janet> _keyword_handlers;
+    network::Reasoning* _n;
+    JanetTable*         _janet_env = nullptr;
+    Janet               _zelph_peg{};
+    bool                _log_janet_functions = false;
+
+    // A registered syntax keyword. Two kinds share this entry, the
+    // registration API (zelph/register-keyword) and the handler protocol
+    // (text in, :incomplete veto, result out):
+    //   - block keywords (inline_mode == false): line-based. Detected as the
+    //     first token of a REPL/script line, accumulated until an empty line
+    //     (see Interactive::process). The handler result is printed.
+    //   - inline keywords (inline_mode == true): expression islands. Whenever
+    //     the opening delimiter (the map key) occurs inside a zelph statement,
+    //     the text up to `close` is passed to the handler, which must return a
+    //     zelph/node; the node replaces the island in the statement (spliced
+    //     via the unquote mechanism). :incomplete extends the island to the
+    //     next occurrence of `close`, so nested delimiters work without the
+    //     host knowing the island's grammar.
+    struct KeywordEntry
+    {
+        Janet       handler{};
+        bool        inline_mode = false;
+        std::string close; // inline mode only
+    };
+    std::map<std::string, KeywordEntry> _keyword_handlers;
+
+    // True while inline-keyword expansion has already prepared (cleared) the
+    // scoped-variable map for the statement being processed; process_janet
+    // and evaluate_expression then skip their own clear exactly once, so
+    // island handlers and the surrounding statement share one variable scope.
+    bool _scoped_vars_preloaded = false;
+
+    enum class HandlerCall
+    {
+        Dispatched,
+        Incomplete
+    };
+
+    // Shared invocation for both keyword kinds: pcall with error wrapping and
+    // the :incomplete veto protocol. Under force a veto is an error (EOF in
+    // scripts for block keywords; see expand_inline_keywords for islands).
+    HandlerCall call_keyword_handler(const std::string& name, const Janet handler, const std::string& text, const bool force, Janet& result)
+    {
+        JanetFunction* f     = janet_unwrap_function(handler);
+        Janet          arg   = janet_cstringv(text.c_str());
+        JanetFiber*    fiber = nullptr;
+
+        if (janet_pcall(f, 1, &arg, &result, &fiber) != JANET_SIGNAL_OK)
+        {
+            std::string err = "Janet error in handler for keyword '" + name + "'";
+            if (janet_checktype(result, JANET_STRING))
+                err += ": " + std::string(reinterpret_cast<const char*>(janet_unwrap_string(result)));
+            else if (janet_checktype(result, JANET_BUFFER))
+            {
+                JanetBuffer* b = janet_unwrap_buffer(result);
+                err += ": " + std::string(reinterpret_cast<const char*>(b->data), b->count);
+            }
+            throw std::runtime_error(err);
+        }
+
+        if (janet_checktype(result, JANET_KEYWORD))
+        {
+            const uint8_t* kw = janet_unwrap_keyword(result);
+            if (std::string(reinterpret_cast<const char*>(kw)) == "incomplete")
+            {
+                if (!force) return HandlerCall::Incomplete;
+                throw std::runtime_error("Keyword block for '" + name + "' is incomplete");
+            }
+        }
+
+        return HandlerCall::Dispatched;
+    }
+
+    // Expand inline keywords ("expression islands") in a zelph statement.
+    // Runs in parse_zelph_to_janet BEFORE the PEG, so every consumer of zelph
+    // syntax (REPL statements, imported scripts, command patterns) gets the
+    // expansion. Each island's handler receives the raw text between the
+    // delimiters and must return a zelph/node; the node is bound to a fresh
+    // Janet name and spliced back via the existing unquote mechanism
+    // (",$inlineN"), which makes islands valid in every value position.
+    //
+    // Close-delimiter search is a raw substring scan: the HANDLER owns the
+    // island's grammar and arbitrates false splits via the :incomplete veto
+    // (a ')' nested inside the island extends it to the next ')'). Handlers
+    // must therefore be side-effect-free until they accept their input --
+    // the contract sparql.zph already follows.
+    //
+    // Openers are not matched inside quoted atoms or comments (mirroring
+    // is_zelph_complete's scanning rules).
+    std::string expand_inline_keywords(const std::string& input)
+    {
+        _scoped_vars_preloaded = false;
+
+        std::vector<std::pair<const std::string*, const KeywordEntry*>> inline_kws;
+        for (const auto& [open, entry] : _keyword_handlers)
+            if (entry.inline_mode) inline_kws.push_back({&open, &entry});
+        if (inline_kws.empty()) return input;
+
+        std::string out;
+        out.reserve(input.size());
+
+        bool   in_string  = false;
+        bool   escape     = false;
+        bool   in_comment = false;
+        size_t island     = 0;
+
+        size_t i = 0;
+        while (i < input.size())
+        {
+            const char c = input[i];
+
+            if (in_comment)
+            {
+                if (c == '\n') in_comment = false;
+                out += c;
+                ++i;
+                continue;
+            }
+            if (escape)
+            {
+                escape = false;
+                out += c;
+                ++i;
+                continue;
+            }
+            if (in_string)
+            {
+                if (c == '\\')
+                    escape = true;
+                else if (c == '"')
+                    in_string = false;
+                out += c;
+                ++i;
+                continue;
+            }
+            if (c == '#')
+            {
+                in_comment = true;
+                out += c;
+                ++i;
+                continue;
+            }
+            if (c == '"')
+            {
+                in_string = true;
+                out += c;
+                ++i;
+                continue;
+            }
+
+            // Longest matching opener at this position wins.
+            const std::string*  open  = nullptr;
+            const KeywordEntry* entry = nullptr;
+            for (const auto& [o, e] : inline_kws)
+            {
+                if (input.compare(i, o->size(), *o) == 0 && (!open || o->size() > open->size()))
+                {
+                    open  = o;
+                    entry = e;
+                }
+            }
+            if (!open)
+            {
+                out += c;
+                ++i;
+                continue;
+            }
+
+            if (!_scoped_vars_preloaded)
+            {
+                // One shared variable scope for the whole statement: a variable
+                // created inside an island must unify with the same name in the
+                // surrounding statement (rule authoring). Cleared here, at the
+                // true start of statement processing; process_janet skips its
+                // own clear once (_scoped_vars_preloaded).
+                {
+                    std::lock_guard<std::mutex> lock(_state_mutex);
+                    _scoped_variables.clear();
+                }
+                _scoped_vars_preloaded = true;
+            }
+
+            const std::string& close         = entry->close;
+            const size_t       content_begin = i + open->size();
+
+            size_t k = input.find(close, content_begin);
+            if (k == std::string::npos)
+                throw std::runtime_error("Inline keyword '" + *open + "': missing closing delimiter '" + close + "'");
+
+            Janet result = janet_wrap_nil();
+            while (true)
+            {
+                const std::string inner = input.substr(content_begin, k - content_begin);
+                if (call_keyword_handler(*open, entry->handler, inner, false, result) == HandlerCall::Dispatched)
+                    break;
+
+                k = input.find(close, k + close.size());
+                if (k == std::string::npos)
+                    throw std::runtime_error("Inline keyword '" + *open + "': handler reports incomplete input and no further '" + close + "' follows");
+            }
+
+            const network::Node n = zelph_unwrap_node(result);
+            if (!n)
+                throw std::runtime_error("Inline keyword '" + *open + "': handler must return a zelph/node");
+
+            const std::string name = "$inline" + std::to_string(island++);
+            janet_def(_janet_env, name.c_str(), result, "inline keyword expansion result");
+            out += "," + name;
+
+            i = k + close.size();
+        }
+
+        return out;
+    }
 
     // Compiled neural networks (session-scoped caches, discarded on .reset).
     // Handles handed to Janet are indexes into this vector.
@@ -122,8 +331,8 @@ public:
         if (s_instance == this) s_instance = nullptr;
         if (_janet_env)
         {
-            for (auto& [kw, handler] : _keyword_handlers)
-                janet_gcunroot(handler);
+            for (auto& [kw, entry] : _keyword_handlers)
+                janet_gcunroot(entry.handler);
             _keyword_handlers.clear();
             janet_gcunroot(_zelph_peg);
             janet_deinit();
@@ -195,9 +404,14 @@ public:
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
 
-        janet_def(_janet_env, "zelph/register-keyword", wrap((JanetCFunction)janet_cfun_zelph_register_keyword), "(zelph/register-keyword keyword handler)\nRegister a REPL syntax keyword. After the keyword is "
-                                                                                                                 "entered, subsequent lines are accumulated verbatim until an empty line, then passed as a single "
-                                                                                                                 "string to handler.");
+        janet_def(_janet_env, "zelph/register-keyword", wrap((JanetCFunction)janet_cfun_zelph_register_keyword), "(zelph/register-keyword keyword handler)\n(zelph/register-keyword open close handler)\n"
+                                                                                                                 "Two-argument form: register a REPL syntax keyword. After the keyword is entered, subsequent "
+                                                                                                                 "lines are accumulated verbatim until an empty line, then passed as a single string to handler.\n"
+                                                                                                                 "Three-argument form: register an inline keyword (expression island). Whenever `open` occurs "
+                                                                                                                 "inside a zelph statement, the text up to `close` is passed to handler, which must return a "
+                                                                                                                 "zelph/node; the node replaces the island in the statement. Returning :incomplete extends the "
+                                                                                                                 "island to the next occurrence of `close`, so nested delimiters work -- handlers must be free "
+                                                                                                                 "of graph side effects until they accept their input.");
 
         janet_def(_janet_env, "zelph/closure", wrap((JanetCFunction)janet_cfun_zelph_closure), "(zelph/closure start predicate &opt include-start)\nTransitive closure following predicate "
                                                                                                "forward (subject to object). include-start true gives the reflexive closure (SPARQL *).");
@@ -258,6 +472,24 @@ public:
                                                                                                                    "Input sugar (\":pred X\") keeps working regardless. Intended for term-forming "
                                                                                                                    "operators (+, eml, nand, ...), where subject == object is a hash-consing "
                                                                                                                    "coincidence rather than a request marker.");
+
+        janet_def(_janet_env, "zelph/register-display-scheme", wrap((JanetCFunction)janet_cfun_zelph_register_display_scheme), "(zelph/register-display-scheme name open close &opt options)\nDeclare how this script's own notation is written, so node_to_string can "
+                                                                                                                               "render terms the way the script's parser reads them back. open/close enclose a rendering that DEVIATES from the default form "
+                                                                                                                               "(elided parentheses, a different numeral prefix); they are emitted verbatim, so use \"$( \" / \" )\" for padded output. "
+                                                                                                                               "options is a struct: :numeral-prefix replaces the default \"&\" of number literals inside the scheme; :name-first and "
+                                                                                                                               ":name-chars declare which characters a leaf name may start with and consist of. A term containing anything the scheme cannot "
+                                                                                                                               "write -- a foreign predicate, a set, a name outside that grammar -- is rendered in the default form instead, so the output "
+                                                                                                                               "always stays re-readable. Re-registering a name updates the scheme.");
+
+        janet_def(_janet_env, "zelph/set-infix-display", wrap((JanetCFunction)janet_cfun_zelph_set_infix_display), "(zelph/set-infix-display scheme entries)\nRegister infix operators into a scheme declared by zelph/register-display-scheme. "
+                                                                                                                   "entries is an array of [predicate precedence &opt associativity]; associativity is :left (default), :right or :none. Higher "
+                                                                                                                   "precedence binds tighter; node_to_string omits the parentheses around an operand whose operator binds tightly enough. Additive "
+                                                                                                                   "across calls. A predicate already claimed by any scheme is an error -- otherwise a term's rendering would depend on load order. "
+                                                                                                                   "Registered operators are excluded from the self-fact display sugar (see zelph/no-selffact-sugar).");
+
+        janet_def(_janet_env, "zelph/out", wrap((JanetCFunction)janet_cfun_zelph_out), "(zelph/out text)\nEmit text through zelph's output pipeline (Out channel). Unlike Janet's "
+                                                                                       "print (raw stdout), the text reaches the REPL, the playground and test collectors, and is "
+                                                                                       "not subject to the input-echo suppression inside imported scripts -- use it for import-time notices.");
     }
 
     void setup_module_paths() const
@@ -1134,6 +1366,123 @@ public:
         return janet_wrap_nil(); // unreachable
     }
 
+    // Register a display scheme: the delimiters a script uses to enclose its
+    // own notation, its numeral prefix, and the identifier grammar of its
+    // leaves. C++ stores these verbatim -- it never parses the scheme's
+    // syntax and knows nothing about the domain.
+    static Janet janet_cfun_zelph_register_display_scheme(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, 4);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/register-display-scheme", argc, argv, true);
+
+        network::DisplayScheme scheme;
+        scheme.name  = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+        scheme.open  = reinterpret_cast<const char*>(janet_getstring(argv, 1));
+        scheme.close = reinterpret_cast<const char*>(janet_getstring(argv, 2));
+
+        if (argc >= 4 && !janet_checktype(argv[3], JANET_NIL))
+        {
+            const auto option = [&](const char* key, std::string& out)
+            {
+                const Janet v = janet_get(argv[3], janet_ckeywordv(key));
+                if (janet_checktype(v, JANET_STRING))
+                    out = reinterpret_cast<const char*>(janet_unwrap_string(v));
+                else if (janet_checktype(v, JANET_BUFFER))
+                {
+                    JanetBuffer* b = janet_unwrap_buffer(v);
+                    out            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+                }
+            };
+            option("numeral-prefix", scheme.numeral_prefix);
+            option("name-first", scheme.name_first);
+            option("name-chars", scheme.name_chars);
+        }
+
+        std::string err;
+        try
+        {
+            s_instance->_n->register_display_scheme(scheme);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/register-display-scheme: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Register infix operators into a previously declared scheme.
+    static Janet janet_cfun_zelph_set_infix_display(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-infix-display", argc, argv, true);
+
+        const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+
+        std::size_t scheme = 0;
+        if (!s_instance->_n->find_display_scheme(name, scheme))
+            janet_panicf("zelph/set-infix-display: unknown display scheme '%s' (register it first)", name.c_str());
+
+        const Janet* rows;
+        int32_t      row_count;
+        if (!janet_indexed_view(argv[1], &rows, &row_count))
+            janet_panicf("zelph/set-infix-display: expected an array of [predicate precedence associativity] entries");
+
+        std::vector<network::InfixEntry> ops;
+        ops.reserve(static_cast<size_t>(row_count));
+
+        for (int32_t i = 0; i < row_count; ++i)
+        {
+            const Janet* cells;
+            int32_t      cell_count;
+            if (!janet_indexed_view(rows[i], &cells, &cell_count) || cell_count < 2)
+                janet_panicf("zelph/set-infix-display: entry %d must be [predicate precedence &opt associativity]", i);
+
+            network::InfixEntry entry;
+
+            // Creating the node is intentional: a module registers its
+            // operators up front, possibly before any fact mentions them.
+            entry.predicate = s_instance->resolve_janet_arg(cells[0]);
+            if (!entry.predicate)
+                janet_panicf("zelph/set-infix-display: predicate of entry %d could not be resolved", i);
+
+            if (!janet_checktype(cells[1], JANET_NUMBER))
+                janet_panicf("zelph/set-infix-display: precedence of entry %d must be a number", i);
+            entry.precedence = static_cast<int>(janet_unwrap_number(cells[1]));
+
+            if (cell_count >= 3 && janet_checktype(cells[2], JANET_KEYWORD))
+            {
+                const std::string a = reinterpret_cast<const char*>(janet_unwrap_keyword(cells[2]));
+                if (a == "left")
+                    entry.assoc = -1;
+                else if (a == "right")
+                    entry.assoc = 1;
+                else if (a == "none")
+                    entry.assoc = 0;
+                else
+                    janet_panicf("zelph/set-infix-display: associativity of entry %d must be :left, :right or :none", i);
+            }
+
+            ops.push_back(entry);
+        }
+
+        std::string err;
+        try
+        {
+            s_instance->_n->set_infix_display(scheme, ops);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/set-infix-display: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
     // Register predicates whose self-facts must render verbose. Additive
     // (unlike the replace-the-set semantics of zelph/set-number-digits):
     // arithmetic, symbolic-core and eml load incrementally, and a later
@@ -1156,6 +1505,20 @@ public:
         }
 
         s_instance->_n->add_verbose_selffact_predicates(preds);
+        return janet_wrap_nil();
+    }
+
+    // Emit a line through zelph's output handler. Janet's own print writes to
+    // raw stdout and bypasses the OutputHandler (REPL redirection, playground,
+    // test collectors); this is the pipeline-correct way for scripts to talk
+    // to the user -- e.g. import-time notices, which the input-echo
+    // suppression inside imports deliberately does not cover.
+    static Janet janet_cfun_zelph_out(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        const uint8_t* str = janet_getstring(argv, 0);
+        s_instance->_n->out(reinterpret_cast<const char*>(str), true);
         return janet_wrap_nil();
     }
 
@@ -1631,13 +1994,12 @@ public:
         return res;
     }
 
-    // Register a keyword that introduces a custom multi-line syntax block in the
-    // REPL and in .zph scripts. The block is terminated by an empty line; the
-    // accumulated text is passed verbatim (as a single string) to the handler.
     static Janet janet_cfun_zelph_register_keyword(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 2);
+        janet_arity(argc, 2, 3);
         if (!s_instance) return janet_wrap_nil();
+
+        const bool inline_mode = argc == 3;
 
         const uint8_t* str     = janet_getstring(argv, 0);
         std::string    keyword = reinterpret_cast<const char*>(str);
@@ -1646,15 +2008,27 @@ public:
             janet_panicf("zelph/register-keyword: invalid keyword '%s'", keyword.c_str());
         if (keyword.find_first_of(" \t\r\n") != std::string::npos)
             janet_panicf("zelph/register-keyword: keyword must not contain whitespace");
-        if (!janet_checktype(argv[1], JANET_FUNCTION))
-            janet_panicf("zelph/register-keyword: second argument must be a function");
+
+        std::string close;
+        if (inline_mode)
+        {
+            close = reinterpret_cast<const char*>(janet_getstring(argv, 1));
+            if (close.empty())
+                janet_panicf("zelph/register-keyword: closing delimiter must not be empty");
+            if (close.find_first_of(" \t\r\n") != std::string::npos)
+                janet_panicf("zelph/register-keyword: closing delimiter must not contain whitespace");
+        }
+
+        const Janet handler = argv[inline_mode ? 2 : 1];
+        if (!janet_checktype(handler, JANET_FUNCTION))
+            janet_panicf("zelph/register-keyword: handler must be a function");
 
         auto it = s_instance->_keyword_handlers.find(keyword);
         if (it != s_instance->_keyword_handlers.end())
-            janet_gcunroot(it->second);
+            janet_gcunroot(it->second.handler);
 
-        janet_gcroot(argv[1]);
-        s_instance->_keyword_handlers[keyword] = argv[1];
+        janet_gcroot(handler);
+        s_instance->_keyword_handlers[keyword] = KeywordEntry{handler, inline_mode, close};
         return janet_wrap_nil();
     }
 
@@ -2020,6 +2394,8 @@ std::string ScriptEngine::get_janet_logging_status() const
 
 std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
 {
+    const std::string expanded = _pImpl->expand_inline_keywords(input);
+
     JanetSymbol      match_sym = janet_csymbol("zelph-safe-parse");
     Janet            match_fun_out;
     JanetBindingType bt = janet_resolve(_pImpl->_janet_env, match_sym, &match_fun_out);
@@ -2027,7 +2403,7 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     if (bt != JANET_BINDING_DEF) return "";
 
     JanetFunction* match_fun = janet_unwrap_function(match_fun_out);
-    Janet          args[2]   = {_pImpl->_zelph_peg, janet_cstringv(input.c_str())};
+    Janet          args[2]   = {_pImpl->_zelph_peg, janet_cstringv(expanded.c_str())};
     Janet          result;
 
     if (janet_pcall(match_fun, 2, args, &result, nullptr) != JANET_SIGNAL_OK)
@@ -2093,7 +2469,10 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
 
 void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 {
-    _pImpl->_scoped_variables.clear();
+    if (_pImpl->_scoped_vars_preloaded)
+        _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
+    else
+        _pImpl->_scoped_variables.clear();
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, code.c_str(), "zelph-script", &out);
@@ -2235,7 +2614,11 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
 network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
 {
-    _pImpl->_scoped_variables.clear(); // Reset scopes for new evaluation context
+    if (_pImpl->_scoped_vars_preloaded)
+        _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
+    else
+        _pImpl->_scoped_variables.clear();
+
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);
     if (status != JANET_SIGNAL_OK)
@@ -2280,48 +2663,23 @@ void ScriptEngine::set_echo_predicate(EchoPredicate predicate)
 
 bool ScriptEngine::has_keyword(const std::string& keyword) const
 {
-    return _pImpl->_keyword_handlers.count(keyword) > 0;
+    // Block keywords only: inline keywords are detected inside statements
+    // by expand_inline_keywords, never as a line-starting token.
+    const auto it = _pImpl->_keyword_handlers.find(keyword);
+    return it != _pImpl->_keyword_handlers.end() && !it->second.inline_mode;
 }
 
 bool ScriptEngine::invoke_keyword(const std::string& keyword, const std::string& text, const bool force)
 {
     auto it = _pImpl->_keyword_handlers.find(keyword);
-    if (it == _pImpl->_keyword_handlers.end())
+    if (it == _pImpl->_keyword_handlers.end() || it->second.inline_mode)
         throw std::runtime_error("No handler registered for keyword '" + keyword + "'");
 
     _pImpl->_scoped_variables.clear();
 
-    JanetFunction* f   = janet_unwrap_function(it->second);
-    Janet          arg = janet_cstringv(text.c_str());
-    Janet          result;
-    JanetFiber*    fiber = nullptr;
-
-    if (janet_pcall(f, 1, &arg, &result, &fiber) != JANET_SIGNAL_OK)
-    {
-        std::string err = "Janet error in handler for keyword '" + keyword + "'";
-        if (janet_checktype(result, JANET_STRING))
-            err += ": " + std::string(reinterpret_cast<const char*>(janet_unwrap_string(result)));
-        else if (janet_checktype(result, JANET_BUFFER))
-        {
-            JanetBuffer* b = janet_unwrap_buffer(result);
-            err += ": " + std::string(reinterpret_cast<const char*>(b->data), b->count);
-        }
-        throw std::runtime_error(err);
-    }
-
-    // Veto protocol: a handler may return :incomplete to signal that the
-    // accumulated text is not yet a complete block (e.g. unbalanced braces).
-    // The dispatcher then resumes accumulation. Under force (second
-    // consecutive blank line, or EOF in a script) the veto is an error.
-    if (janet_checktype(result, JANET_KEYWORD))
-    {
-        const uint8_t* kw = janet_unwrap_keyword(result);
-        if (std::string(reinterpret_cast<const char*>(kw)) == "incomplete")
-        {
-            if (!force) return false;
-            throw std::runtime_error("Keyword block for '" + keyword + "' is incomplete");
-        }
-    }
+    Janet result;
+    if (_pImpl->call_keyword_handler(keyword, it->second.handler, text, force, result) == Impl::HandlerCall::Incomplete)
+        return false;
 
     // String results are emitted verbatim, line by line, through the output
     // handler (so they reach OutputCollector in tests and the REPL alike).
@@ -2415,8 +2773,9 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
     bool escape     = false;
     bool in_comment = false;
 
-    int  top_tokens   = 0;
-    bool in_top_token = false;
+    int  top_tokens         = 0;
+    bool in_top_token       = false;
+    char second_token_first = '\0';
 
     for (char c : code)
     {
@@ -2455,6 +2814,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
+                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
             }
             continue;
         }
@@ -2467,6 +2827,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
+                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
             }
             depth++;
         }
@@ -2485,20 +2846,47 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
+                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
             }
         }
     }
 
     if (depth != 0 || in_string) return false;
-
     if (top_tokens == 0) return false;
+
+    const size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
+    const char   first_c        = first_char_idx == std::string::npos ? '\0' : code[first_char_idx];
+
+    // Result-query prefix "? <statement>": '?' counts as the first
+    // top-level token; the remainder must itself look complete -- a full
+    // triple ("? S P O"), a self-fact with operand ("? :testprime &53"),
+    // or a single bracketed value ("? (S P O)", "? $( ... )"). A lone
+    // "? :pred" keeps accumulating like the native self-fact sugar.
+    if (first_c == '?'
+        && (first_char_idx + 1 >= code.size()
+            || code[first_char_idx + 1] == ' ' || code[first_char_idx + 1] == '\t'
+            || code[first_char_idx + 1] == '\n' || code[first_char_idx + 1] == '('
+            || code[first_char_idx + 1] == '$'))
+    {
+        if (top_tokens >= 4) return true;
+        if (top_tokens == 3 && second_token_first == ':') return true;
+        if (top_tokens == 2
+            && (second_token_first == '(' || second_token_first == '$'
+                || second_token_first == '{' || second_token_first == '<'
+                || second_token_first == '\xC2'))
+            return true;
+        return false;
+    }
+
     if (top_tokens <= 2)
     {
         size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
         if (first_char_idx != std::string::npos)
         {
             char c = code[first_char_idx];
-            if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || c == '\xC2'))
+            // '$' admits a lone inline-keyword island ($( ... )) as a
+            // complete statement -- the calculator idiom.
+            if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || c == '\xC2' || c == '$'))
             {
                 return true;
             }

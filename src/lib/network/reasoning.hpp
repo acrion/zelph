@@ -78,6 +78,33 @@ namespace zelph::network
     // Used to detect "fresh variables" that appear only in rule consequences.
     void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, int depth, std::vector<Node>& history);
 
+    // --- Proof reconstruction (reasoning_explain.cpp) --------------------------
+    // Rebuild a justification for an asserted fact from the saturated graph.
+    // Nothing is tracked during inference: after quiescence, every derived
+    // fact has at least one rule instantiation whose consequence unifies
+    // with it and whose conditions are all present -- this backward search
+    // finds one, using the same unification machinery that runs forward.
+    // Read-only: no graph structure is created. Cost is irrelevant here by
+    // design; it buys a zero-overhead forward pass.
+    struct ProofNode
+    {
+        enum class Status
+        {
+            Derived,   // justified by `rule` via `premises` and `absent`
+            Axiom,     // asserted, and no rule consequence unifies: an input fact
+            Unfounded, // asserted, rule consequences unify, but no acyclic
+                       // instantiation verifies against the CURRENT graph
+                       // (e.g. a NAF premise that has since become true)
+            Truncated  // not expanded: depth limit reached
+        };
+
+        Node                                    fact   = 0;
+        Node                                    rule   = 0; // the => fact, Derived only
+        Status                                  status = Status::Axiom;
+        std::vector<std::shared_ptr<ProofNode>> premises; // positive conditions
+        std::vector<Node>                       absent;   // NAF conditions, verified absent NOW
+    };
+
     class ZELPH_EXPORT Reasoning : public Zelph
     {
     public:
@@ -130,6 +157,11 @@ namespace zelph::network
         bool seminaive() const;
         void set_seminaive_check(bool on);
         bool seminaive_check() const;
+
+        // max_depth 0 = unlimited (terminates via path exclusion and memoization;
+        // hash-consing makes shared subterms shared subproofs, so the result is
+        // a DAG: identical facts share one ProofNode instance).
+        std::shared_ptr<ProofNode> explain(Node fact, std::size_t max_depth) const;
 
     private:
         // --- Implemented in reasoning.cpp (orchestration) ---

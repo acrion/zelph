@@ -149,6 +149,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 #### Exploring the Network
 
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth)
 - `.list <count>` – List first N existing nodes (internal map order, with details)
 - `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
 - `.node [<name|id>]` – Show detailed node information; defaults to last output node

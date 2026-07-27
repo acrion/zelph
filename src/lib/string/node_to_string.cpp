@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "node_to_string.hpp"
 
+#include "network/fact_structure.hpp"
 #include "network/zelph.hpp"
 #include "string/string_utils.hpp"
 
@@ -94,9 +95,21 @@ namespace
             carry /= 10;
         }
     }
+
+    // A leaf name is writable in the scheme iff it matches the declared
+    // identifier grammar. A scheme that declares no grammar can never
+    // deviate -- which is the safe default, not a limitation.
+    bool scheme_name_ok(const zelph::network::DisplayScheme& scheme, const std::string& name)
+    {
+        if (name.empty() || scheme.name_first.empty() || scheme.name_chars.empty()) return false;
+        if (scheme.name_first.find(name.front()) == std::string::npos) return false;
+        for (std::size_t i = 1; i < name.size(); ++i)
+            if (scheme.name_chars.find(name[i]) == std::string::npos) return false;
+        return true;
+    }
 }
 
-void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history)
+void zelph::string::node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history, SchemeContext* ctx)
 {
     // Formats a node into a string representation.
 
@@ -108,14 +121,36 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         int& _n;
     };
 
-    if (!history)
-    {
-        _last_node_to_string_node.store(node, std::memory_order_relaxed);
-    }
-
     std::lock_guard lock(mtx);
 
     IncDec incDec(format_fact_level);
+
+    // One table snapshot per top-level rendering: the recursion reads it
+    // through a raw pointer, so nested nodes pay neither a lock nor an
+    // atomic refcount. Without a registered scheme the tables are empty and
+    // every check below is a single empty() test.
+    std::shared_ptr<const network::DisplayTables> tables_owner;
+    SchemeContext                                 root_ctx;
+    if (!ctx)
+    {
+        tables_owner    = z->display_tables();
+        root_ctx.tables = tables_owner.get();
+        ctx             = &root_ctx;
+    }
+    const bool scheme_enabled = ctx->tables && !ctx->tables->operators.empty() && !ctx->no_scheme;
+
+    if (!history)
+    {
+        // Record what this rendering is ABOUT (consumed by ".node" and
+        // ".explain" without an argument). A query answer renders a
+        // PATTERN plus its bindings -- "(&6 + &7) = _Result" with
+        // _Result = &13 -- so the pattern node is NOT what the user just
+        // read; resolve the bindings to the fact it denotes. Pure hash
+        // lookups, and skipped entirely when there are no bindings, which
+        // is every plain fact and every deduced consequence.
+        _last_node_to_string_node.store(network::resolve_pattern_node(z, node, variables), std::memory_order_relaxed);
+    }
+
 #ifdef DEBUG_FORMAT_FACT
     std::string indent(format_fact_level * 2, ' ');
     z->diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY node=" << node << " parent=" << parent << std::endl;
@@ -188,6 +223,9 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 #ifdef DEBUG_FORMAT_FACT
         z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found name '" << name << "' for node " << resolved << std::endl;
 #endif
+        if (ctx->active && scheme_name_ok(ctx->tables->schemes[ctx->scheme], name))
+            ctx->expressible = true;
+
         result = string::mark_identifier(name);
         return;
     }
@@ -340,7 +378,18 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
                             if (all_digits)
                             {
-                                result = "&" + dec;
+                                if (ctx->active)
+                                {
+                                    // The scheme declares how it writes numbers.
+                                    const network::DisplayScheme& sch = ctx->tables->schemes[ctx->scheme];
+                                    result                            = sch.numeral_prefix + dec;
+                                    ctx->expressible                  = true;
+                                    if (sch.numeral_prefix != "&") ctx->deviated = true;
+                                }
+                                else
+                                {
+                                    result = "&" + dec;
+                                }
                                 return;
                             }
                         }
@@ -450,13 +499,21 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 
         result     = "{";
         bool first = true;
+
+        // A rendering that already carries a scheme's own delimiters is
+        // self-delimiting; wrapping it again would produce "($( ... ))".
+        SchemeContext elem_ctx;
+        elem_ctx.tables = ctx->tables;
+
         for (network::Node e : sorted_elements)
         {
             if (!first) result += " ";
             std::string elem_str;
-            node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
+            elem_ctx.self_delimited = false;
+            node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history, &elem_ctx);
 
-            if (!elem_str.empty()
+            if (!elem_ctx.self_delimited
+                && !elem_str.empty()
                 && elem_str.find(' ') != std::string::npos
                 && elem_str.front() != '('
                 && elem_str.front() != '<'
@@ -507,7 +564,7 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
 #ifdef DEBUG_FORMAT_FACT
                         z->diagnostic_stream() << indent << "[DEBUG node_to_string] Found IsA proxy to concept=" << concept_node << std::endl;
 #endif
-                        string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history);
+                        string::node_to_string(z, result, lang, concept_node, max_objects, variables, parent, history, ctx);
 
                         if (!result.empty() && result != "?")
                         {
@@ -643,20 +700,49 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
         }
     }
 
+    // --- Script-registered display scheme -------------------------------
+    // An operator fact renders under its scheme only if the WHOLE subtree
+    // is writable in that scheme; otherwise the default form is produced
+    // unchanged. The check is not a separate traversal: children report
+    // back through the context, and a boundary node that learns its subtree
+    // is not writable re-renders itself once with the scheme disabled.
+    const network::InfixOperator* infix = nullptr;
+    if (scheme_enabled && !is_negation && subject != 0 && objects.size() == 1 && !self_fact_sugar)
+    {
+        const network::Node pred = resolve_var(z->parse_relation(resolved));
+        const auto          it   = ctx->tables->operators.find(pred);
+        if (it != ctx->tables->operators.end()) infix = &it->second;
+    }
+
+    const bool in_scheme     = infix && ctx->active && ctx->scheme == infix->scheme;
+    const bool scheme_render = infix != nullptr;
+
     auto child_history = std::make_shared<std::unordered_set<network::Node>>(*history);
     child_history->insert(resolved);
+
+    SchemeContext child_ctx;
+    child_ctx.tables     = ctx->tables;
+    child_ctx.scheme     = infix ? infix->scheme : 0;
+    child_ctx.precedence = infix ? infix->precedence : 0;
+    child_ctx.assoc      = infix ? infix->assoc : -1;
+    child_ctx.active     = scheme_render;
+    bool children_ok     = true;
 
     std::string subject_name, relation_name;
 
     if (!is_condition || subject)
     {
-        // Recursion for Subject
         std::string s_str;
-        node_to_string(z, s_str, lang, subject, max_objects, variables, resolved, child_history);
+        child_ctx.expressible    = false;
+        child_ctx.self_delimited = false;
+        child_ctx.right_side     = false;
+        node_to_string(z, s_str, lang, subject, max_objects, variables, resolved, child_history, &child_ctx);
+        children_ok            = children_ok && child_ctx.expressible;
+        const bool s_delimited = child_ctx.self_delimited;
 
-        // Wrap subject only if it's a composite fact, not a named atom
         bool needs_parens = false;
-        if (!s_str.empty()
+        if (!scheme_render && !s_delimited
+            && !s_str.empty()
             && s_str.find(' ') != std::string::npos
             && s_str.front() != '('
             && s_str.front() != '<'
@@ -717,13 +803,19 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     }
     else
     {
+        child_ctx.right_side = true;
         for (network::Node object : objects)
         {
             std::string o_str;
-            node_to_string(z, o_str, lang, object, max_objects, variables, resolved, child_history);
+            child_ctx.expressible    = false;
+            child_ctx.self_delimited = false;
+            node_to_string(z, o_str, lang, object, max_objects, variables, resolved, child_history, &child_ctx);
+            children_ok            = children_ok && child_ctx.expressible;
+            const bool o_delimited = child_ctx.self_delimited;
 
             // Wrap object only if it's a composite fact, not a named atom
-            if (!o_str.empty()
+            if (!scheme_render && !o_delimited
+                && !o_str.empty()
                 && o_str.find(' ') != std::string::npos
                 && o_str.front() != '('
                 && o_str.front() != '<'
@@ -755,6 +847,49 @@ void zelph::string::node_to_string(const zelph::network::Zelph* const z, std::st
     if (is_negation)
     {
         result = "¬(" + result + ")";
+    }
+    else if (scheme_render && !children_ok)
+    {
+        // Something in the subtree is not writable in this scheme. Render
+        // the node exactly as an unregistered engine would; children that
+        // open a scheme region of their own are unaffected (no_scheme is a
+        // one-shot flag for this node).
+        SchemeContext plain;
+        plain.tables    = ctx->tables;
+        plain.no_scheme = true;
+        node_to_string(z, result, lang, resolved, max_objects, variables, parent, history, &plain);
+        return;
+    }
+    else if (scheme_render && in_scheme)
+    {
+        const bool need = infix->precedence < ctx->precedence
+                       || (infix->precedence == ctx->precedence
+                           && (ctx->assoc == 0
+                               || (ctx->assoc < 0 && ctx->right_side)
+                               || (ctx->assoc > 0 && !ctx->right_side)));
+        if (need)
+            result = "(" + result + ")";
+        else
+            ctx->deviated = true; // the default renderer would have printed them
+
+        if (child_ctx.deviated) ctx->deviated = true;
+        ctx->expressible = true;
+    }
+    else if (scheme_render)
+    {
+        // Scheme boundary: seal a deviating rendering with the scheme's own
+        // delimiters, so it stays readable by the scheme's parser. Without a
+        // deviation the result IS the default form and keeps its rules.
+        if (child_ctx.deviated)
+        {
+            const network::DisplayScheme& sch = ctx->tables->schemes[infix->scheme];
+            result                            = sch.open + result + sch.close;
+            ctx->self_delimited               = true;
+        }
+        else if (parent != 0 && resolved_is_stmt)
+        {
+            result = "(" + result + ")";
+        }
     }
     // If this is a statement node used as a value inside another structure,
     // wrap the whole triple in parentheses to make it valid input syntax.

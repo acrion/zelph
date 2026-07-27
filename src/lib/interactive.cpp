@@ -95,7 +95,7 @@ public:
         // output, query answers and import diagnostics are unaffected.
         _script_engine->set_echo_predicate(
             [this]
-            { return _repl_state->import_depth == 0; });
+            { return _repl_state->import_depth == 0 && _repl_state->quiet_depth == 0; });
 
         _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
     }
@@ -377,6 +377,88 @@ void console::Interactive::process(std::string line) const
         std::string complete_stmt = state->zelph_buffer;
         state->zelph_buffer.clear();
         state->accumulating_zelph = false;
+
+        // --- 9a. Result-query prefix '?': assert, infer quietly, then query ---
+        //
+        // "? <statement>" rewrites to the query "(<statement>) = _Result" and
+        // processes it TWICE. Entering a query materializes its subject as a
+        // side effect, so pass 1 seeds the request and runs inference to the
+        // fixpoint; pass 2 evaluates the same query against the saturated graph
+        // and prints the answers. No answer means no result was derivable:
+        // partiality by absence, as everywhere in the stdlib.
+        //
+        // Quietness is enforced on the OUTPUT layer, not via run() flags: pass 1
+        // swaps in a handler that drops the Out and Diagnostic channels (echo,
+        // premature answers, deduction traces, skipped summaries) and forwards
+        // everything else, so errors and warnings stay visible. Known trade-off:
+        // a contradiction DERIVED during pass 1 prints its "!" line into the
+        // void; it remains queryable. The echo of the internal rewritten query
+        // is suppressed in both passes via quiet_depth -- the user sees exactly
+        // the Answer lines.
+        {
+            const size_t q = complete_stmt.find_first_not_of(" \t\r\n");
+            if (q != std::string::npos && complete_stmt[q] == '?'
+                && (q + 1 == complete_stmt.size()
+                    || complete_stmt[q + 1] == ' ' || complete_stmt[q + 1] == '\t'
+                    || complete_stmt[q + 1] == '\n' || complete_stmt[q + 1] == '('
+                    || complete_stmt[q + 1] == '$'))
+            {
+                const std::string request = zelph::string::trim(complete_stmt.substr(q + 1));
+                if (request.empty())
+                    throw std::runtime_error("'?' needs a statement: ? <subject> <predicate> <object>");
+
+                // Idempotent wrapping: "((S P O))" is plain grouping, so
+                // "? (S P O)" and "? S P O" are equivalent.
+                const std::string query = "(" + request + ") = _Result";
+
+                auto process_stmt = [this](const std::string& stmt)
+                {
+                    const std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(stmt);
+                    if (transformed.empty())
+                        throw std::runtime_error("Syntax error: Could not parse statement.");
+                    _pImpl->_n->profiler_reset_epoch();
+                    _pImpl->_script_engine->process_janet(transformed, true);
+                };
+
+                struct QuietEcho
+                {
+                    ReplState& s;
+                    explicit QuietEcho(ReplState& st) : s(st) { ++s.quiet_depth; }
+                    ~QuietEcho() { --s.quiet_depth; }
+                } quiet_echo{*state};
+
+                // Pass 1: quiet (output-layer suppression, see above).
+                {
+                    struct QuietOutput
+                    {
+                        network::Reasoning* n;
+                        io::OutputHandler   original;
+                        explicit QuietOutput(network::Reasoning* r)
+                            : n(r)
+                            , original(r->get_output_handler())
+                        {
+                            n->set_output_handler(
+                                [orig = original](const io::OutputEvent& event)
+                                {
+                                    if (!orig) return;
+                                    if (event.channel == io::OutputChannel::Out
+                                        || event.channel == io::OutputChannel::Diagnostic)
+                                        return;
+                                    orig(event);
+                                });
+                        }
+                        ~QuietOutput() { n->set_output_handler(std::move(original)); }
+                    } quiet_out{_pImpl->_n.get()};
+
+                    process_stmt(query);
+                    _pImpl->_n->run(false, false, false, true);
+                }
+
+                // Pass 2: answers.
+                process_stmt(query);
+                return;
+            }
+        }
 
         std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(complete_stmt);
 

@@ -12,7 +12,8 @@
 # eagerly up to sqrt(N) -- the negation needs the full scan -- and in
 # return finds ALL divisors <= sqrt(N), not just the smallest.
 
-# Default arithmetic module import (maybe overruled by first importing a difference one):
+# Default arithmetic substrate; import a different provider of
+# "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
 .import binary-arithmetic
 
 (N testprime N) => (&2 cmp N)

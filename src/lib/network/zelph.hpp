@@ -44,6 +44,48 @@ namespace zelph::network
     using name_of_node_map = ankerl::unordered_dense::map<Node, std::string_view>;
     using node_of_name_map = ankerl::unordered_dense::map<std::string_view, Node>;
 
+    // --- Script-registered display schemes -------------------------------
+    //
+    // A scheme lets a script declare HOW its own notation is written, so
+    // node_to_string can render terms the way the script's parser reads
+    // them back. C++ knows the mechanism only; every value in here comes
+    // from a script. Without a registration the tables stay empty and
+    // nothing about the display changes.
+    //
+    // The wrapper (open/close) is emitted ONLY where the rendering actually
+    // deviates from what the default renderer would produce -- elided
+    // parentheses or a different numeral prefix. Both strings are emitted
+    // verbatim, so a scheme wanting padding registers "$( " and " )".
+    struct DisplayScheme
+    {
+        std::string name;
+        std::string open;
+        std::string close;
+        std::string numeral_prefix{"&"}; // replaces the default "&" inside the scheme
+        std::string name_first;          // characters a leaf name may START with
+        std::string name_chars;          // characters a leaf name may consist of
+    };
+
+    struct InfixOperator
+    {
+        std::size_t scheme{0};
+        int         precedence{0};
+        int         assoc{-1}; // -1 left, 0 non-associative, +1 right
+    };
+
+    struct InfixEntry
+    {
+        Node predicate{0};
+        int  precedence{0};
+        int  assoc{-1};
+    };
+
+    struct DisplayTables
+    {
+        std::vector<DisplayScheme>              schemes;
+        std::unordered_map<Node, InfixOperator> operators;
+    };
+
     // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
     // provides low-level API for graph manipulation, and handles raw binary serialization (I/O)
     // of the network state via load_from_file/save_to_file. It is agnostic to the semantic meaning
@@ -128,13 +170,28 @@ namespace zelph::network
         static bool          is_hash(Node a);
         static bool          is_var(Node a);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
-        Node                 fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
-        Node                 fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
-        Node                 list(const std::vector<Node>& elements);
-        Node                 list(const std::vector<std::string>& elements);
-        Node                 set(const std::unordered_set<Node>& elements);
-        Node                 parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
-        Node                 parse_relation(const Node rule) const;
+
+        // Single-argument form for callers that already hold the relation
+        // node itself (e.g. .explain, whose target comes from evaluating a
+        // fact pattern). Derives the predicate via predicate_of(); a node
+        // that is not a readable fact node is reported as unknown.
+        Answer check_fact(Node relation) const;
+
+        // Predicate of an existing fact node. Prefers the genuine-structure
+        // store (exact, O(1), no heuristics); falls back to parse_relation()
+        // for nodes without an entry -- subject == predicate facts, which the
+        // store deliberately omits, and everything after a bulk path disarmed
+        // it. Returns 0 if nd is not a fact node or its predicate cannot be
+        // determined unambiguously.
+        Node predicate_of(Node nd) const;
+
+        Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
+        Node fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
+        Node list(const std::vector<Node>& elements);
+        Node list(const std::vector<std::string>& elements);
+        Node set(const std::unordered_set<Node>& elements);
+        Node parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
+        Node parse_relation(const Node rule) const;
         // Locked-scope read access (see Network::ReadScope). Constructed
         // here because only zelph.cpp sees the complete Impl type -- this
         // is the visibility-correct path (Cap'n-Proto layering).
@@ -298,6 +355,21 @@ namespace zelph::network
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
 
+        // Register or update a display scheme; returns its index, which
+        // set_infix_display consumes. Schemes are matched by name.
+        std::size_t register_display_scheme(const DisplayScheme& scheme);
+        bool        find_display_scheme(const std::string& name, std::size_t& index) const;
+
+        // Register infix operators into a scheme. Additive across calls; a
+        // predicate already claimed by ANY scheme is rejected, because a
+        // second claim would make a term's rendering depend on load order.
+        // Registered operators are implicitly added to the verbose-self-fact
+        // set: (X op X) must render "X op X", never ":op X", or the scheme's
+        // own parser could not read it back.
+        void set_infix_display(std::size_t scheme, const std::vector<InfixEntry>& operators);
+
+        std::shared_ptr<const DisplayTables> display_tables() const;
+
         // Display control for self-fact sugar (":pred X"): predicates
         // registered here always render in the verbose "S P S" form.
         // Script-defined, like the digit alphabet: C++ makes no assumptions
@@ -402,6 +474,8 @@ namespace zelph::network
         mutable std::atomic<uint64_t>                             _tvars_walks{0};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
+        std::shared_ptr<const DisplayTables>                      _display_tables;
+        mutable std::shared_mutex                                 _smtx_display_tables;
         std::unordered_set<Node>                                  _verbose_selffact_preds;
         mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
         FactCreationObserver                                      _on_fact_created;

@@ -284,7 +284,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
         auto vars = std::make_shared<Variables>();
         auto uneq = std::make_shared<Variables>();
 
-        Unification u(this, ir.leaf_patterns[leaf_idx], ir.rule, vars, uneq, nullptr, 2, _prof, seed_fact, seed_pred);
+        Unification u(this, ir.leaf_patterns[leaf_idx], ir.rule, vars, uneq, nullptr, 2, &_prof, seed_fact, seed_pred);
 
         while (std::shared_ptr<Variables> match = u.Next())
         {

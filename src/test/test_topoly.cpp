@@ -199,3 +199,25 @@ TEST_CASE("topoly: polynomial identities are node identity (all arithmetic modul
             CHECK(any_output_contains(collector, "TP-NEST-true"));
         } });
 }
+
+TEST_CASE("topoly: polynomial identity ≡ via node identity (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import topoly");
+        interactive.process("x ~ symvar");
+
+        // (1+x)*(1-x) and 1 - x*x compile to the same canonical node.
+        interactive.process("((&1 + x) * (&1 - x)) ≡ (&1 - (x * x))");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(R"js(%(let [l (zelph/fact (zelph/fact (zelph/number "1") "+" "x") "*" (zelph/fact (zelph/number "1") "-" "x")) r (zelph/fact (zelph/number "1") "-" (zelph/fact "x" "*" "x"))] (string "TI-EQ-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
+        CHECK(any_output_contains(collector, "TI-EQ-true"));
+
+        // Non-identity: silence, never a wrong verdict.
+        interactive.process("((&1 + x) * (&1 - x)) ≡ (&1 + (x * x))");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(R"js(%(let [l (zelph/fact (zelph/fact (zelph/number "1") "+" "x") "*" (zelph/fact (zelph/number "1") "-" "x")) r (zelph/fact (zelph/number "1") "+" (zelph/fact "x" "*" "x"))] (string "TI-NEQ-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
+        CHECK(any_output_contains(collector, "TI-NEQ-false")); });
+}
