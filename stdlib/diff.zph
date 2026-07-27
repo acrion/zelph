@@ -60,14 +60,46 @@ exp hasderivative exp
 ((F of U) dstate X, U contains X) => ((F of U) contains X)
 
 # ---------------------------------------------------------------------------
+# Rules DS -- Shape domain: the forms whose derivative this module knows.
+#
+# The constancy rule below is a NEGATION, and a negation is only as sound
+# as the positive recursion it tests. `contains` walks exactly the forms
+# the DD rules decompose; the TRIGGER, however, hands a dstate fact to
+# WHATEVER was requested. Without this marker a term outside the
+# vocabulary -- (x / y), or any foreign predicate -- fails the containment
+# test for the trivial reason that no rule could ever have derived it, and
+# was declared constant: a WRONG answer where the stdlib owes silence.
+#
+# So membership in the domain is stated positively, one rule per form,
+# and the constancy rule is gated on it. This is the fourth contribution
+# of the OPERATOR EXTENSION PROTOCOL: an operator that joins
+# differentiation declares its shape here, exactly as it declares its
+# decompose, containment and assemble rules (see symbolic-minus.zph and
+# symbolic-pow.zph).
+#
+# Note the variable positions: a dstate fact is (TERM dstate VARIABLE), so
+# the leaf rules must NOT be written as (X dstate X, X ~ symvar) -- that
+# self-fact form only matches a leaf differentiated with respect to
+# ITSELF, and every other leaf (the y in d(x*y)/dx) would lose its
+# constancy answer.
+# ---------------------------------------------------------------------------
+(T dstate X, T ~ symvar)   => (T ddom T)
+(T dstate X, T ~ symconst) => (T ddom T)
+((A cons R) dstate X)      => ((A cons R) ddom (A cons R))
+
+((U + V) dstate X)  => ((U + V) ddom (U + V))
+((U * V) dstate X)  => ((U * V) ddom (U * V))
+((F of U) dstate X) => ((F of U) ddom (F of U))
+
+# ---------------------------------------------------------------------------
 # Rules DB -- Base cases
 # ---------------------------------------------------------------------------
 (X dstate X, X ~ symvar) => ((X wrt X) deriv &1)
 
-# Anything not containing X is constant with respect to X. Deferred by
-# stratification until the containment recursion is saturated -- the
-# textbook rule, sound as written (see primes-naf).
-(T dstate X, X ~ symvar, ¬(T contains X)) => ((T wrt X) deriv &0)
+# Anything of a KNOWN SHAPE not containing X is constant with respect to
+# X. Deferred by stratification until the containment recursion is
+# saturated -- the textbook rule, sound as written (see primes-naf).
+(T dstate X, X ~ symvar, T ddom T, ¬(T contains X)) => ((T wrt X) deriv &0)
 
 # ---------------------------------------------------------------------------
 # Rules DA -- Assemble: sum, product, chain. Consequences build the
@@ -103,3 +135,33 @@ exp hasderivative exp
  (T wrt X) deriv D,
  (D simplify D) = S)
 => ((T diffby X) = S)
+
+# ---------------------------------------------------------------------------
+# Rules DL -- Iterated differentiation along a cons list of variables.
+#
+#   (T diffalong <x y>) = E     d/dy (d/dx T)  -- reading order, outermost
+#                               cell first, as in <x y z> ~ polyring
+#   (T diffalong <x x>) = E     the second derivative
+#   (T diffalong nil)   = T     the empty list differentiates nothing
+#
+# No new machinery: each step is an ordinary diffby request whose = result
+# feeds the next one -- results are inputs again, the property the whole
+# stdlib is built on. A cons list is used rather than a fresh pair former
+# because facts carry a SET of objects, so (T d X Y) could not distinguish
+# (T d x y) from (T d y x); the list fixes the order.
+#
+# Partiality composes: if any step derives no result, the chain stays
+# silent. Mixed partials in both orders reach the same answer node -- the
+# Schwarz/Clairaut symmetry, observable as node identity rather than
+# assumed.
+# ---------------------------------------------------------------------------
+(T diffalong nil) => ((T diffalong nil) = T)
+
+(T diffalong (V cons R)) => (T diffby V)
+
+(T diffalong (V cons R), (T diffby V) = D) => (D diffalong R)
+
+(T diffalong (V cons R),
+ (T diffby V) = D,
+ (D diffalong R) = E)
+=> ((T diffalong (V cons R)) = E)

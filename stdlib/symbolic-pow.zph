@@ -63,6 +63,9 @@
 ((U ^ N) dstate X) => (U dstate X)
 ((U ^ N) dstate X, U contains X) => ((U ^ N) contains X)
 
+# Shape domain (diff.zph rules DS): ^ is a form whose derivative is known.
+((U ^ N) dstate X) => ((U ^ N) ddom (U ^ N))
+
 ((U ^ N) dstate X) => (N cmp &0)
 
 ((U ^ N) dstate X, N == &0) => (((U ^ N) wrt X) deriv &0)

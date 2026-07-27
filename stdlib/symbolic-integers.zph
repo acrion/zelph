@@ -34,6 +34,14 @@
 ((G zint N) needssimp (G zint N)) => ((G zint N) simp (G zint N))
 
 # ---------------------------------------------------------------------------
+# Rule ZD1 -- Shape domain for differentiation (diff.zph rules DS): a zint
+# numeral is a LEAF whose derivative is known to be zero, so the constancy
+# fallback may apply to it. Inert without diff.zph -- no dstate fact exists
+# then -- exactly like symbolic-minus.zph's differentiation extension.
+# ---------------------------------------------------------------------------
+((G zint N) dstate X) => ((G zint N) ddom (G zint N))
+
+# ---------------------------------------------------------------------------
 # Rules ZSR -- neutral and absorbing elements over Z numerals, both
 # orientations (mirroring symbolic-core's SR block). Conflict-free with
 # the facade fold on every all-numeral overlap: z+/zx results of

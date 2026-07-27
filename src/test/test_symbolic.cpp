@@ -165,6 +165,85 @@ c ~ symconst
             interactive.process(R"js(%(string "DIFF-CCOMP-NOT-" (zelph/exists (zelph/fact (zelph/fact "y" "*" "y") "diffby" "x") "=" (zelph/fact (zelph/fact (zelph/number "0") "*" "y") "+" (zelph/fact "y" "*" (zelph/number "0"))))))js");
             CHECK(any_output_contains(collector, "DIFF-CCOMP-true"));
             CHECK(any_output_contains(collector, "DIFF-CCOMP-NOT-false"));
+        }
+        SUBCASE("shapes outside the vocabulary stay SILENT, not constant")
+        {
+            // The constancy rule is a negation over `contains`, and
+            // `contains` only walks the forms the DD rules decompose --
+            // while the TRIGGER hands a dstate fact to whatever was
+            // requested. Ungated, a shape diff knows nothing about failed
+            // the containment test for the trivial reason that no rule
+            // could ever have derived it, and was declared constant: a
+            // WRONG answer, where the stdlib owes silence. Rules DS gate
+            // the fallback on a positive shape marker instead.
+            //
+            // (x / y) is the case that matters most: / is ordinary
+            // symbolic-core vocabulary AND is produced by diff itself (the
+            // ln rule), so a wrong zero here would poison every second
+            // derivative of a logarithm.
+            interactive.process("(x / y) diffby x");
+            interactive.process("(x nosuchop y) diffby x");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(string "DIFF-DIV-" (zelph/exists (zelph/fact (zelph/fact "x" "/" "y") "diffby" "x") "=" (zelph/number "0"))))js");
+            interactive.process(R"js(%(string "DIFF-FOREIGN-" (zelph/exists (zelph/fact (zelph/fact "x" "nosuchop" "y") "diffby" "x") "=" (zelph/number "0"))))js");
+            CHECK(any_output_contains(collector, "DIFF-DIV-false"));
+            CHECK(any_output_contains(collector, "DIFF-FOREIGN-false"));
+        } });
+}
+
+TEST_CASE("symbolic: iterated differentiation along a list (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import symbolic-core");
+        interactive.process(".import symbolic-pow");
+        interactive.process(".import diff");
+        process_lines(interactive, R"(
+x ~ symvar
+y ~ symvar
+)");
+
+        SUBCASE("the empty list differentiates nothing")
+        {
+            interactive.process("(x * x) diffalong nil");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact "x" "*" "x")] (string "DL-NIL-" (zelph/exists (zelph/fact t "diffalong" (zelph/resolve "nil")) "=" t))))js");
+            CHECK(any_output_contains(collector, "DL-NIL-true"));
+        }
+        SUBCASE("a one-element list is an ordinary derivative")
+        {
+            interactive.process("(x * x) diffalong <x>");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact "x" "*" "x")] (string "DL-ONE-" (zelph/exists (zelph/fact t "diffalong" (zelph/list "x")) "=" (zelph/fact "x" "+" "x")))))js");
+            CHECK(any_output_contains(collector, "DL-ONE-true"));
+        }
+        SUBCASE("mixed partials agree in both orders (Schwarz/Clairaut)")
+        {
+            // The two requests are DIFFERENT nodes -- <x y> and <y x> are
+            // distinct cons lists -- so agreement is a derived result, not
+            // an artefact of the encoding. Facts carry a SET of objects,
+            // which is exactly why the order is expressed as a list.
+            interactive.process("((x * x) * y) diffalong <x y>");
+            interactive.process("((x * x) * y) diffalong <y x>");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/fact "x" "*" "x") "*" "y") e (zelph/fact "x" "+" "x")] (string "DL-MIX-" (and (zelph/exists (zelph/fact t "diffalong" (zelph/list "x" "y")) "=" e) (zelph/exists (zelph/fact t "diffalong" (zelph/list "y" "x")) "=" e)))))js");
+            interactive.process(R"js(%(string "DL-DISTINCT-" (= (zelph/list "x" "y") (zelph/list "y" "x"))))js");
+            CHECK(any_output_contains(collector, "DL-MIX-true"));
+            CHECK(any_output_contains(collector, "DL-DISTINCT-false"));
+        }
+        SUBCASE("partiality composes: a silent step silences the chain")
+        {
+            // The first step is outside diff's shape domain, so it derives
+            // nothing -- and the list recursion must not invent a result.
+            interactive.process("(x / y) diffalong <x x>");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact "x" "/" "y")] (string "DL-PART-" (zelph/exists (zelph/fact t "diffalong" (zelph/list "x" "x")) "=" (zelph/number "0")))))js");
+            CHECK(any_output_contains(collector, "DL-PART-false"));
         } });
 }
 

@@ -67,6 +67,11 @@ neg inverseof neg
 ((U - V) dstate X) => (U dstate X)
 ((U - V) dstate X) => (V dstate X)
 
+# Shape domain (diff.zph rules DS): - is a form whose derivative is known,
+# so the constancy fallback may apply to it. neg needs no entry -- it is an
+# ordinary (F of U) application, covered there.
+((U - V) dstate X) => ((U - V) ddom (U - V))
+
 ((U - V) dstate X, U contains X) => ((U - V) contains X)
 ((U - V) dstate X, V contains X) => ((U - V) contains X)
 
