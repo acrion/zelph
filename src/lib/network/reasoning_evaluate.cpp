@@ -172,16 +172,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     return;
                 }
 
-                // Resolve variables from current bindings
-                Node lhs = Zelph::Impl::is_var(guard_subject)
-                             ? string::get(*rule.variables, guard_subject, guard_subject)
-                             : guard_subject;
-                Node rhs = Zelph::Impl::is_var(guard_object)
-                             ? string::get(*rule.variables, guard_object, guard_object)
-                             : guard_object;
-
-                bool lhs_bound = !Zelph::Impl::is_var(lhs);
-                bool rhs_bound = !Zelph::Impl::is_var(rhs);
+                // Resolve both sides against the current bindings. Either
+                // may be a variable, a ground node, or a structured pattern
+                // -- see resolve_guard_side, which is shared with the
+                // deferred check in contradicts().
+                Node       lhs       = 0;
+                Node       rhs       = 0;
+                const bool lhs_bound = resolve_guard_side(guard_subject, *rule.variables, lhs);
+                const bool rhs_bound = resolve_guard_side(guard_object, *rule.variables, rhs);
 
                 if (lhs_bound && rhs_bound)
                 {

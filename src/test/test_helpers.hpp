@@ -430,7 +430,7 @@ namespace zelph::test
                     test_fn(collector, interactive); });
         };
 
-        SUBCASE("arithmetic") { with_module("arithmetic"); }
+        SUBCASE("decimal-arithmetic") { with_module("decimal-arithmetic"); }
         SUBCASE("binary-arithmetic") { with_module("binary-arithmetic"); }
         SUBCASE("binary-nand-arithmetic") { with_module("binary-nand-arithmetic"); }
     }

@@ -86,7 +86,7 @@ TEST_CASE("semi-naive: classic mode (off) still computes full results (all arith
             CHECK(any_output_starts_with(collector, "((&12 * &34) = &408)")); });
     };
 
-    SUBCASE("arithmetic") { classic_mode_with("arithmetic"); }
+    SUBCASE("decimal-arithmetic") { classic_mode_with("decimal-arithmetic"); }
     SUBCASE("binary-arithmetic") { classic_mode_with("binary-arithmetic"); }
     SUBCASE("binary-nand-arithmetic") { classic_mode_with("binary-nand-arithmetic"); }
 }

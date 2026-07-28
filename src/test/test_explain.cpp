@@ -121,3 +121,42 @@ TEST_CASE("explain: NAF premises render as absent (all arithmetic modules)")
         interactive.process(".explain (:testprime &7) = prime 0");
         CHECK(any_output_contains(collector, "[absent]")); });
 }
+
+TEST_CASE("explain: a numeral object is not mistaken for the depth argument")
+{
+    // A trailing all-digit token is read as max-depth. That reading must
+    // not swallow the fact's own OBJECT: ".explain <subject> <pred> 0"
+    // would otherwise leave a two-component statement behind, which the
+    // AST builder rejects with a leaked arity error. Every digit-level
+    // fact of the arithmetic modules has this shape, so the failure was
+    // reachable from the very first thing a reader is likely to inspect.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A gate B) => ((A gate B) out 0)");
+        interactive.process("1 gate 1");
+        interactive.run(true, false, false);
+
+        SUBCASE("the numeral stays part of the pattern")
+        {
+            collector.clear();
+            interactive.process(".explain (1 gate 1) out 0");
+            CHECK(any_output_contains(collector, "1 gate 1"));
+            CHECK_FALSE(any_output_contains(collector, "arity mismatch"));
+            CHECK_FALSE(any_output_contains(collector, "cannot parse"));
+        }
+        SUBCASE("the parenthesized spelling keeps working")
+        {
+            collector.clear();
+            interactive.process(".explain ((1 gate 1) out 0)");
+            CHECK(any_output_contains(collector, "1 gate 1"));
+            CHECK_FALSE(any_output_contains(collector, "cannot parse"));
+        }
+        SUBCASE("an explicit depth is still honoured")
+        {
+            // Reading (1) resolves here, so the trailing token IS the depth
+            // -- and depth 1 must cut the tree below the root.
+            collector.clear();
+            interactive.process(".explain ((1 gate 1) out 0) 1");
+            CHECK(any_output_contains(collector, "depth limit"));
+        } });
+}

@@ -83,13 +83,39 @@ target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_
 # Mirror the standard library next to the test binary. Same rationale as in
 # src/app; needed independently so tests work when the app target is not
 # built, and so packaged test binaries (Chocolatey, Homebrew) find the
-# stdlib next to themselves. copy_directory is idempotent, so overlapping
-# with the app target's mirror is harmless (same output directory).
-add_custom_command(TARGET zelph_tests POST_BUILD
+# stdlib next to themselves.
+#
+# Source-driven for the same reason as in src/app, and here it is a
+# CORRECTNESS issue rather than a convenience: as a POST_BUILD step, a
+# change to a .zph file alone relinked nothing, so the suite ran against
+# the previously mirrored stdlib and reported a stale result. Removing the
+# destination first matters for the same reason -- a stale orphan is a
+# module the suite can still import.
+file(GLOB_RECURSE ZELPH_TEST_STDLIB_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_SOURCE_DIR}/stdlib/*)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:zelph_tests>/stdlib
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/stdlib
             $<TARGET_FILE_DIR:zelph_tests>/stdlib
+    COMMAND ${CMAKE_COMMAND} -E touch
+            ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp
+    DEPENDS ${ZELPH_TEST_STDLIB_SOURCES} $<TARGET_FILE:zelph_tests>
     COMMENT "Mirroring zelph standard library next to the test binary")
+
+add_custom_target(zelph_tests_stdlib_mirror ALL
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp)
+
+# Both mirrors write to CMAKE_RUNTIME_OUTPUT_DIRECTORY/stdlib, i.e. the SAME
+# directory whenever the app is built too. Overlapping copies were harmless,
+# but overlapping remove-then-copy is not: a parallel build could delete the
+# tree the other command is still filling. Serialising the two costs one
+# redundant copy and removes the race.
+if(TARGET zelph_stdlib_mirror)
+    add_dependencies(zelph_tests_stdlib_mirror zelph_stdlib_mirror)
+endif()
 
 # suppress doctest specific __COUNTER__ warnings
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

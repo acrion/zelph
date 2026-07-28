@@ -608,3 +608,97 @@ TEST_CASE("symbolic: numeral-times-zero folding is single-valued (all arithmetic
         CHECK(any_output_contains(collector, "SMUL0-true"));
         CHECK(any_output_contains(collector, "SMUL0-NOT-false")); });
 }
+
+TEST_CASE("symbolic: constant reassociation folds nested numeral factors")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import symbolic-core");
+        interactive.process(".import symbolic-pow");
+        interactive.process(".import diff");
+        interactive.process("x ~ symvar");
+
+        SUBCASE("(m * (n * u)) folds m and n")
+        {
+            interactive.process(":simplify (&5 * (&4 * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/number "5") "*" (zelph/fact (zelph/number "4") "*" "x"))] (string "SX-FOLD-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zelph/number "20") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "SX-FOLD-true"));
+        }
+        SUBCASE("it nests: three factors collapse in one bottom-up pass")
+        {
+            interactive.process(":simplify (&5 * (&4 * (&3 * x)))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/number "5") "*" (zelph/fact (zelph/number "4") "*" (zelph/fact (zelph/number "3") "*" "x")))] (string "SX-NEST-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zelph/number "60") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "SX-NEST-true"));
+        }
+        SUBCASE("a zero factor keeps the absorbing answer, single-valued")
+        {
+            // Both the absorbing rule and reassociation match this reduced
+            // form. Reassociation would rewrite to (&0 * x), which is not a
+            // normal form -- so its guard sits on the product and lets the
+            // absorbing rule answer alone. Two rw values would make simp
+            // multi-valued, which the second probe pins.
+            interactive.process(":simplify (&0 * (&4 * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/number "0") "*" (zelph/fact (zelph/number "4") "*" "x"))] (string "SX-ZERO-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/number "0")) "-ONLY-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zelph/number "0") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "SX-ZERO-true-ONLY-false"));
+        }
+        SUBCASE("a unit factor agrees with the neutral-element rule")
+        {
+            // K = &1 * n = n, so reassociation and the neutral rule reach
+            // the SAME node -- an overlap that is harmless by construction.
+            interactive.process(":simplify (&1 * (&4 * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/number "1") "*" (zelph/fact (zelph/number "4") "*" "x"))] (string "SX-UNIT-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zelph/number "4") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "SX-UNIT-true"));
+        }
+        SUBCASE("a symbolic outer factor is left alone")
+        {
+            interactive.process("y ~ symvar");
+            interactive.process(":simplify (y * (&4 * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [inner (zelph/fact (zelph/number "4") "*" "x") t (zelph/fact "y" "*" inner)] (string "SX-SYM-" (zelph/exists (zelph/fact t "simplify" t) "=" t))))js");
+            CHECK(any_output_contains(collector, "SX-SYM-true"));
+        }
+        SUBCASE("iterated differentiation reads as a derivative again")
+        {
+            interactive.process("(x ^ &5) diffalong <x x x>");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact "x" "^" (zelph/number "5"))] (string "SX-D3-" (zelph/exists (zelph/fact t "diffalong" (zelph/list "x" "x" "x")) "=" (zelph/fact (zelph/number "60") "*" (zelph/fact "x" "^" (zelph/number "2")))))))js");
+            CHECK(any_output_contains(collector, "SX-D3-true"));
+        } });
+}
+
+TEST_CASE("symbolic: constant reassociation over Z (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import integer-arithmetic");
+        interactive.process(".import symbolic-core");
+        interactive.process(".import symbolic-integers");
+        interactive.process("x ~ symvar");
+
+        SUBCASE("signed constants fold, sign included")
+        {
+            interactive.process(":simplify ((neg zint &2) * ((pos zint &3) * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [zn (fn [s] (zelph/fact "neg" "zint" (zelph/number s))) zp (fn [s] (zelph/fact "pos" "zint" (zelph/number s))) t (zelph/fact (zn "2") "*" (zelph/fact (zp "3") "*" "x"))] (string "ZX-FOLD-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zn "6") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "ZX-FOLD-true"));
+        }
+        SUBCASE("the zint zero keeps the absorbing answer, single-valued")
+        {
+            interactive.process(":simplify ((pos zint &0) * ((pos zint &3) * x))");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [zp (fn [s] (zelph/fact "pos" "zint" (zelph/number s))) t (zelph/fact (zp "0") "*" (zelph/fact (zp "3") "*" "x"))] (string "ZX-ZERO-" (zelph/exists (zelph/fact t "simplify" t) "=" (zp "0")) "-ONLY-" (zelph/exists (zelph/fact t "simplify" t) "=" (zelph/fact (zp "0") "*" "x")))))js");
+            CHECK(any_output_contains(collector, "ZX-ZERO-true-ONLY-false"));
+        } });
+}

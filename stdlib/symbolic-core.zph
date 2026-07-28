@@ -118,6 +118,47 @@ ln inverseof exp
 (F inverseof G, T red (F of (G of U))) => (T rw U)
 
 # ---------------------------------------------------------------------------
+# Rules SX -- Constant reassociation: (m * (n * u)) folds m and n together.
+#
+# The ONLY associativity in this module, and deliberately so: general
+# associativity plus congruence blows up the term space, but this instance
+# is measure-reducing (two products become one) and its right-hand side is
+# a normal form, so the single bottom-up pass still suffices.
+#
+# It matters because iterated differentiation produces exactly this shape.
+# d3(x^5)/dx3 assembles (&5 * (&4 * (&3 * x ^ &2))) -- every factor correct,
+# yet unreadable as a third derivative. Bottom-up, these rules turn the
+# inner pair into &12 and then the outer one into &60.
+#
+# The mirrored shape ((m * n) * u) needs no rule: congruence reduces the
+# inner numeral product through the SN fold before the outer form is built.
+#
+# NUMERALS BY PATTERN, not by guard: matching (A cons R) restricts both
+# factors to cons-list numerals of the loaded substrate, so no spurious
+# cmp or * facts are created for symbolic operands -- and zint terms, which
+# are not cons lists, are left to symbolic-integers.zph's own rule.
+#
+# Conflict-freedom with the SR block above, case by case: (X * &1) and
+# (X * &0) cannot match, since the right operand here is a product node;
+# (&1 * X) overlaps harmlessly, because K = &1 * n = n makes both paths
+# yield the same node; and (&0 * X) is excluded by the K != &0 guard. The
+# SN fold stays silent, a product with a non-numeral operand having no =
+# fact.
+#
+# The guard sits on the RESULT, not on a factor. K is &0 exactly when a
+# factor is -- which is the case the absorbing rules above already answer,
+# and answer differently ((&0 * u) is not the normal form &0). Guarding the
+# left factor with ((A cons R) != &0) would work too, but the result guard
+# covers both factors at once and needs no second condition.
+# ---------------------------------------------------------------------------
+(T red ((A cons R) * ((B cons S) * U)))
+=> ((A cons R) * (B cons S))
+
+(T red ((A cons R) * ((B cons S) * U)),
+ ((A cons R) * (B cons S)) = K, K != &0)
+=> (T rw (K * U))
+
+# ---------------------------------------------------------------------------
 # Rule SN -- Knowledge folding (M3). If the graph knows an equational
 # result for the reduced form, adopt it as the rewrite. For numeral
 # operands this is constant folding without any dedicated machinery: the

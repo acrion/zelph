@@ -1,0 +1,77 @@
+# The July-2026 counterexample to the Jacobian conjecture (Alpoege/Fable),
+# verified over Z. Companion to the tutorial at
+# https://zelph.org/math/tutorial-jacobian/
+#
+#   .import examples/math/jacobian
+#   _M jdet _P              # answers (neg zint &512)
+#
+# The original map F : C^3 -> C^3 has constant Jacobian determinant -2 yet
+# sends three distinct points to one image, refuting the conjecture for
+# n >= 3. Substituting x=a, y=b/2, z=c/4 and clearing denominators gives
+# G = (32*F1, 16*F2, 4*F3) with INTEGER coefficients, so the whole
+# verification stays inside the natural/zint substrate -- no fractions.
+# By the chain rule det J_G = 2048*(-2)/8 = -512, and conversely
+# det J_G == -512 as a polynomial identity implies det J_F == -2.
+#
+# This file proves the determinant half. The collision half is three
+# ground evaluations; see the tutorial, or test_jacobian.cpp, which builds
+# both halves from ONE Janet constructor parameterized over its leaves.
+
+# The deduction echo of a workload this size is thousands of lines and
+# says nothing the final answer does not. Comment out to watch it.
+.deductions off
+
+.import math
+
+<a b c> ~ polyring
+
+# ---------------------------------------------------------------------------
+# Rules J1-J9 -- Request the nine partial derivatives. A 3x3 Jacobian is
+# stated as (<F G H> jac3 <X Y Z>): rows are components, columns are
+# variables. Lists rather than three objects on one fact, because a fact
+# carries a SET of objects and the order of rows and columns matters.
+# Matching three cells deep is ordinary deep unification.
+# ---------------------------------------------------------------------------
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (F diffby X)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (F diffby Y)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (F diffby Z)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (G diffby X)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (G diffby Y)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (G diffby Z)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (H diffby X)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (H diffby Y)
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) => (H diffby Z)
+
+# ---------------------------------------------------------------------------
+# Rule JD -- Assemble: the first-row cofactor expansion,
+#   det = D11*(D22*D33 - D23*D32)
+#       - D12*(D21*D33 - D23*D31)
+#       + D13*(D21*D32 - D22*D31)
+# written over the nine simplified derivative results. diff exposes each
+# under =, so they are ordinary conditions.
+# ---------------------------------------------------------------------------
+((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil))),
+ (F diffby X) = _P, (F diffby Y) = _Q, (F diffby Z) = _R,
+ (G diffby X) = _S, (G diffby Y) = _T, (G diffby Z) = _U,
+ (H diffby X) = _V, (H diffby Y) = _W, (H diffby Z) = _N)
+=> (((F cons (G cons (H cons nil))) jac3 (X cons (Y cons (Z cons nil)))) detis
+    (((_P * ((_T * _N) - (_U * _W)))
+      - (_Q * ((_S * _N) - (_U * _V))))
+      + (_R * ((_S * _W) - (_T * _V)))))
+
+# ---------------------------------------------------------------------------
+# Rules JC -- Connect: compile the assembled determinant to its polynomial
+# normal form. A CONSTANT result is the whole point -- it is the statement
+# that every non-constant term cancelled, as an identity rather than at
+# sample points.
+# ---------------------------------------------------------------------------
+(M detis D) => (D topoly D)
+(M detis D, (D topoly D) = P) => (M jdet P)
+
+# ---------------------------------------------------------------------------
+# The map G, one component per island. Must stay on one line: the REPL
+# reads statements line by line.
+# ---------------------------------------------------------------------------
+< $( (2+a*b)^3*c + 2*b^2*(2+a*b)*(8+3*a*b) ) $( 8*b + 3*a*(2+a*b)^2*c + 6*a*b^2*(8+3*a*b) ) $( 8*a - (6*a^2*b + a^3*c) ) > jac3 <a b c>
+
+.run

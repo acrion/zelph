@@ -19,12 +19,18 @@
 #   $( x^2 + 2*x + 1 ) diffby x
 #   (T red $( X * 1 )) => (T rw X)        # node-identical to (X * &1)
 #
-# GRAMMAR (v1):
-#   expr    := term  (('+'|'-') term)*            left-associative
-#   term    := factor (('*'|'/') factor)*         left-associative
+# GRAMMAR:
+#   expr    := <one level per declared precedence, loosest first>
 #   factor  := '-' factor | power
 #   power   := primary ('^' INTEGER)?             INTEGER >= 1
 #   primary := INTEGER | IDENT '(' expr ')' | IDENT | '(' expr ')'
+#
+# The infix levels are GENERATED from the operator table below, which also
+# feeds zelph/set-infix-display. One table, so the parser and the printer
+# cannot drift apart: whatever the island can read, it can also write.
+# Default table: + - at 10, * / at 20, all left-associative. ^ is not in
+# it -- its right operand is an integer literal rather than an expression,
+# so it stays the dedicated :power rule.
 #
 #   INTEGER  -> (zelph/number "...")  (the &-literal representation)
 #   IDENT    -> a zelph variable if variable-shaped (single uppercase
@@ -43,9 +49,22 @@
 #               the polynomial 1; t^1 simplifies to t. Symbolic or
 #               negative exponents need the verbose syntax (t ^ n).
 #
-# DELIBERATE OMISSIONS (v1): no implicit multiplication (2x is an error,
+# EXTENDING THE NOTATION: math-syntax/operator adds a binary infix
+# operator to the grammar AND to the display scheme in one step, so a
+# module that teaches zelph a new operation can teach it the notation too:
+#
+#   %(math-syntax/operator "circ" 15)          # left-associative default
+#   %(math-syntax/operator "**" 40 :right)
+#
+# Word-shaped operator names are matched with an identifier boundary, so
+# "circ" does not match inside "circle"; they need surrounding whitespace
+# (a circ b), symbolic ones do not. All operators sharing a precedence
+# must share an associativity -- mixing them has no meaning and is an
+# error rather than a silent choice.
+#
+# DELIBERATE OMISSIONS: no implicit multiplication (2x is an error,
 # write 2*x), no unquote inside islands, no comparison operators, no
-# string literals.
+# string literals, no user-defined prefix or postfix operators.
 #
 # MECHANICS: the island is an inline keyword (3-argument
 # zelph/register-keyword). The host's close-delimiter scan is raw; this
@@ -55,7 +74,14 @@
 # only afterwards.
 
 %
-(def term-grammar
+# The one operator table: [name precedence associativity]. Higher
+# precedence binds tighter. Consumed by build-grammar (parsing) and by
+# zelph/set-infix-display (printing).
+(def- operator-table @[["+" 10 :left] ["-" 10 :left]
+                       ["*" 20 :left] ["/" 20 :left]])
+
+# Everything except the generated infix levels and :expr.
+(def- grammar-base
   ~{:ws (set " \t\r\n")
     :s* (any :ws)
 
@@ -74,14 +100,56 @@
 
     :factor (choice (group (* (constant :neg) "-" :s* :factor)) :power)
 
-    :term (group (* (constant :chain) :factor
-                    (any (* :s* (capture (set "*/")) :s* :factor))))
-    :expr (group (* (constant :chain) :term
-                    (any (* :s* (capture (set "+-")) :s* :term))))
-
     :main (* :s* :expr :s* -1)})
 
-(def term-peg (peg/compile term-grammar))
+(defn- word-op?
+  "Does the name start like an identifier? Such operators need a boundary
+  check, or 'circ' would match the first four characters of 'circle'."
+  [s]
+  (def c (get s 0))
+  (or (= c 95) (<= 97 c 122) (<= 65 c 90)))
+
+(defn- op-pattern [name]
+  (if (word-op? name)
+    ~(* ,name (not (choice (range "az") (range "AZ") (range "09") "_")))
+    name))
+
+(defn- build-grammar []
+  (def by-prec @{})
+  (each entry operator-table
+    (def prec (entry 1))
+    (unless (in by-prec prec) (put by-prec prec @[]))
+    (array/push (in by-prec prec) entry))
+
+  (def g (table ;(kvs grammar-base)))
+  (var operand :factor)
+  (var level 0)
+
+  # Tightest precedence first, so each level's operands are the next
+  # tighter level and the LOOSEST ends up as :expr.
+  (each prec (reverse (sort (keys by-prec)))
+    (def entries (in by-prec prec))
+    (def assocs (distinct (map |($ 2) entries)))
+    (when (> (length assocs) 1)
+      (error (string "math-syntax: operators at precedence " prec
+                     " disagree on associativity")))
+    # Longest name first: a shorter operator must not shadow a longer one
+    # that starts with the same characters.
+    (def names (sort (map |($ 0) entries)
+                     (fn [a b] (> (length a) (length b)))))
+    (def tag (if (= (first assocs) :right) :rchain :chain))
+    (def rule (keyword "lvl" level))
+    (put g rule
+         ~(group (* (constant ,tag) ,operand
+                    (any (* :s* (capture (choice ,;(map op-pattern names)))
+                            :s* ,operand)))))
+    (set operand rule)
+    (++ level))
+
+  (put g :expr operand)
+  g)
+
+(var term-peg (peg/compile (build-grammar)))
 
 (defn- var-name?
   "Variable-shaped identifier, mirroring native syntax: a single
@@ -115,6 +183,16 @@
                (set acc (zelph/fact acc (ast i) (build (ast (+ i 1)))))
                (+= i 2))
              acc)
+    :rchain (do
+              # Same element layout as :chain -- operand op operand ... --
+              # folded from the right instead of the left.
+              (def n (length ast))
+              (var acc (build (ast (- n 1))))
+              (var i (- n 2))
+              (while (> i 0)
+                (set acc (zelph/fact (build (ast (- i 1))) (ast i) acc))
+                (-= i 2))
+              acc)
     (error "math-syntax: internal error (unknown AST tag)")))
 
 (defn- balanced?
@@ -163,12 +241,43 @@
    :name-first "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
    :name-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"})
 
+# The grammar's own operators, plus ^ -- which the parser handles as a
+# dedicated rule (integer exponent) but which prints like any other infix.
 (zelph/set-infix-display "math-syntax"
-  [["+" 10 :left] ["-" 10 :left] ["*" 20 :left] ["/" 20 :left] ["^" 30 :right]])
+  [;(map |[($ 0) ($ 1) ($ 2)] operator-table) ["^" 30 :right]])
 
 (zelph/set-application-display "math-syntax" ["of"])
 
 (zelph/register-keyword "$(" ")" math-term-handler)
+
+(defn math-syntax/operator
+  "Add a binary infix operator to the island grammar and to the island
+  display scheme in one step. name is the predicate, prec its precedence
+  (higher binds tighter; the built-ins are + - at 10, * / at 20, ^ at 30),
+  assoc :left (default) or :right.
+
+  Registering only the DISPLAY -- via zelph/set-infix-display on this
+  scheme -- would let the printer emit island syntax the island parser
+  cannot read back. Going through this function keeps both sides in step."
+  [name prec &opt assoc]
+  (default assoc :left)
+  (when (find |(= ($ 0) name) operator-table)
+    (error (string "math-syntax/operator: '" name "' is already an operator")))
+  (unless (or (= assoc :left) (= assoc :right))
+    (error "math-syntax/operator: associativity must be :left or :right"))
+  (array/push operator-table [name prec assoc])
+  # All-or-nothing: compile FIRST, and take the entry back out if the
+  # table is rejected (mixed associativity at one precedence). Otherwise a
+  # failed call would leave the operator behind and every later call would
+  # fail on a table the caller never asked for -- and the display registry
+  # would already be one entry ahead of the parser, which is exactly the
+  # drift this function exists to prevent.
+  (def compiled
+    (try (peg/compile (build-grammar))
+         ([err] (array/pop operator-table) (error err))))
+  (zelph/set-infix-display "math-syntax" [[name prec assoc]])
+  (set term-peg compiled)
+  nil)
 
 (zelph/out "math-syntax loaded: $( ... ) term islands (infix with precedence)")
 %

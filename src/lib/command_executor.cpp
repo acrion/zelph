@@ -3098,48 +3098,88 @@ private:
         return target;
     }
 
-    void cmd_explain(const std::vector<std::string>& cmd)
+    // Tokens -> the node the pattern denotes, or 0 if this reading does not
+    // work out. Every failure mode is folded into 0 so that cmd_explain can
+    // TRY a reading: parse failure, a statement the AST builder rejects
+    // (too few components), and a pattern that denotes nothing.
+    network::Node resolve_explain_pattern(const std::vector<std::string>& parts)
     {
-        // Trailing all-digit token = depth; everything else re-joins to the pattern.
-        std::size_t              depth = 4;
-        std::vector<std::string> parts(cmd.begin() + 1, cmd.end());
-        if (!parts.empty() && !parts.back().empty()
-            && parts.back().find_first_not_of("0123456789") == std::string::npos)
+        if (parts.empty()) return 0;
+
+        std::string pattern;
+        for (const auto& p : parts)
         {
-            depth = std::stoul(parts.back());
-            parts.pop_back();
+            if (!pattern.empty()) pattern += ' ';
+            pattern += p;
         }
 
-        network::Node target = 0;
-        if (parts.empty())
+        // A pattern wrapped in a single pair of parentheses --
+        // ".explain ((&6 + &7) = &13)" -- is a TERM, which the statement
+        // grammar rejects; unwrapping yields the statement the user
+        // meant. Tried SECOND, so a pattern that parses as given keeps
+        // its original reading.
+        std::string code = try_parse_pattern(pattern);
+        if (code.empty() && is_fully_parenthesized(pattern))
+            code = try_parse_pattern(pattern.substr(1, pattern.size() - 2));
+        if (code.empty()) return 0;
+
+        try
         {
+            return evaluate_pattern_read_only(code);
+        }
+        catch (const std::exception&)
+        {
+            return 0;
+        }
+    }
+
+    void cmd_explain(const std::vector<std::string>& cmd)
+    {
+        std::vector<std::string> parts(cmd.begin() + 1, cmd.end());
+
+        const auto is_number = [](const std::string& s)
+        { return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos; };
+
+        // Two readings of a trailing all-digit token, tried in this order:
+        //
+        //   (1) it is the max-depth argument -- the documented form,
+        //       ".explain alice likes bob 5";
+        //   (2) it belongs to the pattern -- which is the case whenever the
+        //       fact's own object is a numeral, as in
+        //       ".explain ((1 d+ 1) tci 0) sum 0". Reading (1) would steal
+        //       the object there and leave a two-component statement that
+        //       the AST builder cannot turn into a fact.
+        //
+        // (1) keeps precedence, so the documented form never changes
+        // meaning; (2) only rescues arguments that (1) cannot resolve.
+        std::size_t   depth  = 4;
+        network::Node target = 0;
+
+        if (!parts.empty() && is_number(parts.back()))
+        {
+            const std::vector<std::string> head(parts.begin(), parts.end() - 1);
+            if (head.empty())
+            {
+                // Depth only: ".explain 3" explains the last output node.
+                depth = std::stoul(parts.back());
+                parts.clear();
+            }
+            else if ((target = resolve_explain_pattern(head)) != 0)
+            {
+                depth = std::stoul(parts.back());
+            }
+        }
+
+        if (target == 0) target = resolve_explain_pattern(parts);
+
+        if (target == 0)
+        {
+            if (!parts.empty())
+                throw std::runtime_error(".explain: cannot parse fact pattern, or it does not denote a fact");
+
             target = string::last_node_to_string_node();
             if (!target)
                 throw std::runtime_error(".explain: no previous output node -- pass a fact pattern");
-        }
-        else
-        {
-            std::string pattern;
-            for (const auto& p : parts)
-            {
-                if (!pattern.empty()) pattern += ' ';
-                pattern += p;
-            }
-
-            // A pattern wrapped in a single pair of parentheses --
-            // ".explain ((&6 + &7) = &13)" -- is a TERM, which the statement
-            // grammar rejects; unwrapping yields the statement the user
-            // meant. Tried SECOND, so a pattern that parses as given keeps
-            // its original reading.
-            std::string code = try_parse_pattern(pattern);
-            if (code.empty() && is_fully_parenthesized(pattern))
-                code = try_parse_pattern(pattern.substr(1, pattern.size() - 2));
-            if (code.empty())
-                throw std::runtime_error(".explain: cannot parse fact pattern");
-
-            target = evaluate_pattern_read_only(code);
-            if (!target)
-                throw std::runtime_error(".explain: pattern does not denote a fact");
         }
 
         if (!_n->check_fact(target).is_known())

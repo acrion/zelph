@@ -221,3 +221,57 @@ TEST_CASE("topoly: polynomial identity ≡ via node identity (all arithmetic mod
         interactive.process(R"js(%(let [l (zelph/fact (zelph/fact (zelph/number "1") "+" "x") "*" (zelph/fact (zelph/number "1") "-" "x")) r (zelph/fact (zelph/number "1") "+" (zelph/fact "x" "*" "x"))] (string "TI-NEQ-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
         CHECK(any_output_contains(collector, "TI-NEQ-false")); });
 }
+
+TEST_CASE("topoly: identity verdicts are three-way (all arithmetic modules)")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        import_topoly(interactive);
+        interactive.process("x ~ symvar");
+        interactive.process("y ~ symvar");
+        interactive.process("x pouter y");
+
+        SUBCASE("differing normal forms are disproven, not silent")
+        {
+            // (x+1)^2 and x^2+1 both compile, to <1,2,1> and <1,0,1>.
+            // Non-identity used to be indistinguishable from "a side did
+            // not compile"; != on the two results decides it positively.
+            interactive.process("((x + &1) ^ &2) ≡ ((x ^ &2) + &1)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [l (zelph/fact (zelph/fact "x" "+" (zelph/number "1")) "^" (zelph/number "2")) r (zelph/fact (zelph/fact "x" "^" (zelph/number "2")) "+" (zelph/number "1")) e (zelph/fact l "≡" r)] (string "TI-DIS-" (zelph/exists e "=" (zelph/resolve "disproven")) "-NOTPROVEN-" (zelph/exists e "=" (zelph/resolve "proven")))))js");
+            CHECK(any_output_contains(collector, "TI-DIS-true-NOTPROVEN-false"));
+        }
+        SUBCASE("an identity stays proven and is not also disproven")
+        {
+            interactive.process("((x + &1) * (x - &1)) ≡ ((x ^ &2) - &1)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [l (zelph/fact (zelph/fact "x" "+" (zelph/number "1")) "*" (zelph/fact "x" "-" (zelph/number "1"))) r (zelph/fact (zelph/fact "x" "^" (zelph/number "2")) "-" (zelph/number "1")) e (zelph/fact l "≡" r)] (string "TI-PRO-" (zelph/exists e "=" (zelph/resolve "proven")) "-NOTDIS-" (zelph/exists e "=" (zelph/resolve "disproven")))))js");
+            CHECK(any_output_contains(collector, "TI-PRO-true-NOTDIS-false"));
+        }
+        SUBCASE("an uncompilable side yields NEITHER verdict")
+        {
+            // 'u' has no sort, so it has no normal form. "I could not
+            // compile this" must not be reported as "these differ" --
+            // silence is the only honest answer, and the disproof rule
+            // must not weaken it.
+            interactive.process("((x + u) ^ &2) ≡ ((x ^ &2) + u)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [l (zelph/fact (zelph/fact "x" "+" "u") "^" (zelph/number "2")) r (zelph/fact (zelph/fact "x" "^" (zelph/number "2")) "+" "u") e (zelph/fact l "≡" r)] (string "TI-SIL-" (zelph/exists e "=" (zelph/resolve "disproven")) "-" (zelph/exists e "=" (zelph/resolve "proven")))))js");
+            CHECK(any_output_contains(collector, "TI-SIL-false-false"));
+        }
+        SUBCASE("a missing variable order yields neither verdict")
+        {
+            // Cross-variable multiplication needs a declared pouter pair.
+            // Without one the compilation stalls -- again silence, not a
+            // disproof.
+            interactive.process("z ~ symvar");
+            interactive.process("((x * z) + &1) ≡ ((z * x) + &2)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(R"js(%(let [l (zelph/fact (zelph/fact "x" "*" "z") "+" (zelph/number "1")) r (zelph/fact (zelph/fact "z" "*" "x") "+" (zelph/number "2")) e (zelph/fact l "≡" r)] (string "TI-ORD-" (zelph/exists e "=" (zelph/resolve "disproven")) "-" (zelph/exists e "=" (zelph/resolve "proven")))))js");
+            CHECK(any_output_contains(collector, "TI-ORD-false-false"));
+        } });
+}

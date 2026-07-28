@@ -53,13 +53,35 @@ target_link_libraries(zelph PRIVATE ${ZELPH_APP_LIBS})
 
 # Mirror the standard library next to the binary so that freshly built
 # binaries resolve `.import <name>` out of the box and the CI zip archives
-# (which package the bin directory) contain it. This copy is refreshed on
-# (re)builds only; for live script editing point ZELPH_STDLIB at the
-# source tree's stdlib directory instead.
-add_custom_command(TARGET zelph POST_BUILD
+# (which package the bin directory) contain it.
+#
+# The mirror depends on the stdlib SOURCES, not merely on the binary: as a
+# POST_BUILD step it only ran when the target relinked, so editing a .zph
+# file and rebuilding copied nothing and the binary silently kept using the
+# previous stdlib. It also depends on the binary itself, so a relink into a
+# cleaned output directory restores the mirror.
+#
+# It is an IMAGE of the source tree, not an overlay: the destination is
+# removed first. Plain copying leaves behind files that no longer exist in
+# stdlib/, and an orphan there is worse than a missing file -- `.import
+# <name>` finds it, so nothing indicates that the definition is months out
+# of date. The rename arithmetic.zph -> decimal-arithmetic.zph left exactly
+# such an orphan, and the test suite went on importing it.
+file(GLOB_RECURSE ZELPH_STDLIB_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_SOURCE_DIR}/stdlib/*)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:zelph>/stdlib
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/stdlib
             $<TARGET_FILE_DIR:zelph>/stdlib
+    COMMAND ${CMAKE_COMMAND} -E touch
+            ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp
+    DEPENDS ${ZELPH_STDLIB_SOURCES} $<TARGET_FILE:zelph>
     COMMENT "Mirroring zelph standard library next to the binary")
+
+add_custom_target(zelph_stdlib_mirror ALL
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/stdlib_mirror.stamp)
 
 install(TARGETS zelph RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

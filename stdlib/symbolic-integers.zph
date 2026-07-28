@@ -56,6 +56,20 @@
 (T red ((pos zint &0) * X)) => (T rw (pos zint &0))
 
 # ---------------------------------------------------------------------------
+# Rules ZX -- constant reassociation over Z, the zint counterpart of
+# symbolic-core's rules SX. Those match cons-list numerals by pattern, so
+# they never see a zint; this rule covers the same shape over signed
+# constants. As there, the guard sits on the RESULT: a zero product is
+# exactly the case the absorbing rules above already answer.
+# ---------------------------------------------------------------------------
+((T red ((G zint M) * ((H zint N) * U))))
+=> ((G zint M) * (H zint N))
+
+((T red ((G zint M) * ((H zint N) * U))),
+ ((G zint M) * (H zint N)) = K, K != (pos zint &0))
+=> (T rw (K * U))
+
+# ---------------------------------------------------------------------------
 # Rules ZN -- negation of Z numerals. The nonzero case is guarded via an
 # in-system comparison so that (neg zint &0) is never produced and rw
 # stays single-valued (the zero case has its own direct rule).

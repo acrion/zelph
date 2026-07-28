@@ -670,29 +670,58 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
     return sorted;
 }
 
-bool Reasoning::contradicts(const Variables& variables, const Variables& unequals)
+// Substitute the current bindings into one side of an inequality guard.
+// Returns false when the side does not denote a concrete node (yet, or at
+// all), in which case this check cannot decide anything and the constraint
+// is left for a later one.
+//
+// The third case is the one that used to be missing at BOTH call sites. An
+// operand may be a plain variable, a ground node -- or a STRUCTURED PATTERN
+// such as (A cons R) in
+//
+//     ((A cons R) probe M, (A cons R) != &0) => ...
+//
+// Neither is_var nor "ground" describes that, and it used to be treated as
+// ground: the comparison then ran against the PATTERN node, which is never
+// identical to a concrete argument, so the guard silently permitted
+// everything. A guard that looks right and does nothing is worse than one
+// that is rejected, and this shape is the natural way to write "this
+// numeral is not zero".
+bool Reasoning::resolve_guard_side(const Node item, const Variables& variables, Node& out) const
+{
+    if (Zelph::Impl::is_var(item))
+    {
+        const auto it = variables.find(item);
+        if (it == variables.end() || Zelph::Impl::is_var(it->second)) return false;
+        out = it->second;
+        return true;
+    }
+
+    // Atoms, and variable-free structures: hash-consing makes such a
+    // pattern identical to the node it denotes, so no lookup is needed.
+    // Keeping this ahead of resolve_pattern also keeps the common case free
+    // of graph access -- both call sites are on the join path.
+    if (!Zelph::Impl::is_hash(item) || !var_in_closure(item))
+    {
+        out = item;
+        return true;
+    }
+
+    // Resolve::Missing means the denoted fact does not exist; it can then
+    // not be the node the other side is bound to, so "undecided" is the
+    // right answer there too.
+    std::vector<Node> history;
+    return resolve_pattern(this, item, variables, out, history) == Resolve::Ok;
+}
+
+bool Reasoning::contradicts(const Variables& variables, const Variables& unequals) const
 {
     for (const auto& var : unequals)
     {
-        Node item1 = var.first;
-        if (Zelph::Impl::is_var(item1))
-        {
-            auto it = variables.find(item1);
-            if (it != variables.end())
-                item1 = it->second;
-            else
-                continue; // though this variable is included in the unequals, it is missing in the normal variables (meaningless unequal condition)
-        }
-
-        Node item2 = var.second;
-        if (Zelph::Impl::is_var(item2))
-        {
-            auto it = variables.find(item2);
-            if (it != variables.end())
-                item2 = it->second;
-            else
-                continue; // though this variable is included in the unequals, it is missing in the normal variables (meaningless unequal condition)
-        }
+        Node item1 = 0;
+        Node item2 = 0;
+        if (!resolve_guard_side(var.first, variables, item1)) continue;
+        if (!resolve_guard_side(var.second, variables, item2)) continue;
 
         if (item1 == item2)
             return true; // contradiction, because item1 and item2 must be unequal

@@ -171,3 +171,27 @@ b pouter c
         CHECK(any_output_contains(collector, "JB-DET-true"));
         CHECK(any_output_contains(collector, "JB-DET-NOT-false")); });
 }
+
+// ---------------------------------------------------------------------------
+// The shipped example script. The two cases above build the map through a
+// Janet constructor; stdlib/examples/math/jacobian.zph states the same
+// determinant half in plain zelph, and the tutorial quotes it verbatim. It
+// is a documented, user-facing artifact, so it needs a test of its own --
+// otherwise it can rot without anything failing.
+//
+// Single mode on purpose: the semantics are already pinned by the cases
+// above under both schedules; what this adds is that the FILE parses,
+// imports and still answers.
+// ---------------------------------------------------------------------------
+TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".import examples/math/jacobian");
+    collector.clear();
+
+    interactive.process(R"js(%(string "JEX-NEG-" (> (length (zelph/query (zelph/fact '_M "jdet" (zelph/fact "neg" "zint" (zelph/number "512"))))) 0)))js");
+    interactive.process(R"js(%(string "JEX-POS-" (> (length (zelph/query (zelph/fact '_M "jdet" (zelph/fact "pos" "zint" (zelph/number "512"))))) 0)))js");
+    CHECK(any_output_contains(collector, "JEX-NEG-true"));
+    CHECK(any_output_contains(collector, "JEX-POS-false"));
+}

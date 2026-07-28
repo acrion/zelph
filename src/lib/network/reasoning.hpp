@@ -167,7 +167,8 @@ namespace zelph::network
         // --- Implemented in reasoning.cpp (orchestration) ---
 
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
-        static bool                        contradicts(const Variables& variables, const Variables& unequals);
+        bool                               resolve_guard_side(Node item, const Variables& variables, Node& out) const;
+        bool                               contradicts(const Variables& variables, const Variables& unequals) const;
         void                               end_input_capture();
 
         // --- Implemented in reasoning_evaluate.cpp ---

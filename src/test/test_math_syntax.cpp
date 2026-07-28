@@ -322,3 +322,108 @@ TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic mo
         interactive.process(R"js(%(let [t (zelph/fact (zelph/fact "exp" "of" "x") "+" (zelph/number "1"))] (string "MSD-APP-" (zelph/exists t "marker" "approundtrip"))))js");
         CHECK(any_output_contains(collector, "MSD-APP-true")); });
 }
+
+// ---------------------------------------------------------------------------
+// math-syntax/operator: the island grammar and the island display scheme are
+// generated from ONE operator table, so a module that teaches zelph a new
+// operation can teach it the notation too -- and the printer can never emit
+// island syntax the parser refuses to read back.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("math-syntax: a declared operator parses, associates and round-trips")
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import math-syntax");
+        interactive.process(R"js(%(math-syntax/operator "circ" 15))js");
+
+        SUBCASE("precedence sits where it was declared")
+        {
+            // 15 is between + (10) and * (20).
+            interactive.process("$( a circ b * c ) ~ q1");
+            interactive.process("$( a + b circ c ) ~ q2");
+            collector.clear();
+            interactive.process(R"js(%(string "MO-PREC1-" (zelph/exists (zelph/fact "a" "circ" (zelph/fact "b" "*" "c")) "~" "q1")))js");
+            interactive.process(R"js(%(string "MO-PREC2-" (zelph/exists (zelph/fact "a" "+" (zelph/fact "b" "circ" "c")) "~" "q2")))js");
+            CHECK(any_output_contains(collector, "MO-PREC1-true"));
+            CHECK(any_output_contains(collector, "MO-PREC2-true"));
+        }
+        SUBCASE("left-associative by default")
+        {
+            interactive.process("$( a circ b circ c ) ~ q3");
+            collector.clear();
+            interactive.process(R"js(%(string "MO-ASSOC-" (zelph/exists (zelph/fact (zelph/fact "a" "circ" "b") "circ" "c") "~" "q3")))js");
+            CHECK(any_output_contains(collector, "MO-ASSOC-true"));
+        }
+        SUBCASE("the printer emits what the parser accepts")
+        {
+            // The display registration happens in the same call, so the
+            // echo is island syntax -- and it must be re-readable.
+            collector.clear();
+            interactive.process("$( (a circ b) circ c ) ~ q4");
+            CHECK(any_output_contains(collector, "$( a circ b circ c )"));
+        }
+        SUBCASE("a word-shaped operator does not match inside an identifier")
+        {
+            collector.clear();
+            interactive.process("$( circle ) ~ q5");
+            interactive.process(R"js(%(string "MO-WORD-" (zelph/exists "circle" "~" "q5")))js");
+            CHECK(any_output_contains(collector, "MO-WORD-true"));
+        } });
+}
+
+TEST_CASE("math-syntax: right associativity and rejected operator tables")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import math-syntax");
+
+        SUBCASE("a right-associative operator folds from the right")
+        {
+            interactive.process(R"js(%(math-syntax/operator "to" 40 :right))js");
+            interactive.process("$( a to b to c ) ~ r1");
+            collector.clear();
+            interactive.process(R"js(%(string "MO-RIGHT-" (zelph/exists (zelph/fact "a" "to" (zelph/fact "b" "to" "c")) "~" "r1")))js");
+            CHECK(any_output_contains(collector, "MO-RIGHT-true"));
+        }
+        // A rejected registration propagates as an exception rather than
+        // landing in the output collector, so these subcases capture it.
+        const auto message_of = [&interactive](const char* code) -> std::string
+        {
+            try
+            {
+                interactive.process(code);
+            }
+            catch (const std::exception& e)
+            {
+                return e.what();
+            }
+            return {};
+        };
+
+        SUBCASE("mixing associativity at one precedence is refused")
+        {
+            CHECK(message_of(R"js(%(math-syntax/operator "bad" 10 :right))js")
+                      .find("disagree on associativity")
+                  != std::string::npos);
+        }
+        SUBCASE("a refused table leaves neither registry changed")
+        {
+            // The rejected entry must be taken back out: otherwise every
+            // later call fails on a table the caller never asked for, and
+            // the display registry would be one entry ahead of the parser.
+            (void)message_of(R"js(%(math-syntax/operator "bad" 10 :right))js");
+            interactive.process(R"js(%(math-syntax/operator "ok" 15))js");
+            interactive.process("$( a ok b ) ~ r2");
+            collector.clear();
+            interactive.process(R"js(%(string "MO-RECOVER-" (zelph/exists (zelph/fact "a" "ok" "b") "~" "r2")))js");
+            CHECK(any_output_contains(collector, "MO-RECOVER-true"));
+        }
+        SUBCASE("registering the same operator twice is refused")
+        {
+            interactive.process(R"js(%(math-syntax/operator "dup" 15))js");
+            CHECK(message_of(R"js(%(math-syntax/operator "dup" 20))js")
+                      .find("is already an operator")
+                  != std::string::npos);
+        } });
+}

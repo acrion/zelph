@@ -480,6 +480,72 @@ joe likes pizza
         CHECK_FALSE(any_output_starts_with(collector, "( joe taste diverse )")); });
 }
 
+TEST_CASE("inequality: a structured operand is resolved, not compared as a pattern")
+{
+    // A != operand may be a plain variable, a ground node, or a STRUCTURED
+    // PATTERN. The pattern case used to be treated as ground: the
+    // comparison ran against the pattern node itself, which is never
+    // identical to a concrete argument, so the guard silently permitted
+    // everything -- the worst failure mode for a guard, since it reads
+    // correctly. (A cons R) != &0 is the natural way to write "this
+    // numeral is not zero", and the standard library needs it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import binary-arithmetic");
+        process_lines(interactive, R"(
+((A cons R) probe M, (A cons R) != &0) => ((A cons R) nonzero M)
+&0 probe t
+&5 probe t
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+
+        interactive.process(R"js(%(string "UNEQ-KEEP-" (zelph/exists (zelph/number "5") "nonzero" "t")))js");
+        interactive.process(R"js(%(string "UNEQ-BLOCK-" (zelph/exists (zelph/number "0") "nonzero" "t")))js");
+        CHECK(any_output_contains(collector, "UNEQ-KEEP-true"));
+        CHECK(any_output_contains(collector, "UNEQ-BLOCK-false")); });
+}
+
+TEST_CASE("inequality: a structured operand whose variables bind later still blocks")
+{
+    // Both call sites must agree: the immediate check in evaluate() and the
+    // deferred one in contradicts(). Ordering the guard BEFORE the
+    // condition that binds its variables exercises the deferred path.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import binary-arithmetic");
+        process_lines(interactive, R"(
+((A cons R) != &0, (A cons R) probe M) => ((A cons R) late M)
+&0 probe t
+&5 probe t
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+
+        interactive.process(R"js(%(string "UNEQ-LATE-KEEP-" (zelph/exists (zelph/number "5") "late" "t")))js");
+        interactive.process(R"js(%(string "UNEQ-LATE-BLOCK-" (zelph/exists (zelph/number "0") "late" "t")))js");
+        CHECK(any_output_contains(collector, "UNEQ-LATE-KEEP-true"));
+        CHECK(any_output_contains(collector, "UNEQ-LATE-BLOCK-false")); });
+}
+
+TEST_CASE("inequality: a structured operand denoting no existing fact does not block")
+{
+    // Resolve::Missing -- every variable bound, but the denoted fact is not
+    // in the graph. It cannot be the node the other side is bound to, so
+    // the guard must pass rather than block.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X pairs Y, (X op Y) != absent) => (X ok Y)
+a pairs b
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+
+        interactive.process(R"js(%(string "UNEQ-MISSING-" (zelph/exists "a" "ok" "b")))js");
+        CHECK(any_output_contains(collector, "UNEQ-MISSING-true")); });
+}
+
 TEST_CASE("inequality: reflexive opposite without != causes false positive")
 {
     // KEY MOTIVATION for !=:

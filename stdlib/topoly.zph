@@ -127,10 +127,21 @@
 # comparison IS node identity -- expressed through unification: the SAME
 # variable P in both result conditions binds only if both compilations
 # reached the identical node. Repeatable query idiom: (A ≡ B) = proven.
-# Non-identity yields NO answer -- partiality by absence; a disproof
-# verdict would need negation-as-failure over the saturated compile
-# state and is left to a follow-up.
+#
+# DISPROOF needs no negation. Once both sides have a normal form they
+# either are the same node or they are not, and != decides it directly --
+# so the verdict stays inside the positive stratum, independent of the
+# order in which the compile state saturates. What remains partial is the
+# case where a side has NO normal form (an undeclared atom, an operator
+# outside the vocabulary): then neither verdict rule fires and the request
+# is unanswered. That is the honest reading -- "I could not compile this"
+# is not "these differ".
+#
+# Hence a three-way outcome: proven, disproven, or silence. The two
+# verdicts are mutually exclusive by construction, so = stays
+# single-valued.
 # ---------------------------------------------------------------------------
 (A ≡ B) => (:topoly A)
 (A ≡ B) => (:topoly B)
 (A ≡ B, (:topoly A) = P, (:topoly B) = P) => ((A ≡ B) = proven)
+(A ≡ B, (:topoly A) = P, (:topoly B) = Q, P != Q) => ((A ≡ B) = disproven)
