@@ -37,6 +37,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <zelph_export.h>
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -167,6 +168,13 @@ namespace zelph::network
         // --- Implemented in reasoning.cpp (orchestration) ---
 
         std::shared_ptr<std::vector<Node>> optimize_order(const adjacency_set& conditions, const Variables& current_vars, int depth);
+        // True when an iteration banner may be printed. The banners are a
+        // progress indicator, not data: a saturating run can execute
+        // thousands of iterations per second, and printing one line each
+        // buries whatever the user actually asked to see. With logging on
+        // they ARE the data, so every one is kept.
+        bool                               progress_due();
+
         bool                               resolve_guard_side(Node item, const Variables& variables, Node& out) const;
         bool                               contradicts(const Variables& variables, const Variables& unequals) const;
         void                               end_input_capture();
@@ -226,6 +234,9 @@ namespace zelph::network
         int                                      _capture_suppress_depth{0}; // > 0: input capture suppressed (nested imports)
 
         // --- Neural (≈) support ---
+        // Rate limit for the iteration banners; see progress_due().
+        std::chrono::steady_clock::time_point       _progress_last{};
+
         Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
         Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
         std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;          // compiled nets, cleared per epoch

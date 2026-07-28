@@ -27,6 +27,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // commands into the terminal - visitors learn the syntax by watching.
 // `requires` is advisory only: buttons are never disabled (the visitor can
 // always type prerequisites manually); unmet requirements just show a marker.
+// `requiresReset` marks a demo that must run on an empty network: the rail
+// types `.new` ahead of the button's own commands and forgets which demos
+// were pressed, so the dependency markers keep telling the truth. It is the
+// opposite of `requires` - a button declares one or the other, never both.
 // Note: sparql blocks end with an empty line - the trailing '' is deliberate.
 
 export const DEMO_GROUPS = [
@@ -37,7 +41,7 @@ export const DEMO_GROUPS = [
         id: "1.1",
         label: "Load arithmetic",
         command: ".import binary-arithmetic",
-        info: `Loads the arithmetic rule module. There is no arithmetic code in zelph's engine: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of a 16-fact full-adder truth table, computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/arithmetic/" target="_blank">zelph/arithmetic</a>`,
+        info: `Loads the arithmetic rule module. There is no arithmetic code in zelph's engine: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of a 16-fact full-adder truth table, computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/math/arithmetic/" target="_blank">zelph/arithmetic</a>`,
       },
       {
         id: "1.2",
@@ -51,7 +55,7 @@ export const DEMO_GROUPS = [
         label: "Peek inside: additions",
         requires: ["1.2"],
         command: "(X + Y) = Z",
-        info: `A query with variables lists all <code>+</code> facts currently in the graph. In the context of these examples, that means the intermediate additions the multiplication above spawned internally &mdash; multiplication delegates its accumulation steps to the addition module as ordinary facts. Derived knowledge stays in the graph and is reused by later computations.`,
+        info: `A query with variables lists all <code>+</code> facts currently in the graph. In the context of these examples, that means the intermediate additions the multiplication above spawned internally &mdash; multiplication delegates its accumulation steps to the addition module as ordinary facts. Derived knowledge stays in the graph and is reused by later computations.<br><br>Some operands read <code>&lt;000000…&gt;</code> rather than <code>&amp;0</code>. Those are the partial products for a <em>zero bit</em> of the multiplier, zero-extended to the width of the multiplicand &mdash; zero in value, but not the canonical zero <em>node</em>. Only the user-facing <code>=</code> result is canonicalised; internal intermediates keep the shape the recursion built, and the display shows them honestly instead of printing <code>&amp;0</code> for something that is a different node. Note that the sums are correct regardless: adding one leaves the other operand unchanged.`,
       },
       {
         id: "1.4",
@@ -65,7 +69,7 @@ export const DEMO_GROUPS = [
         label: "Peek inside: subtractions",
         requires: ["1.4"],
         command: "(X - Y) = Z",
-        info: `Lists all <code>-</code> facts &mdash; in this context, the candidate differences the division above asserted while selecting quotient digits. Division by a number that doesn't fit simply produces no difference fact: undefinedness is encoded as absence, no error machinery involved.`,
+        info: `Lists all <code>-</code> facts &mdash; in this context, the candidate differences the division above asserted while selecting quotient digits. Division by a number that doesn't fit simply produces no difference fact: undefinedness is encoded as absence, no error machinery involved.<br><br>The <code>&lt;000000&gt;</code> subtrahends are the same phenomenon as the zero addends under <em>Peek inside: additions</em>: the multiple taken for a <em>zero bit</em> of the quotient, zero-extended to the divisor's width. Zero in value &mdash; the difference is unchanged &mdash; but a different node from the canonical <code>&amp;0</code>, and rendered as what it is rather than as what it is worth.`,
       },
       {
         id: "1.6",
@@ -257,78 +261,165 @@ export const DEMO_GROUPS = [
     ],
   },
   {
-    title: "From NAND to EML",
+    title: "Symbolic Mathematics",
     buttons: [
       {
         id: "5.1",
-        label: "Arithmetic from one NAND gate",
-        command: ".import binary-nand-arithmetic",
-        info: `Loads a base-2 arithmetic module whose only gate datum is the single axiom <code>(1 nand 1) out 0</code>. One negation-as-failure rule completes the truth table, five rules build the classical gate library (NOT, AND, OR, XOR, majority) from NAND alone, and nine synthesis rules derive all 52 digit-table facts that the module from button 1.1 states by hand &mdash; on the same predicates, so the shared recursion layer sees no difference. Self-contained: group 1 is not required. For the full provenance show below, best start from a freshly loaded playground &mdash; if the hand-written tables are already present, the derived facts coincide with existing nodes.`,
+        label: "Load mathematics",
+        command: ".import math",
+        info: `One import for the whole mathematical stack: positional arithmetic over cons-list numerals, signed integers, multivariate polynomial normal forms over ℤ, a terminating term simplifier, symbolic differentiation, and conventional infix notation. Every layer is ordinary zelph rules &mdash; there is no algebra in the C++ engine, not even syntactic sugar for it. Full documentation: <a href="https://acrion.github.io/zelph/math/" target="_blank">zelph/math</a>`,
       },
       {
         id: "5.2",
-        label: "Peek inside: the gate table",
+        label: "Declare the indeterminates",
         requires: ["5.1"],
-        command: "(A nand B) out X",
-        info: `The complete NAND truth table: one asserted axiom and three rows derived by negation-as-failure &mdash; every digit pair that is not the zero row outputs 1. Note the derivation markers (⇐) on the derived rows.`,
+        command: "<x y z> ~ polyring",
+        info: `Names the variables of a polynomial ring. This is not a parser directive &mdash; it is an ordinary fact stating that the list <code>&lt;x y z&gt;</code> is an instance of <code>polyring</code>, and rules turn it into the sort and ordering facts the polynomial layer consumes. Because it is a fact, inference can see it: rules may quantify over rings, and it survives <code>.save</code>.`,
       },
       {
         id: "5.3",
-        label: "Multiply on the NAND substrate",
-        requires: ["5.1"],
-        command: "(&12 * &34) = X",
-        info: `The same digit-by-digit inference as in group 1 &mdash; but every gate-table lookup in the cascade now carries its own derivation, bottoming out, transitively, in the single NAND axiom. A provenance chain from 12&times;34&nbsp;=&nbsp;408 down to one gate fact.`,
+        label: "Prove an identity",
+        requires: ["5.2"],
+        command: "? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )",
+        info: `<code>$( … )</code> is conventional infix notation, desugaring to exactly the graph structure the verbose syntax builds. <code>≡</code> asks whether two terms are the same polynomial &mdash; not equal at sampled points, and not textually equal after expansion. Both sides are compiled to a canonical normal form, and since every node is hash-consed, equal normal forms are <em>the same node</em>: the proof is a pointer comparison, expressed through unification.`,
       },
       {
         id: "5.4",
-        label: "Load symbolic layer",
-        requires: ["5.1"],
-        command: ".import symbolic-core",
-        info: `Loads the symbolic layer: simplification as forward chaining. Symbolic terms use the <em>same</em> <code>+</code>/<code>*</code> predicates as the numeric modules; atoms declare a sort (<code>~ symvar</code>, <code>~ symconst</code>), and a marker-gated rule cascade computes normal forms bottom-up in a single pass. Works on top of any of the three arithmetic modules &mdash; here, on the NAND substrate.`,
+        label: "Show the proof",
+        requires: ["5.3"],
+        command: ".explain 2",
+        info: `Reconstructs the justification of the previous answer. Nothing is recorded during inference &mdash; after quiescence every derived fact has a rule instantiation whose conditions are all present, and a backward search finds one. Both branches end at the same normal form <code>(x poly &lt;… &gt;)</code>, whose coefficient list 1,&nbsp;0,&nbsp;&minus;1 &mdash; least significant first &mdash; is 1&nbsp;&minus;&nbsp;x². The only leaf marked <code>[axiom]</code> is what you typed; <code>.explain &lt;pattern&gt; 0</code> goes all the way down to the digit tables.`,
       },
       {
         id: "5.5",
-        label: "Constant folding for free",
-        requires: ["5.4"],
-        command:
-          ":simplify ((&2 + &3) * (&4 + &6))\n(:simplify ((&2 + &3) * (&4 + &6))) = X",
-        info: `The simplifier has no folding code. Its reduced forms are ordinary arithmetic facts, so the arithmetic module computes their <code>=</code> results, and one bridge rule <code>(T red C, C = R) =&gt; (T rw R)</code> adopts them. Watch <code>(&5 * &10)</code> being materialized and computed mid-simplification &mdash; and on this substrate, even the folded 50 traces back to the NAND axiom.`,
+        label: "Disprove one",
+        requires: ["5.2"],
+        command: "? $( (x+1)^2 ) ≡ $( x^2 + 1 )",
+        info: `A false identity is answered, not merely left out: both sides compile, to the coefficient lists 1,&nbsp;2,&nbsp;1 and 1,&nbsp;0,&nbsp;1, and those are different nodes. There is a third possible outcome &mdash; silence &mdash; which means a side did not compile at all (an undeclared variable, say). "I could not compile this" is deliberately not reported as "these differ".`,
       },
       {
         id: "5.6",
-        label: "Declared knowledge simplifies",
-        requires: ["5.4"],
+        label: "Sophie Germain's identity",
+        requires: ["5.2"],
         command:
-          "a ~ symconst\nb ~ symconst\nc ~ symconst\n(a + b) = c\n:simplify (a + b)\n(:simplify (a + b)) = X",
-        info: `The same bridge rule consumes <em>declared</em> equations: stating <code>(a + b) = c</code> over opaque constants makes simplification answer <code>c</code>. An equation imported from a knowledge graph drives rewriting exactly like a computed one &mdash; computation and knowledge share one fact space.`,
+          "? $( x^4 + 4*y^4 ) ≡ $( (x^2 + 2*y^2 - 2*x*y) * (x^2 + 2*y^2 + 2*x*y) )",
+        info: `The classical factorisation showing that x⁴&nbsp;+&nbsp;4y⁴ is composite for every y&nbsp;&gt;&nbsp;1. Multiplying the right-hand side out and cancelling happens inside the polynomial layer, in ℤ[x,&nbsp;y], with coefficient arithmetic that bottoms out in the same digit rules group 1 uses.`,
       },
       {
         id: "5.7",
-        label: "Load differentiation",
-        command: ".import diff",
-        info: `Symbolic differentiation in the same architecture. Derivatives of function symbols are facts (<code>exp hasderivative exp</code>) consumed by one generic chain rule, and constancy is the textbook definition made executable: T is constant w.r.t. x if T does not contain x &mdash; a containment recursion plus negation-as-failure.`,
+        label: "Differentiate",
+        requires: ["5.2"],
+        command: "? $( x^3 - 2*x + 7 ) diffby x",
+        info: `Sum rule, power rule and the constant rule, as forward-chaining rules. The raw derivative is deliberately not the answer: the connect stage pushes it through an ordinary simplification request, so you get 3x²&nbsp;&minus;&nbsp;2 rather than an unreduced tree. Constancy is the textbook definition made executable &mdash; a containment recursion plus negation-as-failure, evaluated only after the positive rules have reached quiescence.`,
       },
       {
         id: "5.8",
-        label: "Differentiate",
-        requires: ["5.7"],
+        label: "Teach two new functions",
+        requires: ["5.2"],
         command:
-          "x ~ symvar\nc ~ symconst\n(x + c) diffby x\n(x * x) diffby x\n((x + c) diffby x) = D\n((x * x) diffby x) = D",
-        info: `d(x+c)/dx answers 1: the constant vanishes via negation-as-failure, and the raw 1&nbsp;+&nbsp;0 is folded away because every derivative is pushed through the simplifier. The product rule assembles d(x&middot;x)/dx, whose neutral factors simplify to (x&nbsp;+&nbsp;x). Every step is an ordinary deduction with provenance.`,
+          "sinh hasderivative cosh\ncosh hasderivative sinh\n? $( sinh(x*x) ) diffby x",
+        info: `There is no table of known functions in the engine. <code>hasderivative</code> is an ordinary predicate consumed by one generic chain rule, and <code>sinh</code> is an ordinary node &mdash; the same kind of node as <code>Berlin</code>. Two facts, and the chain rule applies to them immediately.`,
       },
       {
         id: "5.9",
-        label: "Load EML",
-        command: ".import eml",
-        info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). This module wires eml into the simplifier as an ordinary binary operator with a three-rule identity table.`,
+        label: "Third derivative",
+        requires: ["5.2"],
+        command: "? $( x^5 ) diffalong <x x x>",
+        info: `Iterating needs no new machinery: a derivative is an ordinary fact exposed under <code>=</code>, so each step feeds the next. Four rules walk a list of variables &mdash; a list rather than extra arguments, because a zelph fact carries a <em>set</em> of objects, and order has to live in the data. Asking for <code>&lt;x y&gt;</code> and <code>&lt;y x&gt;</code> reaches the same answer node, which makes Clairaut's theorem observable rather than assumed.`,
       },
       {
         id: "5.10",
-        label: "Derive Eq. (5)",
-        requires: ["5.9"],
+        label: "Invent an operator",
+        requires: ["5.2"],
         command:
-          "x ~ symvar\n:simplify (&1 eml ((&1 eml x) eml &1))\n(:simplify (&1 eml ((&1 eml x) eml &1))) = X",
-        info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier. The engine derives <code>(ln of x)</code> as a chain of ordinary deductions &mdash; across two strata of the negation schedule &mdash; with the full provenance attached. The identity is not checked numerically and not assumed: it is derived.`,
+          '%(math-syntax/operator "circ" 15)\n((U circ V) needstopoly (U circ V)) => (((U + V) + (U * V)) needstopoly ((U + V) + (U * V)))\n((U circ V) needstopoly (U circ V), ((U + V) + (U * V)) aspoly P) => ((U circ V) aspoly P)',
+        info: `Teaches zelph the circle operation of ring theory, x&nbsp;∘&nbsp;y&nbsp;=&nbsp;x&nbsp;+&nbsp;y&nbsp;+&nbsp;xy, under which the elements of the Jacobson radical form a group. The first line gives it notation &mdash; precedence 15, between + and * &mdash; adding it to the island grammar and the printer from one table. The two rules give it meaning by <em>delegation</em>: when asked to compile <code>U circ V</code>, also ask for its defining term, then adopt whatever normal form that reached. No plug-in interface was involved, because there is none.`,
+      },
+      {
+        id: "5.11",
+        label: "…and prove its laws",
+        requires: ["5.10"],
+        command:
+          "? $( (x circ y) circ z ) ≡ $( x circ (y circ z) )\n? $( x circ y ) ≡ $( y circ x )\n? $( x circ 0 ) ≡ $( x )",
+        info: `Associativity, commutativity and a neutral element &mdash; a commutative monoid over ℤ[x,&nbsp;y,&nbsp;z], verified from three lines typed into a REPL. Note the echo of the first answer: you wrote the parentheses, and zelph printed the form without them, because its own precedence declaration makes them redundant &mdash; and that output parses back to the same node.`,
+      },
+    ],
+  },
+  {
+    title: "A Single Operator: EML",
+    buttons: [
+      {
+        id: "6.1",
+        label: "Load EML",
+        requires: ["5.1"],
+        command: '.import eml\n%(math-syntax/operator "eml" 15)',
+        info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). The module wires eml into the simplifier as an ordinary binary operator with a three-rule identity table; the second line gives it infix notation so the nested forms below stay readable.`,
+      },
+      {
+        id: "6.2",
+        label: "Derive Eq. (5)",
+        requires: ["6.1"],
+        command:
+          "x ~ symvar\n? :simplify $( 1 eml ((1 eml x) eml 1) )",
+        info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier, which answers <code>ln(x)</code>. Not checked numerically and not assumed &mdash; derived, as a chain of ordinary deductions across two strata of the negation schedule, by the same fixpoint engine that reasons over Wikidata.`,
+      },
+      {
+        id: "6.3",
+        label: "Bootstrap the constant e",
+        requires: ["6.1"],
+        command:
+          "? :simplify $( 1 eml 1 )\n? :simplify $( exp(1) )",
+        info: `e&nbsp;=&nbsp;eml(1,&nbsp;1) takes two requests, and the reason is worth seeing: a rewrite result is not re-processed within the same request, so the first call reaches <code>exp(1)</code> and the second turns that into <code>e</code>. Single-pass semantics keep the simplifier single-valued; one-shot deep normalisation would be the e-graph design the module deliberately left room for.`,
+      },
+      {
+        id: "6.4",
+        label: "Compile to pure EML",
+        requires: ["6.2"],
+        command: "? :emlcompile $( ln(x) )",
+        info: `The expansion direction: rewrite a named function into eml and the constant 1 alone. Composite operators get no expansion rules of their own &mdash; each materialises its defining term as a graph node and harvests <em>its</em> result, so the paper's reference compiler becomes ordinary fact flow. Since all terms are hash-consed, the output is a canonical DAG: repeated subexpressions are stored and rewritten once.`,
+      },
+    ],
+  },
+  {
+    title: "Refuting the Jacobian Conjecture",
+    buttons: [
+      {
+        id: "7.1",
+        label: "The map, at (0, 0, −1)",
+        requires: ["5.1"],
+        command:
+          "? :topoly $( (2+0*0)^3*(-1) + 2*0^2*(2+0*0)*(8+3*0*0) )\n? :topoly $( 8*0 + 3*0*(2+0*0)^2*(-1) + 6*0*0^2*(8+3*0*0) )\n? :topoly $( 8*0 - (6*0^2*0 + 0^3*(-1)) )",
+        info: `The Jacobian conjecture (Keller, 1939) says a polynomial map with constant nonzero Jacobian determinant must be injective. In July 2026 Alpöge and Fable exhibited a counterexample over ℂ³. Substituting and clearing denominators gives an equivalent map G with <em>integer</em> coefficients, so the whole check fits into zelph's arithmetic. These three lines evaluate G's components at the first collision point: the image is (&minus;8,&nbsp;0,&nbsp;0). Evaluation needs no special machinery &mdash; the normal form of a ground term <em>is</em> its value.`,
+      },
+      {
+        id: "7.2",
+        label: "…and at (1, −3, 26)",
+        requires: ["7.1"],
+        command:
+          "? :topoly $( (2+1*(-3))^3*26 + 2*(-3)^2*(2+1*(-3))*(8+3*1*(-3)) )\n? :topoly $( 8*(-3) + 3*1*(2+1*(-3))^2*26 + 6*1*(-3)^2*(8+3*1*(-3)) )\n? :topoly $( 8*1 - (6*1^2*(-3) + 1^3*26) )",
+        info: `A second, different point &mdash; same image (&minus;8,&nbsp;0,&nbsp;0). The points are genuinely distinct for the same reason the images are equal: canonical numerals of different values are different nodes, so no separate argument is needed.`,
+      },
+      {
+        id: "7.3",
+        label: "…and at (−1, 3, 26)",
+        requires: ["7.1"],
+        command:
+          "? :topoly $( (2+(-1)*3)^3*26 + 2*3^2*(2+(-1)*3)*(8+3*(-1)*3) )\n? :topoly $( 8*3 + 3*(-1)*(2+(-1)*3)^2*26 + 6*(-1)*3^2*(8+3*(-1)*3) )\n? :topoly $( 8*(-1) - (6*(-1)^2*3 + (-1)^3*26) )",
+        info: `Three distinct points, one image. That is the non-injectivity half of the refutation. What remains is to show that the Jacobian determinant is nevertheless a nonzero constant &mdash; and as a polynomial identity, not at sampled points.`,
+      },
+      {
+        id: "7.4",
+        label: "The Jacobian determinant",
+        requiresReset: true,
+        command: ".import examples/math/jacobian",
+        info: `Runs the shipped example script. It states the 3×3 Jacobian as a fact <code>&lt;G1 G2 G3&gt; jac3 &lt;a b c&gt;</code>, and rules do the rest: nine rules request the partial derivatives, one assembles the first-row cofactor expansion exactly as a linear algebra text writes it, and two compile the result to a polynomial normal form. This is the heaviest computation in the playground &mdash; symbolic differentiation produces large unsimplified terms, and the determinant multiplies three of them together.<br><br>The button types <code>.new</code> first, so this runs on an empty network and the other demos start over. Nothing here depends on them &mdash; the script imports <code>math</code> itself &mdash; and reasoning cost grows with what is already in the graph: every fact left over from the other demos is one more candidate every rule has to consider. On a graph carrying the whole playground this run takes more time and derives exactly the same answer.<br><br>Reading the output: the script sets <code>.deductions off</code>, so the thousands of intermediate facts stay silent and only the run summary appears. <em>Matches processed</em> counts rule-condition bindings the engine completed &mdash; roughly 50&nbsp;000 here; <em>skipped deductions</em> counts consequences that turned out to be already present, which hash-consing makes a no-op. The single <code>Reasoning iteration …</code> line is a once-per-second heartbeat, not data: its number differs from run to run and means nothing. The determinant itself is now a fact in the graph &mdash; ask for it next.`,
+      },
+      {
+        id: "7.5",
+        label: "Read the verdict",
+        requires: ["7.4"],
+        command: "_M jdet _P",
+        info: `<code>_M</code> and <code>_P</code> are variables, so this asks: is there <em>anything</em> whose Jacobian determinant is known? The answer echoes the whole matched fact &mdash; subject is the <code>jac3</code> statement with G's three components, predicate <code>jdet</code>, and the object is what was computed: <code>(neg zint &amp;512)</code>, the canonical integer &minus;512.<br><br>A <em>constant</em> polynomial. The normal form collapsed to a bare integer, which is precisely the statement that every non-constant term cancelled; not "cancelled to the precision I sampled at", since the normal form of the determinant simply <em>is</em> that node. By the chain rule this is equivalent to det&nbsp;J&nbsp;=&nbsp;&minus;2 for the original map. Together with the three evaluation steps above &mdash; three distinct points, one image &mdash; that is the refutation. Walk-through: <a href="https://acrion.github.io/zelph/math/tutorial-jacobian/" target="_blank">zelph/math/tutorial-jacobian</a>`,
       },
     ],
   },

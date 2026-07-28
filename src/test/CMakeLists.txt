@@ -57,6 +57,7 @@ add_executable(zelph_tests
     test_jacobian.cpp
     test_math.cpp
     test_math_syntax.cpp
+    test_mermaid.cpp
     test_nand_arithmetic.cpp
     test_neural.cpp
     test_node_display.cpp

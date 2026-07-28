@@ -252,9 +252,14 @@ function runLines(lines, { echo = true, doc = null } = {}) {
       term.writeln((i === 0 && !accumulating ? prompt : "") + l),
     );
   }
-  // xterm only follows new output while the viewport is at the bottom.
-  // If the user has scrolled up, a command would otherwise run invisibly;
-  // jumping down re-engages live scrolling (our implicit progress bar).
+  // xterm only follows new output while the viewport is at the bottom, so a
+  // command entered after scrolling up would run out of sight. Jumping down
+  // puts the prompt and its output back in view.
+  //
+  // This used to double as the progress indicator, back when the engine
+  // printed every deduction and the resulting scroll WAS the sign of life.
+  // It no longer does -- deduction output is filtered by default -- and the
+  // busy state carries that job now; see setBusy.
   term.scrollToBottom();
   setBusy(true);
   worker.postMessage({ type: "process", lines });
@@ -382,8 +387,16 @@ function updateButtons() {
 }
 
 function execDemo(b) {
+  const lines = b.command.split("\n");
+  if (b.requiresReset) {
+    // The demo runs on an empty network, so every earlier demo is undone.
+    // Forgetting them keeps the dependency markers honest; `.new` is typed
+    // rather than sent behind the visitor's back, like every other command.
+    clicked.clear();
+    lines.unshift(".new");
+  }
   clicked.add(b.id);
-  runLines(b.command.split("\n"), { doc: demoDoc(b) });
+  runLines(lines, { doc: demoDoc(b) });
   updateButtons();
 }
 

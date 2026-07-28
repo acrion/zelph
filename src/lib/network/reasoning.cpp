@@ -75,6 +75,8 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
+    // Start the banner clock here, so the first one is due a second in.
+    _progress_last        = std::chrono::steady_clock::now();
 
     if (_generate_markdown)
     {
@@ -148,7 +150,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
             {
                 _done = false;
                 ++iteration;
-                if (!silent)
+                if (!silent && progress_due())
                     diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
                 for (Node rule : positive_rules)
                     apply_rule(rule, 0);
@@ -159,7 +161,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
             if (!deferred_rules.empty())
             {
                 _done = false;
-                if (!silent)
+                if (!silent && progress_due())
                     diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
                 for (Node rule : deferred_rules)
                     apply_rule(rule, 0);
@@ -687,6 +689,20 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 // everything. A guard that looks right and does nothing is worse than one
 // that is rejected, and this shape is the natural way to write "this
 // numeral is not zero".
+bool Reasoning::progress_due()
+{
+    // Logging turns the banners into part of the trace being read, so keep
+    // all of them. Otherwise one line per second is plenty for a progress
+    // indicator -- including the FIRST, so short runs stay silent instead
+    // of emitting a banner nobody had time to read.
+    if (logging_active()) return true;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - _progress_last < std::chrono::seconds(1)) return false;
+    _progress_last = now;
+    return true;
+}
+
 bool Reasoning::resolve_guard_side(const Node item, const Variables& variables, Node& out) const
 {
     if (Zelph::Impl::is_var(item))

@@ -434,20 +434,6 @@ namespace zelph::network
 
         static inline Node mix_bits(Node seed, Node value)
         {
-#ifdef __EMSCRIPTEN__
-            // 32-bit analog of the 64-bit path below.
-            // Scramble value to avoid collisions of sequential IDs
-            // (MurmurHash3 32-bit finalizer, "fmix32")
-            value ^= value >> 16;
-            value *= 0x85ebca6bu;
-            value ^= value >> 13;
-            value *= 0xc2b2ae35u;
-            value ^= value >> 16;
-
-            // Boost hash_combine 32-bit (using standard shifts 6 and 2)
-            seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
-            return seed;
-#else
             // Scramble value to avoid collisions of sequential IDs
             // (MurmurHash3 64-bit finalizer)
             value ^= value >> 33;
@@ -459,7 +445,6 @@ namespace zelph::network
             // Boost hash_combine 64-bit (using standard shifts 6 and 2)
             seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
             return seed;
-#endif
         }
 
         static Node create_hash(const Node a, const Node b)
@@ -922,15 +907,9 @@ namespace zelph::network
     private:
 #endif
         static constexpr Node shift_inc = 5;
-#ifdef __EMSCRIPTEN__
-        static constexpr Node mark_hash           = 0x40000000u;
-        static constexpr Node mask_node           = 0x7FFFFFFFu; // mask highest bit
-        static constexpr Node mask_highest_2_bits = 0x3fffffffu;
-#else
         static constexpr Node mark_hash           = 0x4000000000000000ull;
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
-#endif
 
         // Called from all three node-materialization paths. Lock order is
         // always adjacency locks -> _mtx_clusters, never the reverse.
@@ -958,7 +937,7 @@ namespace zelph::network
             // Node wrapped = n >> ((-c)&mask);
             // Wrap below the two reserved top bits (mask_node clears the var
             // bit, mark_hash occupies the bit below): the rotation wraps at
-            // bit 61 on 64-bit and at bit 29 on the 32-bit wasm build.
+            // bit 61.
             Node wrapped = (n & mask_highest_2_bits) >> (((-c) & mask) - 2);
             return ((n << c) | wrapped) & mask_highest_2_bits;
         }
@@ -977,7 +956,7 @@ namespace zelph::network
         {
             // We generate nodes both by counting up and down (for vars) from 0, which increases probability of hash collisions.
             // So, make a clear difference between those two categories.
-            // Rotate by half the node width: 32 on 64-bit, 16 on the wasm32 build.
+            // Rotate by half the node width, i.e. by 32.
             return n > mask_node ? ror(n, 4 * sizeof(Node)) : n;
         }
     };

@@ -243,7 +243,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
     int iteration = 1;
     _done         = false;
     if (!silent)
-        diagnostic_stream() << "--- Reasoning iteration 1 (classic, positive stratum) ---" << std::endl;
+        if (progress_due())
+            diagnostic_stream() << "--- Reasoning iteration 1 (classic, positive stratum) ---" << std::endl;
     for (const IndexedRule& ir : rules)
         if (!ir.deferred) apply_rule(ir.rule, 0);
     _pool->wait();
@@ -371,7 +372,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
             {
                 _done = false;
                 if (!silent)
-                    diagnostic_stream() << "--- Deferred stratum (negation, classic pass) ---" << std::endl;
+                    if (progress_due())
+                        diagnostic_stream() << "--- Deferred stratum (negation, classic pass) ---" << std::endl;
                 for (const IndexedRule& ir : rules)
                     if (ir.deferred) apply_rule(ir.rule, 0);
                 _pool->wait();
@@ -449,7 +451,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
         ++iteration;
         _done = false;
-        if (!silent)
+        if (!silent && progress_due())
             diagnostic_stream() << "--- Reasoning iteration " << iteration
                                 << " (semi-naive, delta=" << current.size() << ") ---" << std::endl;
 

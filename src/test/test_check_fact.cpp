@@ -113,6 +113,33 @@ TEST_CASE("check_fact: hash is independent of object-set storage mode and iterat
     CHECK(z.check_fact(s, op, mid_up).relation() == midf);
 }
 
+TEST_CASE("check_fact: the hash space is wide enough for six-figure graphs")
+{
+    // A node IS its hash, so the node width fixes the hash space and a
+    // collision silently MERGES two distinct facts -- no error, just a
+    // graph that is one node short and derivations that never fire. The
+    // wasm build used to narrow Node to 32 bits (30 varying hash bits),
+    // which made this likely from a few ten-thousand nodes on: the shipped
+    // Jacobian example (32k nodes) derived nothing there while the native
+    // build answered.
+    //
+    // 40000 facts over distinct subjects and objects materialize exactly
+    // 3 * 40000 nodes on top of the core; hash-consing makes that count an
+    // exact invariant, so any collision shows up as a shortfall.
+    Zelph      z(null_handler());
+    const Node op = z.node("op");
+    z.fact(op, z.core.IsA, {z.core.RelationTypeCategory}); // declare up front, so the loop adds nothing but its own nodes
+
+    const Node before = z.count();
+    for (int i = 0; i < 40000; ++i)
+    {
+        const std::string n = std::to_string(i);
+        z.fact(z.node("s" + n), op, {z.node("o" + n)});
+    }
+
+    CHECK(z.count() == before + 3 * 40000);
+}
+
 TEST_CASE("parse_relation: memo prefilter keeps every branch's semantics")
 {
     Zelph      z(null_handler());

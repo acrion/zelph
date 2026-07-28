@@ -491,11 +491,11 @@ For example,when identifying "is opposite of" as a relation (predicate), this in
 
 ```mermaid
 graph TD
-    n_3["(3) ~"]
-    n_1["(1) ->"]
-    n_5688216769861436680["«is opposite of» «~» ->"]
-    n_10["(10) is opposite of"]
-    style n_10 fill:#FFBB00,stroke:#333,stroke-width:2px
+    n_3["~"]
+    n_1["->"]
+    n_5688216769861436680["is opposite of ~ ->"]
+    n_10["is opposite of"]
+    style n_10 fill:#8a5c00,stroke:#666666,stroke-width:2px,color:#e0e0e0
     n_5688216769861436680 <--> n_10
     n_1 --> n_5688216769861436680
     n_5688216769861436680 --> n_3
@@ -529,7 +529,7 @@ graph TD
     n_9["bright"]
     n_8445031417147704759["bright is opposite of dark"]
     n_10["is opposite of"]
-    style n_10 fill:#FFBB00,stroke:#333,stroke-width:2px
+    style n_10 fill:#8a5c00,stroke:#666666,stroke-width:2px,color:#e0e0e0
     n_8445031417147704759 --> n_10
     n_9 <--> n_8445031417147704759
     n_11 --> n_8445031417147704759
@@ -890,12 +890,24 @@ in the [Internals](internals/performance.md) section.
 
 Current focus areas include:
 
-- **Graph-based arithmetic and symbolic computation**: zelph now supports rule-based multi-digit addition as a proof of concept for computation that emerges purely from graph topology (see [Logic and Computation](logic.md#semantic-math-computation-as-graph-rewriting)). This opens pathways towards using zelph as a foundation for formal reasoning and symbolic mathematics — a direction that bears some resemblance to [Lean](https://lean-lang.org), but which is based on a graph-native, homoiconic representation.
+- **Graph-based arithmetic and symbolic mathematics**: no longer a proof of concept. A complete stack is in the standard library, every layer of it ordinary zelph rules: positional arithmetic over interchangeable digit substrates — one of which derives its entire digit level from a single NAND axiom — then signed integers, multivariate polynomial normal forms over ℤ, a terminating term simplifier, symbolic differentiation, and a compiler that decides polynomial identities by node identity. It proves Euler's four-square identity in a fifth of a second, and reproduces the July-2026 counterexample to the [Jacobian conjecture](math/tutorial-jacobian.md) — nine symbolic partial derivatives and a 3×3 determinant over ℤ — in under two. Every answer carries a reconstructible proof down to the digit tables. See [Mathematics](math/index.md); the comparison with [Lean](https://lean-lang.org) still holds, except that here the foundation is a graph-native, homoiconic representation rather than a type theory.
 - **Transitive reasoning and Wikidata integration**: A [second Wikimedia Rapid Fund proposal](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Transitive_Reasoning,_Qualifier_Support,_and_SPARQL-Subset_Integration_(ID:_23759260)>) targets transitive reasoning over Wikidata's subclass hierarchy, qualifier support, and SPARQL-subset integration — capabilities that also serve as building blocks for more general symbolic computation.
 - **Neural networks in the graph**: Since 0.9.7, zelph embeds a neural substrate directly in the semantic network — weighted edges as synapses, layers as ordinary sets, and rule conditions that consult trained networks via the `≈` operator. See [Neural Networks in the Graph](neural.md).
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
 Regarding potential Wikidata integration and the enhancement of semantic scripts, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
+
+### Where the mathematics goes next
+
+The mathematical stack will keep growing, and which way it grows should depend on what mathematicians actually want from it. Several directions are open, and none of them is committed:
+
+- **Side conditions.** Identities in the symbolic layer are currently *formal*: `exp inverseof ln` silently assumes the principal branch and u > 0. Tracking conditions as ordinary facts — so that a rewrite carries its domain with it — fits the architecture, but the right granularity is a mathematical question, not an engineering one.
+- **Beyond a single polynomial ring.** Ideal membership and Gröbner bases are the obvious next layer above the existing normal forms, and Buchberger's algorithm is a fixpoint computation — an unusually good match for forward chaining. Modular arithmetic and finite fields would be cheaper and would open number theory.
+- **Rationals, and with them division.** The quotient rule is missing from differentiation for exactly one reason: there is no field to divide in yet.
+- **One-shot normalisation.** Rewriting is single-pass per request today. Equality saturation in the e-graph style is, at heart, forward chaining over equalities — the natural experiment, and one the current design deliberately left room for.
+- **Proofs that leave the system.** `.explain` already reconstructs a full justification from the saturated graph. Exporting it in a form another proof checker accepts would turn zelph's answers into externally verifiable ones.
+
+If one of these matters to your work — or if the interesting direction is one not listed here — that is precisely the feedback that would shape the roadmap. Issues and discussions are on [GitHub](https://github.com/acrion/zelph).
 
 ## Project History
 

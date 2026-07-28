@@ -55,6 +55,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 
 using namespace zelph;

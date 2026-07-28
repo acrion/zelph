@@ -441,6 +441,30 @@ namespace
         return it->second;
     }
 
+    // Mermaid text passes through TWO HTML layers, and this one escape is
+    // what carries it intact through both:
+    //   1. the page. The diagram lives as the text content of a <div>, and
+    //      mermaid reads it back with textContent -- so the browser's HTML
+    //      parser sees it first. A raw '<' there starts a tag and swallows
+    //      everything up to the next '>': zelph list syntax (<a b c>) turned
+    //      the whole diagram into "Syntax error in text".
+    //   2. the label. Mermaid inserts label text as HTML, so a '<' that
+    //      survives layer 1 disappears at layer 2 instead -- silently, no
+    //      error, just a missing list.
+    // Escaping BOTH the individual labels and the assembled diagram makes
+    // the two layers cancel exactly: the page decodes one level, mermaid the
+    // other. Mermaid's own '#quot;'-style codes are not an option -- current
+    // versions leak their internal placeholder into the rendered label.
+    // '&' must be replaced first or it would re-escape its own output.
+    std::string html_escape(std::string s)
+    {
+        string::replace_all(s, "&", "&amp;");
+        string::replace_all(s, "<", "&lt;");
+        string::replace_all(s, ">", "&gt;");
+        string::replace_all(s, "\"", "&quot;");
+        return s;
+    }
+
     bool key_less(const network::Zelph* const           z,
                   network::Node                         a,
                   network::Node                         b,
@@ -452,6 +476,17 @@ namespace
         if (ka != kb) return ka < kb;
         return a < b; // stable tie-break for identical representations
     }
+
+    // Upper bound on how many neighbors are ranked by representation before
+    // the display budget cuts in. order_key costs a full recursive
+    // reconstruction per candidate, so ranking EVERY neighbor to keep
+    // max_neighbors of them is the expensive part of drawing a hub: the
+    // canonical zero carries ~2000 neighbors once a symbolic workload is
+    // loaded, and the diagram shows five. Beyond this bound the candidates
+    // are pre-selected by node ID -- deterministic and free -- and only the
+    // survivors are rendered. At hub size WHICH neighbors get shown is
+    // arbitrary either way; the hidden count still reports the true total.
+    constexpr size_t max_ranked_neighbors = 64;
 
     // Sorts neighbors deterministically, drops excluded nodes BEFORE applying
     // the budget (so exclusions no longer consume slots), truncates to
@@ -469,13 +504,25 @@ namespace
             if (!exclude_nodes.count(n))
                 v.push_back(n);
 
+        const size_t candidates = v.size();
+
+        if (max_neighbors > 0)
+        {
+            const size_t rank_budget = std::max(max_ranked_neighbors, static_cast<size_t>(max_neighbors));
+            if (candidates > rank_budget)
+            {
+                std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(rank_budget), v.end());
+                v.resize(rank_budget);
+            }
+        }
+
         std::sort(v.begin(), v.end(), [&](network::Node a, network::Node b)
                   { return key_less(z, a, b, max_neighbors, cache); });
 
         hidden_count = 0;
-        if (max_neighbors > 0 && v.size() > static_cast<size_t>(max_neighbors))
+        if (max_neighbors > 0 && candidates > static_cast<size_t>(max_neighbors))
         {
-            hidden_count = v.size() - static_cast<size_t>(max_neighbors);
+            hidden_count = candidates - static_cast<size_t>(max_neighbors);
             v.resize(static_cast<size_t>(max_neighbors));
         }
         return v;
@@ -1101,8 +1148,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         }
         node_ids[wn] = id;
 
-        std::string label = string::unmark_identifiers(raw_label);
-        string::replace_all(label, "\"", "#quot;");
+        const std::string label = html_escape(string::unmark_identifiers(raw_label));
 
         node_defs[wn] = id + "(\"" + label + "\")";
 
@@ -1165,8 +1211,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     {
         network::Node nd        = key.first;
         std::string   raw_label = z->get_name_hex(nd, false, max_neighbors);
-        std::string   label     = string::unmark_identifiers(raw_label);
-        string::replace_all(label, "\"", "#quot;");
+        const std::string label = html_escape(string::unmark_identifiers(raw_label));
         clone_node_defs[cid] = cid + "(\"" + label + "\")";
 
         // Clone nodes get a distinctive style (same base color but clone stroke)
@@ -1213,8 +1258,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         // Generate subgraph label from z->node_to_string
         std::string label_w;
         string::node_to_string(z, label_w, z->get_lang(), sg, max_neighbors);
-        std::string label = string::unmark_identifiers(label_w);
-        string::replace_all(label, "\"", "#quot;");
+        const std::string label = html_escape(string::unmark_identifiers(label_w));
 
         mermaid << indent << "subgraph " << sg_id << "[\"" << label << "\"]" << std::endl;
 
@@ -1292,8 +1336,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         std::string obj_id  = resolve_id_in_sg(info.object, r);
 
         std::string raw_pred_label = z->get_name_hex(info.predicate, false, max_neighbors);
-        std::string pred_label     = string::unmark_identifiers(raw_pred_label);
-        string::replace_all(pred_label, "\"", "#quot;");
+        const std::string pred_label = html_escape(string::unmark_identifiers(raw_pred_label));
 
         mermaid << "    " << subj_id << " -->|\"" << pred_label << "\"| " << obj_id << std::endl;
 
@@ -1573,7 +1616,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     std::ofstream out_file(file_name);
     if (out_file.is_open())
     {
-        out_file << html_header << mermaid.str() << html_footer;
+        out_file << html_header << html_escape(mermaid.str()) << html_footer;
         out_file.close();
     }
 }

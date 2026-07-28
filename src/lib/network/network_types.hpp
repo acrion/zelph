@@ -32,24 +32,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
-#ifdef __EMSCRIPTEN__
-    // wasm32: size_t is 32 bits. Node deliberately keeps the same width as
-    // size_t (enforced below); the node/hash scheme runs as a faithful
-    // 32-bit analog of the 64-bit design (see network.hpp).
-    using Node = uint32_t;
-#else
+    // A node IS its hash (see network.hpp), so the node width fixes the hash
+    // space. 64 bits everywhere, including wasm32 where size_t is 32 bits.
     using Node = uint64_t;
-#endif
+
     using Variables = std::map<Node, Node>;
 
-    static_assert(sizeof(Node) == 8 || sizeof(Node) == 4,
-                  "Node must be exactly 64 bits (or 32 bits in the wasm32 build). This "
+    static_assert(sizeof(Node) == 8,
+                  "Node must be exactly 64 bits. This "
                   "implementation uses bit-shift operations and other bit-specific logic "
                   "tied to the exact width.");
-
-    static_assert(sizeof(Node) == sizeof(std::size_t),
-                  "Node and size_t must have the same size. "
-                  "Compilation has been halted to prevent undefined behavior.");
 
     inline std::shared_ptr<Variables> join(const Variables& v1, const Variables& v2)
     {
