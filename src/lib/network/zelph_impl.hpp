@@ -1884,6 +1884,20 @@ namespace zelph::network
             _pred_idx_cache.clear();
         }
 
+        // Relation-type declarations (p ~ ->) can appear without passing
+        // through fact(): trusted imports bypass triple-level construction.
+        // Fact-structure reconstruction rejects every predicate absent from
+        // the memoized set, so a set built BEFORE such a bypass makes every
+        // fact using a newly declared predicate invisible to queries and
+        // unification. fact() covers its own case in
+        // invalidate_fact_structures_for.
+        void invalidate_relation_type_set() const
+        {
+            std::unique_lock lock(_rel_types_mtx);
+            _rel_types.reset();
+            ++_rel_types_gen;
+        }
+
         // Lock-once transitive traversal working directly on _left/_right
         // references: no adjacency_set copies, no per-edge lock acquisitions.
         // Aborts and returns false once `scan_budget` relation entries have

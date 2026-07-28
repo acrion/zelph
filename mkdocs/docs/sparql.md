@@ -96,7 +96,9 @@ Every evaluation phase that takes longer than 1 ms then prints a line with its d
 
 ## Complete Example Session
 
-The following is an unedited session running one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **pruned** database so the result list stays reasonably short for this page; on the full database, the same query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
+The following is an unedited session running one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
+
+The [pruned](binaries.md) database answers the same query with 81 culprits in 0.32 s cold (its P279 index covers 1,117,131 edges instead of 5,166,316) and 0.15 s warm — useful if you want to reproduce this on a machine without 256 GB of RAM.
 
 ```
 ❯ build-release/bin/zelph
@@ -470,15 +472,15 @@ Q11569980
 zelph-> .quit
 
 
-❯ stat /home/stefan/zelph/wikidata-20260309-all-pruned.bin.pidx.322
-  File: /home/stefan/zelph/wikidata-20260309-all-pruned.bin.pidx.322
-  Size: 17874144  	Blocks: 10961      IO Block: 131072 regular file
-Device: 0,51	Inode: 1479309     Links: 1
+❯ stat /home/stefan/zelph/wikidata-20260309-all.bin.pidx.322
+  File: /home/stefan/zelph/wikidata-20260309-all.bin.pidx.322
+  Size: 82661104  	Blocks: 32025      IO Block: 131072 regular file
+Device: 0,51	Inode: 1988678     Links: 1
 Access: (0644/-rw-r--r--)  Uid: ( 1001/  stefan)   Gid: ( 1001/  stefan)
-Access: 2026-07-02 23:47:31.446379174 +0200
-Modify: 2026-07-02 23:47:31.449712597 +0200
-Change: 2026-07-02 23:47:31.449712597 +0200
- Birth: 2026-07-02 23:47:31.446379174 +0200
+Access: 2026-07-07 20:38:13.644230882 +0200
+Modify: 2026-07-07 20:38:13.657564547 +0200
+Change: 2026-07-07 20:38:13.657564547 +0200
+ Birth: 2026-07-07 20:38:13.644230882 +0200
 
 ❯
 ```

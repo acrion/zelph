@@ -141,6 +141,42 @@ TEST_CASE("wikidata qualifiers: selective import filters by qualifier property")
     std::filesystem::remove(dump);
 }
 
+// Regression: the memoized relation-type set (Zelph::relation_type_set)
+// is what fact-structure reconstruction uses to tell a predicate from a
+// subject or object. The qualifier import types its new statement-layer
+// predicates through the TRUSTED path, which bypasses fact() and thus the
+// per-declaration invalidation in invalidate_fact_structures_for. Any
+// query issued BEFORE the import materializes that set, so without an
+// explicit invalidation the whole statement layer stayed invisible to
+// queries and unification afterwards -- silently, since adjacency reads
+// (zelph/targets, zelph/exists) never consult the set. This is the
+// realistic REPL order: load a network, look around, then add qualifiers.
+TEST_CASE("wikidata qualifiers: statement layer is queryable after an earlier query")
+{
+    const auto dump = write_dump();
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.lang wikidata
+Q300 P279 Q101
+)");
+        collector.clear();
+        interactive.process("Q300 P279 _x"); // materializes the relation-type set
+        CHECK(answers_contain(collector, "Q300 P279 Q101"));
+
+        interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+
+        collector.clear();
+        interactive.process("Q100 p:P2738 _s");
+        CHECK(answers_contain(collector, "Q100 p:P2738 Q100$AAA1-1"));
+
+        collector.clear();
+        interactive.process("Q100$AAA1-1 pq:P11260 _v");
+        CHECK(answers_contain(collector, "Q100$AAA1-1 pq:P11260 Q101"));
+        CHECK(answers_contain(collector, "Q100$AAA1-1 pq:P11260 Q102")); });
+    std::filesystem::remove(dump);
+}
+
 TEST_CASE("wikidata qualifiers: paper disjointness query runs on imported qualifier data")
 {
     const auto dump = write_dump();

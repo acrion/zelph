@@ -662,6 +662,16 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
 Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node object) const
 {
     invalidate_fact_structures_cache();
+
+    // A declaration typing a predicate must also drop the memoized
+    // relation-type set, or every fact created with that predicate stays
+    // invisible to queries and unification (fact-structure reconstruction
+    // rejects predicates absent from the set). The condition keeps the
+    // extra lock off the bulk import path: it holds once per predicate,
+    // not once per fact.
+    if (predicate == core.IsA && object == core.RelationTypeCategory)
+        _pImpl->invalidate_relation_type_set();
+
     return _pImpl->insert_fact_single_object_trusted(subject, predicate, object);
 }
 
@@ -1472,9 +1482,7 @@ std::shared_ptr<const ankerl::unordered_dense::set<Node>> Zelph::relation_type_s
 
 void Zelph::invalidate_relation_type_set() const
 {
-    std::unique_lock lock(_pImpl->_rel_types_mtx);
-    _pImpl->_rel_types.reset();
-    ++_pImpl->_rel_types_gen;
+    _pImpl->invalidate_relation_type_set();
 }
 
 Zelph::FsCacheStats Zelph::fs_cache_stats() const
