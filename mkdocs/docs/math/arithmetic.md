@@ -1,13 +1,17 @@
 zelph performs arithmetic — addition, subtraction, comparison, multiplication and division with remainder of arbitrarily large natural numbers — purely inside its reasoning engine. There is no arithmetic code in the C++ core: digits are ordinary named nodes, numbers are ordinary cons-lists, digit tables are ordinary facts, and the algorithms are ordinary forward-chaining rules. When you type `&12 * &34`, the engine does not call a multiplication routine; it _derives_ the fact `((&12 * &34) = &408)` the same way it derives `Berlin is located in Europe` from a transitivity rule.
 
-This page describes the complete arithmetic system: the number representation, the shared architecture of the four rule modules, the base-independence property, and the engine machinery — bound-pattern grounding, cost-based condition ordering, semi-naive evaluation — that makes rule-based computation fast enough to be practical. It complements [Logic and Computation](logic.md#semantic-math-computation-as-graph-rewriting), which builds up the addition module step by step.
+This page describes the complete arithmetic system: the number representation, the shared architecture of the four rule modules, the base-independence property, and the engine machinery — bound-pattern grounding, cost-based condition ordering, semi-naive evaluation — that makes rule-based computation fast enough to be practical. It complements [Logic and Computation](../logic.md#semantic-math-computation-as-graph-rewriting), which builds up the addition module step by step.
 
-The modules live in the standard library:
+The modules live in the standard library. Three of them supply the digit level, and one supplies the recursion that runs on top of any of them:
 
-- [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) — internal base 10
-- [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) — internal base 2
+- [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) — internal base 10, from a generated 100-entry table
+- [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) — internal base 2, from 16 hand-written full-adder axioms
+- [`stdlib/binary-nand-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-nand-arithmetic.zph) — internal base 2, derived from a **single NAND axiom**
+- [`stdlib/common-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/common-arithmetic.zph) — the base-agnostic recursions, shared by all three
 
-Both expose the identical user interface:
+All three digit-level modules claim the module ID `arithmetic` via [`.provides`](../index.md#interchangeable-implementations-provides), so anything built on top of arithmetic — [integers](integers.md), [polynomials](polynomial.md), the [symbolic layer](symbolic.md) — imports whichever substrate you loaded first and is otherwise indifferent.
+
+They expose the identical user interface:
 
 ```
 zelph> .import decimal-arithmetic
@@ -23,19 +27,21 @@ zelph> (&17 / &5) = X
 ((&17 / &5) = &3) ⇐ ...
 zelph> (&17 mod &5) = X
 ((&17 mod &5) = &2 ⇐ ...
+zelph> (&3 ^ &4) = X
+((&3 ^ &4) = &81) ⇐ ...
 ```
 
 Every result arrives with its derivation (`⇐`). A computation in zelph is not a black box returning a value — it is a set of ordinary facts, each carrying the conditions that produced it.
 
 ## Numbers Are Graph Structure
 
-A number is a cons-list of digit nodes, stored least-significant digit first: `<42>` is the structure `2 cons (4 cons nil)`. Cons cells are relation nodes — triples with `cons` as the predicate — so a number is nothing but nested statements, the same S-P-O material everything else in zelph is made of (see the [Lisp comparison](logic.md#lisp-and-s-expressions)). The LSB-first order is an algorithmic choice: carries and borrows propagate from the least significant digit, so the recursion of every arithmetic rule simply follows the list. It also makes multiplication by the base a single cons: in LSB-first representation, `base * X` is just `(0 cons X)` — the "shift" of schoolbook multiplication is free.
+A number is a cons-list of digit nodes, stored least-significant digit first: `<42>` is the structure `2 cons (4 cons nil)`. Cons cells are relation nodes — triples with `cons` as the predicate — so a number is nothing but nested statements, the same S-P-O material everything else in zelph is made of (see the [Lisp comparison](../logic.md#lisp-and-s-expressions)). The LSB-first order is an algorithmic choice: carries and borrows propagate from the least significant digit, so the recursion of every arithmetic rule simply follows the list. It also makes multiplication by the base a single cons: in LSB-first representation, `base * X` is just `(0 cons X)` — the "shift" of schoolbook multiplication is free.
 
 The engine core knows exactly one convention about numbers: the `&` prefix means _decimal_, on input and on output. Everything else is defined by scripts. On input, the parser turns `&42` into the Janet call `(zelph/number "42")` — a hook each arithmetic script redefines to build its internal representation. The decimal script maps the literal one-to-one onto digit nodes; the binary script converts by pure string arithmetic (so arbitrarily large literals work) into a base-2 list. On output, the script registers its digit alphabet via `(zelph/set-number-digits ...)`; `node_to_string` then renders any nil-terminated cons-list consisting solely of registered digit nodes as a decimal `&`-literal — the exact inverse of the input conversion. Any other list keeps the generic `<...>` display, so cons-lists remain general-purpose and nothing globally reinterprets them.
 
 The consequence: a binary session reads and writes decimal (`&5` in, `&5` out) while internally computing on `<101>`. Lists with leading zeros are tolerated as non-canonical values — `&105 - &98` internally yields the list `<007>`, which the `&`-display normalizes to `&7` and which the comparison module treats as equal to `<7>` by value.
 
-Janet's role ends at load time: it generates the digit tables, a macro-like input-time job (see [Scripting with Janet](janet.md)). During inference, only the reasoning engine runs.
+Janet's role ends at load time: it generates the digit tables, a macro-like input-time job (see [Scripting with Janet](../janet.md)). During inference, only the reasoning engine runs.
 
 ## The Anatomy of an Arithmetic Module
 
@@ -63,7 +69,7 @@ The internal state facts — `((<A> add <B>) ci C)` and friends — are themselv
 
 ## The Four Operations
 
-**Addition** is the archetype, developed in detail in [Logic and Computation](logic.md#semantic-math-computation-as-graph-rewriting): a full-adder cascade over the digit lists, with zero-extension for operands of unequal length.
+**Addition** is the archetype, developed in detail in [Logic and Computation](../logic.md#semantic-math-computation-as-graph-rewriting): a full-adder cascade over the digit lists, with zero-extension for operands of unequal length.
 
 **Comparison** (`N cmp M`) is an LSB-first state machine. Decomposition rules derive an `lcmp` state for every suffix pair; compute-upward rules then resolve them from the inside out — the more significant rest dominates unless it is `eq`, in which case the current digit pair decides via the `dcmp` table. Missing digits of the shorter operand count as 0, so non-canonical lists compare correctly by value. The results are _relational_ facts — `N < M`, `N > M`, `N == M` — which compose with meta-rules like any declared knowledge:
 
@@ -114,6 +120,8 @@ candidate difference equals `t` by value, `t < 0` is unsatisfiable, no
 quotient digit is ever selected -- `&5 / &0` derives nothing, exactly as
 `&5 - &7` derives nothing. Undefinedness remains encoded as absence.
 
+**Exponentiation** (`N ^ M`) is the naive recursion — repeated multiplication, delegating to the multiplication module the way multiplication delegates to addition. `X ^ &0` is `&1` for every base, including `&0`: the empty-product convention, shared with the [polynomial layer's](polynomial.md) `ppow`.
+
 ## One Rule Set, Any Base
 
 The rule blocks of the decimal and the binary script are byte-identical; only the digit tables (and the input conversion) differ. This is a checked property of the code base, and it makes a satisfying point: the recursion rules are base-agnostic theorems about digit sequences, and the tables are the only place where "ten" or "two" appears. Loading the binary module gives you full adders, full subtractors, and AND gates as facts, with the identical algorithms running on top — a semantic network computing like digital hardware, while reading and writing decimal at the boundary.
@@ -144,13 +152,15 @@ That is an exact 21-digit result. For comparison, asking the embedded Janet runt
 
 ## Why This Is More Than a Demo
 
-The comparisons in [Logic and Computation](logic.md#comparisons-with-other-systems) position zelph relative to Prolog and Datalog, Lean, Gödel numbering, and Lisp. Arithmetic is where those comparisons stop being philosophical.
+The comparisons in [Logic and Computation](../logic.md#comparisons-with-other-systems) position zelph relative to Prolog and Datalog, Lean, Gödel numbering, and Lisp. Arithmetic is where those comparisons stop being philosophical.
 
-In [Lean](logic.md#lean-and-curry-howard), numbers, proofs, and the inference machinery live on different levels; reasoning _about_ the machinery requires stepping up to a meta-level. In zelph there is no meta-level to step up to: the number `<42>`, the rule that adds it, the fact that records the sum, the derivation that justifies the fact, and a meta-rule quantifying over the predicates involved are all nodes in one graph, processed by one engine. When the multiplication module asserts a `+` fact for the addition module to answer, object level and meta level have collapsed into plain fact flow.
+In [Lean](../logic.md#lean-and-curry-howard), numbers, proofs, and the inference machinery live on different levels; reasoning _about_ the machinery requires stepping up to a meta-level. In zelph there is no meta-level to step up to: the number `<42>`, the rule that adds it, the fact that records the sum, the derivation that justifies the fact, and a meta-rule quantifying over the predicates involved are all nodes in one graph, processed by one engine. When the multiplication module asserts a `+` fact for the addition module to answer, object level and meta level have collapsed into plain fact flow.
 
 Where Gödel numbering encodes formulas _as_ numbers to make arithmetic self-referential, zelph runs the arrow in the other direction and makes numbers _structural_: no encoding, no decoding — the digit list _is_ the number, and it participates in statements directly. And against Datalog: computed facts are indistinguishable from declared ones, predicates are first-class, and therefore arithmetic results feed meta-rules (`> is transitive`) that standard Datalog cannot even express.
 
-The mid-term goal is a mathematics engine: numeric _and symbolic_ mathematics performed purely by the reasoning engine. The arithmetic modules are the proof of concept for the numeric half. With division and canonicalization complete, the roadmap continues with integers, number-theoretic demos such as the primality module, and then symbolic experiments. The bet behind the symbolic half is exactly the property demonstrated here: because terms, rules, and equations share one substrate, algebraic rewriting is just more rules over the same graph.
+These modules are the ground floor of a mathematics engine that is now several storeys tall: [signed integers](integers.md), [multivariate polynomial normal forms](polynomial.md), a [symbolic term layer](symbolic.md) with differentiation, and a [compiler](topoly.md) that decides polynomial identities by node identity. Every one of them is rules over this same graph — which was the bet: because terms, rules and equations share one substrate, algebraic rewriting is just more rules.
+
+The [Jacobian case study](tutorial-jacobian.md) runs the whole stack, from these digit tables up to a 2026 counterexample to a 1939 conjecture, in under a second.
 
 ## From Arithmetic to Number Theory: Primality
 
@@ -191,7 +201,7 @@ halts at the smallest divisor — no work is performed past the verdict, and
 prime factor.
 
 **The NAF version: the definition itself, executable.** Under
-[stratified evaluation](logic.md#stratified-evaluation) the textbook
+[stratified evaluation](../logic.md#stratified-evaluation) the textbook
 formulation is sound as written:
 
 ```

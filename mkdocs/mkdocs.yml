@@ -19,8 +19,25 @@ nav:
   - Home: index.md
   - Playground: playground.md
   - Logic and Computation: logic.md
-  - Semantic Arithmetic: arithmetic.md
-  - Symbolic Mathematics: symbolic.md
+  - Mathematics:
+      - Why zelph for Mathematics: math/index.md
+      - Tutorials:
+          - 1 · Proving Identities: math/tutorial-identities.md
+          - 2 · Numbers from Nothing: math/tutorial-numbers.md
+          - 3 · Terms and Rewriting: math/tutorial-terms.md
+          - 4 · Differentiation: math/tutorial-differentiation.md
+          - 5 · Inside the Normal Form: math/tutorial-polynomials.md
+          - 6 · Refuting the Jacobian Conjecture: math/tutorial-jacobian.md
+      - Reference:
+          - Module and Predicate Index: math/reference.md
+          - The math Front End: math/frontend.md
+          - Arithmetic Substrates: math/arithmetic.md
+          - Integers over Z: math/integers.md
+          - Polynomial Normal Forms: math/polynomial.md
+          - The Symbolic Layer: math/symbolic.md
+          - Term-to-Polynomial Compiler: math/topoly.md
+          - Primality: math/primality.md
+          - Case Study - The EML Operator: math/eml.md
   - Presentation: presentation.md
   - Quick Start Guide: quickstart.md
   - Performing Queries: queries.md
@@ -42,8 +59,18 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
+  # Math notation. Dollar delimiters are DISABLED on purpose: "$(" is zelph's
+  # term-island syntax and appears in prose throughout the mathematics
+  # section, so $...$ would collide with it. Only \( ... \) and \[ ... \]
+  # are recognised.
+  - pymdownx.arithmatex:
+      generic: true
+      inline_syntax: ['round']
+      block_syntax: ['square']
 extra_javascript:
   - https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 extra:
   mermaid:
     version: 11.4.1

@@ -177,7 +177,7 @@ mistake.
 ## Candidate Sets: Anchoring and Semi-Naive Seeding
 
 The user-facing semantics of these features live elsewhere —
-[Semantic Arithmetic](../arithmetic.md) introduces bound-pattern grounding
+[Semantic Arithmetic](../math/arithmetic.md) introduces bound-pattern grounding
 and semi-naive evaluation, [Stratified Evaluation](../logic.md#stratified-evaluation)
 covers the negation schedule, and `.help .anchors` / `.help .semi-naive`
 document the switches. This section records the engineering invariants.

@@ -58,16 +58,62 @@ After entering these statements, zelph will automatically infer that Berlin is l
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
 In section [Semantic Network Structure](index.md#semantic-network-structure) you'll find details about the core concepts, including syntactic details.
 
+### Two Statement Prefixes
+
+Besides the dot-commands, two prefixes modify how a *statement* is read.
+They are not commands and take no arguments — they attach to the statement
+itself.
+
+**`?` — ask for a result.** Most standard-library modules expose their
+answer under `=`, which normally means asserting the request, letting the
+fixpoint run, and querying the result separately. `?` does all three in one
+line, and keeps the inference pass quiet:
+
+```
+zelph> .import decimal-arithmetic
+zelph> ? &12 * &34
+Answer: (&12 * &34) = &408
+```
+
+It is repeatable: once the result fact exists, asking again answers from
+the graph without re-deriving anything.
+
+**`:` — the self-fact prefix.** Many requests are facts whose subject and
+object are the same node, `(T simplify T)`. The prefix spells that once:
+`:simplify T` *is* `(T simplify T)`, in input and in output. See
+[The Self-Fact Prefix](index.md#the-self-fact-prefix).
+
+The two combine, which is the usual way to drive the mathematical modules:
+
+```
+zelph> .import math
+zelph> <x> ~ polyring
+zelph> ? :topoly $( (x+1)^2 )
+Answer: (:topoly ((x + &1) ^ &2)) = (x poly <(pos zint &1) (pos zint &2) (pos zint &1)>)
+```
+
+When a request has no answer, nothing is printed. Throughout the standard
+library that is deliberate: partiality is expressed by absence, never by a
+default value.
+
 ### The Standard Library
 
 zelph ships with a standard library of scripts. When a script given to `.import` is not found at the given path, zelph searches the standard library — there, the `.zph` extension is optional:
 
 ```
+.import math                 # the whole mathematics stack in one import
 .import sparql               # SPARQL query interface
-.import decimal-arithmetic   # rule-based decimal arithmetic (+, -, cmp)
+.import decimal-arithmetic   # rule-based arithmetic, base 10 (+ - * / mod cmp ^)
 .import binary-arithmetic    # the same, base 2 (full-adder/subtractor axioms)
+.import binary-nand-arithmetic  # the same, derived from a single NAND axiom
+.import primes               # primality by trial division
 .import nn                   # neural network helpers
 ```
+
+The three arithmetic modules are interchangeable: each claims the module ID
+`arithmetic` via `.provides`, so anything built on top of arithmetic uses
+whichever you imported first. See
+[Mathematics](math/index.md) for the modules stacked above them.
 
 Examples — including every script referenced throughout this documentation — live in the `examples/` subdirectory and are addressed with their subpath:
 
@@ -206,6 +252,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 ### What's Next?
 
+- [Mathematics](math/index.md) — proving polynomial identities, symbolic differentiation, and a stack built from a single logic gate upwards
 - Explore the [Core Concepts](index.md#core-concepts) to understand how zelph represents knowledge
 - Learn about [Rules and Inference](index.md#rules-and-inference) to leverage zelph's reasoning capabilities
 - Check out the [Example Script](index.md#example-script) for a comprehensive demonstration

@@ -348,7 +348,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 
 - **`(zelph/import path & args)`**  
   Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
-  This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
+  This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "decimal-arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
   Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
 
 ##### Persistence
@@ -379,10 +379,64 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
 - **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
+##### Output
+
+- **`(zelph/out text)`**
+  Emit `text` through zelph's own output pipeline (the `Out` channel) rather
+  than Janet's `stdout`. Use this in modules: it is the only form that
+  reaches the REPL, `.log` capture, the WebAssembly playground and the test
+  harness alike, and it respects the quieting that `?` applies to its
+  inference pass. Janet's `print` writes to the process's standard output
+  and is invisible to all of them. The standard library uses it for load
+  banners, e.g. `(zelph/out "math-syntax loaded: $( ... ) term islands")`.
+
+##### Display registration
+
+A script can declare how *its own* notation is written, so that
+`node_to_string` renders matching terms in it. The C++ side knows
+precedence, associativity, delimiters, numeral prefix and leaf grammar —
+never a concrete operator. A term is rendered under a scheme only when the
+whole subtree is expressible in it; otherwise the default rendering is used.
+
+- **`(zelph/register-display-scheme name open close &opt options)`**
+  Declare a scheme. `open`/`close` are the delimiters wrapped around a
+  rendered term (`"$( "` and `" )"` for the stdlib's term islands).
+  `options` is a struct:
+
+    - `:numeral-prefix` — the sigil numerals carry inside the scheme
+      (`"&"` keeps the default, `""` drops it).
+    - `:name-first`, `:name-chars` — the identifier grammar. A leaf is
+      writable in the scheme only if its name matches; a scheme that
+      declares no grammar can never deviate from the default rendering,
+      which is the safe default rather than a limitation.
+
+- **`(zelph/set-infix-display scheme entries)`**
+  Register infix operators into a declared scheme. `entries` is an array of
+  `[predicate precedence associativity]`, with associativity `:left` or
+  `:right`. Higher precedence binds tighter. Registration is additive across
+  calls, but a predicate belongs to at most one scheme — re-registering it
+  is an error.
+
+- **`(zelph/set-application-display scheme predicates)`**
+  Register predicates whose facts render in call notation: `(S P O)` becomes
+  `S(O)`. Application heads must be atomic names; a composite head falls
+  back to the default rendering. Registering a predicate here also excludes
+  it from the self-fact display sugar.
+
+!!! warning "Display alone is half a notation"
+    Registering an operator for display does **not** teach any parser to
+    read it back, so zelph can end up printing syntax it cannot itself
+    consume. For the stdlib's term islands there is a combined entry point,
+    `math-syntax/operator`, which extends the island grammar and the display
+    scheme from one table — see
+    [The math Front End](math/frontend.md#adding-an-operator). Reach for
+    `zelph/set-infix-display` directly only when you are registering a
+    notation you do not intend to parse.
+
 ##### Redefinable hooks
 
 - **`(zelph/number str)`**  
-  Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) (decimal) or [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
+  Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) (decimal) or [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
 
 - **`(zelph/set-number-digits digits)`**  
   Register the digit alphabet of the loaded number representation, as an array

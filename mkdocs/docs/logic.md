@@ -356,7 +356,7 @@ a textbook would state them. The primality rule
 
 is sound as written: it is deferred until every divisor candidate has been
 tested, so the negation quantifies over the _complete_ scan. See
-[Semantic Arithmetic](arithmetic.md#from-arithmetic-to-number-theory-primality)
+[Semantic Arithmetic](math/arithmetic.md#from-arithmetic-to-number-theory-primality)
 for the full module.
 
 Two boundaries are worth knowing:
@@ -474,9 +474,9 @@ The transitive-closure rule
 
 reads as:
 
-$$
+\[
 \forall R\, \forall X\, \forall Y\, \forall Z.\; \bigl(\text{transitive}(R) \wedge R(X,Y) \wedge R(Y,Z)\bigr) \to R(X,Z)
-$$
+\]
 
 with the caveat that quantification ranges over the current fact base (closed-world evaluation), not over all possible interpretations.
 
@@ -599,7 +599,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
   <img src="../assets/multidigit_addition_pipeline_v2.svg" width="67%">
 </div>
 
-> **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
+> **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](math/arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
 The reference implementation lives in [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph).
@@ -785,7 +785,7 @@ memoization is a property of the representation, not a feature.
 > Sharing `tci` between two tables is deliberately harmless: table-keying
 > predicates are never scanned.
 
-Division and remainder complete the four operations; see [Semantic Arithmetic](arithmetic.md) for the candidate-selection design.
+Division and remainder complete the four operations; see [Semantic Arithmetic](math/arithmetic.md) for the candidate-selection design.
 
 ### Number Literals
 
