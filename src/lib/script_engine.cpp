@@ -1931,9 +1931,13 @@ public:
             if (n) elements.push_back(n);
         }
 
+        // The empty cons list IS nil -- the same node zelph/set returns for
+        // the empty set, and the terminator every non-empty list ends at.
+        // Returning Janet's nil instead made `<>` evaluate to nothing at
+        // all, so a statement containing it was silently dropped.
         if (elements.empty())
         {
-            Janet res = janet_wrap_nil();
+            Janet res = zelph_wrap_node(s_instance->_n->core.Nil);
             if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list", argc, argv, false, res);
             return res;
         }
@@ -2359,6 +2363,19 @@ public:
         const Janet* data;
         int32_t      len;
         janet_indexed_view(arg_tuple, &data, &len);
+
+        if (len == 1 && janet_checktype(data[0], JANET_KEYWORD))
+        {
+            // An EMPTY container still denotes something: both `<>` and `{}`
+            // are nil -- the empty cons list is the terminator every list
+            // ends at, and Zelph::set() has always answered nil for the
+            // empty set. Falling through to "nil" (Janet's, not the node)
+            // made the whole statement evaluate to nothing, silently.
+            const std::string tag = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+            if (tag == "set") return "(zelph/set)";
+            if (tag == "list-nodes") return "(zelph/list)";
+        }
+
         if (len < 2) return "nil"; // Minimum [:type value...]
 
         std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));

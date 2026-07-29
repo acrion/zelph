@@ -324,6 +324,17 @@ The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->`
 
 The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
 
+**What `¬` applies to.** A single fact pattern, not a group of them —
+`¬(A is y, A is z)` is rejected rather than guessed at. Use De Morgan:
+`¬(A ∧ B)` is `(¬A) ∨ (¬B)`, and a
+[disjunction](#disjunction) is written as several rules with the same
+consequence:
+
+```
+(A is x, ¬(A is y)) => (A r s)
+(A is x, ¬(A is z)) => (A r s)
+```
+
 #### Stratified Evaluation
 
 A negated condition asks about _absence_ — but absence _when_? During a

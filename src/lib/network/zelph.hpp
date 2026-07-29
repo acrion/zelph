@@ -420,6 +420,10 @@ namespace zelph::network
         Node                     get_core_node(const std::string& name) const;
         std::string              get_core_name(Node n) const;
         std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
+        // A node rendered for a HUMAN -- diagnostics, log lines, error
+        // messages. The identifier markers node_to_string works with are
+        // resolved here, so they stay an internal of the renderer instead
+        // of leaking into whichever caller forgot to strip them.
         std::string              format(Node node) const;
         std::vector<std::string> get_languages() const;
         bool                     has_language(const std::string& language) const;

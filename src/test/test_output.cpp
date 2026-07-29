@@ -166,3 +166,25 @@ TEST_CASE("output: concurrent stream flushes are serialized")
         w.join();
     CHECK(collector.events().size() == static_cast<size_t>(threads) * lines);
 }
+
+TEST_CASE("commands: an argument a command does not take is an error")
+{
+    // Most commands already reject surplus arguments; the ones that did not
+    // silently did something else instead. ".auto-run" is the trap that
+    // matters: it is a toggle sitting among .anchors / .semi-naive /
+    // .fact-stores, all of which take [on|off], so ".auto-run off" ENABLED
+    // auto-run whenever it happened to be off.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_AS(interactive.process(".auto-run off"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".list-rules everything"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".remove-rules all"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".lang en de"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".deductions loud"), std::runtime_error);
+
+        // The documented forms keep working.
+        interactive.process(".auto-run");
+        interactive.process(".deductions all");
+        interactive.process(".lang en"); });
+}

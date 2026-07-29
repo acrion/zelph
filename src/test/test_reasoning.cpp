@@ -108,6 +108,37 @@ TEST_CASE("parsing: quoted sequence keeps its order")
 // Nested structures
 // ---------------------------------------------------------------------------
 
+TEST_CASE("parsing: an empty container denotes nil")
+{
+    // `<>` is the empty cons list, and the empty cons list IS the
+    // terminator every list ends at; Zelph::set() has always answered nil
+    // for the empty set. The parser used to answer neither: it produced
+    // Janet's nil, which zelph/fact reads as "no object", so the whole
+    // statement vanished without a word.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("the empty node list")
+        {
+            process_lines(interactive, "q p <>");
+            CHECK(any_output_contains(collector, "q p nil"));
+        }
+        SUBCASE("the empty set")
+        {
+            process_lines(interactive, "q p {}");
+            CHECK(any_output_contains(collector, "q p nil"));
+        }
+        SUBCASE("all three spellings are the same node")
+        {
+            process_lines(interactive, "q p <>\nq p {}\nq p nil");
+            collector.clear();
+            interactive.process("q p X");
+            std::size_t answers = 0;
+            for (const auto& e : collector.events())
+                if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+            CHECK(answers == 1);
+        } });
+}
+
 TEST_CASE("parsing: nested sequence in set")
 {
     run_both_modes([](const auto& collector, const auto& interactive)
@@ -787,11 +818,13 @@ y ancestor z
         CHECK(any_output_starts_with(collector, "( x ancestor z )"));
         CHECK(any_output_starts_with(collector, "( 5 > 3 )"));
 
-        // Display: rule 1's variables are still shown by name in .list-rules.
+        // Display: rule 1's variables are still shown by name in
+        // .list-rules -- which prints the same unmarked form as every other
+        // command, so a listed rule can be pasted straight back in.
         collector.clear();
         interactive.process(".list-rules");
-        CHECK(any_output_contains(collector, "(A «ancestor» B)"));
-        CHECK_FALSE(any_output_contains(collector, "«??» «ancestor»")); });
+        CHECK(any_output_contains(collector, "(A ancestor B)"));
+        CHECK_FALSE(any_output_contains(collector, "?? ancestor")); });
 }
 
 // ---------------------------------------------------------------------------

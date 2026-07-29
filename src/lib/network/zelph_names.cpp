@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
 namespace
@@ -705,7 +706,7 @@ std::string Zelph::format(Node node) const
 {
     std::string result;
     string::node_to_string(this, result, _lang, node);
-    return result;
+    return string::unmark_identifiers(result);
 }
 
 std::vector<std::string> Zelph::get_languages() const

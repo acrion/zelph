@@ -182,11 +182,18 @@ The elements are linked to this super-node via the `in` (PartOf) relation.
   - `A in SetNode`
   - `B in SetNode`
 
+The empty set `{}` is the node `nil` — there is nothing for a super-node to
+collect, and `nil` is what an empty collection is throughout zelph.
+
 #### Angle Brackets: Lists
 
 Angle brackets `<...>` create **ordered lists** implemented as classic Lisp-style cons lists using the core predicates `cons` and `nil`.
 
 A list is represented by the **outermost cons cell**. There is **no separate container node**: the node returned by list construction _is_ the list (exactly as in Lisp).
+
+The empty list `<>` is `nil`, exactly as in Lisp: the terminator every
+non-empty list ends at. `q p <>`, `q p {}` and `q p nil` are therefore the
+same fact.
 
 ---
 

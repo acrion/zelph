@@ -1365,7 +1365,7 @@ private:
 #ifndef __EMSCRIPTEN__
             "  .run-export <file>                        – Run inference and write all derivations to a JSON Lines file (see .help .run-export)",
 #endif
-            "  .auto-run                                 – Toggle automatic execution of .run after each input (default: on)",
+            "  .auto-run                                 – Toggle automatic execution of .run after each input; takes no argument (default: on)",
             "  .deductions [all|focus|off]               – Set the deduction printing mode (default: focus)",
             "  .list-rules                               – List all defined inference rules",
             "  .remove-rules                             – Remove all inference rules",
@@ -1759,7 +1759,10 @@ private:
 
             {".auto-run", ".auto-run\n"
                           "Toggles the automatic execution of the inference engine (.run) after every input.\n"
-                          "Default is ON. Automatically switches to OFF when .load is used."},
+                          "Default is ON. Automatically switches to OFF when .load is used.\n"
+                          "It is a TOGGLE and takes no argument -- unlike its neighbours .anchors,\n"
+                          ".semi-naive and .fact-stores, which read [on|off]. \".auto-run off\" is\n"
+                          "therefore an error rather than a way to switch it off twice."},
 
             {".deductions", ".deductions [all|focus|off]\n"
                             "Sets the deduction printing mode for reasoning runs; without an\n"
@@ -1923,6 +1926,8 @@ private:
     }
     void cmd_lang(const std::vector<std::string>& cmd)
     {
+        if (cmd.size() > 2) throw std::runtime_error("Usage: .lang [code]");
+
         if (cmd.size() < 2)
         {
             _n->out_stream() << "The current language is '" << _n->get_lang() << "'" << std::endl;
@@ -2495,8 +2500,10 @@ private:
         _n->diagnostic("Export finished. *.json files are in the current directory.", true);
     }
 #endif
-    void cmd_list_rules(const std::vector<std::string>&)
+    void cmd_list_rules(const std::vector<std::string>& cmd)
     {
+        if (cmd.size() != 1) throw std::runtime_error("Command .list-rules takes no arguments");
+
         // Get all nodes that are subjects of a core.Causes() relation
         network::adjacency_set rule_nodes = _n->get_rules();
         if (rule_nodes.empty())
@@ -2511,9 +2518,15 @@ private:
         for (const auto& rule : rule_nodes)
         {
             std::string output;
-            // Format the rule for printing
             string::node_to_string(_n, output, _n->lang(), rule, 3);
-            _n->out(output, true);
+
+            // node_to_string leaves the identifier markers in; every other
+            // command strips them. Printing them made the listing the one
+            // place where zelph shows its internals -- and the one place
+            // where a rule could not be copied back in, because a
+            // multi-word predicate came out as «is part of» rather than
+            // quoted.
+            _n->out(string::unmark_identifiers(output), true);
         }
         _n->out("------------------------", true);
     }
@@ -2577,8 +2590,9 @@ private:
         }
     }
 
-    void cmd_remove_rules(const std::vector<std::string>&)
+    void cmd_remove_rules(const std::vector<std::string>& cmd)
     {
+        if (cmd.size() != 1) throw std::runtime_error("Command .remove-rules takes no arguments");
         require_full_graph_mode(".remove-rules");
         _n->remove_rules();
         _n->out("All rules removed.", true);
@@ -2821,13 +2835,19 @@ private:
             _repl_state->imported_module_ids.emplace(id, id);
         }
     }
-    void cmd_auto_run(const std::vector<std::string>&)
+    void cmd_auto_run(const std::vector<std::string>& cmd)
     {
+        // A toggle standing among .anchors/.semi-naive/.fact-stores, which
+        // all take [on|off]. Silently ignoring an argument meant that
+        // ".auto-run off" ENABLED auto-run whenever it happened to be off.
+        if (cmd.size() != 1) throw std::runtime_error("Usage: .auto-run  (a toggle; it takes no argument)");
         _repl_state->auto_run = !_repl_state->auto_run;
         _n->out("Auto-run is now " + std::string(_repl_state->auto_run ? "enabled" : "disabled") + ".", true);
     }
     void cmd_deductions(const std::vector<std::string>& cmd)
     {
+        if (cmd.size() > 2) throw std::runtime_error("Usage: .deductions [all|focus|off]");
+
         if (cmd.size() >= 2)
         {
             if (cmd[1] == "all")
@@ -2847,8 +2867,7 @@ private:
             }
             else
             {
-                _n->error("Usage: .deductions [all|focus|off]", true);
-                return;
+                throw std::runtime_error("Usage: .deductions [all|focus|off]");
             }
         }
         _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);

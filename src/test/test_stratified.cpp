@@ -334,3 +334,35 @@ TEST_CASE("stratified: deferred alternation with sugar-form negated conditions")
         CHECK(any_output_contains(collector, "w r w"));
         CHECK(any_output_contains(collector, "w s w")); });
 }
+
+TEST_CASE("negation: a group of conditions cannot be negated")
+{
+    // zelph negates a single fact PATTERN. A node tagged as a conjunction
+    // was read as one before its negation tag was ever consulted, so
+    // "¬(A is y, A is z)" evaluated as "A is y AND A is z" -- the exact
+    // opposite of what was written, and without a word about it. Rejecting
+    // the combination is checked where the tag is created, which catches
+    // the ¬ sugar and the explicit "*(...) ~ negation" spelling alike.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process("(A is x, ¬(A is y, A is z)) => (A r s)"),
+                             doctest::Contains("conjunction and a negation"),
+                             std::runtime_error);
+
+        CHECK_THROWS_WITH_AS(
+            interactive.process("(A is x, *(*{(A is y) (A is z)} ~ conjunction) ~ negation) => (A r s)"),
+            doctest::Contains("conjunction and a negation"),
+            std::runtime_error);
+
+        // The ordinary case is untouched.
+        interactive.process("(A is yellow, ¬(A is green)) => (A notgreen green)");
+        interactive.process("plant is green");
+        interactive.process("plant is yellow");
+        interactive.process("plant2 is yellow");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("X notgreen green");
+        CHECK(answers_contain(collector, "plant2 notgreen green"));
+        CHECK_FALSE(any_output_contains(collector, "plant notgreen")); });
+}

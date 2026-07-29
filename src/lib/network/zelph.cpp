@@ -545,6 +545,31 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 
+        // A node cannot be both a conjunction and a negation. The engine
+        // reads the conjunction tag FIRST and would then never look at the
+        // negation tag again, so "¬(A, B)" used to be evaluated as "A and
+        // B" -- the opposite of what was written, silently. Rejecting the
+        // combination here catches both spellings, because the sugar and
+        // the explicit "*(...) ~ negation" form both end up creating this
+        // very fact. The cost for ordinary data is one comparison against
+        // core.IsA.
+        if (predicate == core.IsA && objects.size() == 1)
+        {
+            const Node tag   = *objects.begin();
+            const Node other = tag == core.Negation ? core.Conjunction
+                             : tag == core.Conjunction ? core.Negation
+                                                       : 0;
+
+            if (other != 0 && check_fact(subject, core.IsA, {other}).is_known())
+            {
+                throw std::runtime_error(
+                    "fact(): a condition cannot be a conjunction and a negation at once. "
+                    "zelph negates a single fact pattern, not a group of them. "
+                    "Use De Morgan: not(A and B) is the same as (not A) or (not B), and a "
+                    "disjunction is written as several rules with the same consequence.");
+            }
+        }
+
         if (predicate != core.IsA && (!Impl::is_hash(predicate) || Network::is_var(predicate))) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
         {
             fact(predicate, core.IsA, {core.RelationTypeCategory});
