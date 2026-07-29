@@ -1693,16 +1693,22 @@ private:
 #endif
             {".prune-facts", ".prune-facts <pattern>\n"
                              "Removes only the matching facts (statement nodes).\n"
-                             "The pattern may contain variables in any position.\n"
+                             "The pattern may contain variables in any position; a pattern WITHOUT\n"
+                             "variables denotes one specific fact and removes exactly that one.\n"
+                             "A pattern that matches nothing changes nothing -- in particular it does\n"
+                             "not create the fact it describes.\n"
                              "Reports how many facts were removed."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
-                             "Removes all matching facts AND all nodes that appear as subject or object in these facts.\n"
+                             "Removes all matching facts AND the nodes bound to the pattern's variable.\n"
                              "Requirements:\n"
-                             "- The relation (predicate) must be fixed (no variable allowed in predicate position)\n"
-                             "- Variables are allowed in subject and/or object positions\n"
-                             "WARNING: This is highly destructive! It removes ALL connections of the affected nodes.\n"
-                             "The relation node itself becomes isolated and can be removed with .cleanup.\n"
+                             "- The relation (predicate) must be fixed (no variable in predicate position)\n"
+                             "- EXACTLY ONE variable, in subject or object position: it names what gets\n"
+                             "  deleted. Two variables are rejected rather than silently read as one.\n"
+                             "WARNING: This is highly destructive! The deleted nodes lose ALL of their\n"
+                             "connections, including facts that have nothing to do with the pattern,\n"
+                             "and their names go with them.\n"
+                             "Relation nodes left isolated by the deletion are removed by .cleanup.\n"
                              "Reports removed facts and nodes."},
 
             {".cleanup", ".cleanup\n"
@@ -2625,15 +2631,73 @@ private:
         if (janet_code.empty())
             throw std::runtime_error("Could not parse pattern");
 
-        network::Node pattern_fact = _script_engine->evaluate_expression(janet_code);
+        // Evaluating the pattern MATERIALIZES it, exactly as it does for
+        // .explain -- and a REMOVAL command that adds what it was asked to
+        // delete is the worst kind of surprise: ".prune-facts Q42 typo Q7"
+        // used to insert that very fact. The construction therefore runs
+        // inside a scratch cluster which is dropped afterwards, so a
+        // pattern the graph did not already contain leaves no trace.
+        static const std::string scratch  = "__prune";
+        const std::string        previous = _n->active_cluster_name();
+        _n->set_active_cluster(scratch);
+
+        network::Node pattern_fact = 0;
+        try
+        {
+            pattern_fact = _script_engine->evaluate_expression(janet_code, /*quiet*/ true);
+        }
+        catch (...)
+        {
+            restore_cluster(previous);
+            _n->drop_cluster(scratch);
+            throw;
+        }
+
+        const auto discard_pattern = [&]
+        {
+            restore_cluster(previous);
+            _n->drop_cluster(scratch);
+        };
 
         if (pattern_fact == 0)
+        {
+            discard_pattern();
             throw std::runtime_error("Invalid pattern");
+        }
+
+        // A pattern without variables denotes exactly ONE fact, and the
+        // unification scan that finds "all facts matching the pattern" has
+        // nothing to bind, so it found none -- ".prune-facts a rel b"
+        // silently did nothing. Dropping the scratch first answers the only
+        // question that remains: whatever survives existed beforehand.
+        std::unordered_set<network::Node> pattern_vars;
+        {
+            std::vector<network::Node> history;
+            network::collect_variables(_n, pattern_fact, pattern_vars, 1, history);
+        }
+
+        if (pattern_vars.empty())
+        {
+            discard_pattern();
+
+            const bool exists = _n->check_fact(pattern_fact).is_known();
+            if (exists) _n->remove_node(pattern_fact);
+
+            const std::string what = exists ? "1" : "0";
+            if (facts_mode)
+                _n->out("Pruned " + what + " matching facts.", true);
+            else
+                _n->out("Pruned " + what + " matching facts and 0 nodes (a pattern without variables binds nothing to delete).", true);
+
+            if (exists) _n->diagnostic("Consider running .cleanup.", true);
+            return;
+        }
 
         if (facts_mode)
         {
             size_t removed = 0;
             _n->prune_facts(pattern_fact, removed);
+            discard_pattern();
             _n->out("Pruned " + std::to_string(removed) + " matching facts.", true);
             if (removed > 0) _n->diagnostic("Consider running .cleanup.", true);
         }
@@ -2642,11 +2706,25 @@ private:
             network::Node relation = _n->parse_relation(pattern_fact);
             if (network::Network::is_var(relation))
             {
+                discard_pattern();
                 throw std::runtime_error("Command .prune-nodes: relation (predicate) must be fixed");
+            }
+
+            // One variable is the documented requirement, and it is the
+            // only one the command can honour: with two, it deleted the
+            // SUBJECT bindings and left the object ones alone, without
+            // saying so. On a loaded dump that is half a deletion nobody
+            // asked for.
+            if (pattern_vars.size() > 1)
+            {
+                discard_pattern();
+                throw std::runtime_error("Command .prune-nodes: exactly one variable is allowed (the subject or a single object) -- "
+                                         "it names what gets deleted. Use .prune-facts to remove facts without deleting nodes.");
             }
             size_t removed_facts = 0;
             size_t removed_nodes = 0;
             _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
+            discard_pattern();
             _n->out("Pruned " + std::to_string(removed_facts) + " matching facts and " + std::to_string(removed_nodes) + " nodes.", true);
             if (removed_facts > 0 || removed_nodes > 0)
             {

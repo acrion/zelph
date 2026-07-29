@@ -81,7 +81,11 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
 
     for (Node node : _nodes_to_prune)
     {
-        _pImpl->remove(node);
+        // remove_node, not Impl::remove: the names have to go with the
+        // node, exactly as for the .remove command. Without that the name
+        // still resolved to the deleted node, so ".node <name>" answered
+        // with an empty node that is no longer in the graph.
+        remove_node(node);
     }
 
     _prune_mode       = false;

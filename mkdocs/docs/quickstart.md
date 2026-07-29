@@ -147,11 +147,11 @@ The `.load` command is general-purpose:
 zelph provides powerful commands for targeted data removal:
 
 - `.prune-facts <pattern>` – Removes only the matching facts (statement nodes).  
-  Useful for deleting specific properties without affecting the entities themselves.
+  Useful for deleting specific properties without affecting the entities themselves. A pattern without variables removes exactly the one fact it names; a pattern that matches nothing changes nothing.
 
-- `.prune-nodes <pattern>` – Removes matching facts **and** all nodes bound to the single variable.  
-  Requirements: exactly one variable (subject or single object), fixed relation.  
-  **Warning**: This completely deletes the nodes and **all** their connections – use with caution!
+- `.prune-nodes <pattern>` – Removes matching facts **and** the nodes bound to the pattern's variable.  
+  Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
+  **Warning**: the deleted nodes lose **all** their connections, including facts unrelated to the pattern, and their names go with them – use with caution!
 
 - `.cleanup` – Removes all isolated nodes and cleans name mappings.
 

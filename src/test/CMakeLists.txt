@@ -70,6 +70,7 @@ add_executable(zelph_tests
     test_pow.cpp
     test_primes.cpp
     test_profiler.cpp
+    test_pruning.cpp
     test_reasoning.cpp
     test_rule_identity.cpp
     test_result_query.cpp
