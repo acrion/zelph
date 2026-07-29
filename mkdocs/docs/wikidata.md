@@ -235,4 +235,4 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
   ```
 
-Please note that after executing a '.load' command, '.auto-run' is disabled. This means that any rules added will only be applied when inference is performed explicitly via the `.run`, `.run-once`, `.run-md` or `.run-file` commands (see the Performing Inference section above).
+Please note that after executing a '.load' command, '.auto-run' is disabled. This means that any rules added will only be applied when inference is performed explicitly via the `.run`, `.run-once`, `.run-delta` or `.run-export` commands (see the Performing Inference section above).

@@ -210,9 +210,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.run` – Run full inference (from Janet: [`(zelph/run)`](janet.md#running-the-engine))
 - `.run-once` – Run a single inference pass (from Janet: `(zelph/run-once)`)
 - `.run-delta` – Run inference seeded only by the facts added since the last run; costs time in the size of the addition rather than of the graph (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
-- `.run-md <subdir>` – Run inference and export results as Markdown
-- `.run-file <file>` – Run inference, write deduced facts in reversed order to a file (encoded if lang=wikidata)
-- `.decode <file>` – Decode an encoded/plain file and print readable facts
+- `.run-export <file>` – Run inference and write all derivations to a JSON Lines file (see [Exporting Derivations](index.md#exporting-derivations))
 - `.auto-run` – Toggle automatic execution of .run after each input (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
 - `.deductions [all|focus|off]` – Set the deduction printing mode (default: focus)
 - `.list-rules` – List all defined inference rules

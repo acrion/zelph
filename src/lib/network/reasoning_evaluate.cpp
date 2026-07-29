@@ -249,10 +249,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                                 std::string output;
                                 string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                                std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
+                                std::string message = contradiction_symbol() + " ⇐ " + output;
 
                                 if (_print_deductions) out(string::unmark_identifiers(message), true);
-                                if (_generate_markdown) _markdown->add("Contradictions", message);
+                                if (_export_derivations) _export->add("contradiction", contradiction_symbol(),
+                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
                             }
                         }
                         else if (_prune_mode)
@@ -374,10 +375,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                             std::string output;
                             string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                            std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
+                            std::string message = contradiction_symbol() + " ⇐ " + output;
 
                             if (_print_deductions) out(string::unmark_identifiers(message), true);
-                            if (_generate_markdown) _markdown->add("Contradictions", message);
+                            if (_export_derivations) _export->add("contradiction", contradiction_symbol(),
+                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
                         }
                     }
                     else if (_prune_mode)
@@ -673,15 +675,16 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
                         std::string output;
                         string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                        std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
+                        std::string message = contradiction_symbol() + " ⇐ " + output;
 
                         if (_print_deductions)
                         {
                             out(string::unmark_identifiers(message), true);
                         }
-                        if (_generate_markdown)
+                        if (_export_derivations)
                         {
-                            _markdown->add("Contradictions", message);
+                            _export->add("contradiction", contradiction_symbol(),
+                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
                         }
                     }
                 }

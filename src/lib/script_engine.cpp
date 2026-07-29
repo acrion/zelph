@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script_engine.hpp"
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
+#include "network/rule_identity.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
@@ -38,10 +39,31 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <random>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 using namespace zelph;
+
+// True if a PEG-AST node is the literal atom `text`. Used to recognise `=>`
+// in predicate position, i.e. that a statement defines a rule.
+static bool is_atom(Janet node, const char* text)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+    if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+    if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) != "atom") return false;
+
+    if (janet_checktype(data[1], JANET_STRING))
+        return std::string(reinterpret_cast<const char*>(janet_unwrap_string(data[1]))) == text;
+    if (janet_checktype(data[1], JANET_BUFFER))
+    {
+        const JanetBuffer* b = janet_unwrap_buffer(data[1]);
+        return std::string(reinterpret_cast<const char*>(b->data), b->count) == text;
+    }
+    return false;
+}
 
 // --- Implementation Class ---
 
@@ -283,6 +305,11 @@ public:
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
 
+    // Memoized rule fingerprints, see find_duplicate_rule. Keyed by node,
+    // which is a structural hash, so an entry can never go stale. 0 means
+    // "not a rule".
+    std::unordered_map<network::Node, std::size_t> _rule_shapes;
+
     // Guards the script engine's own bookkeeping (_scoped_variables,
     // _neural_nets) against concurrent access from Janet threads
     // (ev/spawn-thread). Calls INTO the reasoning engine are synchronized
@@ -411,6 +438,12 @@ public:
                                                                                          "conditions: array of fact nodes (the conjunction).\n"
                                                                                          "consequences: one or more fact nodes to deduce.\n"
                                                                                          "Returns the condition set node.");
+
+        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)janet_cfun_zelph_dedup_rule),
+                  "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
+                  "If the graph already holds a rule that is the same up to renaming of its variables, "
+                  "the newly built one is rolled back and the existing node returned instead. "
+                  "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
@@ -1693,6 +1726,104 @@ public:
     //
     // Janet usage:
     //   (zelph/rule [cond1 cond2] consequence1 consequence2)
+    // The rule already in the graph that `rule` duplicates, or 0.
+    //
+    // Linear in the number of rules, but a candidate is dismissed by one
+    // hash lookup and one integer compare, because each rule's fingerprint
+    // is memoized as a 64-bit hash of its shape. A hash collision costs an
+    // alpha-equivalence test that then says no -- it can never make the
+    // answer wrong, since rules_alpha_equivalent is the decision.
+    //
+    // The memo needs no invalidation: a node IS its structure, so a rule's
+    // shape is fixed for the lifetime of the process, and an entry for a
+    // rule that was removed is simply never consulted again -- the scan
+    // iterates the LIVE rule set. That set holds nothing but Causes
+    // relations, and a non-rule would map to shape 0 and be skipped anyway.
+    //
+    // All of this runs while a script is being read, never during
+    // reasoning.
+    network::Node find_duplicate_rule(const network::Node rule)
+    {
+        const auto fingerprint = [this](const network::Node n) -> std::size_t
+        {
+            const auto it = _rule_shapes.find(n);
+            if (it != _rule_shapes.end()) return it->second;
+
+            const std::string shape = network::rule_shape(_n, n);
+            const std::size_t h     = shape.empty() ? 0 : std::hash<std::string>{}(shape);
+            _rule_shapes.emplace(n, h);
+            return h;
+        };
+
+        const std::size_t shape = fingerprint(rule);
+        if (shape == 0) return 0; // not a rule
+
+        for (const network::Node candidate : _n->get_left(_n->core.Causes))
+        {
+            if (candidate == rule) continue;
+            if (fingerprint(candidate) != shape) continue;
+            if (network::rules_alpha_equivalent(_n, rule, candidate)) return candidate;
+        }
+        return 0;
+    }
+
+    // Build a rule statement, and keep it only if it says something new.
+    //
+    // The thunk performs the whole construction -- condition patterns, the
+    // conjunction set, the => fact. Running it inside a scratch cluster
+    // makes that construction undoable: a cluster records exactly the nodes
+    // CREATED while it is active, and every part of an alpha-equivalent
+    // rule that is not a variable is hash-consed, hence already present and
+    // therefore never recorded. Dropping the scratch removes the second
+    // copy and nothing else.
+    static Janet janet_cfun_zelph_dedup_rule(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        JanetFunction* const thunk = janet_getfunction(argv, 0);
+
+        static const std::string scratch  = "__rule";
+        const std::string        previous = s_instance->_n->active_cluster_name();
+
+        // A scratch cluster of our own must not swallow the user's: whatever
+        // survives is handed back to the cluster that was active, so
+        // .cluster-drop still rolls a rule back with the rest of an experiment.
+        const auto restore = [&previous]
+        {
+            if (previous.empty())
+                s_instance->_n->deactivate_cluster();
+            else
+                s_instance->_n->set_active_cluster(previous);
+        };
+
+        s_instance->_n->set_active_cluster(scratch);
+
+        Janet       out = janet_wrap_nil();
+        JanetFiber* fiber{};
+        const int   signal = janet_pcall(thunk, 0, nullptr, &out, &fiber);
+
+        restore();
+
+        if (signal != JANET_SIGNAL_OK)
+        {
+            s_instance->_n->merge_cluster(scratch, previous); // keep whatever was built
+            janet_signalv(static_cast<JanetSignal>(signal), out);
+        }
+
+        const network::Node rule = zelph_unwrap_node(out);
+        const network::Node twin = rule ? s_instance->find_duplicate_rule(rule) : 0;
+
+        if (twin == 0)
+        {
+            s_instance->_n->merge_cluster(scratch, previous);
+            return out;
+        }
+
+        s_instance->_n->drop_cluster(scratch);
+        return zelph_wrap_node(twin);
+    }
+
     static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 2, -1); // At least conditions + 1 consequence
@@ -2577,7 +2708,17 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
             {
                 fact_args.push_back(root_data[i]);
             }
-            return _pImpl->build_smart_call("zelph/fact", fact_args);
+            const std::string call = _pImpl->build_smart_call("zelph/fact", fact_args);
+
+            // A rule statement is wrapped so that the WHOLE construction --
+            // condition patterns, conjunction set, => fact -- happens where
+            // it can be undone if the rule turns out to be one the graph
+            // already has. See janet_cfun_zelph_dedup_rule. Recognising the
+            // statement here, at the one place that knows it is a top-level
+            // `S => O`, keeps the check off every other input line.
+            if (is_atom(fact_args[1], "=>")) return "(zelph/dedup-rule (fn [] " + call + "))";
+
+            return call;
         }
     }
     else if (type == "conjunction")

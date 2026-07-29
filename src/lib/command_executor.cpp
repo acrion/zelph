@@ -39,7 +39,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #ifndef __EMSCRIPTEN__
     #include "wikidata/wikidata.hpp"
-    #include "wikidata/wikidata_text_compressor.hpp"
 
     #include "zelph.capnp.h"
 
@@ -253,12 +252,8 @@ private:
         _command_map[".run-delta"] = [this](auto& c)
         { cmd_run_delta(c); };
 #ifndef __EMSCRIPTEN__
-        _command_map[".run-md"] = [this](auto& c)
-        { cmd_run_md(c); };
-        _command_map[".run-file"] = [this](auto& c)
-        { cmd_run_file(c); };
-        _command_map[".decode"] = [this](auto& c)
-        { cmd_decode(c); };
+        _command_map[".run-export"] = [this](auto& c)
+        { cmd_run_export(c); };
         _command_map[".load"] = [this](auto& c)
         { cmd_load(c); };
         _command_map[".load-partial"] = [this](auto& c)
@@ -1368,9 +1363,7 @@ private:
             "  .run-once                                 – Run a single inference pass",
             "  .run-delta                                – Run inference seeded only by the facts added since the last run",
 #ifndef __EMSCRIPTEN__
-            "  .run-md <subdir>                          – Run inference and export results as Markdown",
-            "  .run-file <file>                          – Run inference, write deduced facts in reversed order to a file (encoded if lang=wikidata)",
-            "  .decode <file>                            – Decode an encoded/plain file and print readable facts",
+            "  .run-export <file>                        – Run inference and write all derivations to a JSON Lines file (see .help .run-export)",
 #endif
             "  .auto-run                                 – Toggle automatic execution of .run after each input (default: on)",
             "  .deductions [all|focus|off]               – Set the deduction printing mode (default: focus)",
@@ -1562,19 +1555,19 @@ private:
                          "the pattern: .explain $( x*x ) diffby x = D is invalid, but\n"
                          ".explain ($( x*x ) diffby x) = (x + x) resolves as usual."},
 #ifndef __EMSCRIPTEN__
-            {".run-md", ".run-md <subdir>\n"
-                        "Runs full inference and exports all deductions and contradictions as Markdown files\n"
-                        "in the directory mkdocs/docs/<subdir> for use with MkDocs."},
-            {".run-file", ".run-file <file>\n"
-                          "Performs full inference. Deduced facts (positive conclusions and contradictions) are written to <file>\n"
-                          "in reversed order (reasons first, then ⇒ conclusion), without any brackets or markup.\n"
-                          "Console output remains unchanged (original order with ⇐ explanations).\n"
-                          "If the current language is 'wikidata' (set via .lang wikidata), Wikidata identifiers are heavily\n"
-                          "compressed for minimal file size. Otherwise the file contains plain readable text."},
-
-            {".decode", ".decode <file>\n"
-                        "Reads a file created by .run-file (encoded or plain) and prints the decoded facts\n"
-                        "in readable form to standard output."},
+            {".run-export", ".run-export <file>\n"
+                            "Performs full inference and writes every derived fact and contradiction to\n"
+                            "<file> as JSON Lines -- one object per line:\n"
+                            "    {\"kind\":\"deduction\",\"conclusion\":[SEG,...],\"premises\":[[SEG,...],...]}\n"
+                            "A SEG is either a JSON string (literal text of the rendering) or an object\n"
+                            "{\"names\":{\"<lang>\":\"<name>\",...}} naming one node in every language it is\n"
+                            "known by. Nothing in the file is specific to a target format: which name to\n"
+                            "show, what to link, how to group -- all of that is the converter's decision.\n"
+                            "dev_scripts/zelph-derivations.py --format md turns the file into the MkDocs\n"
+                            "reports zelph used to write directly; --format text gives one flat line\n"
+                            "per derivation, the starting point for tokenizer-friendly training data.\n"
+                            "Deduction printing is off during the run: rendering to the console dominates\n"
+                            "the cost, and the file is the point."},
 #endif
             {".list-rules", ".list-rules\n"
                             "Lists all currently defined inference rules in readable format."},
@@ -2221,116 +2214,21 @@ private:
         _n->diagnostic("Ready.", true);
     }
 #ifndef __EMSCRIPTEN__
-    void cmd_run_md(const std::vector<std::string>& cmd)
+    void cmd_run_export(const std::vector<std::string>& cmd)
     {
-        require_full_graph_mode(".run-md");
-        if (cmd.size() < 2) throw std::runtime_error("Command .run-md: Missing subdirectory parameter (e.g., '.run-md tree')");
-        const std::string& subdir = cmd[1];
-        _n->set_markdown_subdir(subdir);
-        _n->diagnostic("Running with markdown export...", true);
-        if (_data_manager)
-        {
-            _data_manager->set_logging(false);
-        }
+        require_full_graph_mode(".run-export");
+        if (cmd.size() != 2)
+            throw std::runtime_error("Command .run-export requires exactly one argument: the output file path");
+
+        _n->set_export_file(cmd[1]);
+        _n->diagnostic("Running full inference; derivations are written to " + cmd[1] + " as JSON Lines.", true);
+
+        // Rendering every derived term to the console dominates the cost of
+        // a large export, and the file is the point of the command.
+        if (_data_manager) _data_manager->set_logging(false);
+
         _n->run(false, true, false);
-    }
-    void cmd_run_file(const std::vector<std::string>& cmd)
-    {
-        require_full_graph_mode(".run-file");
-        if (cmd.size() != 2)
-            throw std::runtime_error("Command .run-file requires exactly one argument: the output file path");
-        const std::string& outfile = cmd[1];
-        std::ofstream      out(outfile);
-        if (!out.is_open())
-            throw std::runtime_error("Command .run-file: Cannot open output file '" + outfile + "'");
-        out << std::unitbuf;
-
-        zelph::wikidata::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
-        bool                                    is_wikidata = (_n->get_lang() == "wikidata");
-
-        auto original_handler = _n->get_output_handler();
-
-        std::mutex file_mtx;
-
-        _n->set_output_handler(
-            [&](const zelph::io::OutputEvent& event)
-            {
-                // Always forward to original handler (console output)
-                original_handler(event);
-
-                // Additionally intercept Out channel for file writing
-                if (event.channel != zelph::io::OutputChannel::Out)
-                    return;
-
-                const std::string& str = event.text;
-                size_t             pos = str.find(" ⇐ ");
-                if (pos == std::string::npos)
-                    return;
-
-                std::string deduction = str.substr(0, pos);
-                std::string reasons   = str.substr(pos + std::string(" ⇐ ").size());
-
-                // "Clean format: no brackets, no markup" -- and for
-                // lang=wikidata the whole point is that EVERY Q/P token
-                // reaches the compressor. A token still carrying a bracket
-                // ("{Q2", "Q3)") is not a Q-id, so it stays unencoded and
-                // the line ends up half compressed. Strip every delimiter
-                // the formatter may produce, on BOTH sides: the deduction is
-                // wrapped in "(...)" and the reason set in "{...}", which
-                // the historical single-paren peel no longer matched.
-                for (std::string* part : {&deduction, &reasons})
-                {
-                    for (const char* delim : {"(", ")", "{", "}", "«", "»"})
-                        string::replace_all(*part, delim, "");
-                    string::trim_in_place(*part);
-                }
-
-                std::string line_for_file;
-                if (!reasons.empty())
-                    line_for_file = reasons + " ⇒ " + deduction;
-                else
-                    line_for_file = deduction;
-                string::trim_in_place(line_for_file);
-
-                std::lock_guard lock(file_mtx);
-                if (is_wikidata)
-                    out << compressor.encode(line_for_file) << '\n';
-                else
-                    out << line_for_file << '\n';
-            });
-
-        _n->diagnostic(
-            "Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to "
-                + outfile + (is_wikidata ? " (with Wikidata token encoding)." : " (plain text)."),
-            true);
-
-        _n->run(true, false, false);
-
-        _n->set_output_handler(std::move(original_handler));
         _n->diagnostic("Ready.", true);
-    }
-
-    void cmd_decode(const std::vector<std::string>& cmd)
-    {
-        if (cmd.size() != 2)
-            throw std::runtime_error("Command .decode requires exactly one argument: the input file path");
-
-        const std::string& infile = cmd[1];
-        std::ifstream      in(infile);
-        if (!in.is_open())
-            throw std::runtime_error("Command .decode: Cannot open input file '" + infile + "'");
-
-        zelph::wikidata::WikidataTextCompressor compressor({U' ', U'\t', U'\n', U','});
-
-        std::string line;
-        while (std::getline(in, line))
-        {
-            if (!line.empty())
-            {
-                std::string decoded = compressor.decode(line);
-                _n->out_stream() << decoded << std::endl;
-            }
-        }
     }
     void cmd_load(const std::vector<std::string>& cmd)
     {

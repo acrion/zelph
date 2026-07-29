@@ -321,7 +321,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 _stop_watch.start();
             }
 
-            if (do_print || _generate_markdown)
+            if (do_print || _export_derivations)
             {
                 size_t skipped_val = _skipped.exchange(0);
                 if (skipped_val > 0) diagnostic(" (skipped " + std::to_string(skipped_val) + " deductions)", true);
@@ -330,16 +330,17 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 string::node_to_string(this, input, _lang, ctx.current_condition, 3, augmented, parent);
                 string::node_to_string(this, output, _lang, d, 3, {}, parent);
 
-                std::string message = output + " ⇐ " + input;
-
                 if (do_print)
                 {
-                    out(string::unmark_identifiers(message), true);
+                    out(string::unmark_identifiers(output + " ⇐ " + input), true);
                 }
 
-                if (_generate_markdown)
+                if (_export_derivations)
                 {
-                    _markdown->add("Deductions", message);
+                    // The export keeps the premises apart, which the printed
+                    // line cannot: it renders the condition SET, and a
+                    // consumer would have to take the braces back apart.
+                    _export->add("deduction", output, render_premises(ctx.current_condition, augmented, parent));
                 }
             }
 

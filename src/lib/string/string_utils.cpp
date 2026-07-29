@@ -72,9 +72,60 @@ namespace zelph::string
         return ss.str();
     }
 
-    // This function adds guillemets (« and ») around the identifier unless it's empty, a single uppercase letter (variable),
-    // or enclosed in parentheses (sub-expression). This marking helps in parsing the formatted string in Markdown::convert_to_md,
-    // where guillemets distinguish identifiers from other elements like sub-expressions or variables.
+    // A name that the parser would not read back as ONE atom has to be
+    // quoted on output -- zelph's own printed form is meant to be
+    // re-enterable. The set is the PEG's reserved characters plus
+    // whitespace; a name containing a double quote cannot be written at all
+    // (the quoted-atom rule has no escapes), so it is left alone rather
+    // than wrapped into something that silently parses as something else.
+    static bool needs_quotes(const std::string& name)
+    {
+        if (name.find('"') != std::string::npos) return false;
+
+        // Names the grammar has a dedicated token for. They consist of
+        // reserved characters yet read back as ONE atom, so quoting them
+        // would be noise -- and worse than noise for `*`, which the
+        // mathematical modules use as a predicate everywhere and which the
+        // term-island parser does not accept in quoted form.
+        static const std::string_view bare_atoms[] = {
+            "*", "<", ">", "=>", "->", "-->", "<=>", "<=", ">="};
+        for (const auto& atom : bare_atoms)
+            if (name == atom) return false;
+
+        for (const unsigned char c : name)
+        {
+            if (c <= ' ') return true; // whitespace and control characters
+            switch (c)
+            {
+            case '<':
+            case '>':
+            case '(':
+            case ')':
+            case '{':
+            case '}':
+            case '*':
+            case ',':
+                return true;
+            default:
+                break;
+            }
+            if (c == 0xC2) return true; // UTF-8 lead byte of '¬', '«', '»'
+        }
+        return false;
+    }
+
+    // Marks an identifier with guillemets so that later stages can tell a
+    // leaf NAME from the surrounding structure (brackets, spacing). Skipped
+    // for anything that is not a leaf name -- variables and renderings that
+    // already carry their own delimiters.
+    //
+    // A name containing a guillemet itself cannot be marked: the markers are
+    // in-band, so the first » inside the name would end the marker and split
+    // it in two ("«Le Monde»" came out as "\"«Le Monde\"»"). French and
+    // German Wikidata labels make that a real case, not a hypothetical one.
+    // Such a name is emitted directly instead -- already quoted if it needs
+    // quoting, since nothing downstream will do it. Consumers of the marking
+    // may therefore RELY on a marked name containing no guillemets.
     std::string mark_identifier(const std::string& str)
     {
         if (str.empty())
@@ -101,15 +152,21 @@ namespace zelph::string
             return str;
         }
 
+        if (str.find("«") != std::string::npos || str.find("»") != std::string::npos)
+        {
+            return needs_quotes(str) ? "\"" + str + "\"" : str;
+        }
+
         return "«" + str + "»";
     }
 
-    // Remove all guillemets (« and ») that were added by above function mark_identifier
+    // Remove the guillemets that mark_identifier added, turning them into
+    // double quotes wherever the parser would otherwise not read the name
+    // back as one atom. Quoting only names with a SPACE was not enough: a
+    // node named "x>y" printed as `a rel x>y`, which re-reads as something
+    // else entirely -- and zelph's output is supposed to be its own input.
     std::string unmark_identifiers(const std::string& str)
     {
-        // Identifiers are marked with « » (guillemets). Previously these markers
-        // were simply stripped. Now, if the marked substring contains a space, the
-        // markers are replaced with double quotes instead of being removed.
         static const std::string open  = "«"; // U+00AB, 2 bytes in UTF-8
         static const std::string close = "»"; // U+00BB, 2 bytes in UTF-8
 
@@ -119,7 +176,29 @@ namespace zelph::string
         std::size_t pos = 0;
         while (pos < str.size())
         {
-            const std::size_t open_pos = str.find(open, pos);
+            const std::size_t open_pos  = str.find(open, pos);
+            const std::size_t quote_pos = str.find('"', pos);
+
+            // A double quote OUTSIDE a marker can only come from
+            // mark_identifier's guillemet branch -- nothing else in a
+            // rendering produces one, and a quote INSIDE a name is reached
+            // through its marker first. Its content is therefore already
+            // finished and is copied through, so that the guillemets in
+            // "«Le Monde»" are read as the name they are and not as a
+            // marker pair that happens to sit there.
+            if (quote_pos != std::string::npos && (open_pos == std::string::npos || quote_pos < open_pos))
+            {
+                const std::size_t end = str.find('"', quote_pos + 1);
+                if (end == std::string::npos)
+                {
+                    result.append(str, pos, std::string::npos);
+                    break;
+                }
+                result.append(str, pos, end + 1 - pos);
+                pos = end + 1;
+                continue;
+            }
+
             if (open_pos == std::string::npos)
             {
                 result.append(str, pos, std::string::npos);
@@ -139,7 +218,7 @@ namespace zelph::string
             }
 
             const std::string content = str.substr(content_start, close_pos - content_start);
-            if (content.find(' ') != std::string::npos)
+            if (needs_quotes(content))
             {
                 result += '"';
                 result += content;

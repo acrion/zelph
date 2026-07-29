@@ -48,9 +48,9 @@ Reasoning::Reasoning(const io::OutputHandler& output)
 {
 }
 
-void Reasoning::set_markdown_subdir(const std::string& subdir)
+void Reasoning::set_export_file(const std::string& path)
 {
-    _markdown_subdir = subdir;
+    _export_file = path;
 }
 
 void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* collector)
@@ -58,7 +58,40 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
-void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent, const bool incremental)
+std::string Reasoning::contradiction_symbol() const
+{
+    return string::mark_identifier(get_formatted_name(core.Contradiction, _lang));
+}
+
+std::vector<std::string> Reasoning::render_premises(const Node condition, const Variables& variables, const Node parent) const
+{
+    std::vector<std::string> out;
+
+    // Elements of the conjunction set, found the same way node_to_string
+    // finds them when it prints "{...}".
+    for (const Node rel : get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    element = parse_fact(rel, objs, 0);
+        if (element == 0 || objs.count(condition) != 1) continue;
+
+        std::string rendered;
+        string::node_to_string(this, rendered, _lang, element, 3, variables, condition);
+        out.push_back(std::move(rendered));
+    }
+
+    if (out.empty())
+    {
+        std::string rendered;
+        string::node_to_string(this, rendered, _lang, condition, 3, variables, parent);
+        out.push_back(std::move(rendered));
+    }
+
+    return out;
+}
+
+void Reasoning::run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent, const bool incremental)
 {
     // Input capture must not extend into evaluation: in classic mode the
     // observer would otherwise collect every deduced fact into the focus
@@ -116,7 +149,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     watch.start();
 
     _print_deductions     = print_deductions;
-    _generate_markdown    = generate_markdown;
+    _export_derivations   = export_derivations;
     _skipped              = 0;
     _contradiction        = false;
     _total_matches        = 0;
@@ -124,13 +157,13 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 
-    if (_generate_markdown)
+    if (_export_derivations)
     {
-        if (_markdown_subdir.empty())
+        if (_export_file.empty())
         {
-            throw std::runtime_error("Markdown subdirectory not set for .run-md command");
+            throw std::runtime_error("No export file set for .run-export");
         }
-        _markdown = std::make_unique<io::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
+        _export = std::make_unique<io::DerivationExport>(std::filesystem::path(_export_file), this);
     }
 
     if (!silent)
@@ -247,6 +280,13 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
     logged_relations.clear();
 
+    // Close the export here rather than at the next run: the worker threads
+    // are joined, so nothing more will be written, and a caller that keeps
+    // the engine alive (a library, a test) must still find a complete file
+    // the moment run() returns.
+    _export.reset();
+    _export_derivations = false;
+
     // The graph is a fixpoint of these rules now, which is the precondition a
     // later incremental run relies on. Facts created from here on are new to
     // it, so start recording again.
@@ -322,20 +362,21 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
             _contradiction = true;
             ++_total_contradictions;
 
-            if (_print_deductions || _generate_markdown)
+            if (_print_deductions || _export_derivations)
             {
                 std::string output;
                 string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
+                std::string message = contradiction_symbol() + " ⇐ " + output;
 
                 if (_print_deductions)
                 {
                     out(string::unmark_identifiers(message), true);
                 }
 
-                if (_generate_markdown)
+                if (_export_derivations)
                 {
-                    _markdown->add("Contradictions", message);
+                    _export->add("contradiction", contradiction_symbol(),
+                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
                 }
             }
         }

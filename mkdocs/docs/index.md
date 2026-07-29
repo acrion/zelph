@@ -492,7 +492,7 @@ zelph>
 
 This rule states that if X is opposite of Y and X ≠ Y, then an entity A cannot be both an instance of X and an instance of Y, as this would be a contradiction. The `X != Y` guard is essential here: without it, a reflexive fact like `bright "is opposite of" bright` could cause a spurious contradiction when `yellow ~ bright` is entered, because `X` and `Y` would both bind to `bright` (see [Inequality Constraints](logic.md#inequality-constraints) for a detailed discussion).
 
-If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the Markdown export of the facts).
+If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the [derivation export](#exporting-derivations)).
 
 ### Internal Representation of facts
 
@@ -633,15 +633,14 @@ For a single inference pass:
 .run-once
 ```
 
-To export all deductions and contradictions as structured Markdown reports:
+To record everything a run derived, for further processing:
 
 ```
-.run-md <subdir>
+.run-export <file>
 ```
 
-This command generates a tree of Markdown files in `mkdocs/docs/<subdir>/` (the directory `mkdocs/docs/` must already exist in the current working directory).  
-It is intended for integrating detailed reports into an existing MkDocs site – this is exactly how the contradiction and deduction reports on <https://zelph.org> were produced.  
-For normal interactive or script use, `.run` is the standard command.
+See [Exporting Derivations](#exporting-derivations). For normal interactive
+or script use, `.run` is the standard command.
 
 ### Deduction Output Modes
 
@@ -687,23 +686,46 @@ When experimenting on a large loaded network — say, a full Wikidata dump — y
 .cluster-drop my-experiment      # roll back everything the experiment created
 ```
 
-While a cluster is active, every node created is recorded in it: entities, relation nodes, rule definitions, and facts deduced by `.run`. Facts that already existed beforehand are never recorded, so dropping a cluster can never destroy pre-existing knowledge. `.cluster-merge <from> <to>` commits a cluster's bookkeeping into another one (merging into `default` simply turns its nodes into ordinary nodes), and `.cluster default` deactivates tracking. Clusters are session state and are not persisted by `.save`.
+While a cluster is active, every node created is recorded in it: entities, relation nodes, rule definitions, the variables those rules are made of, and facts deduced by `.run`. Facts that already existed beforehand are never recorded, so dropping a cluster can never destroy pre-existing knowledge. `.cluster-merge <from> <to>` commits a cluster's bookkeeping into another one (merging into `default` simply turns its nodes into ordinary nodes), and `.cluster default` deactivates tracking. Clusters are session state and are not persisted by `.save`.
 
 The [neural network demo](neural.md) uses a cluster so that the entire experiment — layers, synapses, rules, and all deductions — can be removed with a single command, leaving the loaded dump untouched.
 
-### Exporting Deduced Facts to File
+### Exporting Derivations
 
-The command `.run-file <path>` performs full inference (like `.run`) but additionally writes every deduced fact (positive deductions and contradictions) to the specified file – one per line.
+`.run-export <file>` performs full inference like `.run` and writes every
+derived fact and every contradiction to `<file>` — one JSON object per line
+(JSON Lines):
 
-Key characteristics of the file output:
+```json
+{"kind":"deduction","conclusion":[SEG,...],"premises":[[SEG,...],...]}
+```
 
-- **Reversed order**: The reasoning chain comes first, followed by `⇒` and then the conclusion (or `!` for contradictions).
-- **Clean format**: No `«»` markup, no parentheses, no additional explanations – only the pure facts.
-- **Console output unchanged**: On the terminal you still see the normal format with `⇐` explanations and markup.
+A `SEG` is either a JSON string — literal text of the rendering, brackets
+and spacing — or one of
 
-The command is **general-purpose** and works with any language setting. It simply collects all deductions in a clean, machine-readable text file.
+```json
+{"names":{"wikidata":"Q5","en":"human"}}
+{"core":"!"}
+```
 
-Example session:
+the first naming one node in every language it is known by, the second one
+of zelph's own vocabulary (`!`, `~`, `=>`, …).
+
+Two properties are worth spelling out, because they are the point of the
+format:
+
+- **Nothing in it is about a target format.** Which of a node's names to
+  display, which of them is a URL, whether identifiers should be
+  italicised, which file a line belongs in — those are decisions of the
+  consumer. zelph does not know about Wikidata, and it does not know about
+  MkDocs either.
+- **The premises are separate.** The console prints the condition _set_,
+  `⇐ {(a p b) (b p c)}`, because that set is what the rule's subject is.
+  The export hands over its elements, so no one has to take braces apart
+  again.
+
+Deduction printing is off during the run: rendering large derived terms
+dominates the wall-clock time, and the file is the point.
 
 ```
 zelph> .lang wikidata
@@ -715,34 +737,45 @@ wikidata-> Q2 P279 Q3
 Q2 P279 Q3
 wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
 {(B P279 C) (A P279 B)} => (A P279 C)
-wikidata-> .run-file /tmp/output.txt
-Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to /tmp/output.txt (with Wikidata token encoding).
-(Q1 P279 Q3) ⇐ {(Q2 P279 Q3) (Q1 P279 Q2)}
+wikidata-> .run-export /tmp/derivations.jsonl
+Running full inference; derivations are written to /tmp/derivations.jsonl as JSON Lines.
 ```
 
-Content of `output.txt`:
+Content of `/tmp/derivations.jsonl` (one line, wrapped here for reading):
 
-```
-七 一优 丄 丂 一优 七 ⇒ 丂 一优 丄
-```
-
-(The CJK character assigned to an identifier depends on the order in which
-the compressor first meets it, so the exact glyphs vary between runs; the
-encoding is self-describing and `.decode` inverts it either way.)
-
-When the current language is set to `wikidata` (via `.lang wikidata`), the output is **automatically compressed** using a dense encoding that maps Q/P identifiers to CJK characters.
-This dramatically reduces file size and – crucially – makes the data highly suitable for training or prompting large language models (LLMs).
-Standard tokenizers struggle with long numeric identifiers (Q123456789), often splitting them into many sub-tokens.
-The compact CJK encoding avoids this problem entirely, enabling efficient fine-tuning or continuation tasks on Wikidata-derived logical data.
-
-To read an encoded file back in human-readable form, use `.decode`, e.g.:
-
-```
-zelph> .decode /tmp/output.txt
-Q2 P279 Q3 Q1 P279 Q2 ⇒ Q1 P279 Q3
+```json
+{"kind":"deduction",
+ "conclusion":["(",{"names":{"wikidata":"Q1"}}," ",{"names":{"wikidata":"P279"}}," ",{"names":{"wikidata":"Q3"}},")"],
+ "premises":[["(",{"names":{"wikidata":"Q2"}}," ",{"names":{"wikidata":"P279"}}," ",{"names":{"wikidata":"Q3"}},")"],
+             ["(",{"names":{"wikidata":"Q1"}}," ",{"names":{"wikidata":"P279"}}," ",{"names":{"wikidata":"Q2"}},")"]]}
 ```
 
-`.decode` prints each line decoded (if it was encoded) using Wikidata identifiers.
+#### Converting the export
+
+`dev_scripts/zelph-derivations.py` is the reference converter and reproduces
+what zelph used to write itself:
+
+```bash
+# The MkDocs tree behind the reports on https://zelph.org: one page per
+# Wikidata identifier occurring in a conclusion, with links between pages.
+dev_scripts/zelph-derivations.py /tmp/derivations.jsonl --format md --out mkdocs/docs/report
+
+# One flat line per derivation, premises first.
+dev_scripts/zelph-derivations.py /tmp/derivations.jsonl --format text --out /tmp/derivations.txt
+```
+
+```
+Q2 P279 Q3, Q1 P279 Q2 => Q1 P279 Q3
+```
+
+The `text` form is also the starting point for tokenizer-friendly training
+data. Long numeric identifiers (`Q123456789`) are expensive for standard
+tokenizers, which split them into many sub-tokens; because every identifier
+arrives in the export as a discrete token rather than as a substring of a
+sentence, substituting a compact encoding for it is a dictionary lookup and
+not a parse. zelph itself no longer ships such an encoding — that was an
+experiment, and it is exactly the kind of decision that belongs to the
+consumer of the data.
 
 ## Example Script
 
@@ -898,6 +931,48 @@ prerequisites with plain `.import` lines at the top; shared dependencies are
 never loaded twice, and import cycles terminate. `.new` clears the registry.
 Janet scripts are exempt: they are runnable programs and may be executed
 repeatedly, e.g. with different arguments.
+
+The registry is session state and is deliberately **not** part of a `.save`
+file — see [Rules Say Themselves Only Once](#rules-say-themselves-only-once)
+for why re-importing a module after `.load` is both necessary and free.
+
+### Rules Say Themselves Only Once
+
+Facts are hash-consed: the node _is_ its structure, so asserting the same
+fact twice does nothing. Rules used to be the exception. A rule contains
+variables, variables are allocated fresh for each statement, and a node
+built from fresh variables is a fresh node — so entering the same rule
+twice gave you two rules deriving the same consequences at twice the
+unification cost.
+
+zelph therefore recognises a rule it already has. A `... => ...` statement
+is compared against the existing rules **up to a renaming of its
+variables** (alpha-equivalence, as in the lambda calculus); if one matches,
+the newly built rule is rolled back and the statement evaluates to the rule
+that was already there. What counts as "the same rule" is exactly what the
+reasoner reads — set membership, the conjunction and negation tags, and each
+condition's subject, predicate and objects — so two rules that survive the
+check are guaranteed to behave differently.
+
+This matters most in a place where it is easy to miss. `.load` restores the
+graph but not the Janet side of a module (`zelph/number`, digit alphabets,
+display schemes), so working with a saved arithmetic network means
+re-importing the module:
+
+```
+.load math.bin
+.import math          # brings back &-literals -- and adds no second rule set
+```
+
+Without rule identity that sequence doubled every rule in the file.
+
+Two boundaries: the check runs on parsed `=>` statements, which covers
+`.import` and the REPL, but not [`zelph/rule`](janet.md) — a Janet program
+building rules programmatically owns the nodes it passes in, and zelph does
+not second-guess it. And a rule whose conditions mention a literal set
+(`{...}` in a term position) is never recognised as a duplicate, because
+each such set is a fresh node; the outcome is the old behaviour, never a
+wrong one.
 
 ### Interchangeable implementations: `.provides`
 

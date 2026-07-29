@@ -230,3 +230,68 @@ x pouter y
         interactive.process(".log 0");
         CHECK(any_output_contains(collector, "((x * x) * y) foo probe")); });
 }
+
+TEST_CASE("display: a name the parser would misread is quoted")
+{
+    // "Output should round-trip" is a design rule, not a nicety: a printed
+    // fact is meant to be re-enterable. Quoting only names containing a
+    // SPACE was not enough -- a node named "x>y" printed as `a rel x>y`,
+    // where '>' closes a list, so the line reads back as something else.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process(".name b \"x>y\"");
+
+        collector.clear();
+        interactive.process("a rel X");
+        CHECK(answers_contain(collector, "a rel \"x>y\""));
+
+        // Re-entering what was printed must denote the SAME fact, i.e. no
+        // second fact appears for the same subject and predicate.
+        interactive.process("a rel \"x>y\"");
+        collector.clear();
+        interactive.process("a rel X");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1); });
+}
+
+TEST_CASE("display: a name containing guillemets survives the identifier marking")
+{
+    // The renderer marks leaf names with « », in band. A name that contains
+    // those characters itself used to be split by its own content:
+    // "«Le Monde»" came out as "\"«Le Monde\"»". French and German Wikidata
+    // labels make this a real case.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("s rel o");
+        interactive.process(".name o \"«Le Monde»\"");
+
+        collector.clear();
+        interactive.process("s rel X");
+        CHECK(answers_contain(collector, "s rel \"«Le Monde»\"")); });
+}
+
+TEST_CASE("display: a name the grammar has a token for stays bare")
+{
+    // The quoting rule keys on "the parser would not read this back as one
+    // atom", and reserved characters are only a proxy for that. `*`, `<`,
+    // `>` and the arrows have dedicated rules in the grammar, so quoting
+    // them is not merely noisy -- the term-island parser of math-syntax
+    // rejects `$( x "*" x )`, which quietly broke every mathematical
+    // rendering the moment the proxy was taken literally.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a * b");
+        collector.clear();
+        interactive.process("a * X");
+        CHECK(answers_contain(collector, "a * b"));
+        CHECK_FALSE(any_output_contains(collector, "\"*\""));
+
+        interactive.process("c => d");
+        collector.clear();
+        interactive.process("c => X");
+        CHECK(answers_contain(collector, "c => d"));
+        CHECK_FALSE(any_output_contains(collector, "\"=>\"")); });
+}

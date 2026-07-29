@@ -398,6 +398,7 @@ namespace zelph::network
 
             _left[_last_var]  = adjacency_set{};
             _right[_last_var] = adjacency_set{};
+            note_created(_last_var);
 
             return _last_var;
         }
@@ -798,12 +799,18 @@ namespace zelph::network
         //
         // A cluster records the IDs of nodes created while it is active:
         // sequential nodes (create), relation/hash nodes materialized by
-        // fact() (create(Node)), and trusted-import relations. Facts that
-        // already existed are NOT recorded, so dropping a cluster can never
-        // destroy pre-existing knowledge. Node IDs are never altered;
-        // membership is a side table, so nodes outside any cluster cost
-        // nothing. Variables are never tracked. Clusters are not yet
-        // persisted by save_to_file.
+        // fact() (create(Node)), trusted-import relations, and variables
+        // (var). Facts that already existed are NOT recorded, so dropping a
+        // cluster can never destroy pre-existing knowledge. Node IDs are
+        // never altered; membership is a side table, so nodes outside any
+        // cluster cost nothing. Clusters are not yet persisted by
+        // save_to_file.
+        //
+        // Variables are tracked because a rule built inside a cluster is
+        // otherwise only PARTLY rolled back: its patterns disappear while
+        // the variables they were made of stay behind as isolated,
+        // still-named nodes. They are exactly as "created while active" as
+        // any other node.
 
         void set_active_cluster(const std::string& name)
         {

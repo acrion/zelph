@@ -320,7 +320,8 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/rule conditions & consequences)`**  
   Convenience constructor for rules.  
   `conditions` must be a non-empty array/tuple of fact (pattern) nodes; `consequences` are one or more fact nodes.  
-  Returns the conjunction set node.
+  Returns the conjunction set node.  
+  Unlike a parsed `... => ...` statement, this does **not** check whether the graph already holds the same rule up to a renaming of its variables (see [Rules Say Themselves Only Once](index.md#rules-say-themselves-only-once)): the condition nodes are created by the caller, before `zelph/rule` sees them, so there is nothing zelph could roll back without touching facts the caller asked for. A program that builds the same rule repeatedly should either build it once or go through `zelph/import`.
 
 ##### Querying (read-only)
 

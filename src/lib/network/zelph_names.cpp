@@ -552,8 +552,8 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
 }
 
 // If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
-// for nodes that have both a name in the requested language and a Wikidata ID. This allows Markdown::convert_to_md to parse
-// and create appropriate links using the ID for the URL and the name for display text.
+// for nodes that have both a name in the requested language and a Wikidata ID, so that a rendered leaf carries both.
+// DerivationExport::identifier undoes the composition again to recover the node; a reader of the rendered text sees both.
 std::string Zelph::get_formatted_name(const Node node, const std::string& lang) const
 {
     const bool is_wikidata_mode = has_language("wikidata") && lang != "wikidata";
@@ -567,9 +567,9 @@ std::string Zelph::get_formatted_name(const Node node, const std::string& lang) 
     std::string name;
     if (lang == "zelph")
     {
-        // In Wikidata mode, the output of get_formatted_name may be used by the Markdown export (command `.run-md`).
+        // In Wikidata mode, the output of get_formatted_name may end up in the derivation export (command `.run-export`).
         // In this case, we want to use a natural language as the primary language.
-        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for the Markdown export.
+        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for reports.
         // So in case lang is not a natural language, we fall back to English.
         name = get_name(node, "en", false);
     }

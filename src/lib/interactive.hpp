@@ -45,7 +45,7 @@ namespace zelph::console
 
         void               import_file(const std::string& file) const;
         void               process(std::string line) const;
-        void               run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const;
+        void               run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition) const;
         std::string        get_lang() const;
         static std::string get_version();
         bool               is_auto_run_active() const;

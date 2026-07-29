@@ -27,7 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "chrono/stopwatch.hpp"
 #include "concurrency/thread_pool.hpp"
-#include "io/markdown.hpp"
+#include "io/derivation_export.hpp"
 #include "io/output.hpp"
 #include "network_types.hpp"
 #include "neural.hpp"
@@ -121,14 +121,15 @@ namespace zelph::network
         // --- Implemented in reasoning.cpp (orchestration) ---
 
         explicit Reasoning(const io::OutputHandler& output = io::default_output_handler);
-        void set_markdown_subdir(const std::string& subdir);
+        // Path of the JSON Lines file the next run(export=true) writes.
+        void set_export_file(const std::string& path);
         void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
         // incremental: skip the classic first pass and seed the fixpoint from
         // the facts created since the previous run (see .run-delta). Only
         // sound when the graph was already saturated under the current rule
         // set; run() falls back to a classic pass when it cannot establish
         // that, so the flag is a request, not an override.
-        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false, const bool incremental = false);
+        void run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent = false, const bool incremental = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void profiler_reset_epoch()
         {
@@ -141,6 +142,21 @@ namespace zelph::network
         // application/created facts). reset_after additionally zeroes the
         // counters, starting a fresh measurement window (.prof reset).
         void profiler_dump(bool reset_after = false);
+
+        // --- Rendering helpers shared by the console and the export ---
+
+        // The rendered "!" as a MARKED identifier -- the conclusion of a
+        // contradiction, in the same form node_to_string produces for any
+        // other name, so console and export read it the same way.
+        std::string contradiction_symbol() const;
+
+        // The premises of one rule instantiation, rendered individually.
+        // The printed line shows the condition SET -- "{(a p b) (b p c)}" --
+        // because that is what the rule's subject IS; a consumer of the
+        // export should not have to take those braces apart again, so the
+        // export asks for the elements. A single-condition rule has no set,
+        // and then this is that one condition.
+        std::vector<std::string> render_premises(Node condition, const Variables& variables, Node parent) const;
 
         // --- Deduction focus (implemented in reasoning.cpp) ---
 
@@ -224,10 +240,10 @@ namespace zelph::network
         // --- Members ---
 
         std::atomic<bool>                        _done{false};
-        std::unique_ptr<io::Markdown>            _markdown;
+        std::unique_ptr<io::DerivationExport>    _export;
         std::atomic<uint64_t>                    _running{0};
         bool                                     _print_deductions{true};
-        bool                                     _generate_markdown{true};
+        bool                                     _export_derivations{false};
         std::atomic<bool>                        _contradiction{false};
         chrono::StopWatch                        _stop_watch;
         std::atomic<size_t>                      _skipped{0};
@@ -236,7 +252,7 @@ namespace zelph::network
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
         std::unique_ptr<concurrency::ThreadPool> _pool;
-        std::string                              _markdown_subdir;
+        std::string                              _export_file;
         bool                                     _prune_mode{false};
         bool                                     _prune_nodes_mode{false};
         std::unordered_set<Node>                 _facts_to_prune;

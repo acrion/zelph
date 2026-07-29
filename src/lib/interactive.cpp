@@ -504,9 +504,9 @@ void console::Interactive::Impl::process_command(const std::vector<std::string>&
     }
 }
 
-void console::Interactive::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition) const
+void console::Interactive::run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition) const
 {
-    _pImpl->_n->run(print_deductions, generate_markdown, suppress_repetition);
+    _pImpl->_n->run(print_deductions, export_derivations, suppress_repetition);
 }
 
 std::string console::Interactive::get_lang() const
