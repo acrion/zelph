@@ -268,22 +268,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     // ------------------------------------------------------------------
     // Helpers for the seeded phase
     // ------------------------------------------------------------------
-    auto report_contradiction = [&](const contradiction_error& error)
+    auto report_contradiction = [this](const contradiction_error& error)
     {
-        std::lock_guard<std::mutex> lock(_mtx_output);
-        _contradiction = true;
-        ++_total_contradictions;
-
-        if (_print_deductions || _export_derivations)
-        {
-            std::string output;
-            string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-            std::string message = contradiction_symbol() + " ⇐ " + output;
-
-            if (_print_deductions) out(string::unmark_identifiers(message), true);
-            if (_export_derivations) _export->add("contradiction", contradiction_symbol(),
-                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
-        }
+        this->Reasoning::report_contradiction(error);
     };
 
     auto seed_rule = [&](const IndexedRule& ir, size_t leaf_idx, Node seed_fact, Node seed_pred)

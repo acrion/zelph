@@ -243,17 +243,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             }
                             catch (const contradiction_error& error)
                             {
-                                std::lock_guard<std::mutex> lock(_mtx_output);
-                                _contradiction = true;
-                                ++_total_contradictions;
-
-                                std::string output;
-                                string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                                std::string message = contradiction_symbol() + " ⇐ " + output;
-
-                                if (_print_deductions) out(string::unmark_identifiers(message), true);
-                                if (_export_derivations) _export->add("contradiction", contradiction_symbol(),
-                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
+                                report_contradiction(error);
                             }
                         }
                         else if (_prune_mode)
@@ -369,17 +359,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         catch (const contradiction_error& error)
                         {
-                            std::lock_guard<std::mutex> lock(_mtx_output);
-                            _contradiction = true;
-                            ++_total_contradictions;
-
-                            std::string output;
-                            string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                            std::string message = contradiction_symbol() + " ⇐ " + output;
-
-                            if (_print_deductions) out(string::unmark_identifiers(message), true);
-                            if (_export_derivations) _export->add("contradiction", contradiction_symbol(),
-                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
+                            report_contradiction(error);
                         }
                     }
                     else if (_prune_mode)
@@ -669,23 +649,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     catch (const contradiction_error& error)
                     {
-                        std::lock_guard<std::mutex> lock(_mtx_output);
-                        _contradiction = true;
-                        ++_total_contradictions;
-
-                        std::string output;
-                        string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                        std::string message = contradiction_symbol() + " ⇐ " + output;
-
-                        if (_print_deductions)
-                        {
-                            out(string::unmark_identifiers(message), true);
-                        }
-                        if (_export_derivations)
-                        {
-                            _export->add("contradiction", contradiction_symbol(),
-                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
-                        }
+                        report_contradiction(error);
                     }
                 }
                 else if (_prune_mode)

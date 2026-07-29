@@ -335,6 +335,9 @@ consequence:
 (A is x, ¬(A is z)) => (A r s)
 ```
 
+Negating a group directly is an open direction, not a decision against it —
+see [Where the logic goes next](index.md#where-the-logic-goes-next).
+
 #### Stratified Evaluation
 
 A negated condition asks about _absence_ — but absence _when_? During a

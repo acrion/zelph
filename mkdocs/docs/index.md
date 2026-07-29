@@ -499,7 +499,9 @@ zelph>
 
 This rule states that if X is opposite of Y and X ≠ Y, then an entity A cannot be both an instance of X and an instance of Y, as this would be a contradiction. The `X != Y` guard is essential here: without it, a reflexive fact like `bright "is opposite of" bright` could cause a spurious contradiction when `yellow ~ bright` is entered, because `X` and `Y` would both bind to `bright` (see [Inequality Constraints](logic.md#inequality-constraints) for a detailed discussion).
 
-If a contradiction is detected when a fact is entered (via the scripting language or during import of Wikidata data), the corresponding relation (the fact) is not entered into the semantic network. Instead, a fact is entered that describes this contradiction (making it visible in the [derivation export](#exporting-derivations)).
+A contradiction is **reported, not enforced**. The facts that triggered it stay in the graph — zelph is built to audit inconsistent real-world data, and deleting the evidence would defeat that. Nothing is written for the contradiction either: `!` is the one consequence that materialises no fact, which is also why a contradiction rule is always safe in the [deferred stratum](logic.md#stratified-evaluation) (it can derive nothing that another rule could then negate).
+
+What you get instead is a report — on the console, and in the [derivation export](#exporting-derivations) as a record with `"kind":"contradiction"` and the premises that produced it. Each distinct rule instantiation is reported **once**, however many derivation paths reach it, so the count is a count of violations rather than of discoveries.
 
 ### Internal Representation of facts
 
@@ -1017,6 +1019,21 @@ Current focus areas include:
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).
 
 Regarding potential Wikidata integration and the enhancement of semantic scripts, collaboration with domain experts would be particularly valuable. Expert input on conceptual alignment and implementation of best practices would significantly accelerate development and ensure optimal compatibility with existing Wikidata infrastructure and standards.
+
+### Where the logic goes next
+
+The reasoning engine has its own open directions, independent of the
+mathematical stack built on top of it:
+
+- **Negation over a group of conditions.** `¬` applies to one fact pattern.
+  `¬(A, B)` — "not both" — is [rejected](logic.md#negation-as-failure)
+  rather than approximated, because the honest implementation is a nested
+  negation-as-failure over a conjunctive subgoal: run the subgoal's search
+  and succeed only if it yields no binding. The interesting part is not the
+  search but the [stratification](logic.md#stratified-evaluation): a
+  negated group must be deferred exactly like a negated pattern, and its
+  own conditions may themselves be negated. Until then, De Morgan plus
+  several rules expresses the same thing.
 
 ### Where the mathematics goes next
 

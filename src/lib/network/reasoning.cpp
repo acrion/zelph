@@ -58,6 +58,36 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
+void Reasoning::report_contradiction(const contradiction_error& error)
+{
+    std::lock_guard<std::mutex> lock(_mtx_output);
+
+    // The instantiation IS the condition pattern plus the bindings that
+    // satisfied it. Variables is an ordered map, so the fold below is
+    // deterministic without sorting anything, and it reuses the engine's
+    // own mixing function rather than inventing a second one.
+    uint64_t h = error.get_fact();
+    for (const auto& [var, value] : error.get_variables())
+        h = Impl::create_hash(Impl::create_hash(h, var), value);
+
+    if (!_reported_contradictions.insert(h).second) return;
+
+    _contradiction = true;
+    ++_total_contradictions;
+
+    if (!_print_deductions && !_export_derivations) return;
+
+    std::string output;
+    string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+
+    if (_print_deductions)
+        out(string::unmark_identifiers(contradiction_symbol() + " ⇐ " + output), true);
+
+    if (_export_derivations)
+        _export->add("contradiction", contradiction_symbol(),
+                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
+}
+
 std::string Reasoning::contradiction_symbol() const
 {
     return string::mark_identifier(get_formatted_name(core.Contradiction, _lang));
@@ -154,6 +184,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
+    _reported_contradictions.clear();
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 
@@ -358,27 +389,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
         }
         catch (const contradiction_error& error)
         {
-            std::lock_guard<std::mutex> lock(_mtx_output);
-            _contradiction = true;
-            ++_total_contradictions;
-
-            if (_print_deductions || _export_derivations)
-            {
-                std::string output;
-                string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                std::string message = contradiction_symbol() + " ⇐ " + output;
-
-                if (_print_deductions)
-                {
-                    out(string::unmark_identifiers(message), true);
-                }
-
-                if (_export_derivations)
-                {
-                    _export->add("contradiction", contradiction_symbol(),
-                                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
-                }
-            }
+            report_contradiction(error);
         }
 
         _pool->wait();

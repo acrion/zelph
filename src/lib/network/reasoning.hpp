@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "chrono/stopwatch.hpp"
 #include "concurrency/thread_pool.hpp"
+#include "contradiction_error.hpp"
 #include "io/derivation_export.hpp"
 #include "io/output.hpp"
 #include "network_types.hpp"
@@ -145,6 +146,23 @@ namespace zelph::network
 
         // --- Rendering helpers shared by the console and the export ---
 
+        // Count and report one detected contradiction. Every catch site in
+        // the engine calls this and nothing else, so what a contradiction
+        // costs and how it is presented is decided in one place.
+        //
+        // The SAME instantiation arrives several times: semi-naive
+        // evaluation seeds a rule once per newly derived premise, and a
+        // contradiction has no result node that hash-consing could
+        // collapse the way it collapses a repeated deduction. Reporting
+        // each arrival made the number of violations depend on the
+        // evaluation strategy -- 10 semi-naive, 6 classic, 3 real -- and
+        // that number is the headline of the Wikidata work. Repeats are
+        // therefore dropped here.
+        //
+        // Costs one 64-bit hash per DISTINCT contradiction, which is
+        // strictly less than the report each of them produces anyway.
+        void report_contradiction(const contradiction_error& error);
+
         // The rendered "!" as a MARKED identifier -- the conclusion of a
         // contradiction, in the same form node_to_string produces for any
         // other name, so console and export read it the same way.
@@ -251,6 +269,9 @@ namespace zelph::network
         std::mutex                               _mtx_network;
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
+        // Instantiations already reported this run, see
+        // first_contradiction_report. Guarded by _mtx_output; cleared by run().
+        std::unordered_set<uint64_t>             _reported_contradictions;
         std::unique_ptr<concurrency::ThreadPool> _pool;
         std::string                              _export_file;
         bool                                     _prune_mode{false};
