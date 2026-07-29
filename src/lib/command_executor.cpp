@@ -242,6 +242,8 @@ private:
         { cmd_run(c); };
         _command_map[".run-once"] = [this](auto& c)
         { cmd_run_once(c); };
+        _command_map[".run-delta"] = [this](auto& c)
+        { cmd_run_delta(c); };
 #ifndef __EMSCRIPTEN__
         _command_map[".run-md"] = [this](auto& c)
         { cmd_run_md(c); };
@@ -1355,6 +1357,7 @@ private:
             "Inference & Rules",
             "  .run                                      – Run full inference",
             "  .run-once                                 – Run a single inference pass",
+            "  .run-delta                                – Run inference seeded only by the facts added since the last run",
 #ifndef __EMSCRIPTEN__
             "  .run-md <subdir>                          – Run inference and export results as Markdown",
             "  .run-file <file>                          – Run inference, write deduced facts in reversed order to a file (encoded if lang=wikidata)",
@@ -1507,6 +1510,26 @@ private:
 
             {".run-once", ".run-once\n"
                           "Performs a single inference pass."},
+
+            {".run-delta", ".run-delta\n"
+                           "Like .run, but starts from the facts created since the previous run\n"
+                           "instead of from a pass over the whole graph.\n"
+                           "\n"
+                           ".run always begins with one classic pass, because it cannot know what\n"
+                           "the graph looked like before. That pass costs time proportional to the\n"
+                           "graph, so repeatedly adding a little and running again costs time\n"
+                           "proportional to everything accumulated so far, not to what was added.\n"
+                           ".run-delta removes that term: it seeds the fixpoint with the new facts\n"
+                           "and lets semi-naive evaluation take it from there.\n"
+                           "\n"
+                           "This is only equivalent to .run when the graph already is a fixpoint of\n"
+                           "the current rules -- otherwise the missing pass is exactly the one that\n"
+                           "would have found the older consequences. The command therefore falls\n"
+                           "back to a full pass, with a note, unless a previous run has happened,\n"
+                           "the rule set is unchanged since, and .semi-naive is on.\n"
+                           "\n"
+                           "Typical use is a program driving zelph as a library: run once to\n"
+                           "saturate, then assert and .run-delta per unit of new data."},
 
             {".explain", ".explain [<fact pattern>] [max-depth]   (alias: .why)\n"
                          "Reconstructs a justification for an asserted fact from the graph\n"
@@ -2174,6 +2197,12 @@ private:
     {
         require_full_graph_mode(".run-once");
         _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, true);
+        _n->diagnostic("Ready.", true);
+    }
+    void cmd_run_delta(const std::vector<std::string>&)
+    {
+        require_full_graph_mode(".run-delta");
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, false, true);
         _n->diagnostic("Ready.", true);
     }
 #ifndef __EMSCRIPTEN__

@@ -359,6 +359,9 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/run-once)`**  
   Run a single inference pass, exactly like the `.run-once` command: derives what one application of the rules yields instead of iterating to a fixed point. Returns `nil`. Main thread only.
 
+- **`(zelph/run-delta)`**  
+  Run inference seeded by the facts created since the previous run, exactly like the `.run-delta` command. Returns `nil`. Main thread only. See [Reasoning incrementally](#reasoning-incrementally).
+
 Auto-run is tied to _processing an input line_: it fires after a statement, and after a Janet block closes. Code that only calls the Janet API — a program driving zelph as a library, or a long-running script that keeps asserting facts between queries — never triggers it, and so has to run the engine itself.
 
 Given this script:
@@ -391,6 +394,48 @@ zelph->
 ```
 
 The rule is in the graph from the moment it is created, but its consequence only exists once the engine has run.
+
+##### Reasoning incrementally
+
+`zelph/run` always begins with one classic pass over the whole graph, because it cannot know what the graph looked like before. That pass costs time proportional to the graph — so a program that alternates between asserting a little and reasoning pays, every time, for everything it has ever asserted. This is the shape of most library use: a fact base per document, per position, per request.
+
+`zelph/run-delta` removes that term. It seeds the fixpoint with the facts created since the previous run and lets semi-naive evaluation continue from there, so the cost follows the size of the addition instead of the size of the graph.
+
+```
+%(zelph/fact "plato" "~" "human")
+%(zelph/run-delta)
+%(zelph/out (string "plato is mortal: " (zelph/exists "plato" "~" "mortal")))
+```
+
+```
+zelph-> <zelph/node «plato» «~» «human»>
+zelph-> Starting reasoning with 24 worker threads.
+(plato ~ mortal) ⇐ {(plato ~ human)}
+Reasoning complete. Total unification matches processed: 0. Total contradictions found: 0.
+Ready.
+zelph-> plato is mortal: true
+```
+
+Measured on a graph holding fact bases of 72 facts each, with one rule, asserting one further fact base and running again:
+
+| fact bases in the graph | `zelph/run` | `zelph/run-delta` |
+| --- | --- | --- |
+| 100 | 48.7 ms | 0.98 ms |
+| 400 | 190.7 ms | 1.26 ms |
+| 1200 | 532.3 ms | 1.02 ms |
+
+Both derive the same facts. The full run grows with the graph; the seeded one does not.
+
+This is only equivalent to a full run when the graph already is a fixpoint of the current rules — otherwise the skipped pass is exactly the one that would have found the older consequences. `zelph/run-delta` therefore checks, and falls back to a full pass (with a note on the diagnostic channel) unless all of the following hold:
+
+- a previous run has happened,
+- no rule was created since it — a new rule has to see facts older than itself,
+- fewer than a million facts have accumulated since, so the record is still kept (past that it is dropped rather than grown without bound, and anything of that size is a bulk load for which a classic pass is the right answer),
+- `.semi-naive` is on, since delta seeding *is* the semi-naive machinery.
+
+Note that facts created by an imported script count as ordinary additions here. The record is not tied to interactive input, precisely so that a program driving zelph as a library — which never enters a statement — can use it.
+
+The safe pattern is therefore: define the rules, `zelph/run` once, then assert and `zelph/run-delta` per unit of new data.
 
 ##### Persistence
 
@@ -984,6 +1029,7 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |
 | `.run`                          | `(zelph/run)`                                       | Run forward chaining to a fixed point                                       |
 | `.run-once`                     | `(zelph/run-once)`                                  | Run a single inference pass                                                 |
+| `.run-delta`                    | `(zelph/run-delta)`                                 | Run inference seeded only by the facts added since the last run             |
 | `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
 | `&`-literal display             | `(zelph/set-number-digits ["0" "1" ...])`           | Register digit alphabet; digit lists display as decimal `&`-literals        |
 | `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |

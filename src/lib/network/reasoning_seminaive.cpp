@@ -91,7 +91,7 @@ bool Reasoning::seminaive_check() const
 // once in a delta; facts created in the SAME delta find each other because
 // the seeded evaluation of the later-processed fact scans a graph that
 // already contains the earlier one.
-uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
+uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::pair<Node, Node>>* seed)
 {
     _nn_pred        = get_node("nn", "zelph");
     _nn_layers_pred = get_node("nn-layers", "zelph");
@@ -242,12 +242,28 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent)
 
     int iteration = 1;
     _done         = false;
-    if (!silent)
-        if (progress_due())
-            diagnostic_stream() << "--- Reasoning iteration 1 (classic, positive stratum) ---" << std::endl;
-    for (const IndexedRule& ir : rules)
-        if (!ir.deferred) apply_rule(ir.rule, 0);
-    _pool->wait();
+    if (seed)
+    {
+        // Incremental entry: the graph is already a fixpoint of these rules,
+        // so the classic pass would rediscover nothing and cost a full scan.
+        // Start from the facts that arrived since, exactly as if the previous
+        // iteration had derived them.
+        if (!silent)
+            if (progress_due())
+                diagnostic_stream() << "--- Reasoning iteration 1 (seeded from " << seed->size()
+                                    << " new fact(s)) ---" << std::endl;
+        std::lock_guard<std::mutex> lock(delta_mtx);
+        delta.insert(delta.end(), seed->begin(), seed->end());
+    }
+    else
+    {
+        if (!silent)
+            if (progress_due())
+                diagnostic_stream() << "--- Reasoning iteration 1 (classic, positive stratum) ---" << std::endl;
+        for (const IndexedRule& ir : rules)
+            if (!ir.deferred) apply_rule(ir.rule, 0);
+        _pool->wait();
+    }
 
     // ------------------------------------------------------------------
     // Helpers for the seeded phase

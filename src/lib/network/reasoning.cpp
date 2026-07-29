@@ -58,13 +58,59 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
-void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent)
+void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent, const bool incremental)
 {
     // Input capture must not extend into evaluation: in classic mode the
     // observer would otherwise collect every deduced fact into the focus
     // set, neutralizing the filter (semi-naive mode replaces the observer
     // anyway, but the boundary belongs here, not to the evaluation mode).
     end_input_capture();
+
+    // Take the facts created since the last run before anything else can add
+    // to them. A classic run does not need them, but it must not leave them
+    // behind either: they are covered by its own first pass, and carrying
+    // them into a later incremental run would seed work twice.
+    std::vector<std::pair<Node, Node>> carried;
+    bool                               delta_valid = false;
+    {
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        carried.swap(_delta_since_run);
+        delta_valid = _delta_valid;
+    }
+
+    // Delta seeding replaces the classic pass that would otherwise establish
+    // what the rules derive from the graph as a whole. That is only equivalent
+    // if the graph already was a fixpoint of these rules, so a previous run
+    // and the semi-naive strategy are required -- and the rules must not have
+    // changed since, because a new rule has to see facts that are older than
+    // itself, which is precisely what the skipped pass would have shown it.
+    //
+    // A new rule announces itself in the delta as a fact with the Causes
+    // predicate. The rule COUNT cannot carry that alone: get_left returns the
+    // distinct condition nodes, so two rules sharing a condition collapse into
+    // one entry. Both checks are kept -- the delta catches additions, the
+    // count catches wholesale replacement (e.g. .load).
+    bool rules_changed = false;
+    for (const auto& [f, p] : carried)
+    {
+        (void)f;
+        if (p == core.Causes)
+        {
+            rules_changed = true;
+            break;
+        }
+    }
+
+    const size_t rule_count = _pImpl->get_left(core.Causes).size();
+    const bool   seed_only  = incremental
+                        && _seminaive
+                        && !suppress_repetition
+                        && delta_valid
+                        && !rules_changed
+                        && rule_count == _rules_at_last_run;
+
+    if (incremental && !seed_only && !silent)
+        diagnostic("Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.");
 
     chrono::StopWatch watch;
     watch.start();
@@ -94,7 +140,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
 
     if (_seminaive && !suppress_repetition)
     {
-        seminaive_violations = run_fixpoint_seminaive(silent);
+        seminaive_violations = run_fixpoint_seminaive(silent, seed_only ? &carried : nullptr);
     }
     else if (suppress_repetition)
     {
@@ -200,6 +246,17 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     }
 
     logged_relations.clear();
+
+    // The graph is a fixpoint of these rules now, which is the precondition a
+    // later incremental run relies on. Facts created from here on are new to
+    // it, so start recording again.
+    _rules_at_last_run = _pImpl->get_left(core.Causes).size();
+    {
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        _delta_since_run.clear();
+        _delta_valid = true;
+    }
+    arm_delta_recorder();
 
     watch.stop();
 
@@ -369,6 +426,37 @@ void Reasoning::profiler_dump(const bool reset_after)
     if (reset_after) _prof.reset_epoch(/*force=*/true);
 }
 
+// One observer serves both consumers, because Zelph holds only one slot and
+// the two are not mutually exclusive: the input focus wants the facts of the
+// current input line, the cross-run delta wants every fact created since the
+// last run. Which of the two is fed is decided per call by _capturing, so
+// arming is idempotent and safe to repeat.
+void Reasoning::arm_delta_recorder()
+{
+    set_fact_creation_observer([this](Node f, Node p)
+                               {
+        if (_capturing) _input_captured.insert(f);
+
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        if (!_delta_valid) return; // already given up on this record
+
+        // Give up on the record rather than let it grow without bound; the
+        // next incremental request then simply runs a classic pass. Note that
+        // this deliberately does NOT key on input capture: facts created by a
+        // script or an imported module are ordinary additions, and excluding
+        // them would rule out the very case this exists for -- a program that
+        // drives zelph as a library and never enters a statement.
+        if (_delta_since_run.size() >= _max_delta_entries)
+        {
+            _delta_valid = false;
+            _delta_since_run.clear();
+            _delta_since_run.shrink_to_fit();
+            return;
+        }
+
+        _delta_since_run.emplace_back(f, p); });
+}
+
 void Reasoning::begin_input_capture()
 {
     if (_capture_suppress_depth > 0) return;
@@ -379,15 +467,17 @@ void Reasoning::begin_input_capture()
     // capture necessarily contains far more than the statement itself;
     // end_input_capture reduces it to the top-level inputs. Runs on the
     // REPL thread only -- run() ends the capture before evaluation starts.
-    set_fact_creation_observer([this](Node f, Node)
-                               { _input_captured.insert(f); });
+    arm_delta_recorder();
 }
 
 void Reasoning::end_input_capture()
 {
     if (!_capturing) return;
     _capturing = false;
-    set_fact_creation_observer(nullptr);
+    // The observer stays: the input focus is done with this line, the
+    // cross-run delta is not. run() installs its own observer for the
+    // duration of evaluation and re-arms this one when it is finished.
+    arm_delta_recorder();
 
     // Survivors ACCUMULATE into the focus set: focus mode answers "what
     // follows from what I entered", and "what I entered" grows with the
@@ -438,8 +528,9 @@ void Reasoning::suppress_input_capture(const bool on)
         {
             // Discard, do not reduce: whatever was captured of the triggering
             // .import line itself is command syntax, not knowledge input.
+            // The observer itself stays armed -- facts an import creates are
+            // still facts created since the last run.
             _capturing = false;
-            set_fact_creation_observer(nullptr);
             _input_captured.clear();
         }
     }

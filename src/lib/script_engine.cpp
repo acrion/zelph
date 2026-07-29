@@ -391,6 +391,10 @@ public:
         janet_def(_janet_env, "zelph/run-once", wrap((JanetCFunction)janet_cfun_zelph_run_once), "(zelph/run-once)\nRun a single inference pass, like the .run-once command. "
                                                                                                  "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only.");
 
+        janet_def(_janet_env, "zelph/run-delta", wrap((JanetCFunction)janet_cfun_zelph_run_delta), "(zelph/run-delta)\nRun inference seeded by the facts created since the previous run, like the .run-delta command. "
+                                                                                                   "Costs time in the size of the addition rather than of the graph, which is what makes assert-then-reason loops practical. "
+                                                                                                   "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only.");
+
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
         janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether a fact exists without creating it. Returns boolean.");
@@ -2021,6 +2025,11 @@ public:
     static Janet janet_cfun_zelph_run_once(int32_t argc, Janet* argv)
     {
         return command_noarg_impl(argc, argv, "zelph/run-once", ".run-once");
+    }
+
+    static Janet janet_cfun_zelph_run_delta(int32_t argc, Janet* argv)
+    {
+        return command_noarg_impl(argc, argv, "zelph/run-delta", ".run-delta");
     }
 
     // Execute a query: print the pattern and trigger matching via apply_rule.

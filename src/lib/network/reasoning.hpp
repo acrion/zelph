@@ -114,7 +114,12 @@ namespace zelph::network
         explicit Reasoning(const io::OutputHandler& output = io::default_output_handler);
         void set_markdown_subdir(const std::string& subdir);
         void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
-        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false);
+        // incremental: skip the classic first pass and seed the fixpoint from
+        // the facts created since the previous run (see .run-delta). Only
+        // sound when the graph was already saturated under the current rule
+        // set; run() falls back to a classic pass when it cannot establish
+        // that, so the flag is a request, not an override.
+        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false, const bool incremental = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void profiler_reset_epoch()
         {
@@ -203,7 +208,9 @@ namespace zelph::network
         // Delta-driven fixpoint loop (semi-naive evaluation). Returns the
         // number of safety-net violations found (always 0 unless
         // _seminaive_check is active and delta seeding missed a derivation).
-        uint64_t run_fixpoint_seminaive(bool silent);
+        // seed: when non-null, the facts to start from instead of the classic
+        // first pass (see the incremental parameter of run()).
+        uint64_t run_fixpoint_seminaive(bool silent, const std::vector<std::pair<Node, Node>>* seed = nullptr);
 
         // --- Members ---
 
@@ -232,6 +239,32 @@ namespace zelph::network
         bool                                     _deduction_filter{false};
         bool                                     _capturing{false};
         int                                      _capture_suppress_depth{0}; // > 0: input capture suppressed (nested imports)
+
+        // --- Cross-run delta (implemented in reasoning.cpp) ---
+        //
+        // Facts created since the last run(), recorded by the same observer
+        // that feeds the input focus. A normal run rebuilds its knowledge of
+        // the graph from scratch (its first iteration is a classic pass), so
+        // it consumes and discards this; .run-delta seeds from it instead,
+        // which is what turns "run again after adding a little" from a cost
+        // in the size of the graph into a cost in the size of the addition.
+        void                               arm_delta_recorder();
+        std::vector<std::pair<Node, Node>> _delta_since_run;
+        std::mutex                         _mtx_delta_since_run;
+        // False whenever the record is not a faithful account of everything
+        // added since the last run: before the first run, while an import is
+        // in progress (those facts are bulk knowledge, not an increment), and
+        // once the record has outgrown its cap. Seeding then falls back to a
+        // classic pass, so an invalid record costs time, never correctness.
+        bool                               _delta_valid{false};
+        // A recorded entry is 16 bytes, so this caps the record at ~16 MB.
+        // Anything that adds a million facts between two runs is a bulk load,
+        // for which a classic pass is the right answer anyway.
+        static constexpr size_t            _max_delta_entries{1'000'000};
+        // Rule count observed at the end of the last run. A changed rule set
+        // invalidates delta seeding -- a new rule has to see the old facts --
+        // so an incremental request falls back to a classic pass.
+        size_t                             _rules_at_last_run{0};
 
         // --- Neural (≈) support ---
         // Rate limit for the iteration banners; see progress_due().
