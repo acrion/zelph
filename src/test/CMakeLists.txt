@@ -70,6 +70,7 @@ add_executable(zelph_tests
     test_profiler.cpp
     test_reasoning.cpp
     test_result_query.cpp
+    test_script_query.cpp
     test_script_run.cpp
     test_seminaive.cpp
     test_sparql.cpp

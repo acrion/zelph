@@ -175,6 +175,16 @@ Iterate over all bindings in a match with `eachp`:
 
 **Note:** The table keys are symbols (e.g. `'X`), and the values are `zelph/node` abstract types — opaque handles to the internal graph nodes. This ensures unambiguous identity even when multiple nodes share the same name.
 
+A query pattern is an ordinary node, so it can be kept in a binding and asked repeatedly — which is the natural shape for a program that builds its patterns once and queries them per unit of data:
+
+```
+%(def q (zelph/fact 'A "hits" 'B))
+%(each r (zelph/query q) (printf "%s -> %s" (zelph/name (get r 'A)) (zelph/name (get r 'B))))
+%(each r (zelph/query q) (printf "%s -> %s" (zelph/name (get r 'A)) (zelph/name (get r 'B))))
+```
+
+Both loops print the same matches. The bindings are labelled from the names the variable nodes carry in the graph, so it does not matter whether the pattern was built by the statement that runs the query.
+
 When a query is entered in **zelph syntax** (not via `zelph/query`), results are printed to the console — `zelph/query`'s return-value behavior only applies when called from Janet code.
 
 #### Filtering and Transforming Query Results

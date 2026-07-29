@@ -2061,15 +2061,21 @@ public:
             }
         }
 
-        // Collect results instead of printing them
+        // Collect results instead of printing them.
+        //
+        // This used to run only when the CURRENT statement had created scoped
+        // variables, which tied a query to the expression that built its
+        // pattern: storing a pattern in a Janet binding and querying it later
+        // -- or simply querying the same pattern twice -- silently returned an
+        // empty array, indistinguishable from "no matches". The scope is not
+        // needed to run the query at all, only to label the bindings, and
+        // resolve_janet_arg names every variable node it creates, so the names
+        // can be recovered from the graph instead (see below).
         std::vector<std::shared_ptr<network::Variables>> results;
 
-        if (!var_to_name.empty())
-        {
-            s_instance->_n->set_query_collector(&results);
-            s_instance->_n->apply_rule(0, n);
-            s_instance->_n->set_query_collector(nullptr);
-        }
+        s_instance->_n->set_query_collector(&results);
+        s_instance->_n->apply_rule(0, n);
+        s_instance->_n->set_query_collector(nullptr);
 
         // Reset variable scope for the next query/statement
         s_instance->clear_scoped_variables();
@@ -2080,19 +2086,26 @@ public:
 
         for (const auto& vars : results)
         {
-            JanetTable* entry = janet_table(static_cast<int32_t>(var_to_name.size()));
+            JanetTable* entry = janet_table(static_cast<int32_t>(vars->size()));
 
             for (const auto& [var_node, bound_node] : *vars)
             {
-                auto it = var_to_name.find(var_node);
-                if (it != var_to_name.end())
-                {
-                    Janet key = janet_wrap_symbol(janet_symbol(
-                        reinterpret_cast<const uint8_t*>(it->second.c_str()),
-                        static_cast<int32_t>(it->second.size())));
-                    Janet val = zelph_wrap_node(bound_node);
-                    janet_table_put(entry, key, val);
-                }
+                // Prefer the name the current statement used; fall back to the
+                // name the variable node carries in the graph, which is what
+                // makes a pattern built in an earlier expression usable.
+                auto        it = var_to_name.find(var_node);
+                std::string key_name =
+                    (it != var_to_name.end())
+                        ? it->second
+                        : s_instance->_n->get_name(var_node, s_instance->_n->lang(), true);
+
+                if (key_name.empty()) continue;
+
+                Janet key = janet_wrap_symbol(janet_symbol(
+                    reinterpret_cast<const uint8_t*>(key_name.c_str()),
+                    static_cast<int32_t>(key_name.size())));
+                Janet val = zelph_wrap_node(bound_node);
+                janet_table_put(entry, key, val);
             }
 
             janet_array_push(result_array, janet_wrap_table(entry));
