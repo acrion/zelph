@@ -116,7 +116,7 @@ zelph can use any predicate node, not just `~`:
 
 ```
 zelph> bright "is opposite of" dark
-bright   is opposite of   dark
+bright "is opposite of" dark
 ```
 
 In this example, using the interactive REPL, we enter a subject-predicate-object triple.
@@ -156,19 +156,19 @@ Example session:
 
 ```
 zelph> { elem1 elem2 elem3 }
-{ elem1   elem2   elem3 }
+{elem1 elem2 elem3}
 zelph> A in { elem1 elem2 elem3 }
-A  in  { elem1   elem2   elem3 }
-Answer:   elem3    in  { elem1   elem2   elem3 }
-Answer:   elem2    in  { elem1   elem2   elem3 }
-Answer:   elem1    in  { elem1   elem2   elem3 }
+A in {elem1 elem2 elem3}
+Answer: elem1 in {elem1 elem2 elem3}
+Answer: elem3 in {elem1 elem2 elem3}
+Answer: elem2 in {elem1 elem2 elem3}
 zelph> (*{(A "is part of" B) (B "is part of" C) } ~ conjunction) => (A "is part of" C)
-{B  is part of  C A  is part of  B} => (A  is part of  C)
+{(A "is part of" B) (B "is part of" C)} => (A "is part of" C)
 zelph> earth "is part of" "solar system"
-  earth    is part of  ( solar system )
+earth "is part of" "solar system"
 zelph> "solar system" "is part of" universe
-( solar system )  is part of    universe
-  earth    is part of    universe   ⇐ {( solar system )  is part of    universe     earth    is part of  ( solar system )}
+"solar system" "is part of" universe
+(earth "is part of" universe) ⇐ {(earth "is part of" "solar system") ("solar system" "is part of" universe)}
 zelph>
 ```
 
@@ -240,26 +240,46 @@ Example session:
 
 ```
 zelph> (3 cons (1 cons nil)) is prime
-<13>  is   prime
+<3 1> is prime
 zelph> <13> is prime
-<13>  is   prime
+<3 1> is prime
 zelph> <3 1> is prime
-<13>  is   prime
+<3 1> is prime
 ```
 
-Why this works:
-
-- `<13>` is parsed as a compact list of characters `"1"` and `"3"`, **reversed before cons construction**, so it becomes the same internal cons chain as `<3 1>`.
-- `node_to_string` may print certain lists in compact form (e.g. single-character elements) as a **display heuristic**. This does not change the underlying graph structure.
+Why this works: `<13>` is parsed as a compact list of characters `"1"` and
+`"3"`, **reversed before cons construction**, so it becomes the same internal
+cons chain as `<3 1>` — and the same node as the explicit cons chain.
 
 > To avoid confusion: `<13>` is list syntax, **not** a numeric node ID. Numeric IDs are shown elsewhere in parentheses (e.g. `(10)` in Mermaid graphs).
 
 ---
 
-##### Display: compact vs. spaced
+##### Display: storage order, and the numeral exception
 
-When a list consists entirely of single-character named nodes, it is printed in a reversed compact form without spaces, e.g. `<abc>`.  
-This is a **display heuristic only**. It does not change the underlying topology or impose any numeric meaning.
+A cons list echoes in **storage order, space-separated** — the notation that
+re-reads as the same list. `<abc>` therefore prints as `<c b a>`, which is
+exactly the chain the compact syntax built; the display does not undo the
+input-side reversal, because nothing about three character nodes says they
+are a numeral.
+
+The one exception is the numeral case, and it is opt-in: a script that
+registers its digit alphabet with `zelph/set-number-digits` tells the
+formatter which nodes are digits. A `nil`-terminated list consisting solely
+of registered digits is then printed MSB-first as a decimal `&`-literal —
+the inverse of the `&`-input syntax, not a spacing variant of `<...>`:
+
+```
+zelph> .import decimal-arithmetic
+zelph> <3 1> is prime
+&13 is prime
+zelph> <a b c> is x
+<a b c> is x
+```
+
+See [Number Literals](logic.md#number-literals) for the mechanism. Either
+way the topology is untouched: display never imposes numeric meaning, it
+only reports the meaning a script has declared.
 
 ---
 
@@ -270,7 +290,7 @@ The cons-list representation naturally distinguishes between:
 - a **character node** such as `"4"` (a normal named node), and
 - a **single-element list** `( "4" cons nil )` (a different node: a cons cell)
 
-Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting). For convenient input, the parser additionally supports `&`-prefixed number literals (e.g. `&42`), which delegate to the redefinable function `zelph/number` — so you can always type decimal even when the loaded arithmetic script uses a different internal base. See [Number Literals](logic.md#number-literals). The inverse direction — displaying digit lists as decimal &-literals — works through the same opt-in mechanism: scripts register their digit alphabet via zelph/set-number-digits.
+Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four, is entirely up to your rule system (e.g. [stdlib/decimal-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph)) and any external naming/mapping you choose to apply. For a detailed exploration of how rules can define arithmetic over these structures, see [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting). For convenient input, the parser additionally supports `&`-prefixed number literals (e.g. `&42`), which delegate to the redefinable function `zelph/number` — so you can always type decimal even when the loaded arithmetic script uses a different internal base. See [Number Literals](logic.md#number-literals). The inverse direction — displaying digit lists as decimal &-literals — works through the same opt-in mechanism: scripts register their digit alphabet via zelph/set-number-digits.
 
 #### The Focus Operator `*`
 
@@ -288,10 +308,10 @@ The focus operator lets you create a fact and use its subject in an outer statem
 
 ```
 zelph> (*tim ~ human) ~ male
-  tim    ~   male
+tim ~ male
 zelph> tim _predicate _object
-Answer:   tim    ~   human
-Answer:   tim    ~   male
+Answer: tim ~ male
+Answer: tim ~ human
 ```
 
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
@@ -429,7 +449,7 @@ Here is a practical example of how a transitive-closure rule works in zelph (whi
 
 ```
 zelph> (R is transitive, A R B, B R C) => (A R C)
-{(A R B) (R  is   transitive ) (B R C)} => (A R C)
+{(A R B) (R is transitive) (B R C)} => (A R C)
 ```
 
 After the entered rule, we see zelph's output, which in this case simply confirms the input of the rule.
@@ -438,17 +458,17 @@ Now, let's declare that the relation `>` (greater than) is an instance of transi
 
 ```
 zelph> > is transitive
->  is   transitive
+> is transitive
 ```
 
 Next, we provide three elements ("4", "5" and "6") for which the `>` relation applies:
 
 ```
 zelph> 6 > 5
- 6  >  5
+6 > 5
 zelph> 5 > 4
- 5  >  4
- 6  >  4  ⇐ {( 6  >  5 ) (>  is   transitive ) ( 5  >  4 )}
+5 > 4
+(6 > 4) ⇐ {(6 > 5) (> is transitive) (5 > 4)}
 zelph>
 ```
 
@@ -458,14 +478,14 @@ Rules can also define contradictions using `!`:
 
 ```
 zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
-{(X  is opposite of  Y) (A  ~  X) (X  !=  Y) (A  ~  Y)} =>  !
+{(X "is opposite of" Y) (A ~ X) (X != Y) (A ~ Y)} => !
 zelph> bright "is opposite of" dark
- bright   is opposite of   dark
+bright "is opposite of" dark
 zelph> yellow ~ bright
- yellow   ~   bright
+yellow ~ bright
 zelph> yellow ~ dark
- yellow   ~   dark
- !  ⇐ {( bright   is opposite of   dark ) ( yellow   ~   bright ) ( bright   !=   dark ) ( yellow   ~   dark )}
+yellow ~ dark
+! ⇐ {(bright "is opposite of" dark) (yellow ~ bright) (bright != dark) (yellow ~ dark)}
 Found one or more contradictions!
 zelph>
 ```
@@ -690,21 +710,25 @@ zelph> .lang wikidata
 wikidata> .auto-run
 Auto-run is now disabled.
 wikidata-> Q1 P279 Q2
- Q1   P279   Q2
+Q1 P279 Q2
 wikidata-> Q2 P279 Q3
- Q2   P279   Q3
+Q2 P279 Q3
 wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
-{(B  P279  C) (A  P279  B)} => (A  P279  C)
+{(B P279 C) (A P279 B)} => (A P279 C)
 wikidata-> .run-file /tmp/output.txt
 Starting full inference in encode mode – deduced facts (reversed order, no brackets/markup) will be written to /tmp/output.txt (with Wikidata token encoding).
-«Q1» «P279» «Q3» ⇐ {(«Q2» «P279» «Q3») («Q1» «P279» «Q2»)}
+(Q1 P279 Q3) ⇐ {(Q2 P279 Q3) (Q1 P279 Q2)}
 ```
 
 Content of `output.txt`:
 
 ```
-丂 一丂 七, 七 一丂 丄 ⇒ 丂 一七 丄
+七 一优 丄 丂 一优 七 ⇒ 丂 一优 丄
 ```
+
+(The CJK character assigned to an identifier depends on the order in which
+the compressor first meets it, so the exact glyphs vary between runs; the
+encoding is self-describing and `.decode` inverts it either way.)
 
 When the current language is set to `wikidata` (via `.lang wikidata`), the output is **automatically compressed** using a dense encoding that maps Q/P identifiers to CJK characters.
 This dramatically reduces file size and – crucially – makes the data highly suitable for training or prompting large language models (LLMs).
@@ -788,46 +812,61 @@ A "is ancestor of" "pius"
 
 When executed, the last line is interpreted as a query, because it contains a variable (single uppercase letter) and is no rule. Here are the results:
 
+An imported script does not contribute deduction anchors, so in the default
+`focus` mode only the query answer is printed and the derived facts are
+counted (see [Deduction Output Modes](#deduction-output-modes)):
+
 ```
 zelph> .import examples/english
 Importing file examples/english.zph...
-[...skipped repetition of parsed commands..]
-Answer: paul is ancestor of pius
-( peppermint ~ mint ) ⇐ ( peppermint is a mint )
-( catnip ~ lamiacea ) ⇐ ( catnip is a lamiacea )
-( mint ~ lamiacea ) ⇐ ( mint is a lamiacea )
-( water mint ~ mint ) ⇐ ( water mint is a mint )
-( water mint ~ lamiacea ) ⇐ {( water mint ~ mint ) ( ~ is transitive ) ( mint ~ lamiacea )}
-( peppermint ~ lamiacea ) ⇐ {( peppermint ~ mint ) ( ~ is transitive ) ( mint ~ lamiacea )}
-( peter is ancestor of pius ) ⇐ {( peter is ancestor of paul ) ( is ancestor of is transitive ) ( paul is ancestor of pius )}
-( chimpanzee has part finger ) ⇐ {( chimpanzee has part hand ) ( has part is transitive ) ( hand has part finger )}
-( chimpanzee is a ape ) ⇐ ( chimpanzee is an ape )
-( green mint is a mint ) ⇐ ( green mint is an mint )
-( has part is opposite of is part of ) ⇐ ( is part of is opposite of has part )
-( needs is opposite of is needed by ) ⇐ ( is needed by is opposite of needs )
-( generates is opposite of is generated by ) ⇐ ( is generated by is opposite of generates )
-( is a is opposite of is for example ) ⇐ ( is for example is opposite of is a )
-( is is opposite of is attribute of ) ⇐ ( is attribute of is opposite of is )
-( chimpanzee ~ ape ) ⇐ ( chimpanzee is a ape )
-( green mint ~ mint ) ⇐ ( green mint is a mint )
-( chimpanzee is alive ) ⇐ {( chimpanzee is a ape ) ( ape is alive )}
-( mint is for example peppermint ) ⇐ {( peppermint is a mint ) ( is a is opposite of is for example )}
-( lamiacea is for example catnip ) ⇐ {( catnip is a lamiacea ) ( is a is opposite of is for example )}
-( ape is for example chimpanzee ) ⇐ {( chimpanzee is a ape ) ( is a is opposite of is for example )}
-( lamiacea is for example mint ) ⇐ {( mint is a lamiacea ) ( is a is opposite of is for example )}
-( mint is for example water mint ) ⇐ {( water mint is a mint ) ( is a is opposite of is for example )}
-( mint is for example green mint ) ⇐ {( green mint is a mint ) ( is a is opposite of is for example )}
-( transitive is attribute of has attribute ) ⇐ {( has attribute is transitive ) ( is is opposite of is attribute of )}
-( transitive is attribute of ~ ) ⇐ {( ~ is transitive ) ( is is opposite of is attribute of )}
-( transitive is attribute of is ancestor of ) ⇐ {( is ancestor of is transitive ) ( is is opposite of is attribute of )}
-( alive is attribute of chimpanzee ) ⇐ {( chimpanzee is alive ) ( is is opposite of is attribute of )}
-( sweet is attribute of green mint ) ⇐ {( green mint is sweet ) ( is is opposite of is attribute of )}
-( alive is attribute of ape ) ⇐ {( ape is alive ) ( is is opposite of is attribute of )}
-( transitive is attribute of has part ) ⇐ {( has part is transitive ) ( is is opposite of is attribute of )}
-( hand is part of chimpanzee ) ⇐ {( chimpanzee has part hand ) ( has part is opposite of is part of )}
-( finger is part of hand ) ⇐ {( hand has part finger ) ( has part is opposite of is part of )}
-( finger is part of chimpanzee ) ⇐ {( chimpanzee has part finger ) ( has part is opposite of is part of )}
-( green mint ~ lamiacea ) ⇐ {( green mint ~ mint ) ( ~ is transitive ) ( mint ~ lamiacea )}
+Answer: paul "is ancestor of" pius
+ (skipped 35 deductions)
+```
+
+`.deductions all` shows what those 35 are. The order in which they appear
+is not fixed -- the reasoner is parallel, and the fixpoint is a set:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+zelph> .import examples/english
+Importing file examples/english.zph...
+Answer: paul "is ancestor of" pius
+(peppermint ~ mint) ⇐ (peppermint "is a" mint)
+(catnip ~ lamiacea) ⇐ (catnip "is a" lamiacea)
+(mint ~ lamiacea) ⇐ (mint "is a" lamiacea)
+("water mint" ~ mint) ⇐ ("water mint" "is a" mint)
+(peppermint ~ lamiacea) ⇐ {(peppermint ~ mint) (~ is transitive) (mint ~ lamiacea)}
+("water mint" ~ lamiacea) ⇐ {("water mint" ~ mint) (~ is transitive) (mint ~ lamiacea)}
+(peter "is ancestor of" pius) ⇐ {(peter "is ancestor of" paul) ("is ancestor of" is transitive) (paul "is ancestor of" pius)}
+(chimpanzee "has part" finger) ⇐ {(chimpanzee "has part" hand) ("has part" is transitive) (hand "has part" finger)}
+(chimpanzee "is a" ape) ⇐ (chimpanzee "is an" ape)
+("green mint" "is a" mint) ⇐ ("green mint" "is an" mint)
+(needs "is opposite of" "is needed by") ⇐ ("is needed by" "is opposite of" needs)
+(is "is opposite of" "is attribute of") ⇐ ("is attribute of" "is opposite of" is)
+("has part" "is opposite of" "is part of") ⇐ ("is part of" "is opposite of" "has part")
+(generates "is opposite of" "is generated by") ⇐ ("is generated by" "is opposite of" generates)
+("is a" "is opposite of" "is for example") ⇐ ("is for example" "is opposite of" "is a")
+(finger "is part of" chimpanzee) ⇐ {(chimpanzee "has part" finger) ("has part" "is opposite of" "is part of")}
+(chimpanzee ~ ape) ⇐ (chimpanzee "is a" ape)
+(chimpanzee is alive) ⇐ {(chimpanzee "is a" ape) (ape is alive)}
+(ape "is for example" chimpanzee) ⇐ {(chimpanzee "is a" ape) ("is a" "is opposite of" "is for example")}
+("green mint" ~ mint) ⇐ ("green mint" "is a" mint)
+(mint "is for example" "green mint") ⇐ {("green mint" "is a" mint) ("is a" "is opposite of" "is for example")}
+(transitive "is attribute of" "has attribute") ⇐ {("has attribute" is transitive) (is "is opposite of" "is attribute of")}
+(transitive "is attribute of" ~) ⇐ {(~ is transitive) (is "is opposite of" "is attribute of")}
+(transitive "is attribute of" "is ancestor of") ⇐ {("is ancestor of" is transitive) (is "is opposite of" "is attribute of")}
+(alive "is attribute of" chimpanzee) ⇐ {(chimpanzee is alive) (is "is opposite of" "is attribute of")}
+(sweet "is attribute of" "green mint") ⇐ {("green mint" is sweet) (is "is opposite of" "is attribute of")}
+(transitive "is attribute of" "has part") ⇐ {("has part" is transitive) (is "is opposite of" "is attribute of")}
+(alive "is attribute of" ape) ⇐ {(ape is alive) (is "is opposite of" "is attribute of")}
+(hand "is part of" chimpanzee) ⇐ {(chimpanzee "has part" hand) ("has part" "is opposite of" "is part of")}
+(finger "is part of" hand) ⇐ {(hand "has part" finger) ("has part" "is opposite of" "is part of")}
+(lamiacea "is for example" mint) ⇐ {(mint "is a" lamiacea) ("is a" "is opposite of" "is for example")}
+(mint "is for example" "water mint") ⇐ {("water mint" "is a" mint) ("is a" "is opposite of" "is for example")}
+(lamiacea "is for example" catnip) ⇐ {(catnip "is a" lamiacea) ("is a" "is opposite of" "is for example")}
+(mint "is for example" peppermint) ⇐ {(peppermint "is a" mint) ("is a" "is opposite of" "is for example")}
+("green mint" ~ lamiacea) ⇐ {("green mint" ~ mint) (~ is transitive) (mint ~ lamiacea)}
 ```
 
 The results demonstrate zelph's powerful inference capabilities.

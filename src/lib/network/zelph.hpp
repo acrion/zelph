@@ -359,7 +359,7 @@ namespace zelph::network
         // decimal &-literals -- the exact inverse of the &-input syntax
         // (zelph/number). An empty vector disables the feature. Any other
         // list keeps the generic <...> display, so cons lists stay
-        // general-purpose. See stdlib/arithmetic.zph.
+        // general-purpose. See stdlib/decimal-arithmetic.zph.
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
 

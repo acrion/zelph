@@ -702,11 +702,11 @@ public:
     {
         const char* code = R"janet(
             (defn zelph/number
-              "Fallback for $-literals: no number representation is loaded."
+              "Fallback for &-literals: no number representation is loaded."
               [s]
               (error (string "number literal &" s " has no representation - "
                              "load a script that defines zelph/number "
-                             "(e.g. arithmetic.zph or binary-arithmetic.zph)")))
+                             "(e.g. decimal-arithmetic.zph or binary-arithmetic.zph)")))
         )janet";
 
         Janet out;
@@ -2408,7 +2408,7 @@ public:
         }
         else if (type == "number")
         {
-            // $-literal: delegate the representation to the (redefinable)
+            // &-literal: delegate the representation to the (redefinable)
             // Janet function zelph/number. Validation happens there too.
             std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             return "(zelph/number " + content + ")";
@@ -2734,12 +2734,33 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
 }
 
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
-network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
+network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, const bool quiet)
 {
     if (_pImpl->_scoped_vars_preloaded)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
         _pImpl->_scoped_variables.clear();
+
+    // janet_dostring prints the stack trace itself, through janet_eprintf,
+    // BEFORE it hands the error status back. Redirecting the :err dyn to a
+    // buffer is the only way to keep a speculative evaluation silent; the
+    // buffer is discarded, the error still travels via the exception below.
+    struct ErrRedirect
+    {
+        explicit ErrRedirect(const bool on)
+            : _on(on)
+        {
+            if (!_on) return;
+            _saved = janet_dyn("err");
+            janet_setdyn("err", janet_wrap_buffer(janet_buffer(256)));
+        }
+        ~ErrRedirect()
+        {
+            if (_on) janet_setdyn("err", _saved);
+        }
+        const bool _on;
+        Janet      _saved{};
+    } err_redirect(quiet);
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);

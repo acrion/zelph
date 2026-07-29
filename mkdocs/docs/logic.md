@@ -602,7 +602,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 > **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](math/arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
-The reference implementation lives in [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph).
+The reference implementation lives in [stdlib/decimal-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph).
 A second reference implementation, [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
 
 The algorithm consists of three parts:
@@ -627,7 +627,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 #### A Worked Example
 
-> Note: since `arithmetic.zph` registers its digit alphabet, a live session
+> Note: since `decimal-arithmetic.zph` registers its digit alphabet, a live session
 > displays these lists as decimal `&`-literals (e.g. `&12345` instead of
 > `<12345>`).
 
@@ -793,14 +793,14 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
 
 1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
 
-2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
+2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) maps it to a decimal digit list (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. Every stdlib substrate reads the literal the same way, which is what makes them interchangeable under the shared module ID `arithmetic`: non-digits are rejected (`&abc` is an error, not a cons list of letters), and leading zeros are stripped, so `&007` and `&7` denote the same node. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
 
 3. **Symmetric output.** The display side mirrors the input side: a script can
    register its digit alphabet via `(zelph/set-number-digits ["0" "1" ...])`
    (digit nodes or names, in ascending order of value). From then on,
    `node_to_string` renders every properly `nil`-terminated cons list that
    consists _solely_ of registered digit nodes as a decimal `&`-literal --
-   regardless of the internal base. `stdlib/arithmetic.zph` registers `0`–`9`,
+   regardless of the internal base. `stdlib/decimal-arithmetic.zph` registers `0`–`9`,
    `stdlib/binary-arithmetic.zph` registers `0` and `1`, so both display `&5`
    for their respective internal lists `<5>` and `<101>`. Any other cons list
    -- including lists of single-character nodes that are not registered digits

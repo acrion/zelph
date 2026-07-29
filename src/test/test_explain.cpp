@@ -160,3 +160,84 @@ TEST_CASE("explain: a numeral object is not mistaken for the depth argument")
             CHECK(any_output_contains(collector, "depth limit"));
         } });
 }
+
+TEST_CASE("explain: a NAF premise is printed bound, and negated exactly once")
+{
+    // The rule's negated condition is stored as a pattern node tagged
+    // (~ negation), which node_to_string already renders as "¬(...)".
+    // The renderer used to add a SECOND "¬(...)" around it and passed no
+    // bindings, so the honest premise "¬(plant2 is green)" came out as
+    // "¬(¬(A is green))" -- the opposite claim, with an unbound variable.
+    // Variables that occur ONLY inside the negation stay unbound on
+    // purpose: that is what "for no D" quantifies over.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A is yellow, ¬(A is green)) => (A notgreen green)");
+        interactive.process("plant is green");
+        interactive.process("plant is yellow");
+        interactive.process("plant2 is yellow");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".explain plant2 notgreen green");
+        CHECK(any_output_contains(collector, "¬(plant2 is green)  [absent]"));
+        CHECK_FALSE(any_output_contains(collector, "¬(¬")); });
+}
+
+TEST_CASE("explain: a quoted multi-word predicate resolves")
+{
+    // zelph PRINTS a predicate containing spaces quoted, so pasting that
+    // line back into .explain must work. The command tokenizer strips the
+    // quotes, and rejoining the tokens with blanks turned `a "is not" b`
+    // into the four-component `a is not b`, which denotes a different
+    // node -- the fact was reported as not asserted.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a \"is not\" b");
+
+        SUBCASE(".explain finds it")
+        {
+            collector.clear();
+            interactive.process(".explain a \"is not\" b");
+            CHECK(any_output_contains(collector, "[axiom]"));
+            CHECK_FALSE(any_output_contains(collector, "not asserted"));
+        }
+        SUBCASE("the .why alias behaves identically")
+        {
+            collector.clear();
+            interactive.process(".why a \"is not\" b");
+            CHECK(any_output_contains(collector, "[axiom]"));
+        } });
+}
+
+TEST_CASE("explain: a rejected reading of the argument stays silent")
+{
+    // cmd_explain TRIES readings of its argument; a failing one is a
+    // normal outcome. janet_dostring prints its stack trace before it
+    // returns the error status, so the speculative evaluation has to
+    // suppress Janet's own reporting -- otherwise a successful .explain
+    // is preceded by an "arity mismatch" trace that looks like a crash.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A gate B) => ((A gate B) out 0)");
+        interactive.process("1 gate 1");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".explain ((1 gate 1) out 0)");
+        CHECK(any_output_contains(collector, "[axiom]"));
+        CHECK_FALSE(any_output_contains(collector, "arity mismatch")); });
+}
+
+TEST_CASE("help: an alias is documented under its canonical command")
+{
+    // One table drives both the dispatch registration and ".help <alias>".
+    // While ".why" was registered separately, it was a working command
+    // that ".help .why" claimed not to know.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process(".help .why");
+        CHECK(any_output_contains(collector, "alias: .why"));
+        CHECK_FALSE(any_output_contains(collector, "Unknown command")); });
+}

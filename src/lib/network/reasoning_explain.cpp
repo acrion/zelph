@@ -294,15 +294,23 @@ namespace zelph::network
                                     ok = false; // the negated fact is present NOW
                                     break;
                                 }
-                                // Display the ground node when it exists in the
-                                // graph; otherwise the pattern (with variables).
-                                absent.push_back(ground != 0 && z->exists(ground) ? ground : m);
+                                // Keep the rule's PATTERN, not the ground node:
+                                // the pattern carries the (IsA Negation) tag, so
+                                // it renders as ¬(...) on its own, and the
+                                // caller supplies `bindings` to substitute the
+                                // variables the join fixed. A ground node would
+                                // render without the negation and force the
+                                // caller to re-add it -- which is how the
+                                // display grew a second ¬ around a pattern that
+                                // already had one.
+                                absent.push_back(m);
                             }
                             if (!ok) continue;
 
-                            proof->status = ProofNode::Status::Derived;
-                            proof->rule   = rule;
-                            proof->absent = std::move(absent);
+                            proof->status   = ProofNode::Status::Derived;
+                            proof->rule     = rule;
+                            proof->absent   = std::move(absent);
+                            proof->bindings = bindings;
                             for (const Node premise : premises)
                                 proof->premises.push_back(reconstruct(ctx, premise, depth + 1));
                             break; // one justification per fact

@@ -155,7 +155,7 @@ zelph> .explain ((1 d+ 1) tci 0) sum 0
    │  ├─ (1 nand 0) out 1
    │  │  ├─ 0 isdigit true  [axiom]
    │  │  ├─ 1 isdigit true  [axiom]
-   │  │  └─ ¬(¬((A nand B) out 0))  [absent]
+   │  │  └─ ¬((1 nand 0) out 0)  [absent]
    │  ├─ (1 nand 1) out 0  [axiom]
    │  ├─ (1 nand 0) out 1  [see above]
    │  └─ (1 nand 1) out 0  [axiom]
@@ -165,7 +165,7 @@ zelph> .explain ((1 d+ 1) tci 0) sum 0
       ├─ (0 nand 1) out 1
       │  ├─ 1 isdigit true  [axiom]
       │  ├─ 0 isdigit true  [axiom]
-      │  └─ ¬(¬((A nand B) out 0))  [absent]
+      │  └─ ¬((0 nand 1) out 0)  [absent]
       …
 ```
 

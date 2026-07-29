@@ -422,6 +422,9 @@ zelph-> <zelph/node «plato» «~» «human»>
 zelph-> Starting reasoning with 24 worker threads.
 (plato ~ mortal) ⇐ {(plato ~ human)}
 Reasoning complete. Total unification matches processed: 0. Total contradictions found: 0.
+Reasoning summary: 0 matches processed, 0 contradictions found.
+Parallel unifications activated for 0 distinct fixed relations.
+Reasoning complete in 0h0m0.000s – 0 matches processed, 0 contradictions found.
 Ready.
 zelph-> plato is mortal: true
 ```
@@ -802,7 +805,7 @@ Combining `zelph/car` and `zelph/cdr` to walk a cons-list:
 
 ```
 zelph> <42>
-< 4   2 >
+<2 4>
 %
 (def list-42 (zelph/list-chars "42"))
 (def nil-node (zelph/resolve "nil"))

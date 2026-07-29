@@ -329,7 +329,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             if (!list_elements.empty())
             {
                 // Number display: if a digit alphabet is registered via
-                // zelph/set-number-digits (see stdlib/arithmetic.zph), a
+                // zelph/set-number-digits (see stdlib/decimal-arithmetic.zph), a
                 // properly nil-terminated cons list consisting solely of
                 // registered digit nodes is rendered as a decimal &-literal
                 // -- the exact inverse of the &-input syntax (zelph/number).

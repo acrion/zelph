@@ -104,6 +104,15 @@ namespace zelph::network
         Status                                  status = Status::Axiom;
         std::vector<std::shared_ptr<ProofNode>> premises; // positive conditions
         std::vector<Node>                       absent;   // NAF conditions, verified absent NOW
+
+        // The instantiation that justifies this step (Derived only). The
+        // positive premises are already ground nodes, but a NAF condition
+        // usually has no node -- absence is why it holds -- so `absent`
+        // carries the rule's PATTERN and needs these bindings to be
+        // rendered as the concrete premise that was checked. Variables
+        // occurring only inside the negation stay unbound: that is what
+        // "for no D" means, and it must remain visible as such.
+        Variables bindings;
     };
 
     class ZELPH_EXPORT Reasoning : public Zelph

@@ -18,7 +18,22 @@
 
 .provides arithmetic
 %
-(defn zelph/number [s] (zelph/list-chars s))
+(defn zelph/number
+  "Decimal literal -> LSB-first decimal cons list. Validates the literal
+  and strips leading zeros, so that &007 denotes the SAME node as &7. Both
+  properties come for free in the binary substrates (they convert by
+  value), and the three modules claim the same module ID `arithmetic` --
+  an interchangeable implementation must not give a literal a different
+  meaning. Without the check, &abc silently built a cons list of letters
+  that no arithmetic rule can ever reduce; without the strip, &007 built
+  the non-canonical <007>, which renders as a raw digit list and compares
+  unequal to &7."
+  [s]
+  (when (or (= s "")
+            (some (fn [c] (or (< c (chr "0")) (> c (chr "9")))) s))
+    (error (string "invalid decimal literal &" s)))
+  (def t (string/triml s "0"))
+  (zelph/list-chars (if (= t "") "0" t)))
 
 # Register the digit alphabet (ascending order of value) so that
 # node_to_string displays digit cons lists as decimal &-literals -- the

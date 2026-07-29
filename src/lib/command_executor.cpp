@@ -48,6 +48,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <kj/io.h>
 #endif
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
@@ -168,6 +169,13 @@ static bool is_fully_parenthesized(const std::string& s)
     }
     return false;
 }
+
+// Alternative spellings of a command. One table drives BOTH the dispatch
+// registration and ".help <alias>", so an alias can never exist as a
+// runnable command while ".help" claims not to know it.
+static const std::map<std::string, std::string> command_aliases = {
+    {".why", ".explain"},
+};
 
 class console::CommandExecutor::Impl
 {
@@ -324,8 +332,9 @@ private:
         { cmd_cluster_merge(c); };
         _command_map[".explain"] = [this](auto& c)
         { cmd_explain(c); };
-        _command_map[".why"] = [this](auto& c)
-        { cmd_explain(c); };
+
+        for (const auto& [alias, canonical] : command_aliases)
+            _command_map[alias] = _command_map.at(canonical);
     }
 
 // --- Helpers ---
@@ -1344,7 +1353,7 @@ private:
             "",
             "Exploring the Network",
             "  .stat                                     – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
-            "  .explain [<fact>] [depth]                 – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth)",
+            "  .explain [<fact>] [depth]                 – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: .why",
             "  .list <count>                             – List first N existing nodes (internal map order, with details)",
             "  .clist <count>                            – List first N nodes named in current language (sorted by ID if feasible)",
             "  .node [<name|id>]                         – Show detailed node information; defaults to last output node",
@@ -1880,6 +1889,8 @@ private:
                               "Removes every node recorded in the cluster, including all edges and names\n"
                               "(rollback semantics). Pre-existing knowledge is untouched, but facts created\n"
                               "OUTSIDE the cluster that reference cluster nodes lose those connections.\n"
+                              "Dropping the ACTIVE cluster falls back to 'default', i.e. tracking stops.\n"
+                              "An unknown name is an error, not a no-op.\n"
                               "WARNING: destructive and irreversible."},
 
             {".cluster-merge", ".cluster-merge <from> <to>\n"
@@ -1897,7 +1908,11 @@ private:
             }
             else if (cmd.size() == 2)
             {
-                auto it = detailed_help.find(cmd[1]);
+                std::string topic = cmd[1];
+                if (const auto alias = command_aliases.find(topic); alias != command_aliases.end())
+                    topic = alias->second;
+
+                auto it = detailed_help.find(topic);
                 if (it != detailed_help.end())
                 {
                     _n->out(it->second, true);
@@ -2253,22 +2268,22 @@ private:
                     return;
 
                 std::string deduction = str.substr(0, pos);
-                string::trim_in_place(deduction);
+                std::string reasons   = str.substr(pos + std::string(" ⇐ ").size());
 
-                std::string reasons = str.substr(pos + std::string(" ⇐ ").size());
-                string::trim_in_place(reasons);
-                if (!reasons.empty() && reasons.front() == '(')
-                    reasons.erase(0, 1);
-                if (!reasons.empty() && reasons.back() == ')')
-                    reasons.erase(reasons.size() - 1);
-                string::trim_in_place(reasons);
-
-                string::replace_all(reasons, "(", "");
-                string::replace_all(reasons, ")", "");
-                string::replace_all(deduction, "«", "");
-                string::replace_all(deduction, "»", "");
-                string::replace_all(reasons, "«", "");
-                string::replace_all(reasons, "»", "");
+                // "Clean format: no brackets, no markup" -- and for
+                // lang=wikidata the whole point is that EVERY Q/P token
+                // reaches the compressor. A token still carrying a bracket
+                // ("{Q2", "Q3)") is not a Q-id, so it stays unencoded and
+                // the line ends up half compressed. Strip every delimiter
+                // the formatter may produce, on BOTH sides: the deduction is
+                // wrapped in "(...)" and the reason set in "{...}", which
+                // the historical single-paren peel no longer matched.
+                for (std::string* part : {&deduction, &reasons})
+                {
+                    for (const char* delim : {"(", ")", "{", "}", "«", "»"})
+                        string::replace_all(*part, delim, "");
+                    string::trim_in_place(*part);
+                }
 
                 std::string line_for_file;
                 if (!reasons.empty())
@@ -3060,8 +3075,21 @@ private:
     {
         if (cmd.size() != 2) throw std::runtime_error("Usage: .cluster-drop <name>");
         if (cmd[1] == "default") throw std::runtime_error(".cluster-drop: the default cluster cannot be dropped");
-        const size_t removed = _n->drop_cluster(cmd[1]);
+
+        // An unknown name is an error, exactly as in .cluster-merge -- and
+        // it has to be checked here, because "removed 0 node(s)" is also the
+        // honest report for a cluster that exists but is empty. Reporting a
+        // typo as a successful rollback is how an experiment silently keeps
+        // running against a cluster the user believes is gone.
+        const auto clusters = _n->list_clusters();
+        if (std::none_of(clusters.begin(), clusters.end(), [&](const auto& c)
+                         { return c.first == cmd[1]; }))
+            throw std::runtime_error(".cluster-drop: unknown cluster '" + cmd[1] + "'");
+
+        const bool   was_active = _n->active_cluster_name() == cmd[1];
+        const size_t removed    = _n->drop_cluster(cmd[1]);
         _n->out("Dropped cluster " + cmd[1] + ": removed " + std::to_string(removed) + " node(s).", true);
+        if (was_active) _n->out("Active cluster: default", true);
     }
 
     void cmd_cluster_merge(const std::vector<std::string>& cmd)
@@ -3114,7 +3142,7 @@ private:
         network::Node target = 0;
         try
         {
-            target = _script_engine->evaluate_expression(code);
+            target = _script_engine->evaluate_expression(code, /*quiet*/ true);
         }
         catch (...)
         {
@@ -3136,11 +3164,25 @@ private:
     {
         if (parts.empty()) return 0;
 
+        // tokenize_quoted has already STRIPPED the quotes, so a token that
+        // still contains whitespace can only have come from a quoted one --
+        // ".explain a \"is not\" b" arrives as {"a", "is not", "b"}. Joining
+        // that with blanks hands the parser a four-component statement and
+        // resolves the wrong node, so the fact zelph printed as `a "is not"
+        // b` could not be explained by pasting it back. Re-quote exactly
+        // those tokens; everything else (nested facts, term islands, ¬,
+        // &-literals) has to stay verbatim to keep parsing.
         std::string pattern;
         for (const auto& p : parts)
         {
             if (!pattern.empty()) pattern += ' ';
-            pattern += p;
+            if (p.find_first_of(" \t") == std::string::npos)
+                pattern += p;
+            else
+                pattern += '"' + p + '"'; // the PEG's quoted atom has no
+                                          // escapes, so a name containing a
+                                          // quote fails to parse -- honestly,
+                                          // rather than resolving something else
         }
 
         // A pattern wrapped in a single pair of parentheses --
@@ -3265,10 +3307,16 @@ private:
             render_proof(premise, child_indent, ++index == total, printed, out);
         for (const network::Node neg : p->absent)
         {
+            // The stored node is the rule's negation-tagged pattern, so
+            // node_to_string writes the ¬(...) itself; passing the step's
+            // bindings turns "¬(N hasdivisor D)" into the premise actually
+            // checked, "¬(&7 hasdivisor D)". D stays a variable on purpose --
+            // it is what "for no D" quantifies over.
             std::string nline;
-            zelph::string::node_to_string(_n, nline, _n->lang(), neg, 3);
-            out += child_indent + (++index == total ? "└─ " : "├─ ") + "¬("
-                 + zelph::string::unmark_identifiers(nline) + ")  [absent]\n";
+            zelph::string::node_to_string(_n, nline, _n->lang(), neg, 3, p->bindings);
+            nline = zelph::string::unmark_identifiers(nline);
+            if (nline.rfind("¬", 0) != 0) nline = "¬(" + nline + ")";
+            out += child_indent + (++index == total ? "└─ " : "├─ ") + nline + "  [absent]\n";
         }
     }
 };

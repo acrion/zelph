@@ -228,13 +228,13 @@ TEST_CASE("numbers: binary addition via rules (full-adder axioms, no generated t
 // Number literals
 // ---------------------------------------------------------------------------
 
-TEST_CASE("number literals: $ delegates to redefinable zelph/number")
+TEST_CASE("number literals: & delegates to redefinable zelph/number")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-                       // Without a loaded representation, $-literals fail loudly.
+                       // Without a loaded representation, &-literals fail loudly.
                        // excluded from test, because it prints errors on stdout which might be misleading (test succeeds)
-                       // CHECK_THROWS(interactive.process("$5 result_of test0"));
+                       // CHECK_THROWS(interactive.process("&5 result_of test0"));
 
                        // Decimal representation: identical to compact <...> syntax.
                        interactive.process("%(defn zelph/number [s] (zelph/list-chars s))");
@@ -248,11 +248,12 @@ TEST_CASE("number literals: $ delegates to redefinable zelph/number")
                        interactive.process("&5 result_of test2");
                        CHECK(any_output_starts_with(collector, "<1 0 1> result_of test2"));
 
-                       // Existing atoms starting with $ semantics: plain atom untouched?
-                       // ($foo is not a number literal because zelph/number rejects it --
-                       // it never reaches zelph/number: the atom rule only loses to the
-                       // number rule, whose transformation calls zelph/number; so &foo
-                       // errors under the decimal defn? -> covered manually if needed.)
+                       // The '&' is consumed by the PEG, so what zelph/number
+                       // receives is the bare token -- whether it is a valid
+                       // numeral is the representation's decision, not the
+                       // parser's. The stdlib substrates all reject non-digits;
+                       // see "number literals: the substrates agree on what a
+                       // literal denotes" below.
                    });
 }
 
@@ -723,4 +724,47 @@ TEST_CASE("numbers: multiplication by zero yields the canonical zero node (all a
         CHECK(any_output_contains(collector, "MUL0-D-true"));
         CHECK(any_output_contains(collector, "MUL0-NOT-false"));
         CHECK(any_output_contains(collector, "MUL1-true")); });
+}
+
+TEST_CASE("number literals: the substrates agree on what a literal denotes (all arithmetic modules)")
+{
+    // The three arithmetic modules all claim the module ID `arithmetic`
+    // and are therefore interchangeable -- which they only are if a
+    // literal means the same thing in each of them. The binary substrates
+    // convert by VALUE, so they validated and canonicalized for free;
+    // decimal-arithmetic mapped the token straight onto a character list,
+    // so &abc silently built a cons list of letters that no rule can
+    // reduce, and &007 built the non-canonical <007>, which renders as a
+    // raw digit list and is a different node than &7.
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        SUBCASE("leading zeros are stripped")
+        {
+            collector.clear();
+            interactive.process(R"js(%(string "LZ-" (= (zelph/number "007") (zelph/number "7"))))js");
+            interactive.process(R"js(%(string "LZ0-" (= (zelph/number "000") (zelph/number "0"))))js");
+            CHECK(any_output_contains(collector, "LZ-true"));
+            CHECK(any_output_contains(collector, "LZ0-true"));
+        }
+        SUBCASE("a leading-zero literal computes like its canonical form")
+        {
+            collector.clear();
+            interactive.process("? &007 + &1");
+            CHECK(any_output_contains(collector, "(&7 + &1) = &8"));
+        }
+        SUBCASE("non-digits are rejected, not silently turned into a list")
+        {
+            // Caught inside Janet on purpose: letting the error escape to
+            // process() would print a stack trace into the test log that
+            // reads like a failure.
+            collector.clear();
+            interactive.process(R"js(%(string "REJ-A-" (try (do (zelph/number "abc") false) ([e] true))))js");
+            interactive.process(R"js(%(string "REJ-B-" (try (do (zelph/number "1.5") false) ([e] true))))js");
+            interactive.process(R"js(%(string "REJ-C-" (try (do (zelph/number "-5") false) ([e] true))))js");
+            interactive.process(R"js(%(string "REJ-D-" (try (do (zelph/number "") false) ([e] true))))js");
+            CHECK(any_output_contains(collector, "REJ-A-true"));
+            CHECK(any_output_contains(collector, "REJ-B-true"));
+            CHECK(any_output_contains(collector, "REJ-C-true"));
+            CHECK(any_output_contains(collector, "REJ-D-true"));
+        } });
 }
