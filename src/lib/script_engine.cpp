@@ -384,6 +384,13 @@ public:
         janet_def(_janet_env, "zelph/load", wrap((JanetCFunction)janet_cfun_zelph_load), "(zelph/load file)\nLoad a saved network (.bin) or import a Wikidata JSON dump "
                                                                                          "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. Main thread only.");
 
+        janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)janet_cfun_zelph_run), "(zelph/run)\nRun forward chaining to a fixed point, like the .run command. "
+                                                                                       "Needed when driving zelph as a library: facts and rules created from Janet only take effect once the engine has run, "
+                                                                                       "and outside the REPL neither .run nor auto-run is reachable. Returns nil. Main thread only.");
+
+        janet_def(_janet_env, "zelph/run-once", wrap((JanetCFunction)janet_cfun_zelph_run_once), "(zelph/run-once)\nRun a single inference pass, like the .run-once command. "
+                                                                                                 "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only.");
+
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
         janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether a fact exists without creating it. Returns boolean.");
@@ -1970,6 +1977,50 @@ public:
     static Janet janet_cfun_zelph_load(int32_t argc, Janet* argv)
     {
         return command_impl(argc, argv, "zelph/load", ".load");
+    }
+
+    // Same delegation as command_impl, for the REPL commands that take no
+    // argument. Kept separate rather than making the argument optional,
+    // because the arity check is what tells a caller which of the two it is.
+    static Janet command_noarg_impl(int32_t argc, Janet* argv, const char* name, const char* command)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
+
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+
+        if (!s_instance->_command_handler)
+            janet_panicf("%s: no command handler registered (script engine not fully initialized)", name);
+
+        std::string err;
+        try
+        {
+            s_instance->_command_handler({command});
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("%s: %s", name, err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Run the inference engine. Without this, a program that drives zelph as
+    // a library can assert facts and define rules from Janet but cannot ask
+    // for their consequences: forward chaining is otherwise reached only
+    // through the .run command or through auto-run at the end of a Janet
+    // block, neither of which exists outside the REPL.
+    static Janet janet_cfun_zelph_run(int32_t argc, Janet* argv)
+    {
+        return command_noarg_impl(argc, argv, "zelph/run", ".run");
+    }
+
+    static Janet janet_cfun_zelph_run_once(int32_t argc, Janet* argv)
+    {
+        return command_noarg_impl(argc, argv, "zelph/run-once", ".run-once");
     }
 
     // Execute a query: print the pattern and trigger matching via apply_rule.

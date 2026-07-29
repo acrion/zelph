@@ -2,7 +2,7 @@
 
 zelph embeds [Janet](https://janet-lang.org), a lightweight functional programming language, as its scripting layer. Janet serves as the programmatic backbone behind zelph's syntax: every zelph statement is parsed into a Janet expression before execution. This integration enables users to go beyond zelph's declarative syntax and use loops, conditionals, macros, and data structures to generate facts, rules, and queries programmatically.
 
-Importantly, Janet operates exclusively at _input time_ — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside.
+Importantly, Janet operates exclusively at _input time_ — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside. It may decide _when_ the engine runs — see [Running the engine](#running-the-engine) — but not how.
 
 ### Installing External Packages
 
@@ -350,6 +350,47 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
   This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "decimal-arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
   Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+
+##### Running the engine
+
+- **`(zelph/run)`**  
+  Run forward chaining to a fixed point, exactly like the `.run` command. Returns `nil`. Main thread only.
+
+- **`(zelph/run-once)`**  
+  Run a single inference pass, exactly like the `.run-once` command: derives what one application of the rules yields instead of iterating to a fixed point. Returns `nil`. Main thread only.
+
+Auto-run is tied to _processing an input line_: it fires after a statement, and after a Janet block closes. Code that only calls the Janet API — a program driving zelph as a library, or a long-running script that keeps asserting facts between queries — never triggers it, and so has to run the engine itself.
+
+Given this script:
+
+```
+.auto-run
+%(zelph/fact "socrates" "~" "human")
+%(zelph/rule [(zelph/fact 'X "~" "human")] (zelph/fact 'X "~" "mortal"))
+%(zelph/out (string "derived before run: " (zelph/exists "socrates" "~" "mortal")))
+%(zelph/run)
+%(zelph/out (string "derived after run: " (zelph/exists "socrates" "~" "mortal")))
+```
+
+the session reads:
+
+```
+zelph> Auto-run is now disabled.
+zelph-> <zelph/node «socrates» «~» «human»>
+zelph-> <zelph/node {(X «~» «human»)}>
+zelph-> derived before run: false
+zelph-> Starting reasoning with 24 worker threads.
+(socrates ~ mortal) ⇐ {(socrates ~ human)}
+Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0.
+Reasoning summary: 1 matches processed, 0 contradictions found.
+Parallel unifications activated for 0 distinct fixed relations.
+Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found.
+Ready.
+zelph-> derived after run: true
+zelph->
+```
+
+The rule is in the graph from the moment it is created, but its consequence only exists once the engine has run.
 
 ##### Persistence
 
@@ -941,6 +982,8 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)`         | Create inference rule                                                       |
 | `(cond1, cond2, cond3)`         | _(desugars to)_ set + `~ conjunction`               | Conjunction expression (comma sugar), evaluates to the conjunction set node |
 | `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |
+| `.run`                          | `(zelph/run)`                                       | Run forward chaining to a fixed point                                       |
+| `.run-once`                     | `(zelph/run-once)`                                  | Run a single inference pass                                                 |
 | `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
 | `&`-literal display             | `(zelph/set-number-digits ["0" "1" ...])`           | Register digit alphabet; digit lists display as decimal `&`-literals        |
 | `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |
