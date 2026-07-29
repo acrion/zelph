@@ -699,6 +699,24 @@ While a cluster is active, every node created is recorded in it: entities, relat
 
 The [neural network demo](neural.md) uses a cluster so that the entire experiment — layers, synapses, rules, and all deductions — can be removed with a single command, leaving the loaded dump untouched.
 
+A second, less obvious use is **silencing a contradiction you introduced on
+purpose**. With auto-run on, every input line starts a fresh reasoning run
+that re-derives everything, and a contradiction is announced on each of
+them — a derived fact stays quiet the second time because the fact already
+exists, but `!` materialises nothing there could be a second time of. So a
+demonstration contradiction keeps reappearing after every later, unrelated
+line. Wrapping it in a cluster and dropping the cluster removes the facts
+that caused it, and with them the repeated announcement:
+
+```
+.cluster demo
+:isprime &9                      # provokes the contradiction, once
+.cluster-drop demo               # ... and takes it back out again
+```
+
+(`.prune-facts` on the offending fact does the same job when a cluster is
+too coarse.)
+
 ### Exporting Derivations
 
 `.run-export <file>` performs full inference like `.run` and writes every

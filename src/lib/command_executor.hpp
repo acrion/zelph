@@ -80,6 +80,12 @@ namespace zelph::console
          */
         void execute(const std::vector<std::string>& cmd);
 
+        // Dispatch whatever is still half-read: an unterminated keyword
+        // block, zelph statement or Janet block. Called at the end of an
+        // imported script AND at end of input, because both are the point
+        // where "waiting for more lines" turns into "there are none".
+        void finish_input();
+
         /**
          * @brief Imports a zelph script file, processing it line by line.
          *

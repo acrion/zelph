@@ -191,6 +191,51 @@ public:
         register_commands();
     }
 
+    // Everything the line reader may still be holding on to. Both callers
+    // reach the same situation from different directions: a script's last
+    // line, and end of input in the REPL. The keyword handler's
+    // :incomplete veto does not apply any more -- there are no further
+    // lines to wait for -- so dispatch is forced, which turns an
+    // unterminated block into an error instead of silence.
+    void finish_input() const
+    {
+        if (_repl_state->accumulating_keyword)
+        {
+            std::string keyword               = _repl_state->active_keyword;
+            std::string text                  = _repl_state->keyword_buffer;
+            _repl_state->accumulating_keyword = false;
+            _repl_state->active_keyword.clear();
+            _repl_state->keyword_buffer.clear();
+            _repl_state->keyword_prev_blank = false;
+            _script_engine->invoke_keyword(keyword, text, /*force*/ true);
+        }
+
+        if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
+        {
+            const std::string buffered    = _repl_state->zelph_buffer;
+            const std::string transformed = _script_engine->parse_zelph_to_janet(buffered);
+            _repl_state->zelph_buffer.clear();
+            _repl_state->accumulating_zelph = false;
+
+            if (transformed.empty())
+            {
+                // Still incomplete with no more lines coming. Silence here
+                // meant a truncated script or paste looked like it had run.
+                throw std::runtime_error("Input ends inside an unfinished statement: " + string::trim(buffered));
+            }
+            _script_engine->process_janet(transformed, true);
+        }
+        _repl_state->accumulating_zelph = false;
+
+        if (!_repl_state->janet_buffer.empty())
+        {
+            _script_engine->process_janet(_repl_state->janet_buffer, false);
+            _repl_state->janet_buffer.clear();
+        }
+        _repl_state->accumulating_inline_janet = false;
+        _repl_state->script_mode               = ScriptMode::Zelph;
+    }
+
     void execute(const std::vector<std::string>& cmd)
     {
         if (cmd.empty()) return;
@@ -1120,39 +1165,7 @@ public:
                 _process_line_callback(line_utf8);
             }
 
-            // Flush an unterminated keyword block. EOF forces dispatch: the
-            // handler's :incomplete veto does not apply here - a script that
-            // ends inside a keyword block is a script bug, which invoke_keyword
-            // reports as an error under force.
-            if (_repl_state->accumulating_keyword)
-            {
-                std::string keyword               = _repl_state->active_keyword;
-                std::string text                  = _repl_state->keyword_buffer;
-                _repl_state->accumulating_keyword = false;
-                _repl_state->active_keyword.clear();
-                _repl_state->keyword_buffer.clear();
-                _repl_state->keyword_prev_blank = false;
-                _script_engine->invoke_keyword(keyword, text, /*force*/ true);
-            }
-
-            // Flush any remaining accumulated zelph statement (incomplete file would be a script bug)
-            if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
-            {
-                std::string transformed = _script_engine->parse_zelph_to_janet(_repl_state->zelph_buffer);
-                if (!transformed.empty())
-                    _script_engine->process_janet(transformed, true);
-                _repl_state->zelph_buffer.clear();
-            }
-            _repl_state->accumulating_zelph = false;
-
-            // Flush any remaining accumulated Janet code
-            if (!_repl_state->janet_buffer.empty())
-            {
-                _script_engine->process_janet(_repl_state->janet_buffer, false);
-                _repl_state->janet_buffer.clear();
-            }
-            _repl_state->accumulating_inline_janet = false;
-            _repl_state->script_mode               = ScriptMode::Zelph;
+            finish_input();
         }
 
         if (suspend.was_active())
@@ -1966,9 +1979,17 @@ private:
             {
                 throw std::runtime_error("Node '" + name_in_current_lang + "' does not exist");
             }
+            else if (node_in_target_lang == node_in_current_lang)
+            {
+                // Renaming a node to the name it already carries. Refusing
+                // it complained about the node itself -- "Name 'a' is
+                // already in use by node 11" where 11 IS 'a'.
+                _n->out("Node '" + name_in_current_lang + "' already has this name in language '" + target_lang + "'.", true);
+            }
             else if (node_in_target_lang != 0)
             {
-                throw std::runtime_error("Name '" + name_in_target_lang + "' is already in use by node " + std::to_string(node_in_target_lang));
+                throw std::runtime_error("Name '" + name_in_target_lang + "' is already in use by node " + std::to_string(node_in_target_lang)
+                                         + ". Names are unique per language; remove the other node or use a different name.");
             }
             else
             {
@@ -2540,20 +2561,9 @@ private:
     {
         size_t limit = 0;
         if (cmd.size() > 2) throw std::runtime_error("Command .list-predicate-usage accepts at most one optional argument (max entries)");
-        if (cmd.size() == 2)
-        {
-            try
-            {
-                size_t pos = 0;
-                limit      = std::stoull(cmd[1], &pos);
-                if (pos != cmd[1].length() || limit == 0)
-                    throw std::runtime_error("Could not parse max entries argument");
-            }
-            catch (...)
-            {
-                throw std::runtime_error("Invalid max entries argument");
-            }
-        }
+        // parse_count, not a hand-rolled stoull: the same negative-wraps-to-
+        // huge trap applies here, and one place to get it right is enough.
+        if (cmd.size() == 2) limit = string::parse_count(cmd[1]);
         if (_data_manager)
         {
             _data_manager->set_logging(false);
@@ -2571,20 +2581,7 @@ private:
 
         size_t             limit    = 0;
         const std::string& pred_arg = cmd[1];
-        if (cmd.size() == 3)
-        {
-            try
-            {
-                size_t pos = 0;
-                limit      = std::stoull(cmd[2], &pos);
-                if (pos != cmd[2].length() || limit == 0)
-                    throw std::runtime_error("Could not parse max entries argument");
-            }
-            catch (...)
-            {
-                throw std::runtime_error("Invalid max entries argument");
-            }
-        }
+        if (cmd.size() == 3) limit = string::parse_count(cmd[2]);
         if (_data_manager)
         {
             _data_manager->set_logging(false);
@@ -3329,6 +3326,11 @@ console::CommandExecutor::~CommandExecutor() = default;
 void console::CommandExecutor::execute(const std::vector<std::string>& cmd)
 {
     _pImpl->execute(cmd);
+}
+
+void console::CommandExecutor::finish_input()
+{
+    _pImpl->finish_input();
 }
 
 void console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args) const

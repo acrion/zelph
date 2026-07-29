@@ -30,6 +30,17 @@ SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
 
 Blank lines _inside_ a pasted query (for example between the `PREFIX` prologue and the `SELECT`) are harmless: the handler only executes once the query is structurally complete (a `SELECT` has been seen and all braces are balanced). Two consecutive blank lines force execution, which is useful to surface a syntax error in an incomplete paste.
 
+The end of the input does the same, so the query needs no terminating blank
+line when zelph is driven non-interactively:
+
+```bash
+printf '.import sparql\nsparql\nSELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }\n' | zelph
+```
+
+A query that is still incomplete when the input ends is reported as an
+error rather than dropped — a mistyped `SELECT` would otherwise look exactly
+like a query with no results.
+
 Results are printed as tab-separated rows. For nodes that carry names, both the Wikidata ID and the English label are shown when available, e.g. `Q703534 (employee)`.
 
 ## Supported Subset

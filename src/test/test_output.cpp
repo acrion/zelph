@@ -188,3 +188,53 @@ TEST_CASE("commands: an argument a command does not take is an error")
         interactive.process(".deductions all");
         interactive.process(".lang en"); });
 }
+
+TEST_CASE("naming: renaming a node to the name it already has is a no-op")
+{
+    // The uniqueness check did not exclude the node itself, so ".name a a"
+    // failed with "Name 'a' is already in use by node 11" -- where node 11
+    // is 'a'. An idempotent operation should say so, not complain about
+    // the very node it was pointed at.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel x");
+
+        collector.clear();
+        interactive.process(".name a a");
+        CHECK(any_output_contains(collector, "already has this name"));
+
+        // Still there, still reachable under that name.
+        collector.clear();
+        interactive.process("a rel X");
+        CHECK(answers_contain(collector, "a rel x"));
+
+        // A genuine collision is still refused.
+        interactive.process("b rel y");
+        CHECK_THROWS_WITH_AS(interactive.process(".name a b"),
+                             doctest::Contains("already in use"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("commands: a negative count is rejected, not wrapped")
+{
+    // std::stoull turns "-1" into 18446744073709551615 rather than failing,
+    // so ".list -1" announced "Listing 18446744073709551615 nodes" and
+    // ".out node -1" quietly meant "all of them". Every count argument goes
+    // through one parser now, and that parser looks at the sign.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        interactive.process("a rel b");
+
+        for (const char* cmd : {".list -1", ".clist -1", ".out a -1", ".in b -1",
+                                ".list-predicate-usage -1", ".list-predicate-value-usage rel -1"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(cmd),
+                                 doctest::Contains("positive number"),
+                                 std::runtime_error);
+        }
+
+        // Zero was already refused and stays refused; a real count works.
+        CHECK_THROWS_AS(interactive.process(".list 0"), std::runtime_error);
+        interactive.process(".list 2"); });
+}

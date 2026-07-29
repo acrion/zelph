@@ -181,3 +181,50 @@ TEST_CASE("inline keyword: error cases")
             CHECK_THROWS_AS(interactive.process("$( x ) ~ y"), std::runtime_error);
         } });
 }
+
+TEST_CASE("input end: a half-read block is dispatched, not discarded")
+{
+    // process_file flushed an unterminated keyword block, multi-line
+    // statement or Janet block at the end of a script; the REPL loop did
+    // not, so the same input ran from a FILE and vanished from stdin. That
+    // is the shape of every "printf ... | zelph" verification, which made a
+    // query that never ran indistinguishable from one that found nothing.
+    //
+    // Interactive::finish_input is what both paths call now; here it stands
+    // in for reaching the end of the input.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a multi-line statement completes")
+        {
+            interactive.process("a rel");
+            interactive.process("b");
+            interactive.finish_input();
+
+            collector.clear();
+            interactive.process("a rel X");
+            CHECK(answers_contain(collector, "a rel b"));
+        }
+        SUBCASE("a Janet block runs")
+        {
+            interactive.process("%");
+            interactive.process("(zelph/fact \"j\" \"ran\" \"yes\")");
+            interactive.finish_input();
+
+            collector.clear();
+            interactive.process("j ran X");
+            CHECK(answers_contain(collector, "j ran yes"));
+        }
+        SUBCASE("an unfinished statement is reported")
+        {
+            interactive.process("(a rel");
+            CHECK_THROWS_WITH_AS(interactive.finish_input(),
+                                 doctest::Contains("unfinished statement"),
+                                 std::runtime_error);
+        }
+        SUBCASE("finishing twice is harmless")
+        {
+            interactive.process("a rel b");
+            interactive.finish_input();
+            interactive.finish_input();
+        } });
+}

@@ -50,6 +50,13 @@ namespace zelph::console
         static std::string get_version();
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;
+
+        // Dispatch whatever process() is still accumulating. Call this when
+        // the input ENDS: a piped session or a script that stops inside a
+        // keyword block, a multi-line statement or a Janet block would
+        // otherwise discard it without a word -- and "printf ... | zelph" is
+        // how zelph gets verified.
+        void               finish_input() const;
         void               process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
 
         void set_output_handler(io::OutputHandler output) const;

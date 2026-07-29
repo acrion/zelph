@@ -158,10 +158,17 @@ namespace zelph::string
         return it == container.end() ? key : it->second;
     }
 
+    // A positive count argument (".list 20", ".out node 5"). std::stoull
+    // WRAPS a negative literal into a huge unsigned instead of failing, so
+    // ".list -1" reported "Listing 18446744073709551615 nodes" -- rejecting
+    // the sign explicitly is the only way to tell the two apart afterwards.
     inline size_t parse_count(const std::string& str)
     {
         try
         {
+            if (str.empty() || str.front() == '-' || str.front() == '+')
+                throw std::exception();
+
             size_t pos = 0;
             size_t c   = std::stoull(str, &pos);
             if (pos != str.length() || c == 0)
@@ -170,7 +177,7 @@ namespace zelph::string
         }
         catch (...)
         {
-            throw std::runtime_error("Invalid count value");
+            throw std::runtime_error("Invalid count value '" + str + "': expected a positive number");
         }
     }
 

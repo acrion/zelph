@@ -198,6 +198,19 @@ int main(int argc, char** argv)
                 interactive.prompt(make_prompt(), false);
             }
 
+            // End of input is the last chance to dispatch a half-read block.
+            // Without this, "printf '...sparql\nSELECT ...' | zelph" ran the
+            // query when it came from a FILE and silently dropped it when it
+            // came from stdin.
+            try
+            {
+                interactive.finish_input();
+            }
+            catch (const std::exception& e)
+            {
+                interactive.err(e.what());
+            }
+
             interactive.out("");
         }
     }

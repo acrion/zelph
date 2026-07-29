@@ -1461,23 +1461,29 @@ namespace zelph::network
             // 2. Intern new name
             std::string_view sv = _string_pool.intern(name);
 
-            // 3. If another node currently owns that name, detach its forward mapping
-            // 3. If another node currently owns that name, detach its forward mapping
+            // 3. If another node currently owns that name, decide who keeps
+            //    what. A VARIABLE's name is purely cosmetic and
+            //    statement-scoped -- parsing resolves variables through the
+            //    scoped variable table, never through this map -- and every
+            //    statement makes fresh ones, so many nodes legitimately
+            //    carry the same variable name.
+            //
+            //    Both directions matter:
+            //      - a new owner must not strip an EARLIER VARIABLE's
+            //        display name, or every rule that used the same letter
+            //        would start rendering as «??»;
+            //      - a new VARIABLE must not take anything from a real node.
+            //        A graph with a node named "A" -- a Wikidata label can
+            //        be a single letter -- lost that name to the first query
+            //        mentioning A, and the node afterwards rendered as
+            //        "(?? ?? ??)": asking a question deleted data.
             auto rev_it = rev.find(sv);
             if (rev_it != rev.end() && rev_it->second != node)
             {
                 const Node previous_owner = rev_it->second;
+                const bool takes_over     = !(is_var(node) && !is_var(previous_owner));
 
-                // Variable nodes intentionally share display names: every
-                // statement creates fresh variable nodes, and their names are
-                // purely cosmetic and statement-scoped (parsing resolves
-                // variables through the scoped variable table, not through
-                // this map). Stealing the forward mapping here would strip
-                // the display name from the variables of every earlier rule
-                // that used the same variable name (they would render as
-                // «??»). Keep the previous owner's forward entry when it is
-                // a variable; the reverse entry stays last-wins.
-                if (!is_var(previous_owner))
+                if (takes_over && !is_var(previous_owner))
                 {
                     auto prev_fwd_it = fwd.find(previous_owner);
                     if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
@@ -1486,7 +1492,7 @@ namespace zelph::network
                     }
                 }
 
-                rev_it->second = node;
+                if (takes_over) rev_it->second = node;
             }
             else if (rev_it == rev.end())
             {

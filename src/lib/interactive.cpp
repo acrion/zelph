@@ -169,6 +169,11 @@ bool console::Interactive::is_auto_run_active() const
     return _pImpl->_repl_state->auto_run;
 }
 
+void console::Interactive::finish_input() const
+{
+    _pImpl->_command_executor->finish_input();
+}
+
 bool console::Interactive::is_accumulating() const
 {
     const auto& s = _pImpl->_repl_state;

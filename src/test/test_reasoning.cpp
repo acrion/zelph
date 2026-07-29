@@ -944,3 +944,27 @@ x foo x
         CHECK(any_output_contains(collector, "x foo x"));
         CHECK_FALSE(any_output_contains(collector, "foo ?")); });
 }
+
+TEST_CASE("naming: a query variable does not take a real node's name")
+{
+    // Variable names are cosmetic and statement-scoped, but they went into
+    // the same map as real names and won. A graph holding a node named "A"
+    // -- a single-letter Wikidata label is enough -- lost that name to the
+    // first query that mentioned the variable A, and the node afterwards
+    // rendered as "(?? ?? ??)". Asking a question deleted data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("alpha rel beta");
+        interactive.process(".name alpha A");
+
+        collector.clear();
+        interactive.process("A rel beta");
+        CHECK(answers_contain(collector, "A rel beta"));
+        CHECK_FALSE(any_output_contains(collector, "??"));
+
+        // The name still resolves to the node it was given to.
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Name in language"));
+        CHECK_FALSE(any_output_contains(collector, "No node found")); });
+}
