@@ -2525,6 +2525,18 @@ private:
         const std::string&    dir        = cmd[2];
         std::filesystem::path input_path = cmd[1];
 
+        // Up front, and with the whole path: the export runs one entity at a
+        // time on worker threads, where a filesystem_error is not a message
+        // but a std::terminate. A nested target directory used to abort the
+        // process the moment the first property entity arrived.
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec && !std::filesystem::is_directory(dir))
+        {
+            throw std::runtime_error("Command .wikidata-constraints: cannot create output directory '"
+                                     + dir + "': " + ec.message());
+        }
+
         // Specific Logic: This command strictly requires Wikidata capability.
         // We update the global manager to reflect this load context.
         _data_manager = io::DataManager::create(_n, input_path);

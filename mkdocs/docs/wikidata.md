@@ -244,4 +244,15 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
   ```
 
+  You get one `<property>.zph` per property entity — `P31.zph`, `P279.zph` and so on. Each `property constraint` (P2302) statement of that property appears in it with its raw JSON as a comment, so nothing from the dump is dropped, and two constraint types are additionally translated into rules that run:
+
+  | Constraint | Becomes |
+  | --- | --- |
+  | conflicts-with (Q21502838) | `(I <prop> Y, I <other> <value>) => !` — one rule per forbidden value, or one rule against the mere presence of the other property when the constraint names no value |
+  | none-of (Q52558054) | `(I <prop> <value>) => !` — one rule per forbidden value |
+
+  Everything else the constraint system defines — range, format, single-value, subject type and some forty more — is exported as commented JSON with the note `# (no existing zelph rule generator for this constraint type)`. Writing the rule is then yours; the comment block holds the qualifiers you need for it. A constraint whose qualifiers carry no usable value says so (`# No P2306 (conflict property) found`) rather than guessing.
+
+  The scripts start with `.lang wikidata` and speak in Q- and P-IDs, so import them into a network loaded from a dump. They define **contradiction rules**: importing one asserts nothing, it makes the violations of that constraint reportable by the next inference run.
+
 Please note that after executing a '.load' command, '.auto-run' is disabled. This means that any rules added will only be applied when inference is performed explicitly via the `.run`, `.run-once`, `.run-delta` or `.run-export` commands (see the Performing Inference section above).

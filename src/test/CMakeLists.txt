@@ -88,6 +88,7 @@ add_executable(zelph_tests
     test_symbolic_integers.cpp
     test_topoly.cpp
     test_var_closure.cpp
+    test_wikidata_constraints.cpp
     test_wikidata_import.cpp
     test_wikidata_qualifiers.cpp
 )

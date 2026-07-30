@@ -397,20 +397,44 @@ struct ConstraintInfo
         : short_desc(sd), long_desc(ld), generator(gen) {}
 };
 
-// Helper to extract ids from qualifier arrays (searches for "id":"Pxx" or "id":"Qxx")
+// The entity ids that one qualifier of a statement was given, in order.
+// `qualifier_key` arrives quoted, e.g. "\"P2306\"".
+//
+// Scanning for the key alone is not enough: it also matches the key of the
+// qualifiers object and the entry in "qualifiers-order", and the id search
+// that followed was unbounded, so a snak WITHOUT a value of its own -- a
+// novalue or somevalue snak, or a value that is a string rather than an
+// entity -- silently adopted the next id it could find, which belongs to a
+// different qualifier. A conflicts-with constraint whose P2306 is novalue
+// came out as the rule "(I P7777 Y, I Q5 Q5) => !", built from the Q-id of
+// the P2305 next to it.
+//
+// A snak names its own property, so "property":<key> visits exactly the
+// snaks of this qualifier, and the id has to lie before the next snak
+// begins.
 std::vector<std::string> extract_ids(const std::string& str, const std::string& qualifier_key)
 {
+    const std::string prop_tag  = "\"property\":" + qualifier_key;
+    const std::string next_snak = "\"property\":";
+    const std::string id_tag    = "\"id\":\"";
+
     std::vector<std::string> ids;
-    size_t                   pos    = 0;
-    std::string              id_tag = "\"id\":\"";
-    while ((pos = str.find(qualifier_key, pos)) != std::string::npos)
+    size_t                   pos = 0;
+    while ((pos = str.find(prop_tag, pos)) != std::string::npos)
     {
-        size_t start = str.find(id_tag, pos);
+        pos += prop_tag.size();
+
+        const size_t snak_end = str.find(next_snak, pos);
+        size_t       start    = str.find(id_tag, pos);
         if (start == std::string::npos) break;
+        if (snak_end != std::string::npos && start > snak_end) continue; // this snak has no entity value
+
         start += id_tag.size();
         size_t end = str.find('\"', start);
         if (end == std::string::npos) break;
         std::string id = str.substr(start, end - start);
+        // The statement's own id ("P9999$C1") is the one thing that can still
+        // follow the last snak of a statement that has no value.
         if (id.find('$') == std::string::npos)
         {
             ids.push_back(id);
@@ -451,14 +475,14 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             if (conflict_qs.empty())
             {
                 // No specific value: conflict with presence of conflict_p
-                result << "I " << id_str << " Y, I " << conflict_p << " Z => !" << std::endl;
+                result << "(I " << id_str << " Y, I " << conflict_p << " Z) => !" << std::endl;
             }
             else
             {
                 // One rule per forbidden value
                 for (const auto& q : conflict_qs)
                 {
-                    result << "I " << id_str << " Y, I " << conflict_p << " " << q << " => !" << std::endl;
+                    result << "(I " << id_str << " Y, I " << conflict_p << " " << q << ") => !" << std::endl;
                 }
             }
 
@@ -505,7 +529,7 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             // One rule per forbidden value
             for (const auto& q : forbidden_qs)
             {
-                result << "I " << id_str << " " << q << " => !" << std::endl;
+                result << "(I " << id_str << " " << q << ") => !" << std::endl;
             }
 
             return result.str();
@@ -570,8 +594,11 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
 
 void Wikidata::process_constraints(const std::string& line, std::string id_str, const std::string& dir)
 {
-    // Create directory if not exists
-    std::filesystem::create_directory(dir);
+    // The command handler has already created the tree; this is the
+    // belt-and-braces for a direct call. Non-throwing on purpose: this runs
+    // per entity on a worker thread, where an exception is a std::terminate.
+    std::error_code dir_ec;
+    std::filesystem::create_directories(dir, dir_ec);
 
     // Output file path
     std::string   filename = dir + "/" + id_str + ".zph";
