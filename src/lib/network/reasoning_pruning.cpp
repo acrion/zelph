@@ -79,13 +79,35 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
         _pImpl->remove(fact);
     }
 
+    size_t kept_core_nodes = 0;
+
     for (Node node : _nodes_to_prune)
     {
+        // The engine's own vocabulary is not data. A pattern as ordinary as
+        // "A ~ ->" binds A to every declared relation type, the core
+        // predicates among them, and deleting those leaves a network whose
+        // next negation or list fails deep inside the engine. Skipped rather
+        // than refused: a prune is a bulk operation, and aborting it halfway
+        // leaves a graph nobody asked for.
+        if (!get_core_name(node).empty())
+        {
+            ++kept_core_nodes;
+            --removed_nodes;
+            continue;
+        }
+
         // remove_node, not Impl::remove: the names have to go with the
         // node, exactly as for the .remove command. Without that the name
         // still resolved to the deleted node, so ".node <name>" answered
         // with an empty node that is no longer in the graph.
         remove_node(node);
+    }
+
+    if (kept_core_nodes > 0)
+    {
+        out_stream() << "Kept " << kept_core_nodes
+                     << " core node(s) that the pattern matched; they are part of the engine, not data."
+                     << std::endl;
     }
 
     _prune_mode       = false;

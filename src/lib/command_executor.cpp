@@ -1657,6 +1657,7 @@ private:
                         "Removes the specified node from the network, disconnecting all its edges\n"
                         "and cleaning all name mappings. The argument can be a node name (looked up in the current language)\n"
                         "or a numeric node ID.\n"
+                        "Core nodes of the engine ('~', '=>', '!', 'cons', ...) cannot be removed.\n"
                         "WARNING: This operation is destructive and irreversible!"},
 
             {".import", ".import <script> [args...]\n"
@@ -1811,7 +1812,9 @@ private:
 
             {".cleanup", ".cleanup\n"
                          "Removes all nodes that have no connections (isolated nodes).\n"
-                         "Also cleans up associated entries in name mappings."},
+                         "Also cleans up associated entries in name mappings.\n"
+                         "The engine's core nodes are exempt: several of them ('!', 'nil',\n"
+                         "'conjunction', 'negation') carry no edges until something uses them."},
 
             {".new", ".new\n"
                      "Clears the complete network, including node names. Re-initializes core nodes.\n"

@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -293,7 +294,14 @@ namespace zelph::network
             remove(from);
         }
 
-        void remove_isolated_nodes(size_t& removed_count)
+        // `is_protected` marks nodes that stay even when nothing points at
+        // them. The engine's own core nodes are such nodes: several of them
+        // (the contradiction marker, nil, the conjunction and negation tags)
+        // carry no edges in a fresh network, so a cleanup deleted them and
+        // the next rule using "!" failed with "requested node does not
+        // exist". Network itself does not know which nodes those are -- that
+        // is a Zelph concept, hence the predicate.
+        void remove_isolated_nodes(size_t& removed_count, const std::function<bool(Node)>& is_protected = {})
         {
             removed_count = 0;
 
@@ -315,7 +323,8 @@ namespace zelph::network
                 adjacency_set outgoing = get_right(n);
                 adjacency_set incoming = get_left(n);
 
-                if (outgoing.empty() && incoming.empty())
+                if (outgoing.empty() && incoming.empty()
+                    && !(is_protected && is_protected(n)))
                 {
                     isolated.push_back(n);
                 }

@@ -37,7 +37,14 @@ void Zelph::cleanup_isolated(size_t& removed_count) const
 
     invalidate_fact_structures_cache();
 
-    _pImpl->remove_isolated_nodes(removed_count);
+    // The core nodes are exempt. Four of them carry no edges in a fresh
+    // network -- the contradiction marker, nil, and the conjunction and
+    // negation tags -- so a plain .cleanup used to delete them, and the next
+    // rule concluding "!" then failed with "requested left node does not
+    // exist" until .new. They are the engine's own vocabulary, not data.
+    _pImpl->remove_isolated_nodes(removed_count,
+                                  [this](const Node nd)
+                                  { return !get_core_name(nd).empty(); });
 }
 
 size_t Zelph::cleanup_names() const
@@ -47,6 +54,16 @@ size_t Zelph::cleanup_names() const
 
 void Zelph::remove_node(Node node) const
 {
+    // Removing a core node leaves a network in which the next negation, list
+    // or contradiction fails deep inside the engine ("requested node does not
+    // exist"), with nothing pointing back at the command that caused it. The
+    // merge path has always protected them; this is the same rule for the
+    // removal path, which .remove reaches now that core spellings resolve.
+    if (const std::string core = get_core_name(node); !core.empty())
+    {
+        throw std::runtime_error("Node '" + core + "' is part of the engine's core vocabulary and cannot be removed");
+    }
+
     if (!_pImpl->exists(node))
     {
         throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));

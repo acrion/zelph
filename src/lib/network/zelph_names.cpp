@@ -508,6 +508,19 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
             return std::string(sv);
         }
 
+        // The operator spelling of a core node ranks ABOVE a name from
+        // another language, because it is what the parser accepts in every
+        // language -- the output stays re-enterable. Once "!" carried an
+        // English name, a query answer in the zelph language printed
+        // "contradiction is unsatisfiable", and re-entering that line created
+        // a new node named "contradiction" instead of addressing "!". A name
+        // in the CURRENT language still wins: that mapping was asked for, and
+        // it is re-enterable by construction.
+        if (const auto core_it = _core_names_by_node.find(node); core_it != _core_names_by_node.end())
+        {
+            return core_it->second;
+        }
+
         if (fallback)
         {
             if (lang != "en")
@@ -541,8 +554,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
             }
         }
 
-        auto it = _core_names_by_node.find(node);
-        return (it != _core_names_by_node.end()) ? it->second : "";
+        return "";
     };
 
     if (name_of_node_exclusive_depth > 0)
@@ -650,15 +662,25 @@ Node Zelph::get_node(const std::string& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
 
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
-    auto             lang_it = _pImpl->_node_of_name.find(lang);
-    if (lang_it == _pImpl->_node_of_name.end())
     {
-        return 0;
+        std::shared_lock lock(_pImpl->_mtx_node_of_name);
+        auto             lang_it = _pImpl->_node_of_name.find(lang);
+        if (lang_it != _pImpl->_node_of_name.end())
+        {
+            auto it = lang_it->second.find(name);
+            if (it != lang_it->second.end()) return it->second;
+        }
     }
 
-    auto it = lang_it->second.find(name);
-    return (it == lang_it->second.end()) ? 0 : it->second;
+    // The operator spellings of the core nodes ("~", "=>", "!", "cons", ...)
+    // are not name-map entries; the parser knows them, and so does node(),
+    // which consults the same table after the language map. Without this the
+    // non-creating lookup disagreed with the creating one: every command that
+    // takes a node by name refused the very predicate the line above had just
+    // used -- ".node ~" reported "No node found with name '~'". The order is
+    // node()'s: a name given in the current language wins over a core
+    // spelling.
+    return get_core_node(name);
 }
 
 void Zelph::register_core_node(Node n, const std::string& name)

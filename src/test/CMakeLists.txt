@@ -47,6 +47,7 @@ FetchContent_MakeAvailable(unordered_dense)
 add_executable(zelph_tests
     test_check_fact.cpp
     test_clusters.cpp
+    test_core_names.cpp
     test_derivation_export.cpp
     test_display_scheme.cpp
     test_explain.cpp

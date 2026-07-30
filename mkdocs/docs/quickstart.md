@@ -154,7 +154,7 @@ zelph provides powerful commands for targeted data removal:
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
   **Warning**: the deleted nodes lose **all** their connections, including facts unrelated to the pattern, and their names go with them – use with caution!
 
-- `.cleanup` – Removes all isolated nodes and cleans name mappings.
+- `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
 
 Example:
 
@@ -223,7 +223,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.remove <name|id>` – Remove a node (destructive: disconnects all edges and cleans names)
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
-- `.cleanup` – Remove isolated nodes and clean name mappings
+- `.cleanup` – Remove isolated nodes and clean name mappings (core nodes exempt)
 - `.new` – Clear the complete network and re-initialize the core nodes
 
 #### Clusters
