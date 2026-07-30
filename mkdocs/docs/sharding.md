@@ -14,7 +14,17 @@ Partial loading and sharding address this with three goals:
 2. **Enable cloud-native, on-demand access.** Host the network as many small objects on Hugging Face and fetch only the requested ranges over the network, without downloading multi-gigabyte files first.
 3. **Provide a foundation for external tools.** Programmatic consumers can query specific parts of a hosted zelph graph without embedding zelph's full in-memory representation.
 
-A partial load always produces a **read-only, incomplete graph view**. Node and name lookups, adjacency inspection (`.out`, `.in`, `.node`), and statistics (`.stat`) work normally. Operations that require the full graph — inference (`.run`), pruning, cleanup, and destructive edits — are blocked while partial mode is active.
+A partial load always produces a **read-only, incomplete graph view**. Node and name lookups, adjacency inspection (`.out`, `.in`, `.node`), and statistics (`.stat`) work normally. Operations that require the full graph — inference (`.run`), pruning, cleanup, renaming, saving, and destructive edits — are blocked while partial mode is active, whether they are invoked as a command or through the Janet API.
+
+`.import` is **not** blocked: the query layers are ordinary scripts, and `.import sparql` on a partial view is exactly what one wants. A script that only defines things (which is what a query layer does) imports silently. One that adds facts to the view says so afterwards:
+
+```
+WARNING: 'examples/english' added 239 node(s) to a partial view.
+  Inference over them is blocked (.run), and the adjacency-index cache is
+  disabled for this session because the graph no longer matches its file.
+```
+
+Nothing is undone — the addition is as legitimate as a typed statement, which was always allowed — but the two consequences are worth knowing, and the second one is otherwise invisible.
 
 Partial loading has been available since version 0.9.6.
 

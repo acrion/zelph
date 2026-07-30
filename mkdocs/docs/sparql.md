@@ -28,6 +28,11 @@ SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
 
 ```
 
+The order of the first two lines does not matter, and both work on a
+[partially loaded](sharding.md) view as well: the script only defines functions
+and registers the `sparql` keyword, so importing it neither needs nor touches
+the graph.
+
 Blank lines _inside_ a pasted query (for example between the `PREFIX` prologue and the `SELECT`) are harmless: the handler only executes once the query is structurally complete (a `SELECT` has been seen and all braces are balanced). Two consecutive blank lines force execution, which is useful to surface a syntax error in an incomplete paste.
 
 The end of the input does the same, so the query needs no terminating blank

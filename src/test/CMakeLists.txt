@@ -53,6 +53,7 @@ add_executable(zelph_tests
     test_fact_cache.cpp
     test_genuine_structure.cpp
     test_hf_cache.cpp
+    test_import_guard.cpp
     test_inline_keyword.cpp
     test_integers.cpp
     test_jacobian.cpp

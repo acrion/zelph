@@ -1080,13 +1080,33 @@ public:
         // here), so `zelph examples/english` works like `.import`.
         const std::string resolved = resolve_script_path(file);
 
+        // A partial view is incomplete, so a script that ADDS to it deserves a
+        // word -- but most scripts only define things. Which of the two it is
+        // shows in the node count, and that is also the honest measure: it
+        // counts what actually reached the graph, not what the file looks
+        // like. Blocking .import outright instead made the layered query
+        // languages unusable on a partial view (`.import sparql` after
+        // `.load-partial`), while protecting nothing: every operation that
+        // would be wrong on an incomplete graph -- inference, pruning,
+        // cleanup, renaming, saving -- is refused on its own, from Janet as
+        // well, and a plain typed statement was always allowed.
+#ifndef __EMSCRIPTEN__
+        const bool warn_about_writes = _repl_state && _repl_state->partial_load_mode
+                                    && _repl_state->import_depth == 0;
+#else
+        const bool warn_about_writes = false; // no partial loading in the wasm build
+#endif
+        const network::Node nodes_before = warn_about_writes ? _n->count() : 0;
+
+        std::vector<std::string> module_ids;
+
         // Import guard for .zph scripts (Janet scripts are runnable programs
         // that may legitimately be executed repeatedly, e.g. with different
         // arguments -- they are exempt).
         if (std::filesystem::path(resolved).extension() != ".janet")
         {
-            const std::vector<std::string> module_ids = scan_module_ids(resolved);
-            const std::string&             self       = module_ids.front(); // default ID
+            module_ids                   = scan_module_ids(resolved);
+            const std::string& self      = module_ids.front(); // default ID
 
             for (const auto& id : module_ids)
             {
@@ -1121,6 +1141,26 @@ public:
             for (const auto& id : module_ids)
                 _repl_state->imported_module_ids.emplace(id, self);
         }
+
+        // ... and release the claim again unless the import runs to
+        // completion. A script that threw halfway used to keep its IDs, so
+        // importing it again after the fix reported "Skipping already
+        // imported" and did nothing: the only way out was .new. What is left
+        // behind now is what the lines before the error did, and the next
+        // attempt runs.
+        struct ModuleIdClaim
+        {
+            ReplState&                      state;
+            const std::vector<std::string>& ids;
+            bool                            committed = false;
+
+            ~ModuleIdClaim()
+            {
+                if (committed) return;
+                for (const auto& id : ids)
+                    state.imported_module_ids.erase(id);
+            }
+        } module_id_claim{*_repl_state, module_ids};
 
         // Nesting depth: suppresses the input echo inside imported scripts and
         // distinguishes direct from nested import requests (see the guard above).
@@ -1168,6 +1208,17 @@ public:
             }
 
             finish_input();
+        }
+
+        module_id_claim.committed = true;
+
+        if (warn_about_writes && _n->count() > nodes_before)
+        {
+            _n->error("WARNING: '" + file + "' added " + std::to_string(_n->count() - nodes_before)
+                          + " node(s) to a partial view.\n"
+                            "  Inference over them is blocked (.run), and the adjacency-index cache is\n"
+                            "  disabled for this session because the graph no longer matches its file.",
+                      true);
         }
 
         if (suspend.was_active())
@@ -1635,7 +1686,15 @@ private:
                         "  .import decimal-arithmetic\n"
                         "Subdirectories must be given explicitly:\n"
                         "  .import examples/english\n"
-                        "  .import examples/neural/nn-wikidata-demo"},
+                        "  .import examples/neural/nn-wikidata-demo\n"
+                        "\n"
+                        "On a partial view (.load-partial) importing is allowed - a query layer such\n"
+                        "as sparql only defines functions. A script that ADDS facts to the incomplete\n"
+                        "view is reported afterwards, since inference over them is blocked and the\n"
+                        "adjacency-index cache is disabled once the graph differs from its file.\n"
+                        "\n"
+                        "A script that fails halfway leaves what its earlier lines did, releases its\n"
+                        "module IDs again and can be imported once more after the fault is removed."},
 
             {".provides", ".provides <id> [id2 ...]\n"
                           "Claims one or more module IDs (lowercased) in the import registry.\n"
@@ -2942,7 +3001,7 @@ private:
 #endif
     void cmd_import(const std::vector<std::string>& cmd) const
     {
-        require_full_graph_mode(".import");
+        // Deliberately NOT gated by require_full_graph_mode: see import_file.
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         // Tokens after the script path are passed to the script as arguments.
         import_file(cmd[1], std::vector<std::string>(cmd.begin() + 2, cmd.end()));
