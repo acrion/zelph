@@ -39,7 +39,8 @@ namespace
     // output layer is linear (identity).
     std::vector<std::vector<double>> run_forward(const std::vector<std::vector<Node>>&   nodes,
                                                  const std::vector<std::vector<double>>& w,
-                                                 const std::vector<double>&              input)
+                                                 const std::vector<double>&              input,
+                                                 const std::vector<size_t>*              active_input)
     {
         if (input.size() != nodes.front().size())
         {
@@ -57,15 +58,29 @@ namespace
             const size_t n_post    = nodes[k + 1].size();
             const bool   is_output = (k + 2 == nodes.size());
 
+            // Only the input layer is known to be sparse; hidden activations
+            // are dense after a ReLU that most units pass.
+            const bool sparse = (k == 0 && active_input != nullptr);
+
             std::vector<double> out(n_post, 0.0);
             for (size_t j = 0; j < n_post; ++j)
             {
                 const double* row = w[k].data() + j * n_pre;
 
                 double sum = 0.0;
-                for (size_t i = 0; i < n_pre; ++i)
+                if (sparse)
                 {
-                    sum += row[i] * act[k][i];
+                    for (const size_t i : *active_input)
+                    {
+                        sum += row[i] * act[k][i];
+                    }
+                }
+                else
+                {
+                    for (size_t i = 0; i < n_pre; ++i)
+                    {
+                        sum += row[i] * act[k][i];
+                    }
                 }
                 out[j] = is_output ? sum : std::max(0.0, sum);
             }
@@ -152,16 +167,18 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
     return nn;
 }
 
-std::vector<double> NeuralNet::forward(const std::vector<double>& input) const
+std::vector<double> NeuralNet::forward(const std::vector<double>& input,
+                                       const std::vector<size_t>* active_input) const
 {
-    return run_forward(_nodes, _w, input).back();
+    return run_forward(_nodes, _w, input, active_input).back();
 }
 
 double NeuralNet::train_step(const std::vector<double>& input,
                              const std::vector<double>& target,
-                             const double               learning_rate)
+                             const double               learning_rate,
+                             const std::vector<size_t>* active_input)
 {
-    const auto  act = run_forward(_nodes, _w, input);
+    const auto  act = run_forward(_nodes, _w, input, active_input);
     const auto& out = act.back();
 
     if (target.size() != out.size())
@@ -190,10 +207,28 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
         std::vector<double> prev_delta(n_pre, 0.0);
 
+        // At the input layer prev_delta is not needed and the update is
+        // proportional to pre[i], so an inactive input contributes nothing:
+        // `row[i] -= lr * delta * 0` leaves the weight bit for bit as it was.
+        // Skipping those is what makes a wide sparse input layer trainable.
+        const bool sparse = (k == 0 && active_input != nullptr);
+
         for (size_t j = 0; j < n_post; ++j)
         {
             double*        row  = _w[k].data() + j * n_pre;
             const uint8_t* mask = _mask[k].data() + j * n_pre;
+
+            if (sparse)
+            {
+                for (const size_t i : *active_input)
+                {
+                    if (mask[i]) // only existing synapses are trainable
+                    {
+                        row[i] -= learning_rate * delta[j] * pre[i];
+                    }
+                }
+                continue;
+            }
 
             for (size_t i = 0; i < n_pre; ++i)
             {
@@ -265,16 +300,40 @@ std::vector<double> NeuralNet::encode(const size_t layer, const std::vector<std:
     return v;
 }
 
+std::vector<size_t> NeuralNet::active_indices(const size_t layer, const std::vector<std::pair<Node, double>>& active) const
+{
+    const auto& index = _index.at(layer);
+
+    std::vector<size_t> out;
+    out.reserve(active.size());
+    for (const auto& [node, activation] : active)
+    {
+        const auto it = index.find(node);
+        if (it != index.end()) out.push_back(it->second);
+    }
+    // encode() rejects a node that is not a member, so a missing one has
+    // already thrown by the time this is used. Sorting and de-duplicating
+    // keeps the summation order and the slot count identical to the dense
+    // pass, which is what makes the two produce the same number.
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 double NeuralNet::train_nodes(const std::vector<std::pair<Node, double>>& input,
                               const std::vector<std::pair<Node, double>>& target,
                               const double                                learning_rate)
 {
-    return train_step(encode(0, input), encode(_nodes.size() - 1, target), learning_rate);
+    const std::vector<double> in     = encode(0, input);
+    const std::vector<size_t> active = active_indices(0, input);
+    return train_step(in, encode(_nodes.size() - 1, target), learning_rate, &active);
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std::pair<Node, double>>& input) const
 {
-    const std::vector<double> out = forward(encode(0, input));
+    const std::vector<double> in     = encode(0, input);
+    const std::vector<size_t> active = active_indices(0, input);
+    const std::vector<double> out    = forward(in, &active);
 
     const std::vector<Node>& outputs = _nodes.back();
 

@@ -54,11 +54,17 @@ namespace zelph::network
         size_t                   layer_count() const { return _nodes.size(); }
         const std::vector<Node>& layer_nodes(size_t layer) const { return _nodes.at(layer); }
 
-        std::vector<double> forward(const std::vector<double>& input) const;
+        // `active_input`, when given, lists the indices of the non-zero input
+        // slots. It is an optimisation only: the result is the value the
+        // dense pass produces, because the skipped terms are multiplications
+        // by zero.
+        std::vector<double> forward(const std::vector<double>& input,
+                                    const std::vector<size_t>* active_input = nullptr) const;
 
         double train_step(const std::vector<double>& input,
                           const std::vector<double>& target,
-                          double                     learning_rate);
+                          double                     learning_rate,
+                          const std::vector<size_t>* active_input = nullptr);
 
         void write_back(Zelph& z) const;
 
@@ -92,6 +98,13 @@ namespace zelph::network
 
     private:
         NeuralNet() = default;
+
+        // Sorted indices of the active input slots. The node-addressed entry
+        // points know which inputs are non-zero; passing that on lets the
+        // input layer cost O(active) instead of O(width), which is what makes
+        // a wide sparse input layer usable at all. Sorted, so a sparse pass
+        // sums in the same order a dense one does and returns the same value.
+        std::vector<size_t> active_indices(size_t layer, const std::vector<std::pair<Node, double>>& active) const;
 
         std::vector<std::vector<Node>>    _nodes;
         std::vector<std::vector<double>>  _w;
