@@ -450,12 +450,19 @@ private:
 
     struct BinHeaderStats
     {
-        uint32_t left_chunk_count   = 0;
-        uint32_t right_chunk_count  = 0;
-        uint32_t name_of_node_count = 0;
-        uint32_t node_of_name_count = 0;
-        uint64_t file_size_bytes    = 0;
+        uint32_t left_chunk_count    = 0;
+        uint32_t right_chunk_count   = 0;
+        uint32_t name_of_node_count  = 0;
+        uint32_t node_of_name_count  = 0;
+        uint64_t file_size_bytes     = 0;
+        uint64_t header_length_bytes = 0;
     };
+
+    // Smallest number of bytes a chunk message can occupy. A packed Cap'n
+    // Proto message begins with its segment table, so nothing below this is
+    // possible; only used to reject a header that declares more chunks than
+    // the file could ever hold.
+    static constexpr uint64_t kMinimumChunkBytes = 8;
 
     struct BinChunkRef
     {
@@ -476,6 +483,22 @@ private:
         std::vector<BinChunkRef> name_of_node_chunks;
         std::vector<BinChunkRef> node_of_name_chunks;
     };
+
+    // Cap'n Proto and kj report through kj::Exception, whose what() carries a
+    // C++ source location and a hex stack trace. Neither means anything to
+    // someone who typed a file name, and the two failures they cover here --
+    // the file is not a zelph .bin at all, or it stops in the middle -- are
+    // exactly what such a person needs told.
+    [[noreturn]] static void rethrow_bin_error(const std::string&   command,
+                                               const std::string&   filename,
+                                               const kj::Exception& e)
+    {
+        const std::string detail(e.getDescription().cStr());
+        throw std::runtime_error(
+            "Command " + command + ": '" + filename
+            + "' is not a readable zelph .bin file (truncated, or not a .bin at all): "
+            + detail);
+    }
 
     static ::capnp::ReaderOptions make_bin_reader_options()
     {
@@ -498,23 +521,47 @@ private:
             BinHeaderStats stats;
             stats.file_size_bytes = std::filesystem::file_size(filename);
 
-            kj::FdInputStream              raw_input(fileno(file));
-            kj::BufferedInputStreamWrapper buffered_input(raw_input);
+            kj::FdInputStream           raw_input(fileno(file));
+            CountingBufferedInputStream counting_input(raw_input);
 
-            ::capnp::ReaderOptions options;
-            options.traversalLimitInWords = 1ULL << 32;
-            options.nestingLimit          = 128;
+            auto options = make_bin_reader_options();
 
-            ::capnp::PackedMessageReader main_message(buffered_input, options);
-            auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
+            {
+                ::capnp::PackedMessageReader main_message(counting_input, options);
+                auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
 
-            stats.left_chunk_count   = impl.getLeftChunkCount();
-            stats.right_chunk_count  = impl.getRightChunkCount();
-            stats.name_of_node_count = impl.getNameOfNodeChunkCount();
-            stats.node_of_name_count = impl.getNodeOfNameChunkCount();
+                stats.left_chunk_count   = impl.getLeftChunkCount();
+                stats.right_chunk_count  = impl.getRightChunkCount();
+                stats.name_of_node_count = impl.getNameOfNodeChunkCount();
+                stats.node_of_name_count = impl.getNodeOfNameChunkCount();
+            }
+            // Measured after the reader is gone; see read_bin_index_data.
+            stats.header_length_bytes = counting_input.bytes_read();
+
+            // The counts are whatever the header says. They are believed
+            // everywhere downstream, so rule out the ones the file cannot
+            // possibly back -- a corrupted header that still parses declares
+            // chunk counts in the billions.
+            const uint64_t declared = static_cast<uint64_t>(stats.left_chunk_count)
+                                    + stats.right_chunk_count
+                                    + stats.name_of_node_count
+                                    + stats.node_of_name_count;
+            if (stats.header_length_bytes + declared * kMinimumChunkBytes > stats.file_size_bytes)
+            {
+                // No fclose here: the catch(...) below owns the handle.
+                throw std::runtime_error(
+                    "Command .stat-file: '" + filename + "' declares " + std::to_string(declared)
+                    + " chunks, which do not fit in " + std::to_string(stats.file_size_bytes)
+                    + " bytes -- the header is corrupted or the file is truncated");
+            }
 
             fclose(file);
             return stats;
+        }
+        catch (const kj::Exception& e)
+        {
+            fclose(file);
+            rethrow_bin_error(".stat-file", filename, e);
         }
         catch (...)
         {
@@ -621,6 +668,11 @@ private:
 
             fclose(file);
             return data;
+        }
+        catch (const kj::Exception& e)
+        {
+            fclose(file);
+            rethrow_bin_error(".index-file", filename, e);
         }
         catch (...)
         {
@@ -1105,8 +1157,8 @@ public:
         // arguments -- they are exempt).
         if (std::filesystem::path(resolved).extension() != ".janet")
         {
-            module_ids                   = scan_module_ids(resolved);
-            const std::string& self      = module_ids.front(); // default ID
+            module_ids              = scan_module_ids(resolved);
+            const std::string& self = module_ids.front(); // default ID
 
             for (const auto& id : module_ids)
             {
@@ -1832,12 +1884,18 @@ private:
             {".stat-file", ".stat-file <file.bin>\n"
                            "Reads only the serialized zelph header from the given .bin file and prints\n"
                            "file size and chunk counts for left/right adjacency and name maps.\n"
-                           "Does not load the network into memory."},
+                           "Does not load the network into memory, and does not read a single chunk --\n"
+                           "which is what makes it instant on an 88 GB file, and also means that a file\n"
+                           "truncated after the header still reports the counts the header declares.\n"
+                           "Only a header whose counts cannot fit in the file at all is refused.\n"
+                           "Use .index-file when you need the chunks themselves verified."},
 
             {".index-file", ".index-file <file.bin> <output.json>\n"
                             "Scans a serialized zelph .bin file sequentially and emits a JSON sidecar\n"
                             "containing byte offsets and lengths for the header and each chunk section.\n"
-                            "Does not load the graph into the live network."},
+                            "Does not load the graph into the live network. Every chunk is read, so this\n"
+                            "is the command that notices a truncated or corrupted file -- at the cost of\n"
+                            "one pass over the whole file."},
 #endif
             {".licenses", ".licenses\n"
                           "Lists all third-party software embedded in zelph, including their versions and licenses."},
@@ -2918,6 +2976,11 @@ private:
         _n->out_stream() << "Node-of-Name Chunks: " << stats.node_of_name_count << std::endl;
         _n->out_stream() << "Total Chunks: " << total_chunks << std::endl;
         _n->out_stream() << "------------------------" << std::endl;
+        // The counts come from the header; nothing here read a chunk. That is
+        // the point on an 88 GB file, but it also means a file that stops
+        // after the header still reports them. .index-file walks the chunks
+        // and is what fails on such a file.
+        _n->out_stream() << "(declared by the header; use .index-file to verify the chunks)" << std::endl;
     }
     void cmd_index_file(const std::vector<std::string>& cmd)
     {

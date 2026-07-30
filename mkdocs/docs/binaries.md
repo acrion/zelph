@@ -59,18 +59,21 @@ Each section is divided into multiple chunks. For example, the pruned Wikidata 2
 Use `.stat-file` to get a quick overview of a file's chunk counts without loading it:
 
 ```
-zelph> .stat-file /path/to/file.bin
+zelph> .stat-file /path/to/wikidata-20260309-all-pruned.bin
 Serialized File Statistics:
 ------------------------
-File: /path/to/file.bin
-File Size: 5996414847 bytes
+File: /path/to/wikidata-20260309-all-pruned.bin
+File Size: 5996415596 bytes
 Left Chunks: 75
 Right Chunks: 75
 Name-of-Node Chunks: 21
 Node-of-Name Chunks: 21
 Total Chunks: 192
 ------------------------
+(declared by the header; use .index-file to verify the chunks)
 ```
+
+This reads the header and nothing else, which is what makes it instant on an 88 GB file — and is also its limit: a file that was cut off after the header still reports the counts the header declares. Only a header whose counts could not fit in the file at all is refused. A file that is not a serialized network, or is empty, is refused by name rather than with a Cap'n Proto backtrace.
 
 Use `.index-file` to generate a detailed JSON byte-offset index for every chunk:
 
@@ -79,7 +82,7 @@ zelph> .index-file /path/to/file.bin /tmp/index.json
 Wrote byte-offset index to /tmp/index.json
 ```
 
-The resulting JSON file lists the byte offset and length of each chunk within the `.bin` file. This is useful for understanding the internal layout and serves as the starting point for creating manifest files (see [Manifest-Based Loading](#manifest-based-loading) below).
+The resulting JSON file lists the byte offset and length of each chunk within the `.bin` file. This is useful for understanding the internal layout and serves as the starting point for creating manifest files (see [Manifest-Based Loading](#manifest-based-loading) below). Because it reads every chunk, it is also the command that notices a truncated or corrupted file — at the cost of one pass over the whole thing.
 
 ### Basic Partial Loading from a Local `.bin` File
 
