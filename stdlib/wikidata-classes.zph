@@ -1,0 +1,219 @@
+# wikidata-classes.zph - working with the Wikidata class hierarchy (P279)
+#
+# Everything here operates on P279 ("subclass of") facts in the wikidata
+# language. It works on a full Wikidata network, on a pruned one, and on a
+# class-hierarchy slice produced with
+#
+#   .save-predicates wikidata-<date>-P279.bin P279
+#
+# which contains nothing but those facts and the names of the classes they
+# connect -- see the "Wikidata class hierarchy" page of the documentation.
+#
+# Usage after importing this script:
+#
+#   %(culprits "Q215627" "Q43229")     ranked work list for a disjoint pair
+#   %(culprit-path "Q703534" "Q43229") the P279 chain that causes one entry
+#   %(class-report "Q7187")            one class: parents, subclass count
+#
+# The functions print through zelph's output pipeline and return nil, so
+# they can be used interactively and from scripts alike.
+#
+# Why Janet rather than rules: the questions below are about the transitive
+# closure of P279 over millions of edges. Materialising that closure as
+# facts is not tractable, so the work is delegated to the closure engine in
+# the zelph core (zelph/closure, zelph/closure-sources), which computes it
+# on demand over an adjacency index. The knowledge that Wikidata calls its
+# subclass relation P279 stays here in the script, not in the engine.
+
+.provides wikidata-classes
+
+%
+# ============================================================
+# 1. Small helpers
+# ============================================================
+
+(defn- wd
+  "Resolve a Wikidata ID in the wikidata language."
+  [id]
+  (zelph/resolve id "wikidata"))
+
+(defn- p279 [] (wd "P279"))
+
+(defn- label
+  "ID and English label of a node, in the form used by the SPARQL layer."
+  [nd]
+  (def id (zelph/name nd "wikidata"))
+  (def en (zelph/name nd "en"))
+  (cond
+    (and id en (not= id en)) (string id " (" en ")")
+    id                       id
+    en                       en
+    (string nd)))
+
+(defn- set-of [ind]
+  (def t @{})
+  (each x ind (put t x true))
+  t)
+
+(defn- in-set [ind s]
+  (filter (fn [x] (get s x)) ind))
+
+(defn- known-class?
+  "A node that takes part in no P279 fact at all is almost always a typo in
+   the ID, not a class without superclasses -- worth saying so."
+  [nd]
+  (def p (p279))
+  (or (not (empty? (zelph/targets nd p)))
+      (not (empty? (zelph/sources p nd)))))
+
+(defn- require-class [id]
+  (def nd (wd id))
+  (unless (known-class? nd)
+    (error (string "'" id "' takes part in no P279 fact in this network. "
+                   "Either the ID is wrong, or this network does not carry "
+                   "the class hierarchy.")))
+  nd)
+
+# ============================================================
+# 2. One class
+# ============================================================
+
+(defn class-report
+  "Print what the network knows about one class: its direct superclasses and
+   how many classes are below it."
+  [id]
+  (def p (p279))
+  (def c (require-class id))
+  (def parents (zelph/targets c p))
+  (def below (zelph/closure-sources c p false))
+
+  (def lines @[])
+  (array/push lines (string "Class: " (label c)))
+  (array/push lines (string "Subclasses (transitive): " (length below)))
+  (array/push lines (string "Direct superclasses: " (length parents)))
+  (each parent parents
+    (array/push lines (string "  P279 -> " (label parent))))
+  (zelph/out (string/join lines "\n"))
+  nil)
+
+# ============================================================
+# 3. Disjointness culprits
+# ============================================================
+# A "culprit" of a disjoint pair (A, B) is a class that is a subclass of
+# both -- which cannot be, if A and B are disjoint. Reporting all of them is
+# useless: the millions of counts in the literature are dominated by classes
+# that inherit the problem from a parent that is a culprit itself. What an
+# editor can act on is the TOPMOST culprits, the classes where the wrong
+# P279 edge actually sits, and among those the ones whose removal takes the
+# most other culprits with them.
+
+(defn culprit-set
+  "Every class below both A and B (array of nodes)."
+  [a-id b-id]
+  (def p (p279))
+  (def a (require-class a-id))
+  (def b (require-class b-id))
+  (in-set (zelph/closure-sources a p false)
+          (set-of (zelph/closure-sources b p false))))
+
+(defn culprits
+  "Print the topmost culprits of the disjoint pair (A, B), most consequential
+   first. The 'below' column counts how many culprits sit at or below that
+   class: removing the offending P279 edge there removes that many entries
+   from the report at once."
+  [a-id b-id &opt limit]
+  (default limit 25)
+  (def p (p279))
+  (def all (culprit-set a-id b-id))
+  (def all-set (set-of all))
+
+  # Topmost: no direct superclass is itself a culprit.
+  (def top
+    (filter (fn [c]
+              (not (some (fn [parent] (get all-set parent))
+                         (zelph/targets c p))))
+            all))
+
+  (def rows
+    (sorted (map (fn [c]
+                   [(length (in-set (zelph/closure-sources c p true) all-set)) c])
+                 top)
+            (fn [x y] (> (get x 0) (get y 0)))))
+
+  (def lines @[])
+  (array/push lines "below\tclass")
+  (var shown 0)
+  (each row rows
+    (when (< shown limit)
+      (array/push lines (string (get row 0) "\t" (label (get row 1))))
+      (++ shown)))
+  (array/push lines
+    (string/format "-- %d topmost culprit(s) of %d affected class(es); showing %d --"
+                   (length rows) (length all) shown))
+  (zelph/out (string/join lines "\n"))
+  nil)
+
+# ============================================================
+# 4. Why is this class a culprit?
+# ============================================================
+# The answer an editor needs is not "it is a subclass of both" but the chain
+# of P279 edges that says so -- one of them is the edit to make. Breadth-first
+# upwards from the class gives a shortest chain, which is the one that is
+# easiest to check by hand.
+
+(defn class-path
+  "Shortest chain of P279 steps from `from` up to `to`, as an array of nodes
+   beginning with `from` and ending with `to`, or nil if there is none."
+  [from-id to-id]
+  (def p (p279))
+  (def from (require-class from-id))
+  (def to (require-class to-id))
+
+  (if (= from to)
+    @[from]
+    (do
+      (def came-from @{from :root})
+      (def queue @[from])
+      (var head 0)
+      (var found false)
+
+      (while (and (not found) (< head (length queue)))
+        (def current (get queue head))
+        (++ head)
+        (each parent (zelph/targets current p)
+          (unless (get came-from parent)
+            (put came-from parent current)
+            (if (= parent to)
+              (set found true)
+              (array/push queue parent)))))
+
+      (when found
+        (def chain @[to])
+        (var current to)
+        (while (not= (get came-from current) :root)
+          (set current (get came-from current))
+          (array/push chain current))
+        (reverse chain)))))
+
+(defn culprit-path
+  "Print the shortest P279 chain from a class up to one of the two classes it
+   must not be a subclass of. Each arrow is one Wikidata statement; removing
+   any one of them breaks this particular derivation."
+  [from-id to-id]
+  (def chain (class-path from-id to-id))
+  (if (nil? chain)
+    (zelph/out (string "No P279 chain from " from-id " up to " to-id "."))
+    (do
+      (def lines @[])
+      (array/push lines (string "P279 chain, " (length chain) " class(es):"))
+      (var first true)
+      (each nd chain
+        (array/push lines (string (if first "  " "  -> ") (label nd)))
+        (set first false))
+      (zelph/out (string/join lines "\n"))))
+  nil)
+%
+
+# The import notice goes through the output pipeline; a bare string would be
+# read as an input echo, which imported scripts suppress.
+%(zelph/out "Wikidata class tools loaded: (culprits A B), (culprit-path X A), (class-report X).")

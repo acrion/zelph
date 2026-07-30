@@ -343,6 +343,8 @@ private:
 #ifndef __EMSCRIPTEN__
         _command_map[".save"] = [this](auto& c)
         { cmd_save(c); };
+        _command_map[".save-predicates"] = [this](auto& c)
+        { cmd_save_predicates(c); };
 #endif
         _command_map[".import"] = [this](auto& c)
         { cmd_import(c); };
@@ -1349,6 +1351,7 @@ private:
             "  .load <file>                              – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
             "  .load-partial <file|manifest> [...]       – Load selected chunks as a read-only partial view (see .help .load-partial)",
             "  .save <file.bin>                          – Save the current network to a binary file",
+            "  .save-predicates <file.bin> <pred> [...]  – Save only the facts of the given predicates (a slice)",
             "  .stat-file <file.bin>                     – Show serialized-file chunk statistics without loading the network",
             "  .index-file <file.bin> <json>             – Emit a JSON byte-offset index for a serialized .bin file",
 #endif
@@ -1706,6 +1709,26 @@ private:
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
                       "The filename must end with '.bin'."},
+
+            {".save-predicates", ".save-predicates <file.bin> <predicate> [<predicate> ...]\n"
+                                 "\n"
+                                 "Saves a SLICE of the current network: the facts of the named predicates,\n"
+                                 "the nodes those facts connect, and all names of those nodes. Everything\n"
+                                 "else is left behind. Predicates are named in the current language\n"
+                                 "(.lang) or given as node IDs.\n"
+                                 "\n"
+                                 "The result is an ordinary network file. Loading it needs a fraction of\n"
+                                 "the memory of the source and answers the same questions as long as they\n"
+                                 "only involve those predicates -- which is what makes a large graph\n"
+                                 "usable on a small machine.\n"
+                                 "\n"
+                                 "Relation-type declarations and the structure of nested facts travel\n"
+                                 "with the slice automatically; a fact of another predicate between two\n"
+                                 "retained nodes does not.\n"
+                                 "\n"
+                                 "Example (the Wikidata class hierarchy alone):\n"
+                                 "  .lang wikidata\n"
+                                 "  .save-predicates wikidata-20260309-P279.bin P279"},
 #endif
             {".prune-facts", ".prune-facts <pattern>\n"
                              "Removes only the matching facts (statement nodes).\n"
@@ -2889,6 +2912,32 @@ private:
 
         _n->save_to_file(file);
         _n->diagnostic("Saved network to " + file, true);
+    }
+
+    void cmd_save_predicates(const std::vector<std::string>& cmd)
+    {
+        require_full_graph_mode(".save-predicates");
+        if (cmd.size() < 3)
+            throw std::runtime_error("Command .save-predicates requires an output file (.bin) and at least one predicate");
+
+        const std::string& file = cmd[1];
+        if (!file.ends_with(".bin"))
+            throw std::runtime_error("Command .save-predicates: filename must end with '.bin'");
+
+        std::vector<network::Node> predicates;
+        for (size_t i = 2; i < cmd.size(); ++i)
+        {
+            const network::Node nd = resolve_node(cmd[i], _n->lang());
+            if (nd == 0)
+                throw std::runtime_error("Command .save-predicates: unknown predicate '" + cmd[i]
+                                         + "' in language '" + _n->lang() + "'");
+            predicates.push_back(nd);
+        }
+
+        const size_t facts = _n->save_predicate_slice(file, predicates);
+        _n->diagnostic("Saved " + std::to_string(facts) + " fact(s) of "
+                           + std::to_string(predicates.size()) + " predicate(s) to " + file,
+                       true);
     }
 #endif
     void cmd_import(const std::vector<std::string>& cmd) const

@@ -886,9 +886,45 @@ namespace zelph::network
 
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after partial load: " << _string_pool.size();
         }
-        void saveToFile(const std::string& filename) const
+        // Write the network, or the part of it that `keep` selects.
+        //
+        // A filtered save produces a smaller network that is complete in
+        // itself: the caller is responsible for handing in a node set that is
+        // structurally closed (see Zelph::save_predicate_slice), this function
+        // only drops everything else -- including the edges POINTING at
+        // dropped nodes, which is what keeps the result loadable.
+        void saveToFile(const std::string&                              filename,
+                        const ankerl::unordered_dense::set<Node>* const keep = nullptr) const
         {
             const size_t chunkSize = 1000000; // 1M entries per chunk
+
+            const auto kept = [keep](const Node nd)
+            { return keep == nullptr || keep->find(nd) != keep->end(); };
+
+            // Number of entries a section contributes under the filter.
+            const auto count_kept = [&kept](const auto& map, const size_t unfiltered, const bool filtering)
+            {
+                if (!filtering) return unfiltered;
+                size_t n = 0;
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.first)) ++n;
+                }
+                return n;
+            };
+
+            // Adjacency of one node, without the neighbours that were dropped.
+            const auto kept_neighbours = [&kept](const adjacency_set& adj)
+            {
+                std::vector<Node> sorted;
+                sorted.reserve(adj.size());
+                for (const Node nd : adj)
+                {
+                    if (kept(nd)) sorted.push_back(nd);
+                }
+                std::sort(sorted.begin(), sorted.end());
+                return sorted;
+            };
 
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _weights.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
@@ -921,10 +957,18 @@ namespace zelph::network
             impl.setLast(_last);
             impl.setLastVar(_last_var);
 
+            const bool filtering = keep != nullptr;
+
+            // Per-language entry counts under the filter; needed twice (chunk
+            // counts in the header, chunk sizes below), so computed once.
+            std::unordered_map<std::string, size_t> nameOfNodeKept;
+            std::unordered_map<std::string, size_t> nodeOfNameKept;
+
             size_t nameOfNodeChunkTotal = 0;
             for (const auto& langMap : _name_of_node)
             {
-                size_t mapSize = langMap.second.size();
+                size_t mapSize = count_kept(langMap.second, langMap.second.size(), filtering);
+                nameOfNodeKept[langMap.first] = mapSize;
                 nameOfNodeChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
             impl.setNameOfNodeChunkCount(static_cast<uint32_t>(nameOfNodeChunkTotal));
@@ -932,13 +976,27 @@ namespace zelph::network
             size_t nodeOfNameChunkTotal = 0;
             for (const auto& langMap : _node_of_name)
             {
+                // node_of_name is keyed by NAME; the node is the value, so the
+                // filter has to look at the other side of the pair.
                 size_t mapSize = langMap.second.size();
+                if (filtering)
+                {
+                    mapSize = 0;
+                    for (const auto& entry : langMap.second)
+                    {
+                        if (kept(entry.second)) ++mapSize;
+                    }
+                }
+                nodeOfNameKept[langMap.first] = mapSize;
                 nodeOfNameChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
             impl.setNodeOfNameChunkCount(static_cast<uint32_t>(nodeOfNameChunkTotal));
 
-            size_t leftChunkCount  = (_left.size() + chunkSize - 1) / chunkSize;
-            size_t rightChunkCount = (_right.size() + chunkSize - 1) / chunkSize;
+            const size_t leftKept  = count_kept(_left, _left.size(), filtering);
+            const size_t rightKept = count_kept(_right, _right.size(), filtering);
+
+            size_t leftChunkCount  = (leftKept + chunkSize - 1) / chunkSize;
+            size_t rightChunkCount = (rightKept + chunkSize - 1) / chunkSize;
             impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
             impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
 
@@ -953,15 +1011,16 @@ namespace zelph::network
                 chunk.setWhich("left");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, _left.size() - chunkIdx * chunkSize);
+                size_t thisChunkSize = std::min(chunkSize, leftKept - chunkIdx * chunkSize);
                 auto   pairList      = chunk.initPairs(thisChunkSize);
                 size_t pIdx          = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
                 {
+                    while (leftIt != _left.end() && !kept(leftIt->first)) ++leftIt;
+
                     pairList[pIdx].setNode(leftIt->first);
-                    std::vector<Node> sorted(leftIt->second.begin(), leftIt->second.end());
-                    std::sort(sorted.begin(), sorted.end());
-                    auto adj = pairList[pIdx].initAdj(sorted.size());
+                    const std::vector<Node> sorted = kept_neighbours(leftIt->second);
+                    auto                    adj    = pairList[pIdx].initAdj(sorted.size());
                     for (size_t j = 0; j < sorted.size(); ++j)
                     {
                         adj.set(j, sorted[j]);
@@ -980,15 +1039,16 @@ namespace zelph::network
                 chunk.setWhich("right");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, _right.size() - chunkIdx * chunkSize);
+                size_t thisChunkSize = std::min(chunkSize, rightKept - chunkIdx * chunkSize);
                 auto   pairList      = chunk.initPairs(thisChunkSize);
                 size_t pIdx          = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
                 {
+                    while (rightIt != _right.end() && !kept(rightIt->first)) ++rightIt;
+
                     pairList[pIdx].setNode(rightIt->first);
-                    std::vector<Node> sorted(rightIt->second.begin(), rightIt->second.end());
-                    std::sort(sorted.begin(), sorted.end());
-                    auto adj = pairList[pIdx].initAdj(sorted.size());
+                    const std::vector<Node> sorted = kept_neighbours(rightIt->second);
+                    auto                    adj    = pairList[pIdx].initAdj(sorted.size());
                     for (size_t j = 0; j < sorted.size(); ++j)
                     {
                         adj.set(j, sorted[j]);
@@ -1014,7 +1074,12 @@ namespace zelph::network
             {
                 std::string                                    lang = langMap.first;
                 const auto&                                    map  = langMap.second;
-                std::vector<std::pair<Node, std::string_view>> sorted(map.begin(), map.end());
+                std::vector<std::pair<Node, std::string_view>> sorted;
+                sorted.reserve(nameOfNodeKept[lang]);
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.first)) sorted.emplace_back(entry.first, entry.second);
+                }
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -1046,7 +1111,12 @@ namespace zelph::network
             {
                 std::string                                    lang = langMap.first;
                 const auto&                                    map  = langMap.second;
-                std::vector<std::pair<std::string_view, Node>> sorted(map.begin(), map.end());
+                std::vector<std::pair<std::string_view, Node>> sorted;
+                sorted.reserve(nodeOfNameKept[lang]);
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.second)) sorted.emplace_back(entry.first, entry.second);
+                }
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 

@@ -103,6 +103,7 @@ zelph ships with a standard library of scripts. When a script given to `.import`
 ```
 .import math                 # the whole mathematics stack in one import
 .import sparql               # SPARQL query interface
+.import wikidata-classes     # Wikidata class hierarchy: culprits, chains, reports
 .import decimal-arithmetic   # rule-based arithmetic, base 10 (+ - * / mod cmp ^)
 .import binary-arithmetic    # the same, base 2 (full-adder/subtractor axioms)
 .import binary-nand-arithmetic  # the same, derived from a single NAND axiom
@@ -182,6 +183,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.load <file>` – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)
 - `.load-partial <file|manifest> [...]` – Load selected chunks as a read-only partial view (see `.help .load-partial`)
 - `.save <file.bin>` – Save the current network to a binary file
+- `.save-predicates <file.bin> <predicate> [...]` – Save only the facts of the given predicates (a slice; see [Publishing a Predicate Slice](publishing-slices.md))
 - `.stat-file <file.bin>` – Show serialized-file chunk statistics without loading the network
 - `.index-file <file.bin> <json>` – Emit a JSON byte-offset index for a serialized .bin file
 

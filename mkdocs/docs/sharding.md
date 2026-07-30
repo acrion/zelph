@@ -29,7 +29,11 @@ A `.bin` file is a sequence of [Cap'n Proto](https://capnproto.org/) packed mess
 | `nameOfNode` | node ID → human-readable name, grouped by language   |
 | `nodeOfName` | human-readable name → node ID, grouped by language   |
 
-Each section is split into chunks of up to 1,000,000 entries. The `left` and `right` sections are keyed and ordered by node ID. The two name sections are grouped by language and ordered by their respective key: `nameOfNode` is sorted by node ID, `nodeOfName` is sorted by the name string.
+Each section is split into chunks of up to 1,000,000 entries.
+
+The two name sections are grouped by language and sorted within it: `nameOfNode` by node ID, `nodeOfName` by the name string. Their chunk boundaries are therefore key ranges, and a chunk can be located by its key.
+
+The `left` and `right` sections are **not** sorted. They are written in the order the nodes stand in the in-memory map, which for an imported network is roughly the order in which they were created; only the adjacency list inside each entry is sorted. `left=0` thus means "the first million nodes that were created", not an ID range, and there is no way to tell from a node ID which adjacency chunk holds it — that is what a [node route index](#route-selectors) is for.
 
 The header message records the number of chunks in each section (it is read by `.stat-file`). For example, the full Wikidata file has 984 left + 984 right + 204 nameOfNode + 204 nodeOfName = 2376 chunks; the pruned file has 75 + 75 + 21 + 21 = 192 chunks.
 

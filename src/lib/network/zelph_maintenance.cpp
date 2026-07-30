@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph_impl.hpp"
 
+#include <algorithm>
+
 using namespace zelph::network;
 
 void Zelph::cleanup_isolated(size_t& removed_count) const
@@ -120,6 +122,124 @@ size_t Zelph::rule_count() const
 void Zelph::save_to_file(const std::string& filename) const
 {
     _pImpl->saveToFile(filename);
+}
+
+// A slice is a network in its own right that contains the facts of the given
+// predicates, the nodes those facts connect, every name of those nodes, and
+// nothing else. It exists because the interesting questions about a large
+// graph rarely need all of it: the class hierarchy of Wikidata is 5.2 million
+// P279 facts inside 88 GB, and once it stands alone it fits in a fraction of
+// the memory while answering the same queries with the same engine.
+//
+// Two things have to travel with the facts or the result is a network that
+// looks complete and answers nothing:
+//
+//   * the relation-type declaration of each predicate -- fact structures are
+//     only reconstructed for declared predicates, so without it every query
+//     over the slice returns empty. It is addressed by its content hash
+//     rather than searched: core.IsA's adjacency holds every instance-of fact
+//     of a mapped Wikidata network, and scanning that to find one edge would
+//     cost a full pass over the graph.
+//   * the structural closure of everything retained -- a fact whose subject
+//     is itself a fact (a rule, a qualified statement) drags in the nodes it
+//     is built from, or the loaded slice has a node whose structure cannot be
+//     read back.
+size_t Zelph::save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates) const
+{
+    ankerl::unordered_dense::set<Node> keep{
+        core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction,
+        core.Cons, core.Nil, core.PartOf, core.Conjunction, core.Negation};
+
+    size_t facts = 0;
+
+    {
+        // Same lock order as the writers: left before right.
+        std::shared_lock<std::shared_mutex> lock_left(_pImpl->_smtx_left);
+        std::shared_lock<std::shared_mutex> lock_right(_pImpl->_smtx_right);
+
+        const auto exists_unlocked = [this](const Node nd)
+        { return _pImpl->_left.find(nd) != _pImpl->_left.end(); };
+
+        std::vector<Node> pending;
+
+        const auto retain = [&keep, &pending](const Node nd)
+        {
+            if (keep.insert(nd).second) pending.push_back(nd);
+        };
+
+        for (const Node p : predicates) retain(p);
+
+        // The declarations that make the predicates usable, including the
+        // core ones (a freshly constructed network re-creates those, but a
+        // load replaces the whole state, so they have to be in the file).
+        std::vector<Node> declared(predicates);
+        declared.insert(declared.end(), {core.IsA, core.Unequal, core.Causes, core.Cons, core.PartOf});
+        for (const Node nd : declared)
+        {
+            const Node declaration = create_hash(core.IsA, nd, {core.RelationTypeCategory});
+            if (exists_unlocked(declaration)) retain(declaration);
+        }
+
+        for (const Node p : predicates)
+        {
+            const auto rels_it = _pImpl->_right.find(p);
+            if (rels_it == _pImpl->_right.end()) continue;
+
+            for (const Node rel : rels_it->second)
+            {
+                const auto rel_left  = _pImpl->_left.find(rel);
+                const auto rel_right = _pImpl->_right.find(rel);
+                if (rel_left == _pImpl->_left.end() || rel_right == _pImpl->_right.end()) continue;
+
+                if (rel_left->second.count(p) == 0) continue;
+
+                // rel can also be a fact ABOUT p -- the declaration above, or
+                // "P279 is a transitive relation". Those carry p as their
+                // SUBJECT, which puts it on both sides of rel just like the
+                // predicate position does, so the two are told apart the same
+                // way the index builder does it: a fact OF p has a subject
+                // that is not p and stands on both sides of rel.
+                const bool is_fact_of_p =
+                    std::any_of(rel_left->second.begin(), rel_left->second.end(),
+                                [&](const Node candidate)
+                                { return candidate != p
+                                      && !Impl::is_var(candidate)
+                                      && rel_right->second.count(candidate) == 1; });
+                if (!is_fact_of_p) continue;
+
+                retain(rel);
+                ++facts;
+                for (const Node nd : rel_left->second) retain(nd);
+                for (const Node nd : rel_right->second) retain(nd);
+            }
+        }
+
+        // Structural closure: expand retained fact nodes until nothing new
+        // appears. Plain nodes are not expanded -- their adjacency is the
+        // rest of the graph, which is exactly what the slice leaves behind.
+        while (!pending.empty())
+        {
+            const Node nd = pending.back();
+            pending.pop_back();
+            if (!Impl::is_hash(nd)) continue;
+
+            const auto left_it = _pImpl->_left.find(nd);
+            if (left_it != _pImpl->_left.end())
+            {
+                for (const Node participant : left_it->second) retain(participant);
+            }
+
+            const auto right_it = _pImpl->_right.find(nd);
+            if (right_it != _pImpl->_right.end())
+            {
+                for (const Node participant : right_it->second) retain(participant);
+            }
+        }
+    }
+
+    _pImpl->saveToFile(filename, &keep);
+
+    return facts;
 }
 
 void Zelph::load_from_file(const std::string& filename) const

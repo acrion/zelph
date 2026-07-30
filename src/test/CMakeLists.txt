@@ -68,6 +68,7 @@ add_executable(zelph_tests
     test_partial_anchor.cpp
     test_polynomial.cpp
     test_pow.cpp
+    test_predicate_slice.cpp
     test_primes.cpp
     test_profiler.cpp
     test_pruning.cpp

@@ -442,6 +442,12 @@ namespace zelph::network
         void          remove_rules() const;
         size_t        rule_count() const;
         void          save_to_file(const std::string& filename) const;
+
+        /// Write a network containing only the facts of the given predicates,
+        /// the nodes they connect and the names of those nodes. Returns the
+        /// number of facts written. See the definition for what else has to
+        /// travel with them for the result to be a usable network.
+        size_t        save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates) const;
         void          load_from_file(const std::string& filename) const;
         void          load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
         void          load_from_manifest(const std::string&       manifest_path,

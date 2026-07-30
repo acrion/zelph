@@ -48,6 +48,8 @@ nav:
   - Binary Data Files: binaries.md
   - Sharding and Partial Loading: sharding.md
   - Use Case - Wikidata: wikidata.md
+  - Wikidata Class Hierarchy: class-hierarchy.md
+  - Publishing a Predicate Slice: publishing-slices.md
   - Wikidata Qualifiers: qualifiers.md
   - Internals:
       - Performance Architecture: internals/performance.md

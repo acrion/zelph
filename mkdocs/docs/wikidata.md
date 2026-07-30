@@ -29,6 +29,8 @@ This structural compatibility makes zelph well suited to analysing and enriching
 
 Since version 0.9.6, this extends to Wikidata's **statement layer**: qualifiers can be imported as reified statement structures and queried natively or via [SPARQL](sparql.md) — see [Wikidata Qualifiers](qualifiers.md).
 
+If you came here for the class hierarchy specifically — disjointness violations, which `P279` statement to change, and doing it without a 210 GB machine — start at [Working on the Wikidata Class Hierarchy](class-hierarchy.md).
+
 ## Technical Implementation
 
 ### Memory Efficiency
