@@ -41,7 +41,7 @@ This invariant matters for selection: it guarantees that the selector `nameOfNod
 
 Two consequences are worth keeping in mind:
 
-- Because `nameOfNode` is sorted by node ID and `nodeOfName` by name string, the same index in the two sections covers **different** sets. A node that appears in `nameOfNode` chunk 0 is not generally resolvable through `nodeOfName` chunk 0.
+- Because `nameOfNode` is sorted by node ID and `nodeOfName` by name string, the same index in the two sections covers **different** sets. A node that appears in `nameOfNode` chunk 0 is not generally resolvable through `nodeOfName` chunk 0. In a view that loaded only one of the two directions this is visible directly: `.clist` walks `nodeOfName` and will list nodes for which `.node` — which reads `nameOfNode` — reports no name, and the other way round.
 - Chunk indices are **file-local**. They are not guaranteed to be stable across regenerated `.bin` files, because chunk boundaries depend on map iteration order at save time.
 
 ## Inspecting a File Without Loading It
@@ -219,7 +219,7 @@ This writes an upload-ready artifact tree under `/tmp/file/`, mirroring the layo
 
 Shard filenames follow `chunk-<index>.capnp-packed` for the adjacency sections and `chunk-<index>-<lang>.capnp-packed` for the name sections. Because the local tree mirrors the advertised layout, uploading `/tmp/file/` to the repo as `file` publishes exactly the paths referenced by the manifest; the tool prints the matching `hf upload` command. Overriding `--shard-root` breaks this mirror and requires manual path mapping at upload time (the tool warns in that case).
 
-The manifest's `source.binPath` is advertised as `<hf-root>/<bin filename>` by default (override with `--bin-object-path`), so that pure-remote loads can fetch the `.bin` header without passing `source-bin=`. This assumes the source `.bin` is published at the repository root. For fully local use, pass `source-bin=<local .bin>` to `.load-partial`.
+The manifest's `source.binPath` is advertised as `<hf-root>/<bin filename>` by default (override with `--bin-object-path`), so that pure-remote loads can fetch the `.bin` header without passing `source-bin=`. This assumes the source `.bin` is published at the repository root. A local copy of that file next to the tree is used automatically (see [Where a Chunk Is Read From](#where-a-chunk-is-read-from)); `source-bin=` is only needed for a `.bin` kept elsewhere.
 
 ### Using a Manifest
 
@@ -231,13 +231,39 @@ zelph> .load-partial /path/to/file.hf-v2.json left=0 right=0
 
 Additional options for manifest mode:
 
-| Option              | Effect                                                            |
-| ------------------- | ----------------------------------------------------------------- |
-| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)    |
-| `shard-root=<path>` | Local directory containing pre-downloaded shard files             |
-| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg) |
+| Option              | Effect                                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)                |
+| `shard-root=<path>` | Directory holding the shards, when they are **not** next to the manifest      |
+| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg)             |
 
-When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them with `curl` and caches them in a temporary directory. If `shard-root` is set, zelph looks there first before downloading.
+### Where a Chunk Is Read From
+
+A chunk entry advertises an `objectPath`, which in the published artifacts is
+an `hf://` URL. That URL says where the object lives in the repository — it
+does not say that the network has to be used. zelph resolves it in this order
+and takes the first hit:
+
+1. the path as written, if it happens to be a local file;
+2. relative to the **manifest's own directory** — an artifact tree keeps
+   `shards/` next to the manifest, so a downloaded or freshly emitted tree
+   resolves without any further option;
+3. below `shard-root=`, if given;
+4. the remote object, fetched with `curl` and cached.
+
+Only step 4 touches the network, and it announces itself
+(`Shard left-0 has no local copy; fetching …`). `shard-root=` is therefore
+needed only when the shards were moved away from their manifest, and a purely
+local artifact never reaches the network — earlier versions went straight to
+step 4 whenever `shard-root=` was absent and downloaded files that were lying
+next to the manifest they had just read.
+
+The `.bin` named in `source.binPath` follows the same rule: if a file of that
+name exists next to the manifest or one directory above it (the layout of the
+published repository, where the `.bin` sits at the root and the artifact tree
+below it), the header is read from that file instead of over the network, and
+`source-bin=` is not needed. Passing `source-bin=` remains the way to point at
+a `.bin` kept somewhere else.
 
 ## Hosting on Hugging Face
 
@@ -319,7 +345,17 @@ transport layer is the later extension for instantaneous throughput and exact
 last-progress timestamps; its measurements will also inform shard sizing and
 the planned progressive query/join executor.
 
-If you have already downloaded the shards (for example via `huggingface-cli download`), point `shard-root` at the local copy to skip network access:
+If you have already downloaded the artifact (for example via
+`huggingface-cli download`), address the **local** manifest instead of the
+`hf://` one — the shards next to it are then read from disk and nothing goes
+over the network:
+
+```
+zelph> .load-partial /local/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json left=0 right=0
+```
+
+Only if the shards were separated from their manifest does the location have
+to be spelled out:
 
 ```
 zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all/wikidata-20260309-all.hf-v2.json \
@@ -393,6 +429,19 @@ A Cap'n Proto message can span multiple segments; the save path uses a 512 MiB f
 - Selecting a node in one section does not imply it is resolvable through the same index in another section, because the name sections are sorted by different keys.
 
 ## Performance
+
+What a manifest buys locally, measured on the published pruned artifact
+(`wikidata-20260309-all-pruned`, 75 left chunks, 6.0 GB) by loading its first
+left chunk and nothing else, alternating the two commands over two rounds:
+
+| Command                                                                       | Time            |
+| ----------------------------------------------------------------------------- | --------------- |
+| `.load-partial …-pruned.bin left=0 right=none nameOfNode=none nodeOfName=none` | 7.05 s / 7.10 s |
+| `.load-partial …-pruned.hf-v2.json left=0 right=none …` (shards on disk)       | 1.07 s / 1.03 s |
+
+Both produce the same 1,000,000-node view. The difference is the packed stream:
+the `.bin` path walks it from the beginning, the manifest path seeks — or, with
+shards, opens one small file.
 
 Observed timings for selective chunk access on the proof-of-concept artifact at [chbwa/zelph-sharded](https://huggingface.co/datasets/chbwa/zelph-sharded):
 

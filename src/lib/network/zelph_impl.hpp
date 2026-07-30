@@ -605,7 +605,7 @@ namespace zelph::network
 
             if (header_source.empty())
             {
-                throw std::runtime_error("Manifest requires --source-bin (or source.binPath in manifest)");
+                throw std::runtime_error("Manifest names no .bin: pass source-bin=<file> or add source.binPath to the manifest");
             }
 
             const uint32_t leftChunkCount       = static_cast<uint32_t>(manifest_description.left.chunks.size());
@@ -656,16 +656,29 @@ namespace zelph::network
 
             clear_loaded_state();
 
-            const bool  header_is_remote   = detail::is_hf_uri(header_source);
+            bool        header_is_remote   = detail::is_hf_uri(header_source);
             std::string header_source_path = header_source;
             if (header_is_remote)
             {
-                if (manifest_description.source_header_length_bytes == 0)
+                // Same rule as for the shards: a local copy of the named .bin
+                // beats fetching it. Finding it also turns a non-sharded
+                // manifest into plain seeks in that file instead of one
+                // ranged request per chunk.
+                if (const auto local_bin = detail::resolve_local_source_bin(local_manifest_path, header_source, shard_root);
+                    !local_bin.empty())
                 {
-                    throw std::runtime_error("Manifest headerLengthBytes required for remote source-bin loading");
+                    header_source_path = local_bin.string();
+                    header_is_remote   = false;
                 }
-                header_source_path =
-                    detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
+                else
+                {
+                    if (manifest_description.source_header_length_bytes == 0)
+                    {
+                        throw std::runtime_error("Manifest headerLengthBytes required for remote source-bin loading");
+                    }
+                    header_source_path =
+                        detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
+                }
             }
 
             FILE* file = detail::open_file_or_throw(header_source_path);
@@ -702,6 +715,45 @@ namespace zelph::network
                 return;
             }
 
+            // Where one chunk is read from. A sharded reference is looked up
+            // locally FIRST -- next to the manifest, then below shard-root --
+            // and only fetched from the remote object when no local copy
+            // exists. The published artifact tree contains manifest and
+            // shards together, so the previous "no shard-root means remote"
+            // rule downloaded files that were already on disk: 232 MB over
+            // the network for one chunk of the pruned network, 50x slower
+            // than reading it, with nothing in the output saying so.
+            auto chunk_source_path = [&](const detail::ManifestChunkRef& ref,
+                                         const bool                      is_sharded_ref,
+                                         const uint64_t                  source_offset,
+                                         const std::string&              cache_label) -> std::string
+            {
+                if (is_sharded_ref)
+                {
+                    try
+                    {
+                        return detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
+                    }
+                    catch (const std::exception&)
+                    {
+                        // A path that is not remote cannot be recovered from.
+                        if (!detail::is_hf_uri(ref.object_path)) throw;
+                    }
+
+                    io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                        << "Shard " << cache_label << " has no local copy; fetching " << ref.object_path;
+
+                    return detail::fetch_chunk_to_cache(ref.object_path, 0, ref.length, cache_label).string();
+                }
+
+                if (header_is_remote)
+                {
+                    return detail::fetch_chunk_to_cache(header_source, source_offset, ref.length, cache_label).string();
+                }
+
+                return header_source_path;
+            };
+
             if (leftSelectionPtr == nullptr || !leftSelection.empty())
             {
                 for (const auto& ref : manifest_description.left.chunks)
@@ -711,46 +763,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file =
-                                        detail::fetch_chunk_to_cache(ref.object_path, 0, source_length, "left-" + std::to_string(ref.chunk_index)).string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path, 0, source_length, "left-" + std::to_string(ref.chunk_index)).string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "left-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "left-" + std::to_string(ref.chunk_index));
 
                     try
                     {
@@ -780,52 +795,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "right-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                           0,
-                                                                           source_length,
-                                                                           "right-" + std::to_string(ref.chunk_index))
-                                                  .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "right-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "right-" + std::to_string(ref.chunk_index));
 
                     try
                     {
@@ -859,53 +831,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "nameOfNode-" + std::to_string(ref.chunk_index));
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "nameOfNode-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path,
-                                                                 0,
-                                                                 source_length,
-                                                                 "nameOfNode-" + std::to_string(ref.chunk_index))
-                                        .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "nameOfNode-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
                     try
                     {
                         loadNameOfNodeChunkFromPath(source_file, read_chunk_start, nameOfNodeSelectionPtr);
@@ -934,53 +862,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "nodeOfName-" + std::to_string(ref.chunk_index));
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "nodeOfName-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path,
-                                                                 0,
-                                                                 source_length,
-                                                                 "nodeOfName-" + std::to_string(ref.chunk_index))
-                                        .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "nodeOfName-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
                     try
                     {
                         loadNodeOfNameChunkFromPath(source_file, read_chunk_start, nodeOfNameSelectionPtr);

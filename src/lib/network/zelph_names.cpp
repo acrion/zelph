@@ -29,6 +29,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
+
 namespace
 {
     thread_local unsigned node_of_name_exclusive_depth = 0;
@@ -709,9 +711,15 @@ std::string Zelph::format(Node node) const
     return string::unmark_identifiers(result);
 }
 
+// A language counts as present when EITHER direction knows it. The two maps
+// only ever agree in a complete network; a partial load addresses nameOfNode
+// and nodeOfName as separate sections, so "nameOfNode=0 nodeOfName=none" used
+// to leave .stat reporting "Languages: 0" over a million loaded names.
+// Lock order is the one documented for the two maps: node_of_name first.
 std::vector<std::string> Zelph::get_languages() const
 {
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
 
     std::vector<std::string> result;
     result.reserve(_pImpl->_node_of_name.size());
@@ -719,6 +727,14 @@ std::vector<std::string> Zelph::get_languages() const
     for (const auto& [language, _] : _pImpl->_node_of_name)
     {
         result.push_back(language);
+    }
+
+    for (const auto& [language, _] : _pImpl->_name_of_node)
+    {
+        if (std::find(result.begin(), result.end(), language) == result.end())
+        {
+            result.push_back(language);
+        }
     }
 
     return result;
@@ -785,6 +801,7 @@ size_t Zelph::get_node_of_name_size(const std::string& lang) const
 
 size_t Zelph::language_count() const
 {
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
-    return _pImpl->_node_of_name.size();
+    // Same rule as get_languages(), so that a count and the list below it in
+    // .stat cannot contradict each other.
+    return get_languages().size();
 }
