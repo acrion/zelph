@@ -295,3 +295,52 @@ TEST_CASE("display: a name the grammar has a token for stays bare")
         CHECK(answers_contain(collector, "c => d"));
         CHECK_FALSE(any_output_contains(collector, "\"=>\"")); });
 }
+
+TEST_CASE("display: a fact used as a predicate keeps its structure")
+{
+    // A predicate that is itself a fact node is not a DECLARED relation
+    // type, so z->parse_relation could not name it and the whole line came
+    // out as "x ?? y" -- unusable as input, although the identical
+    // statement parses and matches perfectly well. Subject and objects
+    // already came from the recorded triple; only the predicate was still
+    // being reconstructed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+)");
+        CHECK(any_output_contains(collector, "x (a p b) y"));
+        CHECK_FALSE(any_output_contains(collector, "??"));
+
+        // The printed line is input again: re-entering it as a query must
+        // find the very fact that was printed.
+        collector.clear();
+        interactive.process("X (a p b) Y");
+        CHECK(answers_contain(collector, "x (a p b) y")); });
+}
+
+TEST_CASE("display: nested predicates render at every level")
+{
+    // Each level of this statement puts a fact in predicate position, so
+    // the failure was cumulative: the inner levels collapsed to "??" while
+    // subject and object of the outermost level still printed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
+        CHECK(any_output_contains(collector, "Level3 predicate Level3Object"));
+        CHECK(any_output_contains(collector, "Level2Object"));
+        CHECK(any_output_contains(collector, "Level1Object"));
+        CHECK_FALSE(any_output_contains(collector, "??")); });
+}
+
+TEST_CASE("display: a list in predicate position renders as a list")
+{
+    // "<=>" is read by the grammar as the list <=>, i.e. a cons cell, and a
+    // cons cell is no more a declared relation type than a fact node is.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a <=> b) is_type equivalence");
+        CHECK(any_output_contains(collector, "<=>"));
+        CHECK_FALSE(any_output_contains(collector, "??")); });
+}

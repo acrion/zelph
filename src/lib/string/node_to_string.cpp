@@ -606,7 +606,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 #endif
 
     network::adjacency_set objects;
-    network::Node          subject = 0;
+    network::Node          subject            = 0;
+    network::Node          recorded_predicate = 0;
 
     // Prefer the RECORDED structure over any reconstruction: the genuine-
     // structure store holds the exact triple fact() was called with, so
@@ -621,10 +622,26 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const network::FactStructure fs = network::get_preferred_structure(z, resolved, 3);
         if (fs.predicate != 0 && fs.subject != 0 && fs.subject != parent && !fs.objects.empty())
         {
-            subject = fs.subject;
-            objects = fs.objects;
+            subject            = fs.subject;
+            objects            = fs.objects;
+            recorded_predicate = fs.predicate;
         }
     }
+
+    // The predicate comes from the same recorded triple as subject and
+    // objects. z->parse_relation only recognises a predicate that is a
+    // DECLARED relation type, so a fact or cons node used as a predicate
+    // ("x (a p b) y", "deep_nesting ~ (Level1 (Level2 ...) Level1Object)")
+    // resolved to 0 and rendered as "??" -- a line that cannot be entered
+    // again, although the very same statement parses and matches as input.
+    // Where parse_relation succeeds it returns exactly fs.predicate, so
+    // nothing else changes; where no triple was recorded (a subject ==
+    // predicate fact, or a network whose stores a .load has disarmed) the
+    // reconstruction is still the only source.
+    const auto fact_predicate = [&]() -> network::Node
+    {
+        return recorded_predicate != 0 ? recorded_predicate : z->parse_relation(resolved);
+    };
 
     if (subject == 0) subject = z->parse_fact(resolved, objects, parent);
 
@@ -734,7 +751,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             return true;
         };
 
-        const network::Node rel_node = resolve_var(z->parse_relation(resolved));
+        const network::Node rel_node = resolve_var(fact_predicate());
         const std::string   rel_name = z->get_formatted_name(rel_node, lang);
         if (sugar_safe_name(rel_name) && !z->selffact_sugar_suppressed(rel_node))
         {
@@ -752,7 +769,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     const network::OperatorDisplay* op = nullptr;
     if (scheme_enabled && !is_negation && subject != 0 && objects.size() == 1 && !self_fact_sugar)
     {
-        const network::Node pred = resolve_var(z->parse_relation(resolved));
+        const network::Node pred = resolve_var(fact_predicate());
         const auto          it   = ctx->tables->operators.find(pred);
         if (it != ctx->tables->operators.end()) op = &it->second;
     }
@@ -810,7 +827,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         else
             subject_name = s_str.empty() ? (is_condition ? "" : string::mark_identifier("?")) : s_str;
 
-        network::Node relation = z->parse_relation(resolved);
+        network::Node relation = fact_predicate();
         // Recursion for Relation (usually just get name, but handle complex relations)
         // Here we can assume relations are mostly named or simple, preventing deep noise
         relation = resolve_var(relation);
@@ -967,7 +984,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // wrap the whole triple in parentheses to make it valid input syntax.
     else if (parent != 0 && resolved_is_stmt)
     {
-        network::Node pred = z->parse_relation(resolved);
+        network::Node pred = fact_predicate();
         if (pred != z->core.Cons) // lists are handled earlier; don't wrap "<...>"
             result = "(" + result + ")";
     }

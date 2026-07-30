@@ -64,15 +64,10 @@ atom_C <= atom_D
         CHECK(any_output_starts_with(collector, "atom_C <= atom_D")); });
 }
 
-// NOTE: <=> parsing is currently broken (displays as ??). Uncomment when fixed.
-// TEST_CASE("parsing: biconditional arrow")
-// {
-//     run_both_modes([](const auto& collector, const auto& interactive)
-//     {
-//         process_lines(interactive, "(a <=> b) is_type equivalence");
-//         CHECK(any_output_contains(collector, "<=>"));
-//     });
-// }
+// NOTE: there is no biconditional arrow in the grammar. `<=>` is read as the
+// list <=>, which then sits in predicate position; that it renders as such is
+// pinned by "display: a list in predicate position renders as a list" in
+// test_node_display.cpp. It used to print as "??".
 
 // ---------------------------------------------------------------------------
 // Sequences and lists
@@ -164,7 +159,6 @@ TEST_CASE("parsing: deep nesting")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
-        // Display truncates inner levels to ??, but the parser must accept the input.
         CHECK(any_output_contains(collector, "Level1"));
         CHECK(any_output_contains(collector, "Level1Object")); });
 }
