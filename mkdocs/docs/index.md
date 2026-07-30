@@ -1053,6 +1053,44 @@ mathematical stack built on top of it:
   own conditions may themselves be negated. Until then, De Morgan plus
   several rules expresses the same thing.
 
+- **More of Wikidata's property constraints as rules.**
+  [`.wikidata-constraints`](wikidata.md#checking-wikidatas-own-constraints)
+  turns two of the roughly forty constraint types Wikidata defines into
+  rules; the rest are exported as commented JSON for a human to work from.
+  Which ones to add next is not a question of how many statements a type
+  covers, but of where a whole-graph rule engine can say something that a
+  check evaluated one statement at a time cannot. Three that fit that
+  description:
+
+    - **Subject type and value-type constraints**
+      ([Q21503250](https://www.wikidata.org/wiki/Q21503250),
+      [Q21510865](https://www.wikidata.org/wiki/Q21510865)) — "the item
+      must be an instance or subclass of X". The condition is the
+      transitive closure of `P279`, which a per-statement check has to walk
+      on demand and therefore has to bound; zelph materialises the closure
+      once and reasons over it, which is the same machinery the
+      [class-hierarchy work](wikidata.md) already runs at full-dump scale.
+      Long chains and deep classes are exactly the part that goes
+      unexamined today.
+    - **Contemporary constraint**
+      ([Q25796498](https://www.wikidata.org/wiki/Q25796498)) — subject and
+      object have to have coexisted. Deciding it means reading dates off
+      two different items, possibly from qualifiers, and comparing them.
+      That is a join plus arithmetic rather than a lookup, and zelph has
+      both [in the graph](math/index.md) — with the
+      [qualifier layer](qualifiers.md) supplying the dates.
+    - **Inverse constraint**
+      ([Q21510855](https://www.wikidata.org/wiki/Q21510855)) — the value
+      has to point back with the inverse property. Here the interesting
+      output is not the violation but the fix: the same rule that reports
+      the asymmetry also *derives* the missing statement, so what comes out
+      is a list of edits rather than a list of complaints.
+
+  Each of these needs a generator in `wikidata.cpp` and, for the first two,
+  a small amount of vocabulary in the standard library. Input on which of
+  them the ontology community would actually use is more valuable than the
+  implementation.
+
 ### Where the mathematics goes next
 
 The mathematical stack will keep growing, and which way it grows should depend on what mathematicians actually want from it. Several directions are open, and none of them is committed:

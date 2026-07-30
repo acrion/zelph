@@ -238,21 +238,89 @@ zelph provides several additional commands for working with Wikidata:
   .wikidata-qualifiers download/wikidata-20250127-all.json P11260
   ```
 
-- **Export constraints:** extract constraints from the dump and generate zelph scripts for them:
+- **Export constraints:** turn Wikidata's own property constraints into runnable zelph rules — see [Checking Wikidata's own constraints](#checking-wikidatas-own-constraints) below.
+
+- **Extract single entities:** pull the exact JSON lines of named entities out of a dump, without importing anything:
 
   ```zelph
-  .wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
+  .export-wikidata download/wikidata-20250127-all.json Q42 Q5
   ```
 
-  You get one `<property>.zph` per property entity — `P31.zph`, `P279.zph` and so on. Each `property constraint` (P2302) statement of that property appears in it with its raw JSON as a comment, so nothing from the dump is dropped, and two constraint types are additionally translated into rules that run:
+  Each line is written to `<id>.json` in the current directory, byte for byte as the dump held it — the usual way to get a realistic fixture to develop against. IDs are matched in full, so asking for `Q4` does not also give you `Q42`. Any ID that turns out not to be in the dump is listed at the end (`Not found in …: Q9999`); the scan itself reads the whole file, so on a full dump this takes as long as any other pass over it.
 
-  | Constraint | Becomes |
-  | --- | --- |
-  | conflicts-with (Q21502838) | `(I <prop> Y, I <other> <value>) => !` — one rule per forbidden value, or one rule against the mere presence of the other property when the constraint names no value |
-  | none-of (Q52558054) | `(I <prop> <value>) => !` — one rule per forbidden value |
+### Checking Wikidata's own constraints
 
-  Everything else the constraint system defines — range, format, single-value, subject type and some forty more — is exported as commented JSON with the note `# (no existing zelph rule generator for this constraint type)`. Writing the rule is then yours; the comment block holds the qualifiers you need for it. A constraint whose qualifiers carry no usable value says so (`# No P2306 (conflict property) found`) rather than guessing.
+Wikidata states most of its quality rules as data: the `property constraint`
+([P2302](https://www.wikidata.org/wiki/Property:P2302)) statements that sit on
+almost every property. `.wikidata-constraints` reads them out of a dump and
+writes them out as zelph rules:
 
-  The scripts start with `.lang wikidata` and speak in Q- and P-IDs, so import them into a network loaded from a dump. They define **contradiction rules**: importing one asserts nothing, it makes the violations of that constraint reportable by the next inference run.
+```zelph
+.wikidata-constraints download/wikidata-20250127-all.json constraints_output_dir
+```
+
+What that buys you is a check you run **over the whole graph at once**, offline,
+against a pinned dump — and one that hands back, for every item it flags, the
+statements that made it flag. The result is a work-list you can act on, not a
+count.
+
+You get one `<property>.zph` per property from which at least one rule could be
+derived. A property whose constraints are all of a type zelph cannot express
+yet produces no file at all, so the output directory is the work-list itself
+rather than a copy of the dump.
+
+Two of Wikidata's constraint types are translated today:
+
+| Constraint | Rule written |
+| --- | --- |
+| [conflicts-with](https://www.wikidata.org/wiki/Q21502838) (Q21502838) | `(I <prop> Y, I <other> <value>) => !` — one rule per forbidden value, or `(I <prop> Y, I <other> Z) => !` against the mere presence of the other property when the constraint names no value |
+| [none-of](https://www.wikidata.org/wiki/Q52558054) (Q52558054) | `(I <prop> <value>) => !` — one rule per forbidden value |
+
+`I`, `Y` and `Z` are variables: `I` is the item under test, `Y` and `Z` stand
+for whatever values it happens to carry. `=> !` marks the combination as a
+[contradiction](index.md#rules-and-inference) — importing such a rule asserts nothing, it
+makes the violations of that constraint reportable.
+
+So the whole check is three steps: load a dump, import the script, infer.
+
+```zelph
+.load download/wikidata-20250127-all.bin
+.import constraints_output_dir/P569.zph
+.run
+```
+
+Each violation is reported with the statements that produced it. Typed out
+small, so you can see the shape — this is a real transcript of a rule of the
+kind the exporter writes, for a constraint saying that
+[date of birth](https://www.wikidata.org/wiki/Property:P569) conflicts with
+[inception](https://www.wikidata.org/wiki/Property:P571):
+
+```
+zelph> .lang wikidata
+wikidata> (I P569 Y, I P571 Z) => !
+{(I P569 Y) (I P571 Z)} => !
+wikidata> Q42 P569 Q1900
+wikidata> Q42 P571 Q1900
+! ⇐ {(Q42 P569 Q1900) (Q42 P571 Q1900)}
+Found one or more contradictions!
+```
+
+The line after `⇐` is the justification: exactly the two statements on Q42 that
+together break the constraint, which is what you need in order to decide which
+of them is the mistake. (`.explain` does not apply here — a contradiction
+materialises no fact to explain, so it carries its premises with it instead.)
+For a large run, [`.run-export <file>`](index.md#exporting-derivations) writes every derivation
+and every contradiction to a JSON Lines file, one record per line, with
+`"kind":"contradiction"` and the premises.
+
+Everything else Wikidata's constraint system defines — range, format,
+single-value, subject type and some forty more types — is not translated yet.
+Where a file is written, those constraints still appear in it as the raw JSON
+of their P2302 statement, commented out and marked
+`# (no existing zelph rule generator for this constraint type)`, which is the
+material you need to write the rule yourself. A constraint whose qualifiers
+carry no usable value says so (`# No P2306 (conflict property) found`) rather
+than guessing at one. Which of the remaining types are worth generating next is
+an [open roadmap question](index.md#where-the-logic-goes-next).
 
 Please note that after executing a '.load' command, '.auto-run' is disabled. This means that any rules added will only be applied when inference is performed explicitly via the `.run`, `.run-once`, `.run-delta` or `.run-export` commands (see the Performing Inference section above).

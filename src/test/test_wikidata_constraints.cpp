@@ -119,8 +119,10 @@ TEST_CASE("wikidata constraints: the exported script defines rules that fire")
     CHECK(text.find("# (no existing zelph rule generator") != std::string::npos);
     CHECK(text.find("# Unsupported constraint: Q99999999") != std::string::npos);
 
-    // Item entities carry no constraints and get no script.
+    // Item entities are not properties, and a property whose constraints
+    // yield no rule is not a work-list entry: neither gets a script.
     CHECK_FALSE(fs::exists(dir / "Q42.zph"));
+    CHECK_FALSE(fs::exists(dir / "P8888.zph"));
 
     // Now the part that was silently broken: import what was written.
     interactive.process(".deductions off");
@@ -163,20 +165,11 @@ TEST_CASE("wikidata constraints: a qualifier without a value produces no rule")
 
     interactive.process(".wikidata-constraints \"" + dump.string() + "\" \"" + dir.string() + "\"");
 
-    const auto script = dir / "P7777.zph";
-    REQUIRE(fs::exists(script));
-    const std::string text = read_file(script);
-
-    // No rule at all -- the generators say so instead of inventing one.
-    CHECK(text.find("=> !") == std::string::npos);
-    CHECK(text.find("Q5 Q5") == std::string::npos);
-    CHECK(text.find("# No P2306 (conflict property) found") != std::string::npos);
-    CHECK(text.find("# No forbidden values (P2305) found") != std::string::npos);
-
-    // And it is still a script that imports.
-    collector.clear();
-    interactive.process(".import \"" + script.string() + "\"");
-    CHECK_FALSE(any_output_contains(collector, "error"));
+    // Neither statement yields a rule, so the property does not appear in
+    // the output at all. That absence is the assertion: before the fix the
+    // file existed and held "(I P7777 Y, I Q5 Q5) => !".
+    CHECK_FALSE(fs::exists(dir / "P7777.zph"));
+    CHECK(fs::is_empty(dir));
 
     fs::remove_all(dir);
     fs::remove(dump);
@@ -192,7 +185,7 @@ TEST_CASE("wikidata constraints: the output directory is created, or refused wit
     // that does not exist yet aborted the process as soon as the first
     // property entity arrived -- this test case used to take the whole test
     // binary down with it.
-    const auto dump = write_dump(kEdgeDump, "zelph_constraints_dir_test.json");
+    const auto dump = write_dump(kDump, "zelph_constraints_dir_test.json");
     const auto root = fs::temp_directory_path() / "zelph_constraints_dir_root";
     fs::remove_all(root);
 
@@ -201,7 +194,7 @@ TEST_CASE("wikidata constraints: the output directory is created, or refused wit
 
     const auto nested = root / "a" / "b";
     interactive.process(".wikidata-constraints \"" + dump.string() + "\" \"" + nested.string() + "\"");
-    CHECK(fs::exists(nested / "P7777.zph"));
+    CHECK(fs::exists(nested / "P9999.zph"));
 
     // A target that cannot be a directory -- below a regular file -- is a
     // reported error, not a crash and not a silent nothing.

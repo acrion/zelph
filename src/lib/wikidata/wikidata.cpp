@@ -594,17 +594,29 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
 
 void Wikidata::process_constraints(const std::string& line, std::string id_str, const std::string& dir)
 {
-    // The command handler has already created the tree; this is the
-    // belt-and-braces for a direct call. Non-throwing on purpose: this runs
-    // per entity on a worker thread, where an exception is a std::terminate.
-    std::error_code dir_ec;
-    std::filesystem::create_directories(dir, dir_ec);
+    // Built in memory and written only if a generator produced at least one
+    // rule. Most properties either carry no constraint at all or only
+    // constraint types nothing can be derived from yet, and a directory of
+    // twelve thousand files that are pure comment is not a work-list.
+    std::ostringstream out;
+    size_t             rules = 0;
 
-    // Output file path
-    std::string   filename = dir + "/" + id_str + ".zph";
-    std::ofstream out(filename);
+    // A rule is a line that is neither blank nor a comment. Generators report
+    // a constraint they could not read as a "# ..." line, and those must not
+    // make the property look actionable.
+    const auto count_rules = [](const std::string& text)
+    {
+        size_t             n = 0;
+        std::istringstream lines(text);
+        std::string        l;
+        while (std::getline(lines, l))
+        {
+            const size_t first = l.find_first_not_of(" \t\r");
+            if (first != std::string::npos && l[first] != '#') ++n;
+        }
+        return n;
+    };
 
-    if (out)
     {
         out << ".lang wikidata" << std::endl
             << std::endl;
@@ -676,14 +688,15 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
 
                     if (it != constraints_map.end() && it->second.generator)
                     {
-                        std::string rules = it->second.generator(stmt_json, id_str);
-                        if (rules.empty())
+                        const std::string generated = it->second.generator(stmt_json, id_str);
+                        if (generated.empty())
                         {
                             out << "# (Generator delivered empty rule set)" << std::endl;
                         }
                         else
                         {
-                            out << rules << std::endl;
+                            rules += count_rules(generated);
+                            out << generated << std::endl;
                         }
                     }
                     else
@@ -698,9 +711,23 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
             pos = stmt_end + 1; // Move past this constraint
         }
     }
+
+    if (rules == 0) return;
+
+    // The command handler has already created the tree; this is the
+    // belt-and-braces for a direct call. Non-throwing on purpose: this runs
+    // per entity on a worker thread, where an exception is a std::terminate.
+    std::error_code dir_ec;
+    std::filesystem::create_directories(dir, dir_ec);
+
+    const std::string filename = dir + "/" + id_str + ".zph";
+    std::ofstream     file(filename);
+    if (file)
+    {
+        file << out.str();
+    }
     else
     {
-        // Error handling if file can't be opened
         _pImpl->_n->error("Failed to open file: " + filename, true);
     }
 }
@@ -1062,13 +1089,17 @@ void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
                 {
                     std::string   filename = id_str + ".json";
                     std::ofstream out(filename, std::ios::binary);
+                    remaining.erase(it); // seen; whether it could be written is reported below
                     if (out)
                     {
                         out.write(line.data(), static_cast<std::streamsize>(line.size()));
                         out << '\n';
                         found++;
-                        remaining.erase(it);
                         _pImpl->_n->out_stream() << "→ " << filename << std::endl;
+                    }
+                    else
+                    {
+                        _pImpl->_n->error("Failed to write " + filename, true);
                     }
                 }
             }
@@ -1106,6 +1137,25 @@ void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
     }
 
     _pImpl->_n->diagnostic_stream() << "Export completed." << std::endl;
+
+    // An ID that is not in the dump used to leave no trace at all: the run
+    // simply produced one file fewer. On a dump that takes hours to scan, and
+    // for a command whose entire job is "give me these lines", that is the
+    // one outcome that has to be said out loud.
+    if (!remaining.empty())
+    {
+        std::vector<std::string> missing(remaining.begin(), remaining.end());
+        std::sort(missing.begin(), missing.end());
+
+        std::string list;
+        for (const auto& id : missing)
+        {
+            if (!list.empty()) list += " ";
+            list += id;
+        }
+
+        _pImpl->_n->error("Not found in " + source.string() + ": " + list, true);
+    }
 }
 
 // ---------------------------------------------------------------------------
