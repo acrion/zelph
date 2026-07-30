@@ -64,7 +64,28 @@ This means the graph doesn't just _describe_ knowledge; it _structures the execu
 
 ### Relation Nodes and Self-Reference
 
-Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject or object of further facts, enabling statements about statements without any special mechanism.
+Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject, the object _or the predicate_ of further facts, enabling statements about statements without any special mechanism.
+
+Predicate position is the least obvious of the three, and it works like the others:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> X (a p b) Y
+Answer: x (a p b) y
+```
+
+Anything used as a predicate becomes a relation type, so the composite predicate appears among them and the fact is found by a rule quantifying over predicates just like any other:
+
+```
+zelph> X Y Z
+Answer: (a p b) ~ ->
+Answer: p ~ ->
+Answer: a p b
+Answer: x (a p b) y
+```
+
+(abridged — the query also lists the core relation types). This holds independently of how the network came to be: a graph read back from a `.bin` answers exactly as the one that was typed.
 
 This is in contrast to [RDF](https://en.wikipedia.org/wiki/Resource_Description_Framework), where a triple is an edge with no inherent identity. To make a statement _about_ a triple in classic RDF, you need [reification](<https://en.wikipedia.org/wiki/Reification_(knowledge_representation)#RDF_reification>): four additional triples that decompose and name the original one. The [RDF-star](https://www.w3.org/2021/12/rdf-star.html) extension was introduced specifically to address this limitation.
 

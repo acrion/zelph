@@ -35,6 +35,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #endif
 
 #include "network.hpp"
+#include "serialization_layout.hpp"
 #include "zelph.hpp"
 
 #include <ankerl/unordered_dense.h>
@@ -896,7 +897,12 @@ namespace zelph::network
         void saveToFile(const std::string&                              filename,
                         const ankerl::unordered_dense::set<Node>* const keep = nullptr) const
         {
-            const size_t chunkSize = 1000000; // 1M entries per chunk
+            const size_t chunkSize = serialization::chunk_entries;
+
+            // See serialization_layout.hpp for why this is sized from the data
+            // rather than fixed.
+            const auto firstSegmentWords = [](const size_t entries) -> ::capnp::uint
+            { return static_cast<::capnp::uint>(serialization::first_segment_words(entries)); };
 
             const auto kept = [keep](const Node nd)
             { return keep == nullptr || keep->find(nd) != keep->end(); };
@@ -942,7 +948,7 @@ namespace zelph::network
             kj::FdOutputStream output(fileno(file));
 
             // Main message (small data)
-            ::capnp::MallocMessageBuilder mainMessage(1u << 26);
+            ::capnp::MallocMessageBuilder mainMessage(firstSegmentWords(_weights.size()));
             auto                          impl = mainMessage.initRoot<ZelphImpl>();
 
             // Serialize probabilities
@@ -1006,14 +1012,15 @@ namespace zelph::network
             auto leftIt = _left.begin();
             for (size_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
             {
-                ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                const size_t thisChunkSize = std::min(chunkSize, leftKept - chunkIdx * chunkSize);
+
+                ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisChunkSize));
                 auto                          chunk = chunkMessage.initRoot<AdjChunk>();
                 chunk.setWhich("left");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, leftKept - chunkIdx * chunkSize);
-                auto   pairList      = chunk.initPairs(thisChunkSize);
-                size_t pIdx          = 0;
+                auto   pairList = chunk.initPairs(thisChunkSize);
+                size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
                 {
                     while (leftIt != _left.end() && !kept(leftIt->first)) ++leftIt;
@@ -1034,14 +1041,15 @@ namespace zelph::network
             auto rightIt = _right.begin();
             for (size_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
             {
-                ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                const size_t thisChunkSize = std::min(chunkSize, rightKept - chunkIdx * chunkSize);
+
+                ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisChunkSize));
                 auto                          chunk = chunkMessage.initRoot<AdjChunk>();
                 chunk.setWhich("right");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, rightKept - chunkIdx * chunkSize);
-                auto   pairList      = chunk.initPairs(thisChunkSize);
-                size_t pIdx          = 0;
+                auto   pairList = chunk.initPairs(thisChunkSize);
+                size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
                 {
                     while (rightIt != _right.end() && !kept(rightIt->first)) ++rightIt;
@@ -1087,13 +1095,14 @@ namespace zelph::network
                 size_t numChunks = (sorted.size() + chunkSize - 1) / chunkSize;
                 for (size_t chunkIdx = 0; chunkIdx < numChunks; ++chunkIdx)
                 {
-                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    const size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
+
+                    ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
                     auto                          chunk = chunkMessage.initRoot<NameChunk>();
                     chunk.setLang(lang);
                     chunk.setChunkIndex(nameOfNodeChunkIndex++);
 
-                    size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
-                    auto   pairs    = chunk.initPairs(thisSize);
+                    auto pairs = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         pairs[i].setKey(it->first);
@@ -1124,13 +1133,14 @@ namespace zelph::network
                 size_t numChunks = (sorted.size() + chunkSize - 1) / chunkSize;
                 for (size_t chunkIdx = 0; chunkIdx < numChunks; ++chunkIdx)
                 {
-                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    const size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
+
+                    ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
                     auto                          chunk = chunkMessage.initRoot<NodeNameChunk>();
                     chunk.setLang(lang);
                     chunk.setChunkIndex(nodeOfNameChunkIndex++);
 
-                    size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
-                    auto   pairs    = chunk.initPairs(thisSize);
+                    auto pairs = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         // Pool-backed string_view: data() is null-terminated

@@ -570,7 +570,19 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             }
         }
 
-        if (predicate != core.IsA && (!Impl::is_hash(predicate) || Network::is_var(predicate))) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
+        // Whatever stands in predicate position IS a relation type, and saying
+        // so is what makes the fact readable again later. The declaration used
+        // to be skipped for hash nodes, i.e. for a predicate that is itself a
+        // fact or a cons cell ("x (a p b) y", "a <=> b"): the fact was created,
+        // the genuine store held its triple, and everything worked -- until a
+        // .save/.load disarmed the store, after which the reconstruction had no
+        // way to recognise the predicate and the fact silently stopped
+        // answering queries. Declaring it costs one extra fact per DISTINCT
+        // composite predicate, and only for those; ordinary data, every import
+        // and the whole stdlib name their predicates and are unaffected.
+        // (Note that the initial constructor call fact(core.IsA, core.IsA,
+        // core.RelationTypeCategory) is executed as intended.)
+        if (predicate != core.IsA)
         {
             fact(predicate, core.IsA, {core.RelationTypeCategory});
         }

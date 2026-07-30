@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include <filesystem>
+
 #include "io/output.hpp"
 #include "network/fact_structure.hpp"
 #include "network/zelph.hpp"
@@ -155,6 +157,46 @@ TEST_CASE("genuine store: growth-only full clears do not disarm")
     CHECK(z.genuine_stats().walks == 0); // ...not by the walk
 }
 
+TEST_CASE("genuine store: a fact in predicate position reconstructs like any other")
+{
+    // Whatever stands in predicate position is declared a relation type, so
+    // the walk can name it. The hard part is the other direction: fact()
+    // draws "F -> P" for the predicate and "O -> F" for an object, i.e. the
+    // USERS of a predicate land in its left set right next to its objects.
+    // Reading a user as another object made the reconstructed triple of
+    // (a p b) grow an extra object as soon as someone used it as a
+    // predicate -- which is precisely the state a network is in after
+    // .load, when the store no longer answers.
+    Zelph      z(null_handler());
+    const Node a = z.node("a");
+    const Node b = z.node("b");
+    const Node p = z.node("p");
+    const Node x = z.node("x");
+    const Node y = z.node("y");
+
+    const Node inner = z.fact(a, p, {b});
+    const Node outer = z.fact(x, inner, {y}); // inner is the PREDICATE here
+
+    CHECK(z.parse_relation(outer) == inner);
+    CHECK(has_reading(*get_fact_structures(&z, outer, 1), x, y));
+
+    // Disarm, so everything below is the walk. `outer` must not leak into
+    // the objects of `inner`.
+    z.disable_fact_stores();
+    z.set_logging(-1);
+
+    const auto inner_structs = get_fact_structures(&z, inner, 1);
+    CHECK(has_reading(*inner_structs, a, b));
+    REQUIRE(inner_structs->size() == 1);
+    CHECK(inner_structs->front().predicate == p);
+    CHECK(inner_structs->front().objects.size() == 1); // b, and nothing else
+    CHECK(inner_structs->front().objects.count(outer) == 0);
+
+    CHECK(has_reading(*get_fact_structures(&z, outer, 1), x, y));
+    CHECK(z.genuine_stats().hits == 0);
+    CHECK(z.genuine_stats().walks > 0);
+}
+
 TEST_CASE("command: .fact-stores reports, disarms one-way, reasoning stays correct on the walk path")
 {
     using namespace zelph::test;
@@ -184,4 +226,43 @@ p foo q
         collector.clear();
         interactive.process(".fact-stores");
         CHECK(any_output_contains(collector, "Fact-path stores: on")); });
+}
+
+TEST_CASE("save/load: a fact in predicate position answers the same on both sides")
+{
+    using namespace zelph::test;
+    namespace fs = std::filesystem;
+
+    // The end-to-end shape of the two mechanisms above. A .load disarms the
+    // stores, so the reloaded network answers purely from the walk; before
+    // the predicate was declared and the users were filtered out, this
+    // query answered on the typed network and stayed silent on the
+    // reloaded one -- the same file, read back as something else.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto path = fs::temp_directory_path() / "zelph_composite_predicate.bin";
+
+    process_lines(interactive, R"(
+a p b
+x (a p b) y
+)");
+    collector.clear();
+    interactive.process("X (a p b) Y");
+    REQUIRE(answers_contain(collector, "x (a p b) y"));
+
+    interactive.process(".save \"" + path.string() + "\"");
+    interactive.process(".new");
+    interactive.process(".load \"" + path.string() + "\"");
+
+    collector.clear();
+    interactive.process("X (a p b) Y");
+    CHECK(answers_contain(collector, "x (a p b) y"));
+
+    // The inner fact must not have grown an object from its own user.
+    collector.clear();
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
+
+    fs::remove(path);
 }
