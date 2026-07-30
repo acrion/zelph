@@ -32,32 +32,100 @@ namespace zelph::string
 {
     namespace unicode
     {
+        // Read a \uXXXX escape at `i` (which points at the backslash) and
+        // return its code unit, or -1 if the four hex digits are not there.
+        static int read_u_escape(const std::string& input, size_t i)
+        {
+            if (i + 5 >= input.size() || input[i] != '\\' || input[i + 1] != 'u') return -1;
+
+            // cppcheck-suppress stlcstrConstructor
+            std::string_view hexCode(input.data() + i + 2, 4);
+            if (!std::all_of(hexCode.begin(), hexCode.end(), [](unsigned char c)
+                             { return std::isxdigit(c); }))
+                return -1;
+
+            return std::stoi(std::string(hexCode), nullptr, 16);
+        }
+
         std::string unescape(const std::string& input)
         {
+            // The Wikidata dump escapes every non-ASCII character, so a label
+            // that is not decoded here reaches the network with the six
+            // characters of the escape sequence in place of the letter --
+            // unsearchable under its real name and not re-enterable as input.
+            // The whole JSON escape set is handled, because a label may just
+            // as well contain an escaped quote or backslash.
+            if (input.find('\\') == std::string::npos) return input;
+
             std::string result;
             result.reserve(input.size());
 
             for (size_t i = 0; i < input.size(); ++i)
             {
-                if (i + 5 < input.size() && input[i] == '\\' && input[i + 1] == 'u')
+                if (input[i] != '\\' || i + 1 >= input.size())
                 {
-                    // cppcheck-suppress stlcstrConstructor
-                    std::string_view hexCode(input.data() + i + 2, 4);
-                    bool             isValidHex = std::all_of(hexCode.begin(), hexCode.end(), [](unsigned char c)
-                                                              { return std::isxdigit(c); });
-
-                    if (isValidHex)
-                    {
-                        int codePoint = std::stoi(std::string(hexCode), nullptr, 16);
-
-                        utf8::append(result, static_cast<char32_t>(codePoint));
-
-                        i += 5;
-                        continue;
-                    }
+                    result.push_back(input[i]);
+                    continue;
                 }
 
-                result.push_back(input[i]);
+                const char esc = input[i + 1];
+
+                if (esc == 'u')
+                {
+                    const int unit = read_u_escape(input, i);
+                    if (unit < 0)
+                    {
+                        result.push_back(input[i]); // not an escape after all
+                        continue;
+                    }
+                    i += 5;
+
+                    char32_t cp = static_cast<char32_t>(unit);
+
+                    // Code points above the BMP arrive as a surrogate pair.
+                    // Appending the halves separately would emit CESU-8, i.e.
+                    // invalid UTF-8 that every later reader has to cope with.
+                    if (unit >= 0xD800 && unit <= 0xDBFF)
+                    {
+                        const int low = read_u_escape(input, i + 1);
+                        if (low >= 0xDC00 && low <= 0xDFFF)
+                        {
+                            cp = 0x10000 + ((static_cast<char32_t>(unit) - 0xD800) << 10)
+                               + (static_cast<char32_t>(low) - 0xDC00);
+                            i += 6;
+                        }
+                        else
+                        {
+                            cp = 0xFFFD; // unpaired high surrogate
+                        }
+                    }
+                    else if (unit >= 0xDC00 && unit <= 0xDFFF)
+                    {
+                        cp = 0xFFFD; // unpaired low surrogate
+                    }
+
+                    utf8::append(result, cp);
+                    continue;
+                }
+
+                switch (esc)
+                {
+                    case '"': result.push_back('"'); break;
+                    case '\\': result.push_back('\\'); break;
+                    case '/': result.push_back('/'); break;
+                    case 'b': result.push_back('\b'); break;
+                    case 'f': result.push_back('\f'); break;
+                    case 'n': result.push_back('\n'); break;
+                    case 'r': result.push_back('\r'); break;
+                    case 't': result.push_back('\t'); break;
+                    default:
+                        // Not a JSON escape -- keep both characters, so that
+                        // text which merely contains a backslash survives.
+                        result.push_back(input[i]);
+                        result.push_back(esc);
+                        break;
+                }
+                ++i;
             }
 
             return result;

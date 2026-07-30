@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "io/read_async.hpp"
 #include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -51,6 +52,27 @@ using namespace std::string_literals;
 using std::chrono::duration_cast;
 
 // #define SINGLE_THREADED_IMPORT
+
+namespace
+{
+    // Index of the closing quote of a JSON string whose first character is at
+    // `from`. A quote preceded by an odd number of backslashes is part of the
+    // value, not its end -- a label like  The \"Chirping\" Crickets  used to
+    // be truncated to  The \  because the first quote found ended the scan.
+    size_t find_json_string_end(const std::string& line, size_t from)
+    {
+        for (size_t i = from; i < line.size(); ++i)
+        {
+            if (line[i] == '\\')
+            {
+                ++i; // the escaped character cannot end the string
+                continue;
+            }
+            if (line[i] == '"') return i;
+        }
+        return std::string::npos;
+    }
+}
 
 class Wikidata::Impl
 {
@@ -687,8 +709,18 @@ void Wikidata::process_import(const std::string& line,
 
                     if (descriptions == std::string::npos || language0 < descriptions)
                     {
-                        id1                         = line.find('\"', language0 + language_tag.size() + 1);
-                        name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
+                        const size_t value0 = language0 + language_tag.size();
+                        const size_t value1 = find_json_string_end(line, value0);
+
+                        if (value1 != std::string::npos)
+                        {
+                            id1 = value1;
+                            // The dump escapes every non-ASCII character, so
+                            // the label has to be decoded here -- otherwise
+                            // the node carries the escape sequences instead
+                            // of the letters they stand for.
+                            name_in_additional_language = string::unicode::unescape(line.substr(value0, value1 - value0));
+                        }
                     }
                 }
             }
@@ -1104,26 +1136,19 @@ namespace
 
     // Extract the string value of  <key_tag>value"  searching in [from, to).
     // key_tag must include the opening quote of the value, e.g. "\"time\":\"".
-    // Skips escaped quotes when locating the closing quote; the value itself
-    // is returned with raw JSON escapes (consistent with the label import).
+    // Escaped quotes do not end the value, and JSON escapes are decoded, so
+    // that a monolingual text or string qualifier becomes a node named by the
+    // text it stands for -- the same rule as for imported labels.
     std::string extract_json_string(const std::string& line, const std::string& key_tag, size_t from, size_t to)
     {
         const size_t k = line.find(key_tag, from);
         if (k == std::string::npos || k >= to) return {};
         const size_t v0 = k + key_tag.size();
 
-        size_t v1 = v0;
-        while (true)
-        {
-            v1 = line.find('"', v1);
-            if (v1 == std::string::npos || v1 >= to) return {};
-            size_t backslashes = 0;
-            while (v1 >= v0 + backslashes + 1 && line[v1 - backslashes - 1] == '\\')
-                ++backslashes;
-            if (backslashes % 2 == 0) break; // unescaped quote
-            ++v1;
-        }
-        return line.substr(v0, v1 - v0);
+        const size_t v1 = find_json_string_end(line, v0);
+        if (v1 == std::string::npos || v1 >= to) return {};
+
+        return zelph::string::unicode::unescape(line.substr(v0, v1 - v0));
     }
 
     // The statement id is the only "id" value inside a claim object that

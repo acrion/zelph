@@ -424,7 +424,7 @@ P30-candidate facts: 43
   Q1530762 (Kingdom of Kandy) -> Q46  conf=0.527
   Q109534069 (Kingdom of Wolaita) -> Q46  conf=0.527
   Q3136869 (Kingdom of Dambadeniya) -> Q46  conf=0.527
-  Q3267672 (Republic of Entre R\u00edos) -> Q46  conf=0.527
+  Q3267672 (Republic of Entre Ríos) -> Q46  conf=0.527
   Q814959 (Beiyang Government) -> Q46  conf=0.527
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
 -- 2.497 s --

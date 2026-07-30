@@ -219,6 +219,13 @@ or directly the resuling bin file:
 
 You can download various zelph `.bin` files directly from [Hugging Face](https://huggingface.co/datasets/acrion/zelph).
 
+Each imported entity is named twice: by its ID (`Q5`, `P279`) in the `wikidata`
+language and by its English label in the `en` language. The dump writes labels
+with JSON escapes (`B\u00fcdner`), which the import decodes, so the node is
+named `Büdner` and can be found under that name. A `.bin` file written by a
+zelph older than 1.0.0 stores the undecoded form instead; re-import the dump if
+you need the labels themselves rather than only the IDs.
+
 ### Advanced Commands
 
 zelph provides several additional commands for working with Wikidata:
