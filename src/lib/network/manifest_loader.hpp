@@ -956,6 +956,14 @@ namespace zelph::network
                 }
             }
 
+            // Not everything an artifact advertises lives under shards/: the
+            // offset index and the node route index sit next to the manifest
+            // itself, so their advertised path has no marker to cut at.
+            if (const std::string filename = fs::path(normalized).filename().string(); !filename.empty())
+            {
+                candidates.emplace_back(manifest_dir / filename);
+            }
+
             if (!shard_root.empty())
             {
                 fs::path shard_base{shard_root};
@@ -1374,16 +1382,19 @@ namespace zelph::network
 
             if (is_hf_uri(manifest.node_route_index_path))
             {
-                if (!shard_root.empty())
+                // Local first, as for the shards themselves: the sidecar is
+                // part of the artifact tree, so a downloaded artifact has it
+                // next to its manifest. Only shard-root used to be consulted,
+                // which sent a load that had everything on disk to the
+                // network for one small JSON file.
+                try
                 {
-                    try
-                    {
-                        return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
-                    }
-                    catch (...)
-                    {
-                    }
+                    return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
                 }
+                catch (const std::exception&)
+                {
+                }
+
                 return fetch_chunk_to_cache(manifest.node_route_index_path, 0, 0, "node-route-index");
             }
 

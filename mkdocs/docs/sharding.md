@@ -386,12 +386,65 @@ When a manifest advertises a **node route index** — a sidecar JSON that maps n
 | `route-name=<name>`   | Resolve a name to the nodeOfName chunk that contains it                      |
 | `route-lang=<lang>`   | Language for the route-name lookup (required with `route-name`)              |
 
-Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support; they can be combined with explicit chunk selectors.
+Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support; they can be combined with explicit chunk selectors, and the two selections are unioned.
 
 ```
 zelph> .load-partial manifest.json route-node=1
 zelph> .load-partial manifest.json route-name=A route-lang=wikidata
 ```
+
+A node route and a name route answer different questions, and the difference is
+not a limitation but the layout: `nameOfNode` is sorted by node ID, `nodeOfName`
+by name string. `route-node` therefore selects adjacency and the node's own
+name; `route-name` selects the one chunk in which that name can be found. A
+name route alone gives a view in which the name resolves to a node ID while the
+node carries no names — enough to route, not enough to display. Ask for both
+when you want both.
+
+Chunk selectors are file-local, and so are node IDs: both are assigned when the
+`.bin` is written. `route-name` is the only selector that survives a
+regenerated network, because names are the one identifier the graph carries
+itself.
+
+### The Sidecar Format
+
+The route index is a JSON file listing, per section, which chunk holds which
+keys. Nothing generates it yet, so it is written by whoever produces the
+artifact:
+
+```json
+{
+  "routing": {
+    "left":       [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "right":      [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "nameOfNode": [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "nodeOfName": [{"chunkIndex": 0, "lang": "zelph", "names": ["alpha", "beta"]},
+                   {"chunkIndex": 1, "lang": "de",    "names": ["alpha_de"]}]
+  }
+}
+```
+
+Every field shown is required for the entries of that section; an entry with a
+missing `chunkIndex`, `nodes`, `lang` or `names` is an error rather than a
+skipped line. Sections may be omitted entirely — a sidecar that only routes
+names is valid. Listing only the keys that callers are expected to route by is
+also valid, and is what keeps the sidecar small: a route selector that resolves
+no chunk at all is reported as an error, so an incomplete index shows up as
+such instead of loading a wrong subset.
+
+The manifest points at the file and declares the capability:
+
+```json
+{
+  "selectorModel": {"supportedOperations": ["header-probe", "selected-chunk-read", "node-route"]},
+  "hfObjects": {"nodeRouteIndex": {"path": "hf://datasets/<owner>/<repo>/<artifact>/net.route.json"}}
+}
+```
+
+`localPath` may be used instead of `path` for a purely local artifact. As for
+the shards, an advertised remote path is resolved against the local tree first
+(see [Where a Chunk Is Read From](#where-a-chunk-is-read-from)), so a
+downloaded artifact routes without touching the network.
 
 ## Producing and Publishing Shards
 

@@ -78,6 +78,12 @@ namespace
         fs::path sharded_manifest;
         fs::path seek_manifest;
         fs::path shards_dir;
+        fs::path route_index;
+
+        // Node ID of "alpha", read from the network rather than assumed: the
+        // route index addresses nodes by ID, which is what makes it a route
+        // index rather than a chunk selector.
+        uint64_t alpha = 0;
 
         std::map<std::string, std::vector<ChunkInfo>> sections;
 
@@ -86,6 +92,15 @@ namespace
         uint64_t name_of_node_chunk(const std::string& lang) const
         {
             for (const auto& chunk : sections.at("nameOfNode"))
+            {
+                if (chunk.lang == lang) return chunk.index;
+            }
+            return static_cast<uint64_t>(-1);
+        }
+
+        uint64_t node_of_name_chunk(const std::string& lang) const
+        {
+            for (const auto& chunk : sections.at("nodeOfName"))
             {
                 if (chunk.lang == lang) return chunk.index;
             }
@@ -136,6 +151,28 @@ namespace
         out.write(buffer.data(), static_cast<std::streamsize>(length));
     }
 
+    // ".node <name>" prints "Node ID: <n>"; nothing else exposes the ID.
+    uint64_t node_id_of(const zelph::console::Interactive& interactive,
+                        zelph::io::OutputCollector&        collector,
+                        const std::string&                 name)
+    {
+        collector.clear();
+        interactive.process(".node " + name);
+
+        const std::string marker = "Node ID:";
+        for (const auto& event : collector.events())
+        {
+            const size_t pos = event.text.find(marker);
+            if (pos != std::string::npos)
+            {
+                return std::stoull(event.text.substr(pos + marker.size()));
+            }
+        }
+
+        REQUIRE_MESSAGE(false, "no node ID in .node output");
+        return 0;
+    }
+
     std::string shard_file_name(const ChunkInfo& chunk)
     {
         char buffer[64];
@@ -160,6 +197,7 @@ namespace
         paths.sharded_manifest = root / "net.hf-v2.json";
         paths.seek_manifest    = root / "net.seek.json";
         paths.shards_dir       = root / "shards";
+        paths.route_index      = root / "net.route.json";
 
         const fs::path index_json = root / "index.json";
 
@@ -172,6 +210,7 @@ gamma ~ beta
 )");
             interactive.process(".name alpha de alpha_de");
             interactive.process(".name beta de beta_de");
+            paths.alpha = node_id_of(interactive, collector, "alpha");
             interactive.process(".save \"" + paths.bin.string() + "\"");
             interactive.process(".index-file \"" + paths.bin.string() + "\" \"" + index_json.string() + "\"");
         }
@@ -218,6 +257,11 @@ gamma ~ beta
         std::ostringstream seek;
         sharded << "{\n  \"manifestVersion\": \"zelph-hf-layout/v2\",\n"
                 << "  \"storageMode\": \"multi-object-shards\",\n"
+                // Advertised the way a published manifest does it: capability
+                // plus an hf:// path for the sidecar, which the loader has to
+                // resolve against the local tree.
+                << "  \"selectorModel\": {\"supportedOperations\": [\"header-probe\", \"selected-chunk-read\", \"node-route\"]},\n"
+                << "  \"hfObjects\": {\"nodeRouteIndex\": {\"path\": \"" << hf_root << "/net.route.json\"}},\n"
                 << "  \"source\": {\"binPath\": \"" << hf_root << "/net.bin\", \"headerLengthBytes\": " << header_length << "},\n"
                 << "  \"sections\": {\n";
         seek << "{\n  \"source\": {\"binPath\": \"" << paths.bin.string()
@@ -268,6 +312,23 @@ gamma ~ beta
 
         std::ofstream(paths.sharded_manifest) << sharded.str();
         std::ofstream(paths.seek_manifest) << seek.str();
+
+        // The node route index: which chunk holds a given node, and which
+        // holds a given name. Written for "alpha" and its two names only --
+        // enough to tell a routed selection from a wrong one, because the
+        // name sections have one chunk per language.
+        std::ostringstream route;
+        route << "{\n  \"routing\": {\n"
+              << "    \"left\":  [{\"chunkIndex\": 0, \"nodes\": [" << paths.alpha << "]}],\n"
+              << "    \"right\": [{\"chunkIndex\": 0, \"nodes\": [" << paths.alpha << "]}],\n"
+              << "    \"nameOfNode\": [{\"chunkIndex\": " << paths.name_of_node_chunk("zelph")
+              << ", \"nodes\": [" << paths.alpha << "]}],\n"
+              << "    \"nodeOfName\": [{\"chunkIndex\": " << paths.node_of_name_chunk("de")
+              << ", \"lang\": \"de\", \"names\": [\"alpha_de\"]},\n"
+              << "                    {\"chunkIndex\": " << paths.node_of_name_chunk("zelph")
+              << ", \"lang\": \"zelph\", \"names\": [\"alpha\"]}]\n"
+              << "  }\n}\n";
+        std::ofstream(paths.route_index) << route.str();
 
         return paths;
     }
@@ -389,6 +450,121 @@ TEST_CASE("sharding: an out-of-range chunk selector is rejected")
     with_fresh_session([&](auto&, auto& interactive)
                        { CHECK_THROWS(interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
                                                           + "\" left=" + std::to_string(left_chunks))); });
+
+    fs::remove_all(artifact.root);
+}
+
+// ---------------------------------------------------------------------------
+// Route selectors.
+//
+// A manifest may advertise a node route index: a sidecar that says which chunk
+// holds a given node ID, and which holds a given name. It lets a caller ask
+// for "the neighbourhood of this node" instead of computing chunk numbers, and
+// a name route is the only selector that survives a regenerated .bin -- chunk
+// indices do not, and neither do node IDs, which are assigned at import time.
+// No published artifact carries such a sidecar, so the code below was never
+// exercised; the fixture writes one.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("sharding: route-name selects the chunk of one language")
+{
+    const auto artifact = build_artifact(artifact_root("routename"));
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                            + "\" route-name=alpha_de route-lang=de");
+
+        // Exactly the de chunk of nodeOfName, and nothing of the other
+        // sections: the sidecar names no chunk for them under a name route.
+        CHECK(any_event_contains(collector, "nodeOfName chunks=1/2"));
+        CHECK(any_event_contains(collector, "route_requested=true"));
+        CHECK_FALSE(any_event_contains(collector, "has no local copy"));
+
+        // The name resolves -- but the node itself is not in this view: the
+        // adjacency sections were not part of a name route, so .node reports
+        // the name as unknown. That asymmetry is inherent to selecting the
+        // two name directions independently, and the point of the route is to
+        // narrow WHICH chunk has to be read, not to complete the graph.
+        collector.clear();
+        interactive.process(".lang de");
+        interactive.process(".node alpha_de");
+        CHECK(any_event_contains(collector, "Node ID:"));
+        CHECK(any_event_contains(collector, "No names in any language"));
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "de: 2"));
+        CHECK_FALSE(any_output_contains(collector, "zelph:")); });
+
+    fs::remove_all(artifact.root);
+}
+
+TEST_CASE("sharding: route-node selects the chunks that hold one node")
+{
+    const auto artifact = build_artifact(artifact_root("routenode"));
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                            + "\" route-node=" + std::to_string(artifact.alpha));
+
+        // Adjacency and the node's own name travel together; the reverse
+        // direction (nodeOfName) is a name route, not a node route.
+        CHECK(any_event_contains(collector, "left chunks=1/1"));
+        CHECK(any_event_contains(collector, "right chunks=1/1"));
+        CHECK(any_event_contains(collector, "nameOfNode chunks=1/2"));
+        CHECK(any_event_contains(collector, "nodeOfName chunks=0/2"));
+
+        collector.clear();
+        interactive.process(".stat");
+        // The zelph names came along, the de names did not.
+        CHECK(any_output_contains(collector, "zelph: 3"));
+        CHECK_FALSE(any_output_contains(collector, "de:")); });
+
+    fs::remove_all(artifact.root);
+}
+
+TEST_CASE("sharding: a routed and an explicit selector combine")
+{
+    const auto artifact = build_artifact(artifact_root("routeboth"));
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                            + "\" route-node=" + std::to_string(artifact.alpha)
+                            + " route-name=alpha_de route-lang=de nodeOfName="
+                            + std::to_string(artifact.node_of_name_chunk("zelph")));
+
+        // The de chunk from the name route, the zelph chunk from the explicit
+        // selector: both, not one of them.
+        CHECK(any_event_contains(collector, "nodeOfName chunks=2/2"));
+
+        collector.clear();
+        interactive.process(".node alpha");
+        CHECK(any_event_contains(collector, "alpha")); });
+
+    fs::remove_all(artifact.root);
+}
+
+TEST_CASE("sharding: route selectors are rejected without what they need")
+{
+    const auto artifact = build_artifact(artifact_root("routebad"));
+
+    with_fresh_session([&](auto&, auto& interactive)
+                       {
+        // A name route without its language cannot be resolved.
+        CHECK_THROWS(interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                                         + "\" route-name=alpha_de"));
+
+        // A node the sidecar does not mention resolves no chunk at all, which
+        // is an error rather than an empty network.
+        CHECK_THROWS(interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                                         + "\" route-node=999999"));
+
+        // The seek-only manifest advertises no route index.
+        CHECK_THROWS(interactive.process(".load-partial \"" + artifact.seek_manifest.string()
+                                         + "\" route-node=" + std::to_string(artifact.alpha))); });
 
     fs::remove_all(artifact.root);
 }
