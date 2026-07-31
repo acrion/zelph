@@ -193,14 +193,18 @@ namespace zelph::string
         // Some tokens the grammar recognises by their FIRST character rather
         // than by the characters they contain, so a reserved SET cannot see
         // them: "_x" and a single uppercase letter are variables, "&12" is a
-        // number literal, "≈net" opens a neural condition. A node really
-        // named that way exists -- Wikidata has single-letter labels -- and
-        // printing it bare made the line read back as something else, in the
-        // variable case without any complaint. The self-fact colon is
-        // deliberately NOT in this list: ":pred" is composed by the renderer
-        // out of a colon and a name, it is never a name itself.
+        // number literal, ":foo" opens the self-fact sugar, "≈net" a neural
+        // condition. A node really named that way exists -- Wikidata has
+        // single-letter labels -- and printing it bare made the line read
+        // back as something else. Two of them do so without any complaint:
+        // a variable, and `c rel2 :foo d`, where the sugar swallows the
+        // following object and yields a nested self-fact instead.
+        //
+        // The renderer's own ":pred subject" never reaches this function:
+        // the colon is emitted beside the marked name, not inside it, which
+        // is what lets the colon be judged here as part of a NAME.
         if (name.size() == 1 && name[0] >= 'A' && name[0] <= 'Z') return true;
-        if (name.front() == '_' || name.front() == '&') return true;
+        if (name.front() == '_' || name.front() == '&' || name.front() == ':') return true;
         if (name.rfind("≈", 0) == 0) return true;
 
         for (const unsigned char c : name)
@@ -223,6 +227,15 @@ namespace zelph::string
             if (c == 0xC2) return true; // UTF-8 lead byte of '¬', '«', '»'
         }
         return false;
+    }
+
+    // Does this name reach the parser unchanged, i.e. does printing it add
+    // no quotes? The renderer asks before using a form that has no way to
+    // quote the name it contains -- the self-fact sugar is the one such
+    // form -- so that the quoting rules are followed rather than restated.
+    bool prints_bare(const std::string& name)
+    {
+        return !needs_quotes(name);
     }
 
     // Marks an identifier with guillemets so that later stages can tell a

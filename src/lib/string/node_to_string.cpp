@@ -51,6 +51,49 @@ bool zelph::string::is_var(std::string token)
     return *token.begin() == '_';
 }
 
+// The self-fact sugar ":pred subject" is only used where it reads back
+// as the fact it renders, and that is a property of the PREDICATE's
+// name. Two conditions, each for its own reason:
+//
+//   - the sugar's own rule captures the predicate as `(some :symchars)`,
+//     so a name carrying a reserved character ends it early -- and that
+//     rules out the bare atoms `>` or `=>`, which needs_quotes exempts;
+//   - the name has to print BARE, since there is no way to quote it
+//     inside the sugar. That is exactly !needs_quotes, so the sugar
+//     follows the quoting rules instead of restating them: a predicate
+//     named "&12" or "≈net" keeps the verbose form.
+//
+// Whether a predicate is suppressed by a module is graph state and stays
+// with the caller.
+bool zelph::string::selffact_sugar_safe(const std::string& name)
+{
+    if (name.empty() || is_var(name)) return false;
+
+    for (const char ch : name)
+    {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c <= ' ') return false; // whitespace and ASCII control characters
+        switch (c)
+        {
+        case '<':
+        case '>':
+        case '(':
+        case ')':
+        case '{':
+        case '}':
+        case '*':
+        case ',':
+        case '"':
+            return false; // PEG-reserved structure characters
+        default:
+            break;
+        }
+        if (c == 0xC2) return false; // UTF-8 lead byte of '¬', '«', '»'
+    }
+
+    return prints_bare(name);
+}
+
 bool zelph::string::is_inside_node_to_wstring()
 {
     return format_fact_level > 0;
@@ -755,44 +798,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // '¬'), and not shaped like a variable (":A x" would re-parse with
     // variable semantics). Everything else -- including hash-consed numeric
     // self-facts on '*' such as (&9 * &9) -- keeps the verbose "S P S" form.
-    bool        self_fact_sugar = false;
-    std::string self_fact_pred;
+    bool          self_fact_sugar = false;
+    std::string   self_fact_pred;
+    network::Node self_fact_rel = 0;
     if (subject != 0 && objects.size() == 1
         && resolve_var(*objects.begin()) == resolve_var(subject))
     {
-        const auto sugar_safe_name = [](const std::string& name) -> bool
-        {
-            if (name.empty() || string::is_var(name)) return false;
-            for (const char ch : name)
-            {
-                const unsigned char c = static_cast<unsigned char>(ch);
-                if (c <= ' ') return false; // whitespace and ASCII control characters
-                switch (c)
-                {
-                case '<':
-                case '>':
-                case '(':
-                case ')':
-                case '{':
-                case '}':
-                case '*':
-                case ',':
-                case '"':
-                    return false; // PEG-reserved structure characters
-                default:
-                    break;
-                }
-                if (c == 0xC2) return false; // UTF-8 lead byte of U+00AC ('¬'), U+00AB/U+00BB ('«'/'»')
-            }
-            return true;
-        };
-
         const network::Node rel_node = resolve_var(fact_predicate());
         const std::string   rel_name = z->get_formatted_name(rel_node, lang);
-        if (sugar_safe_name(rel_name) && !z->selffact_sugar_suppressed(rel_node))
+        if (string::selffact_sugar_safe(rel_name) && !z->selffact_sugar_suppressed(rel_node))
         {
             self_fact_sugar = true;
             self_fact_pred  = rel_name;
+            self_fact_rel   = rel_node;
         }
     }
 
@@ -949,7 +967,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
     // The components (subject_name, relation_name, objects_name) are already marked.
     if (self_fact_sugar)
-        result = string::mark_identifier(":" + self_fact_pred) + " " + subject_name;
+        // The colon is the SUGAR, the predicate is a NAME -- marking them
+        // as one leaf made the two indistinguishable downstream. The
+        // derivation export had to split the colon off again by hand to
+        // keep the predicate a node reference, and the quoting rules could
+        // not say anything about a name that starts with a colon, since
+        // every self-fact looked like one.
+        result = ":" + mark_leaf(self_fact_rel, self_fact_pred) + " " + subject_name;
     else if (application)
         result = subject_name + "(" + objects_name + ")";
     else

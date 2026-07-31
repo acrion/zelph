@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "interactive.hpp"
+#include "string/node_to_string.hpp"
 #include "io/output.hpp"
 
 #include <algorithm>
@@ -89,34 +90,11 @@ namespace zelph::test
             bool        spaced; // preceded by whitespace in the source
         };
 
-        // Mirror of the display gate in node_to_string.cpp.
+        // The display gate itself, not a copy of it: a mirror here drifted
+        // from node_to_string.cpp the moment either side gained a rule.
         inline bool sugarable_predicate(const std::string& t)
         {
-            if (t.empty()) return false;
-            if (t.size() == 1 && t[0] >= 'A' && t[0] <= 'Z') return false; // variable
-            if (t[0] == '_') return false;                                 // variable
-            for (const char ch : t)
-            {
-                const unsigned char c = static_cast<unsigned char>(ch);
-                if (c <= ' ') return false;
-                switch (c)
-                {
-                case '<':
-                case '>':
-                case '(':
-                case ')':
-                case '{':
-                case '}':
-                case '*':
-                case ',':
-                case '"':
-                    return false;
-                default:
-                    break;
-                }
-                if (c == 0xC2) return false; // '¬', '«', '»'
-            }
-            return true;
+            return zelph::string::selffact_sugar_safe(t);
         }
 
         // Contract "S P S" token triples to ":P S" until fixpoint. The

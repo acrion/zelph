@@ -183,6 +183,39 @@ TEST_CASE("run-export: a name that would break the format is escaped, not lost")
         CHECK(any_contains(lines, "«Le Monde»")); });
 }
 
+TEST_CASE("run-export: the predicate of a self-fact stays a node reference")
+{
+    // A self-fact renders as ":pred subject". The colon is sugar, the
+    // predicate is a NAME, and the export needs the second as a node the
+    // converter can look up. The renderer used to mark the two as one leaf,
+    // which this file then had to take apart again by hand -- a heuristic
+    // that could not tell that pair from a node genuinely named ":pred".
+    // The renderer now emits the colon beside the marked name. This case
+    // passed under the heuristic too -- it guards the property now that the
+    // heuristic is gone, rather than proving the change.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_selffact.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process("(A parent_of B) => (B child_of A)");
+        interactive.process("narc parent_of narc");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE_FALSE(lines.empty());
+        CHECK(any_contains(lines, "\"names\":{\"zelph\":\"child_of\"}"));
+        CHECK(any_contains(lines, "\"names\":{\"zelph\":\"parent_of\"}"));
+        // Not glued into the literal text around it.
+        CHECK_FALSE(any_contains(lines, "\":child_of\"")); });
+}
+
 TEST_CASE("run-export: a bracket-shaped name stays a node reference")
 {
     // The export splits the rendering at the markers the renderer puts

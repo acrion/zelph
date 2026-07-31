@@ -395,6 +395,59 @@ TEST_CASE("display: a sequence element is compared against the marked name")
         CHECK_FALSE(any_output_contains(collector, "(\"a b\")")); });
 }
 
+TEST_CASE("display: a name starting with a colon is quoted")
+{
+    // A leading colon opens the self-fact sugar, so a node NAMED ":foo"
+    // could not be printed bare: as a subject the line failed with an arity
+    // error, and inside a multi-object fact the sugar swallowed the next
+    // object and produced a nested self-fact instead -- silently.
+    //
+    // The quoting rule could not say so while the renderer marked
+    // ":" + predicate as ONE leaf, because then every self-fact looked like
+    // a name beginning with a colon. Splitting the two is what makes the
+    // rule expressible.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("sfoo rel x");
+        interactive.process(".name sfoo \":foo\"");
+
+        collector.clear();
+        interactive.process("S rel x");
+        CHECK(answers_contain(collector, "\":foo\" rel x"));
+
+        // Re-entering the printed form denotes the SAME fact.
+        interactive.process("\":foo\" rel x");
+        collector.clear();
+        interactive.process("S rel x");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1);
+
+        // The sugar itself is untouched: its colon is not part of a name.
+        interactive.process("narc friend narc");
+        collector.clear();
+        interactive.process("A friend B");
+        CHECK(answers_contain(collector, ":friend narc"));
+        CHECK_FALSE(any_output_contains(collector, "\":friend\"")); });
+}
+
+TEST_CASE("display: the self-fact sugar gives way to a predicate that needs quoting")
+{
+    // There is no way to quote a name inside ":pred subject", so the sugar
+    // is only used where the predicate prints BARE. The gate asks the
+    // quoting rules rather than restating them, which is what keeps a
+    // predicate named "&12" -- a number literal to the parser -- in the
+    // verbose form instead of rendering an unreadable :"&12".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("narc \"&12\" narc");
+        collector.clear();
+        interactive.process("A \"&12\" B");
+        CHECK(answers_contain(collector, "narc \"&12\" narc"));
+        CHECK_FALSE(any_output_contains(collector, ":\"&12\"")); });
+}
+
 TEST_CASE("display: a name containing a quote is writable")
 {
     // The quoted-atom rule had no escapes, so a name carrying a quote could

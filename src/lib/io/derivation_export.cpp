@@ -166,19 +166,7 @@ namespace zelph::io
                     break;
                 }
 
-                std::string display = marked.substr(content_start, close - content_start);
-
-                // Self-fact sugar: ":pred subject" renders a whole fact, so
-                // the marked leaf is ":" plus a predicate NAME. Splitting the
-                // colon off keeps the predicate a node reference instead of
-                // degrading it to text -- again the engine undoing its own
-                // display decision, not the reader guessing at it.
-                if (display.size() > 1 && display.front() == ':' && resolve(display) == 0
-                    && resolve(display.substr(1)) != 0)
-                {
-                    emit_literal(":");
-                    display.erase(0, 1);
-                }
+                const std::string display = marked.substr(content_start, close - content_start);
 
                 emit(identifier(display));
                 pos = close + close_marker.size();

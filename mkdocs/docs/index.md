@@ -374,10 +374,13 @@ any fact whose subject and object coincide is printed as `:pred subject`.
 Because all terms are hash-consed, this includes facts that merely _happen_ to
 be self-facts, such as `(&1 + &1)` — printed `:+ &1`. A manual expansion of
 such output back to the verbose `S P S` form parses to the identical node.
-The sugar form is only used where it round-trips through the parser: the
-predicate needs a single-token name free of reserved characters (`*`, `<`,
-`>`, `,`, quotes, `¬`) that is not shaped like a variable. Facts such as
-`(&9 * &9)` or `x "is opposite of" x` therefore keep the verbose form.
+The sugar form is only used where it round-trips through the parser, and
+that is a property of the predicate's NAME: it needs a single token free of
+reserved characters (`*`, `<`, `>`, `,`, quotes, `¬`), and it has to print
+without quotes, since the sugar has no place to put them. So a predicate
+named `&12` or `≈net` — which the parser reads as a number literal and as a
+neural condition — keeps the verbose form, as do `(&9 * &9)` and
+`x "is opposite of" x`.
 
 Modules can additionally exclude predicates from the display sugar via
 [`zelph/no-selffact-sugar`](janet.md#redefinable-hooks): the arithmetic and EML modules register their
@@ -388,7 +391,12 @@ term-forming operators, so a hash-consed coincidence like `(&1 + &1)` or
 
 The colon is **not** a reserved character: atoms with an _inner_ colon (URLs,
 `wd:Q5`-style names) are unaffected; only a leading colon in value position
-triggers the sugar.
+triggers the sugar. A node whose NAME begins with a colon is therefore
+printed quoted (`":foo" rel x`), because bare it would open the sugar
+instead — as a subject that is an arity error, and inside a multi-object
+fact the sugar would swallow the next object without a word. The colon of
+the sugar itself is not part of the name and is emitted beside it, which is
+also what lets `.run-export` report the predicate as the node it is.
 
 ## Creating a node graph
 

@@ -222,6 +222,10 @@ namespace zelph::string
     /// a string literal unchanged -- but the DEcoding has to happen here,
     /// or Janet's much larger escape set applies to zelph text and a node
     /// written `a\b` ends up named `a<backspace>`.
+    /// Does printing this name add no quotes? Asked by a rendering that
+    /// has no way to quote the name it embeds.
+    bool prints_bare(const std::string& name);
+
     std::string escape_atom(const std::string& name);
     std::string unescape_atom(const std::string& body);
 
