@@ -568,3 +568,66 @@ TEST_CASE("sharding: route selectors are rejected without what they need")
 
     fs::remove_all(artifact.root);
 }
+
+TEST_CASE("sharding: a manifest naming a .bin that is not there leaves the session alone")
+{
+    const auto artifact = build_artifact(artifact_root("missing-bin"));
+
+    // The seek manifest names the .bin by a local path, so nothing here can
+    // reach for the network. The manifest loader used to discard the graph
+    // before it ever tried to open that file: what was left had not even its
+    // core nodes, and the message was "Failed to open file for reading".
+    fs::rename(artifact.bin, artifact.root / "moved.bin");
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        try
+        {
+            interactive.process(".load-partial \"" + artifact.seek_manifest.string() + "\"");
+            FAIL("expected the load to be refused");
+        }
+        catch (const std::runtime_error& e)
+        {
+            const std::string message(e.what());
+            CHECK(message.find("net.bin") != std::string::npos);
+            CHECK(message.find("not there") != std::string::npos);
+        }
+
+        collector.clear();
+        interactive.process("a p b");
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
+
+    fs::remove_all(artifact.root);
+}
+
+TEST_CASE("sharding: an unreadable shard falls back to the .bin and says so")
+{
+    const auto artifact = build_artifact(artifact_root("bad-shard"));
+
+    // Emptied, not deleted: a shard that is ABSENT is fetched, which no test
+    // may trigger. One that is present and unreadable exercises the fallback
+    // without leaving the machine.
+    const auto& chunk = artifact.sections.at("left").front();
+    const auto  shard = artifact.shards_dir / "left" / shard_file_name(chunk);
+    REQUIRE(fs::exists(shard));
+    std::ofstream(shard, std::ios::binary | std::ios::trunc);
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + artifact.sharded_manifest.string() + "\"");
+
+        // The substitution is announced. Every other test in this file
+        // asserts the ABSENCE of this line to prove it read the shards, which
+        // is only worth anything if the line appears when it should.
+        CHECK(any_event_contains(collector, "falling back to sequential"));
+        CHECK_FALSE(any_event_contains(collector, "has no local copy"));
+
+        // And the network is complete, because the .bin next to the manifest
+        // can serve what the shard could not.
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Languages: 2")); });
+
+    fs::remove_all(artifact.root);
+}

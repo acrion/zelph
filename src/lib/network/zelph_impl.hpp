@@ -655,8 +655,6 @@ namespace zelph::network
                                     nodeOfNameChunkCount,
                                     "nodeOfName");
 
-            clear_loaded_state();
-
             bool        header_is_remote   = detail::is_hf_uri(header_source);
             std::string header_source_path = header_source;
             if (header_is_remote)
@@ -664,22 +662,36 @@ namespace zelph::network
                 // Same rule as for the shards: a local copy of the named .bin
                 // beats fetching it. Finding it also turns a non-sharded
                 // manifest into plain seeks in that file instead of one
-                // ranged request per chunk.
+                // ranged request per chunk. Costs nothing and fetches
+                // nothing, so it belongs before the graph is discarded.
                 if (const auto local_bin = detail::resolve_local_source_bin(local_manifest_path, header_source, shard_root);
                     !local_bin.empty())
                 {
                     header_source_path = local_bin.string();
                     header_is_remote   = false;
                 }
-                else
+            }
+
+            // Also before the graph is discarded. A manifest naming a .bin
+            // that is not there left a network without even its core nodes,
+            // and said only "Failed to open file for reading": every
+            // following statement then failed with "requested left node 1
+            // does not exist" and nothing pointed at .new.
+            if (!header_is_remote && !std::filesystem::exists(header_source_path))
+            {
+                throw std::runtime_error("Manifest names a source .bin that is not there: " + header_source_path);
+            }
+
+            clear_loaded_state();
+
+            if (header_is_remote)
+            {
+                if (manifest_description.source_header_length_bytes == 0)
                 {
-                    if (manifest_description.source_header_length_bytes == 0)
-                    {
-                        throw std::runtime_error("Manifest headerLengthBytes required for remote source-bin loading");
-                    }
-                    header_source_path =
-                        detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
+                    throw std::runtime_error("Manifest headerLengthBytes required for remote source-bin loading");
                 }
+                header_source_path =
+                    detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
             }
 
             FILE* file = detail::open_file_or_throw(header_source_path);
@@ -973,7 +985,7 @@ namespace zelph::network
             size_t nameOfNodeChunkTotal = 0;
             for (const auto& langMap : _name_of_node)
             {
-                size_t mapSize = count_kept(langMap.second, langMap.second.size(), filtering);
+                size_t mapSize                = count_kept(langMap.second, langMap.second.size(), filtering);
                 nameOfNodeKept[langMap.first] = mapSize;
                 nameOfNodeChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
@@ -1023,7 +1035,8 @@ namespace zelph::network
                 size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
                 {
-                    while (leftIt != _left.end() && !kept(leftIt->first)) ++leftIt;
+                    while (leftIt != _left.end() && !kept(leftIt->first))
+                        ++leftIt;
 
                     pairList[pIdx].setNode(leftIt->first);
                     const std::vector<Node> sorted = kept_neighbours(leftIt->second);
@@ -1052,7 +1065,8 @@ namespace zelph::network
                 size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
                 {
-                    while (rightIt != _right.end() && !kept(rightIt->first)) ++rightIt;
+                    while (rightIt != _right.end() && !kept(rightIt->first))
+                        ++rightIt;
 
                     pairList[pIdx].setNode(rightIt->first);
                     const std::vector<Node> sorted = kept_neighbours(rightIt->second);
