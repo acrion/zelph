@@ -238,6 +238,24 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
         {
             const Node nd = pending.back();
             pending.pop_back();
+
+            // The tags that give a node its meaning to the reasoner. A rule's
+            // condition set is a FRESH node, not a content-addressed one (two
+            // literal sets are never the same node), so the loop below skips
+            // it and everything reachable only through it stayed behind --
+            // including "<set> ~ conjunction". Without that tag the reasoner
+            // reads the whole set as a single condition: the sliced network
+            // still REPORTED the rule, printed it in full and counted it, and
+            // could not fire it, while .explain called the facts it had once
+            // derived axioms. Addressed by content hash rather than searched,
+            // like the relation-type declaration above: core.IsA's adjacency
+            // is most of the graph.
+            for (const Node tag : {core.Conjunction, core.Negation})
+            {
+                const Node tagged = create_hash(core.IsA, nd, {tag});
+                if (exists_unlocked(tagged)) retain(tagged);
+            }
+
             if (!Impl::is_hash(nd)) continue;
 
             const auto left_it = _pImpl->_left.find(nd);

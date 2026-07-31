@@ -48,6 +48,12 @@ What this costs, measured on the pruned network (74.6 million nodes, 15.2 GiB re
 
 Which predicates are worth slicing is a content question, not a technical one. `P279` alone answers everything about the class hierarchy, which is where the documented demand is.
 
+### What travels with the facts
+
+A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of each named predicate (without it the loaded slice answers nothing at all), the **structure of nested facts** (a statement about a statement drags in what it is built from), and the **conjunction and negation tags** of any rule that ends up in the slice — a rule without them is still counted and still printed, but reads as a single condition and can never fire.
+
+What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing. A rule whose conditions mention such a predicate is kept intact and simply never matches; rules you want to run over the slice are normally imported at use time (`.import wikidata-classes`) rather than carried in the file.
+
 ### File naming
 
 Keep the name of the source network and append the predicates:

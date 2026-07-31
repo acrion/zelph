@@ -173,6 +173,56 @@ TEST_CASE("slice: the closure over the slice equals the closure over the source"
     fs::remove(file);
 }
 
+TEST_CASE("slice: a rule that travels with the slice still fires and still explains")
+{
+    const auto file = slice_path("rule");
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+.lang wikidata
+(R P31 P1, A R B, B R C) => (A R C)
+P279 P31 P1
+Q10 P279 Q20
+Q20 P279 Q30
+)");
+        // The rule fires on the source: that is the baseline the slice has
+        // to reproduce.
+        collector.clear();
+        interactive.process("Q10 P279 X");
+        REQUIRE(answers_contain(collector, "Q10 P279 Q30"));
+
+        interactive.process(".save-predicates \"" + file.string() + "\" P279 P31");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    interactive.process(".auto-run");
+    interactive.process(".lang wikidata"); // .load leaves the language at zelph
+
+    // A rule's condition set is a fresh node, not a content-addressed one, so
+    // the structural closure did not expand it and "<set> ~ conjunction" was
+    // left behind. The slice then reported the rule, printed it in full and
+    // counted it -- and read the whole condition set as ONE condition, so
+    // nothing ever matched. Adding a fact that the rule must extend is the
+    // only way to tell the two apart from outside.
+    collector.clear();
+    interactive.process("Q30 P279 Q40");
+    interactive.process("Q10 P279 X");
+    CHECK(answers_contain(collector, "Q10 P279 Q40"));
+
+    // ...and the derivation is reconstructible, rather than the fact being
+    // called an axiom because no rule consequence could unify with it.
+    collector.clear();
+    interactive.process(".explain (Q10 P279 Q40)");
+    CHECK_FALSE(any_output_contains(collector, "[axiom]"));
+    CHECK(any_output_contains(collector, "Q20 P279 Q40"));
+
+    fs::remove(file);
+}
+
 TEST_CASE("slice: rejects a predicate the network does not know")
 {
     const auto file = slice_path("unknown");
