@@ -898,6 +898,58 @@ namespace zelph::network
             }
 
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after partial load: " << _string_pool.size();
+
+            // The route index is a sidecar written by the emitter, and the
+            // loader trusts it: it says which chunks hold a node, and those
+            // chunks are what gets read. An index that points somewhere else
+            // therefore produced a perfectly ordinary load of the wrong
+            // pieces -- the requested node simply was not in the result, with
+            // nothing said. Checking afterwards costs one lookup per
+            // requested node and turns that into a sentence.
+            if (route_requested && !skip_payload)
+            {
+                const auto has_a_name = [this](const Node nd)
+                {
+                    for (const auto& lang : _name_of_node)
+                    {
+                        if (lang.second.find(nd) != lang.second.end()) return true;
+                    }
+                    return false;
+                };
+
+                for (const Node nd : selection.route_nodes)
+                {
+                    if (!exists(nd))
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-node=" << nd
+                            << ": the chunks the route index named do not contain that node"
+                            << " -- the index and the shards disagree";
+                    }
+                    else if (!routed_selection.name_of_node.empty() && !has_a_name(nd))
+                    {
+                        // The index routed a nameOfNode chunk for this node,
+                        // so it claims to know where the name is.
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-node=" << nd
+                            << ": the nameOfNode chunk the route index named carries no name for it"
+                            << " -- the index and the shards disagree";
+                    }
+                }
+
+                if (selection.route_name_explicit && !selection.route_name.empty())
+                {
+                    const auto lang_it = _node_of_name.find(selection.route_lang);
+                    if (lang_it == _node_of_name.end()
+                        || lang_it->second.find(selection.route_name) == lang_it->second.end())
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-name=" << selection.route_name
+                            << ": the chunk the route index named does not contain that name in '"
+                            << selection.route_lang << "' -- the index and the shards disagree";
+                    }
+                }
+            }
         }
         // Write the network, or the part of it that `keep` selects.
         //

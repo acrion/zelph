@@ -631,3 +631,81 @@ TEST_CASE("sharding: an unreadable shard falls back to the .bin and says so")
 
     fs::remove_all(artifact.root);
 }
+
+TEST_CASE("sharding: a route selector that resolves to nothing is refused")
+{
+    const auto        artifact = build_artifact(artifact_root("routebad"));
+    const std::string m        = artifact.sharded_manifest.string();
+
+    // Every one of these is a question the route index cannot answer. None
+    // of them may cost the session: the selectors are resolved and checked
+    // before the graph is discarded.
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        for (const std::string& tail : {std::string(" route-node=999999999"),
+                                        std::string(" route-node=abc"),
+                                        std::string(" route-name=nosuchname route-lang=zelph"),
+                                        std::string(" route-name=alpha route-lang=fr")})
+        {
+            CHECK_THROWS_AS(interactive.process(".load-partial \"" + m + "\"" + tail), std::runtime_error);
+        }
+
+        collector.clear();
+        interactive.process("a p b");
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
+
+    // A routing entry naming a chunk the section does not have is caught by
+    // the same selector validation as a hand-typed one.
+    {
+        std::string text = read_file(artifact.route_index);
+        const auto  from = std::string("\"left\":  [{\"chunkIndex\": 0");
+        const auto  pos  = text.find(from);
+        REQUIRE(pos != std::string::npos);
+        text.replace(pos, from.size(), "\"left\":  [{\"chunkIndex\": 99");
+        std::ofstream(artifact.route_index, std::ios::trunc) << text;
+    }
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        CHECK_THROWS_AS(interactive.process(".load-partial \"" + m + "\" route-node="
+                                            + std::to_string(artifact.alpha)),
+                        std::runtime_error);
+
+        collector.clear();
+        interactive.process("a p b");
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
+
+    fs::remove_all(artifact.root);
+}
+
+TEST_CASE("sharding: a route index that points at the wrong chunk says so")
+{
+    const auto artifact = build_artifact(artifact_root("routewrong"));
+
+    // The route index is a sidecar the emitter writes and the loader trusts:
+    // it says which chunk holds a name, and that chunk is what gets read. An
+    // index pointing elsewhere therefore produced an ordinary, successful
+    // load of the wrong pieces -- the requested name simply was not in the
+    // result, with nothing said. Here alpha_de is routed to the zelph chunk.
+    {
+        const auto  wrong  = artifact.node_of_name_chunk("zelph");
+        const auto  needle = "{\"chunkIndex\": " + std::to_string(artifact.node_of_name_chunk("de"))
+                           + ", \"lang\": \"de\"";
+        std::string text   = read_file(artifact.route_index);
+        const auto  pos    = text.find(needle);
+        REQUIRE(pos != std::string::npos);
+        text.replace(pos, needle.size(), "{\"chunkIndex\": " + std::to_string(wrong) + ", \"lang\": \"de\"");
+        std::ofstream(artifact.route_index, std::ios::trunc) << text;
+    }
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                            + "\" route-name=alpha_de route-lang=de");
+        CHECK(any_event_contains(collector, "the index and the shards disagree"));
+        CHECK(any_event_contains(collector, "alpha_de")); });
+
+    fs::remove_all(artifact.root);
+}
