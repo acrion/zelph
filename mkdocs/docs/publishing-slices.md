@@ -52,7 +52,15 @@ Which predicates are worth slicing is a content question, not a technical one. `
 
 A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of each named predicate (without it the loaded slice answers nothing at all), the **structure of nested facts** (a statement about a statement drags in what it is built from), and the **conjunction and negation tags** of any rule that ends up in the slice — a rule without them is still counted and still printed, but reads as a single condition and can never fire.
 
-What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing. A rule whose conditions mention such a predicate is kept intact and simply never matches; rules you want to run over the slice are normally imported at use time (`.import wikidata-classes`) rather than carried in the file.
+What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing.
+
+**Rules are a different matter, and worth knowing about before you rely on one.** Which rules end up in a slice is incidental: a rule travels when the closure happens to reach it, and a *contradiction* rule — whose consequence is `!`, a fact of no predicate — normally does not. A slice can therefore stop reporting a contradiction that its source reports, silently. `.save-predicates` says how many of the network's rules travelled:
+
+```
+Saved 8 fact(s) of 1 predicate(s) to leaf-slice.bin; 0 of 1 rule(s) travelled with it
+```
+
+The workflow that avoids the question altogether is the one the class-hierarchy work uses: publish the slice as **data**, and import the rules when you use it (`.import wikidata-classes`). A rule that does travel is complete and behaves exactly as it did in the source.
 
 ### File naming
 

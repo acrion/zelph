@@ -223,6 +223,55 @@ Q20 P279 Q30
     fs::remove(file);
 }
 
+TEST_CASE("slice: says how many rules travelled, and the file agrees")
+{
+    const auto file = slice_path("rulecount");
+
+    std::string report;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+.lang wikidata
+(A P279 X, A P279 Y, X != Y) => (A P9 yes)
+(A P279 Q10, A P279 Q20) => !
+Q30 P279 Q10
+)");
+        collector.clear();
+        interactive.process(".save-predicates \"" + file.string() + "\" P279 P9");
+        // The summary goes to the Diagnostic channel, like every other
+        // progress line of a save.
+        for (const auto& event : collector.events())
+        {
+            if (event.text.find("travelled with it") != std::string::npos) report = event.text;
+        }
+    }
+
+    // Which rules a slice keeps follows from the closure rather than from a
+    // decision -- a contradiction rule, whose consequence is a fact of no
+    // predicate, normally stays behind, so a slice can stop reporting a
+    // contradiction its source reports. The contract is not WHICH rules
+    // travel but that the command says how many did, and that the file backs
+    // the number up.
+    REQUIRE(report.find("rule(s) travelled with it") != std::string::npos);
+
+    REQUIRE(report.find("of 2 rule(s)") != std::string::npos); // the network had two
+
+    const std::size_t semicolon = report.find(';');
+    REQUIRE(semicolon != std::string::npos);
+    const std::size_t travelled = static_cast<std::size_t>(std::stoul(report.substr(semicolon + 1)));
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+
+    collector.clear();
+    interactive.process(".stat");
+    CHECK(any_output_contains(collector, "Rules: " + std::to_string(travelled)));
+
+    fs::remove(file);
+}
+
 TEST_CASE("slice: rejects a predicate the network does not know")
 {
     const auto file = slice_path("unknown");

@@ -161,8 +161,10 @@ void Zelph::save_to_file(const std::string& filename) const
 //     is itself a fact (a rule, a qualified statement) drags in the nodes it
 //     is built from, or the loaded slice has a node whose structure cannot be
 //     read back.
-size_t Zelph::save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates) const
+size_t Zelph::save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept) const
 {
+    if (rules_kept) *rules_kept = 0;
+
     ankerl::unordered_dense::set<Node> keep{
         core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction,
         core.Cons, core.Nil, core.PartOf, core.Conjunction, core.Negation};
@@ -269,6 +271,21 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             {
                 for (const Node participant : right_it->second) retain(participant);
             }
+        }
+    }
+
+    // Which rules end up in a slice follows from the closure, not from a
+    // decision: a rule travels when something retained happens to reach it,
+    // and a contradiction rule -- whose consequence is the core `!` node and
+    // therefore a fact of no predicate -- normally does not. A slice can thus
+    // stop reporting a contradiction its source reports, which is the kind of
+    // thing that has to be said at the moment it happens rather than found
+    // later.
+    if (rules_kept)
+    {
+        for (const Node rule : get_rules())
+        {
+            if (keep.find(rule) != keep.end()) ++*rules_kept;
         }
     }
 
