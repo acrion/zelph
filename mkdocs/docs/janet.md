@@ -470,6 +470,8 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors.
 - **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step; returns the loss before the update.
 - **`(zelph/nn-write-back handle)`** — write trained weights back into the graph's weight store (required for `.save` and for `≈` conditions).
+- **`(zelph/nn-snapshot handle)`** — copy the weights out as an array of arrays of numbers.
+- **`(zelph/nn-restore handle snapshot)`** — put a snapshot back; shapes must match, absent synapses stay absent.
 - **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — densely wire two layers; idempotent, preserves existing weights.
 - **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.

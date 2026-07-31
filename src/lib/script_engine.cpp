@@ -456,6 +456,13 @@ public:
         janet_def(_janet_env, "zelph/nn-write-back", wrap((JanetCFunction)janet_cfun_zelph_nn_write_back), "(zelph/nn-write-back handle)\nWrite the compiled net's weights back into the graph's edge-weight store, "
                                                                                                            "so they survive .save and are picked up by future zelph/nn-compile calls.");
 
+        janet_def(_janet_env, "zelph/nn-snapshot", wrap((JanetCFunction)janet_cfun_zelph_nn_snapshot), "(zelph/nn-snapshot handle)\nCopy the compiled net's weights out as an array of arrays of numbers, "
+                                                                                                       "one per layer transition. Use it to keep the best epoch of a training run: the criterion that says a run has passed its "
+                                                                                                       "optimum can only fire afterwards, so without a snapshot the saved weights are always some epochs past the good ones.");
+
+        janet_def(_janet_env, "zelph/nn-restore", wrap((JanetCFunction)janet_cfun_zelph_nn_restore), "(zelph/nn-restore handle snapshot)\nPut a zelph/nn-snapshot back into the compiled net. "
+                                                                                                     "Shapes must match; synapses absent from the graph stay absent, since the mask belongs to the graph and not to the weights.");
+
         janet_def(_janet_env, "zelph/nn-connect-layers", wrap((JanetCFunction)janet_cfun_zelph_nn_connect_layers), "(zelph/nn-connect-layers from-layer to-layer &opt scale seed)\nCreate raw synapses between all members of two layers "
                                                                                                                    "((neuron in layer) facts, ascending node id). Weights are uniform in [-scale, scale]; scale defaults to 0.1, scale 0 gives exact zeros. "
                                                                                                                    "seed defaults to 42 for reproducible initialization. Existing edges are left untouched, so trained weights survive re-wiring. "
@@ -1161,6 +1168,64 @@ public:
             err = e.what();
         }
         janet_panicf("zelph/nn-train: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
+    // Copy the compiled net's weights out, as an array of arrays of numbers.
+    static Janet janet_cfun_zelph_nn_snapshot(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-snapshot: invalid network handle");
+
+        const auto& w    = net->weights();
+        JanetArray* outer = janet_array(static_cast<int32_t>(w.size()));
+        for (const auto& matrix : w)
+        {
+            JanetArray* inner = janet_array(static_cast<int32_t>(matrix.size()));
+            for (const double v : matrix)
+            {
+                janet_array_push(inner, janet_wrap_number(v));
+            }
+            janet_array_push(outer, janet_wrap_array(inner));
+        }
+        return janet_wrap_array(outer);
+    }
+
+    // Put a snapshot back. Shapes must match the compiled net.
+    static Janet janet_cfun_zelph_nn_restore(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) janet_panicf("zelph/nn-restore: invalid network handle");
+
+        const Janet* outer;
+        int32_t      outer_len;
+        if (!janet_indexed_view(argv[1], &outer, &outer_len))
+            janet_panicf("zelph/nn-restore: expected an array of weight matrices");
+
+        std::vector<std::vector<double>> w;
+        w.reserve(static_cast<size_t>(outer_len));
+        for (int32_t k = 0; k < outer_len; ++k)
+        {
+            w.push_back(janet_number_vector(outer[k], "zelph/nn-restore"));
+        }
+
+        std::string err;
+        try
+        {
+            net->set_weights(w);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-restore: %s", err.c_str());
         return janet_wrap_nil(); // unreachable
     }
 

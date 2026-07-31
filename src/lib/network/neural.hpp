@@ -68,6 +68,13 @@ namespace zelph::network
 
         void write_back(Zelph& z) const;
 
+        // Copy of every weight matrix, and the inverse. Training is a walk
+        // that passes its best point and then leaves it: the criterion that
+        // says "stop" can only fire after the fact, so without a way back the
+        // weights that get saved are always some epochs past the good ones.
+        const std::vector<std::vector<double>>& weights() const { return _w; }
+        void                                    set_weights(const std::vector<std::vector<double>>& w);
+
         // --- Node-addressed access (graph-driven training) ---
         //
         // These address neurons by their graph node instead of by index,

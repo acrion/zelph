@@ -257,6 +257,27 @@ double NeuralNet::train_step(const std::vector<double>& input,
     return loss;
 }
 
+void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
+{
+    if (w.size() != _w.size())
+    {
+        throw std::runtime_error("NeuralNet::set_weights: expected " + std::to_string(_w.size())
+                                 + " weight matrices, got " + std::to_string(w.size()));
+    }
+    for (size_t k = 0; k < _w.size(); ++k)
+    {
+        if (w[k].size() != _w[k].size())
+        {
+            throw std::runtime_error("NeuralNet::set_weights: matrix " + std::to_string(k) + " has "
+                                     + std::to_string(w[k].size()) + " entries, expected " + std::to_string(_w[k].size()));
+        }
+    }
+    // The mask is a property of the graph, not of the weights, so restoring
+    // cannot resurrect a synapse the graph does not have: entries outside the
+    // mask are never trained and never read.
+    _w = w;
+}
+
 void NeuralNet::write_back(Zelph& z) const
 {
     for (size_t k = 0; k < _w.size(); ++k)

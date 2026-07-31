@@ -88,6 +88,9 @@ The remaining compiled-network API:
 - **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors (in `zelph/nn-nodes` order). Hidden layers use ReLU, the output layer is linear.
 - **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step on one sample; returns the loss (`0.5 · Σ error²`) _before_ the update. Learning rate defaults to 0.01.
 - **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — wiring helper: creates raw synapses between _all_ members of two layers, with uniform random weights in `[-scale, scale]` (`scale` defaults to 0.1; `scale 0` gives exact zeros; `seed` defaults to 42 for reproducibility). Existing edges are left untouched, so the call is idempotent and re-wiring never destroys trained weights.
+- **`(zelph/nn-snapshot handle)`** / **`(zelph/nn-restore handle snapshot)`** — copy the weights out as an array of arrays of numbers, and put them back. Shapes must match; a synapse absent from the graph stays absent, because the mask belongs to the graph rather than to the weights.
+
+Snapshots exist because training passes its best point before anything can notice. A criterion like "the held-out loss has not improved for _n_ epochs" only fires _n_ epochs late, and on a noisy curve it fires at a point that says more about the noise than about the model — so without a way back, what gets saved is never quite what was measured. Take a snapshot whenever the held-out loss improves, restore it before `zelph/nn-write-back`, and the saved network is the one the number described.
 
 ## Node-Addressed Training
 

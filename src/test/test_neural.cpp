@@ -347,6 +347,75 @@ f1 in NOut
 }
 
 // ---------------------------------------------------------------------------
+// Weight snapshots: a training run can be put back where it was best
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: a snapshot restores the exact weights it was taken from")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+p1 in PIn
+p2 in PIn
+q1 in POut
+%(zelph/nn-connect-layers "PIn" "POut" 0)
+%(def net (zelph/nn-compile [(zelph/resolve "PIn") (zelph/resolve "POut")]))
+%(for i 0 30 (zelph/nn-train-nodes net ["p1"] [["q1" 1.0]] 0.1))
+%(def good (zelph/nn-snapshot net))
+%(def good-score (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1))
+%(for i 0 30 (zelph/nn-train-nodes net ["p1"] [["q1" -5.0]] 0.1))
+)");
+        // The net has been trained away from where the snapshot was taken.
+        collector.clear();
+        interactive.process(R"(%(if (> (math/abs (- (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1) good-score)) 0.5) "moved-away" "did-not-move"))");
+        CHECK(any_output_contains(collector, "moved-away"));
+
+        // Restoring must reproduce the earlier score exactly, not closely.
+        collector.clear();
+        interactive.process(R"(%(do (zelph/nn-restore net good)
+                                    (if (= (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1) good-score) "restored-exactly" "restored-differently")))");
+        CHECK(any_output_contains(collector, "restored-exactly"));
+
+        // And the restored weights are the ones write-back puts in the graph.
+        collector.clear();
+        interactive.process(R"(%(do (zelph/nn-write-back net)
+                                    (if (= (zelph/weight "p1" "q1") good-score) "written-back" (string "written-back-differs " (zelph/weight "p1" "q1")))))");
+        CHECK(any_output_contains(collector, "written-back"));
+
+        // A snapshot of the wrong shape is rejected rather than truncated.
+        collector.clear();
+        interactive.process(R"(%(try (zelph/nn-restore net [[1 2 3 4 5]]) ([err] "shape-rejected")))");
+        CHECK(any_output_contains(collector, "shape-rejected"));
+
+        collector.clear();
+        interactive.process(R"(%(try (zelph/nn-restore net [[0 0] [0 0]]) ([err] "count-rejected")))");
+        CHECK(any_output_contains(collector, "count-rejected")); });
+}
+
+TEST_CASE("neural: restoring never resurrects a synapse the graph does not have")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Only one of the two possible synapses exists in the graph.
+        process_lines(interactive, R"(
+r1 in RIn
+r2 in RIn
+s1 in ROut
+%(zelph/nn-connect "r1" "s1" 0.25)
+%(def net (zelph/nn-compile [(zelph/resolve "RIn") (zelph/resolve "ROut")]))
+%(def snap (zelph/nn-snapshot net))
+)");
+        // Hand-write a weight into the absent slot and restore it. Training
+        // has always refused to create that synapse; restoring must too.
+        collector.clear();
+        interactive.process(R"(%(do (put (get snap 0) 1 9.0)
+                                    (zelph/nn-restore net snap)
+                                    (zelph/nn-write-back net)
+                                    (if (nil? (zelph/weight "r2" "s1")) "absent-stays-absent" (string "leaked " (zelph/weight "r2" "s1")))))");
+        CHECK(any_output_contains(collector, "absent-stays-absent")); });
+}
+
+// ---------------------------------------------------------------------------
 // Graph-driven training: the reasoning query defines the training data
 // ---------------------------------------------------------------------------
 
