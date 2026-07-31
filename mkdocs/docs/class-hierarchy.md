@@ -5,7 +5,7 @@
 Pick two classes that should be disjoint — say _profession_ ([Q215627](https://www.wikidata.org/wiki/Q215627)) and _organization_ ([Q43229](https://www.wikidata.org/wiki/Q43229)). zelph answers, on your own machine and in well under a second:
 
 - **which classes are subclasses of both** — the violation set, which is usually large and by itself unusable as a work list;
-- **which few classes actually carry the mistake** — those whose parents are not themselves in violation. Everything else inherits the problem;
+- **which few classes actually carry the mistake** — the [_culprits_](#where-this-comes-from), those whose parents are not themselves in violation. Everything else inherits the problem;
 - **how much each one is worth fixing** — how many entries of the violation set disappear with it;
 - **why each entry is there** — the chain of `P279` statements that produced it. Every arrow in that chain is one statement in Wikidata, and one of them is the edit.
 
@@ -210,6 +210,32 @@ Two statements moved, 194 results changed. Both numbers are right about the data
 zelph is not a query engine over triples; it is an inference engine whose graph happens to answer queries. Two properties matter here. First, a network can be cut down to the statements of chosen predicates and still be a complete network — that is what `.save-predicates` produces, and why the class hierarchy can be shipped as a file that is three orders of magnitude smaller than the dump it comes from. Second, transitive questions are not answered by walking triples per query but by a closure engine over an adjacency index that is built once per predicate and cached next to the file (`.pidx.322` above). The 18,933 affected classes and the 81 culprits fall out of set operations on two closures. `stdlib/wikidata-classes.zph`, which `.import wikidata-classes` loads, is 200 lines of ordinary script on top of the public API — you can read it, change it, and ask different questions with it.
 
 If you want to produce such a file yourself — for another dump, another property, or a combination — see [Publishing a Predicate Slice](publishing-slices.md).
+
+## Where this comes from
+
+The word _culprit_, and the way of counting used here, are from Ege Atacan Doğan and Peter F. Patel-Schneider, [_Disjointness Violations in Wikidata_](https://arxiv.org/abs/2410.13707) (2024). That paper analyses how disjointness is modelled in Wikidata, categorises the patterns that produce violations, and gives SPARQL queries that identify the culprits.
+
+Two things in it say what this page is for.
+
+The first is where the paper stops. Finding the culprits is mechanical; finding the **mistake behind** one is not, and the paper says so plainly — determining mistakes "requires manually examining the information in Wikidata", and "cannot be done with a simple formula and then retrieved using a simple query like determining culprits". Their own largest case is _gene_ ([Q7187](https://www.wikidata.org/wiki/Q7187)): 10,656 of the culprits they found are subclasses of it, and that was established by hand.
+
+The second is what the paper asks for next. Its section on crowdsourcing fixes wants a tool that shows "disjointness culprits in context and pointed out changes that would eliminate the issue".
+
+That is what `culprits` and `culprit-path` are: the culprits ranked by how much each fix is worth, and for each one the chain of `P279` statements that put it there, so the context is on the screen rather than in twelve browser tabs. What the tool deliberately does not do is decide which statement in the chain is the wrong one. That remains the editorial judgement the paper describes — the difference is that it is now a judgement about three or four statements instead of about a five-figure list.
+
+Their case is in the file used here, so you can start from it:
+
+```
+zelph-> %(class-report "Q7187")
+Class: Q7187
+Subclasses (transitive): 23600
+Direct superclasses: 3
+  P279 -> Q15712714 (biomolecular structure)
+  P279 -> Q50365914 (biological region)
+  P279 -> Q863908 (nucleic acid sequence)
+```
+
+Three statements above a class that carries five figures of consequences — which is the shape of every entry in the report.
 
 ## Reporting problems
 
