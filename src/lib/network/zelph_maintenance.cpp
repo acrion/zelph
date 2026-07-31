@@ -52,7 +52,7 @@ size_t Zelph::cleanup_names() const
     return _pImpl->cleanup_dangling_names();
 }
 
-void Zelph::remove_node(Node node) const
+size_t Zelph::remove_node(Node node) const
 {
     // Removing a core node leaves a network in which the next negation, list
     // or contradiction fails deep inside the engine ("requested node does not
@@ -153,6 +153,8 @@ void Zelph::remove_node(Node node) const
         _pImpl->remove(dead);            // Disconnects edges and removes from adjacency maps
         _pImpl->remove_node_names(dead); // Separate method for name cleanup
     }
+
+    return doomed.size();
 }
 
 // Returns all nodes that are subjects of a core.Causes relation
@@ -420,13 +422,16 @@ size_t Zelph::drop_cluster(const std::string& name) const
 
     invalidate_fact_structures_cache();
 
+    // Counting the calls would UNDERSTATE the damage twice over: removing
+    // one node takes the facts it is part of, so a later entry of the same
+    // cluster may already be gone, and the facts themselves need not be in
+    // the cluster at all. What the caller reports is what actually went.
     size_t removed = 0;
     for (const Node n : nodes)
     {
         if (_pImpl->exists(n))
         {
-            remove_node(n);
-            ++removed;
+            removed += remove_node(n);
         }
     }
     return removed;

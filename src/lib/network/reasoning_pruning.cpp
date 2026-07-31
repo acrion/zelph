@@ -70,7 +70,7 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
     _pool->wait();
 
     removed_facts = _facts_to_prune.size();
-    removed_nodes = _nodes_to_prune.size();
+    removed_nodes = 0;
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
@@ -92,15 +92,24 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
         if (!get_core_name(node).empty())
         {
             ++kept_core_nodes;
-            --removed_nodes;
             continue;
         }
+
+        // A bound node can be gone before its turn: removing an earlier one
+        // takes the facts it is part of with it, and a bound node may BE
+        // such a fact -- "X rel o" binds X to `a` and to `(a p b)` alike.
+        // Which of the two comes first is not fixed (the set is unordered),
+        // so the case cannot be provoked reliably; remove_node REFUSES a
+        // node that does not exist, so asking is not decoration.
+        if (!_pImpl->exists(node)) continue;
 
         // remove_node, not Impl::remove: the names have to go with the
         // node, exactly as for the .remove command. Without that the name
         // still resolved to the deleted node, so ".node <name>" answered
-        // with an empty node that is no longer in the graph.
-        remove_node(node);
+        // with an empty node that is no longer in the graph. Its return
+        // value is what actually went, which is more than one whenever the
+        // node took part in a fact.
+        removed_nodes += remove_node(node);
     }
 
     if (kept_core_nodes > 0)

@@ -437,7 +437,10 @@ namespace zelph::network
 
         void          cleanup_isolated(size_t& removed_count) const;
         size_t        cleanup_names() const;
-        void          remove_node(Node node) const;
+        /// Removes the node and everything it is a PART of, cascading
+        /// upwards. Returns HOW MANY nodes went, which is more than one
+        /// whenever the node took part in a fact -- the callers report it.
+        size_t        remove_node(Node node) const;
         adjacency_set get_rules() const;
         void          remove_rules() const;
         size_t        rule_count() const;

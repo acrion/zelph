@@ -240,6 +240,51 @@ TEST_CASE("removal: nothing incomplete reaches the .bin")
         std::filesystem::remove(out); });
 }
 
+TEST_CASE("removal: the report counts what actually went")
+{
+    // Removing a node takes the facts it is part of, so counting the
+    // removal CALLS understates what happened -- and for .cluster-drop it
+    // understated twice over, since a later entry of the same cluster may
+    // already have gone with an earlier one. The rollback accounting is the
+    // whole point of that command, so the number has to be the real one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE(".remove says how much went with the node")
+        {
+            interactive.process("outer rel d");
+            interactive.process("second rel d");
+            collector.clear();
+            interactive.process(".remove d");
+            // The node itself plus the two facts it was the object of.
+            CHECK(any_output_contains(collector, "and 2 node(s) it was part of"));
+        }
+        SUBCASE(".cluster-drop removes every node it recorded")
+        {
+            interactive.process(".cluster rollback");
+            interactive.process("c rel e");
+            interactive.process(".cluster default");
+
+            collector.clear();
+            interactive.process(".cluster");
+            // Whatever the cluster recorded has to be what the drop reports,
+            // so the expected number is read off rather than assumed.
+            std::string recorded;
+            for (const auto& e : collector.events())
+            {
+                const std::string  n   = normalize(e.text);
+                const std::size_t  pos = n.find("rollback: ");
+                if (pos == std::string::npos) continue;
+                const std::size_t end = n.find(' ', pos + 10);
+                recorded              = n.substr(pos + 10, end - pos - 10);
+            }
+            REQUIRE_FALSE(recorded.empty());
+
+            collector.clear();
+            interactive.process(".cluster-drop rollback");
+            CHECK(any_output_contains(collector, "removed " + recorded + " node(s)"));
+        } });
+}
+
 TEST_CASE("pruning: the pattern reads the way .explain reads it")
 {
     // The prune commands built their pattern by QUOTING every non-variable

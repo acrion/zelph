@@ -2092,9 +2092,14 @@ private:
                          "Note: clusters are session state and are not persisted by .save."},
 
             {".cluster-drop", ".cluster-drop <name>\n"
-                              "Removes every node recorded in the cluster, including all edges and names\n"
-                              "(rollback semantics). Pre-existing knowledge is untouched, but facts created\n"
-                              "OUTSIDE the cluster that reference cluster nodes lose those connections.\n"
+                              "Removes every node recorded in the cluster, with its names (rollback\n"
+                              "semantics). Pre-existing knowledge is untouched EXCEPT where it is built\n"
+                              "on a cluster node: a fact created outside the cluster that names one goes\n"
+                              "with it, and so does a rule one of its conditions belongs to -- see\n"
+                              ".help .remove. A fact that merely lost a part could not be told from a\n"
+                              "different fact.\n"
+                              "The reported count is what actually went, which is more than the cluster\n"
+                              "recorded whenever such a fact existed.\n"
                               "Dropping the ACTIVE cluster falls back to 'default', i.e. tracking stops.\n"
                               "An unknown name is an error, not a no-op.\n"
                               "WARNING: destructive and irreversible."},
@@ -2391,8 +2396,10 @@ private:
             }
         }
 
-        _n->remove_node(nd);
-        _n->out("Removed node " + std::to_string(nd) + " (all edges disconnected, name mappings cleaned).", true);
+        const size_t removed = _n->remove_node(nd);
+        _n->out("Removed node " + std::to_string(nd) + " and " + std::to_string(removed - 1)
+                    + " node(s) it was part of (names cleaned).",
+                true);
         _n->diagnostic("Consider running .cleanup afterwards if needed.", true);
     }
     void cmd_mermaid(const std::vector<std::string>& cmd)
