@@ -425,116 +425,55 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
             }
 
-            // Parse the negated pattern to inspect its subject.
-            adjacency_set pattern_objects;
-            Node          pattern_subject = parse_fact(condition, pattern_objects, rule.node);
+            // A negated condition succeeds exactly when NO fact matches it,
+            // whichever of its variables happen to be bound -- one reading,
+            // readable where it stands.
+            //
+            // It used to have a second one. With the pattern's SUBJECT still
+            // free, the engine took the subjects of that relation as a
+            // domain and let the condition succeed once per candidate the
+            // pattern failed for, BINDING that candidate -- so
+            // `(A ~ interval, ¬(B before A)) => (A is earliest)` concluded
+            // it for every interval, one of them justified by the self-fact
+            // `¬(b before b)`. Which reading applied depended on whether
+            // some other condition happened to bind the subject, i.e. adding
+            // a positive condition elsewhere silently changed what the
+            // negation meant.
+            //
+            // Nothing is lost: the enumeration is the same thing as naming
+            // the domain positively, `(X flagged S, ¬(X flagged bad))`,
+            // which additionally lets the author CHOOSE the domain and puts
+            // the fact that made an entity a candidate into the
+            // justification. The whole stdlib already reads this way. The
+            // other direction was not expressible at all -- with a free
+            // subject there was no way to ask for plain absence.
+            std::shared_ptr<Variables> match = u->Next();
+            u->wait_for_completion();
 
-            bool subject_is_unbound = Zelph::Impl::is_var(pattern_subject)
-                                   && rule.variables->find(pattern_subject) == rule.variables->end();
-
-            if (!subject_is_unbound)
+            if (match)
             {
-                // --- Step 1: Try standard Unification ---
-                // This handles the common case where all variables are already
-                // bound by prior positive conditions.
-                std::shared_ptr<Variables> match = u->Next();
-                u->wait_for_completion();
-
-                if (match)
-                {
-                    if (logging_active())
-                        _prof.negation_fail.fetch_add(1, std::memory_order_relaxed);
-
-                    if (should_log(depth))
-                    {
-                        log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
-                        for (const auto& [var, val] : *match)
-                        {
-                            log(depth, "neg-eval", get_name(var, _lang, true) + " (id=" + std::to_string(var) + ") -> " + get_name(val, _lang, true) + " (id=" + std::to_string(val) + ")");
-                        }
-                    }
-                    // Match found => negation fails => prune this branch
-                    return;
-                }
-
                 if (logging_active())
-                    _prof.negation_success.fetch_add(1, std::memory_order_relaxed);
+                    _prof.negation_fail.fetch_add(1, std::memory_order_relaxed);
 
                 if (should_log(depth))
-                    log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
-
-                proceed_with_bindings(rule.variables);
-            }
-            else
-            {
-                // --- Step 2: Complementary enumeration ---
-                // Subject is unbound. We use complementary enumeration:
-                // iterate all facts of this relation, collect unique
-                // subjects (= the domain), and for each check whether
-                // the full pattern holds. Those where it does NOT hold
-                // are successful negation bindings.
-
-                adjacency_set rels = filter(condition, core.IsA, core.RelationTypeCategory);
-                if (rels.empty()) { return; }
-                Node pattern_rel = *rels.begin();
-                if (Zelph::Impl::is_var(pattern_rel))
-                    pattern_rel = string::get(*rule.variables, pattern_rel, pattern_rel);
-                if (Zelph::Impl::is_var(pattern_rel)) { return; }
-
-                adjacency_set rel_facts;
-                if (!_pImpl->snapshot_left_of(pattern_rel, rel_facts)) { return; }
-
-                std::unordered_set<Node> processed_subjects;
-
-                for (Node fn : rel_facts)
                 {
-                    if (logging_active())
-                        _prof.neg_complement_subjects_tested.fetch_add(1, std::memory_order_relaxed);
-
-                    // Skip nodes belonging to the rule's own topology
-                    if (rule.excluded && rule.excluded->count(fn)) continue;
-
-                    adjacency_set fact_objs;
-                    Node          fact_subj = parse_fact(fn, fact_objs, pattern_rel);
-                    if (fact_subj == 0 || Zelph::Impl::is_var(fact_subj)) continue;
-                    if (processed_subjects.count(fact_subj)) continue;
-                    processed_subjects.insert(fact_subj);
-
-                    // Substitute the unbound subject with this candidate
-                    Variables test        = *rule.variables;
-                    test[pattern_subject] = fact_subj;
-
-                    // Fully instantiate the pattern with the test bindings
-                    std::vector<Node> hist;
-                    Node              inst_subj = instantiate_fact(this, pattern_subject, test, depth, hist);
-
-                    adjacency_set inst_objs;
-                    bool          resolved = true;
-                    for (Node po : pattern_objects)
+                    log(depth, "neg-eval", "MATCH FOUND => negation FAILS. Bindings:");
+                    for (const auto& [var, val] : *match)
                     {
-                        hist.clear();
-                        Node io = instantiate_fact(this, po, test, depth, hist);
-                        if (io && !Zelph::Impl::is_var(io))
-                            inst_objs.insert(io);
-                        else
-                        {
-                            resolved = false;
-                            break;
-                        }
-                    }
-
-                    if (!resolved || !inst_subj || Zelph::Impl::is_var(inst_subj)) continue;
-
-                    // Check if the positive fact exists in the network
-                    Answer ans = check_fact(inst_subj, pattern_rel, inst_objs);
-                    if (!ans.is_known())
-                    {
-                        // The positive pattern does NOT hold for this entity
-                        // → negation succeeds with this binding
-                        proceed_with_bindings(std::make_shared<Variables>(test));
+                        log(depth, "neg-eval", get_name(var, _lang, true) + " (id=" + std::to_string(var) + ") -> " + get_name(val, _lang, true) + " (id=" + std::to_string(val) + ")");
                     }
                 }
+                // Match found => negation fails => prune this branch
+                return;
             }
+
+            if (logging_active())
+                _prof.negation_success.fetch_add(1, std::memory_order_relaxed);
+
+            if (should_log(depth))
+                log(depth, "neg-eval", "NO MATCH => negation SUCCEEDS");
+
+            proceed_with_bindings(rule.variables);
 
             return;
         }

@@ -343,6 +343,40 @@ zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
 
 The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->` link — identifying the last element purely declaratively.
 
+**A free variable inside `¬` is quantified inside it.** Whichever position it
+stands in, the condition succeeds exactly when *no* fact matches — the free
+variable produces no binding that leaves the rule. So the same graph answers
+both directions the way their names suggest:
+
+```
+zelph> a ~ interval
+zelph> b ~ interval
+zelph> c ~ interval
+zelph> a before b
+zelph> b before c
+zelph> (A ~ interval, ¬(A before B)) => (A is latest)
+(c is latest) ⇐ {(¬(c before B)) (c ~ interval)}
+zelph> (A ~ interval, ¬(B before A)) => (A is earliest)
+(a is earliest) ⇐ {(a ~ interval) (¬(B before a))}
+```
+
+Datalog would refuse both rules outright: there, a variable under negation
+must be bound by a positive condition (*range restriction*), and `B` is not.
+zelph accepts them and gives them the reading the notation suggests.
+
+**Ranging over a domain is a positive condition, not a negation.** To
+conclude something for each member of a set that *lacks* a property, name the
+set:
+
+```
+(X flagged S, ¬(X flagged bad)) => (X unflagged ok)
+```
+
+`X flagged S` is what makes an entity a candidate, and it says which
+candidates — the negation then only filters. The justification of each
+derived fact names both, so a result can be traced back to why the entity was
+considered at all.
+
 The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
 
 **What `¬` applies to.** A single fact pattern, not a group of them —

@@ -66,6 +66,7 @@ add_executable(zelph_tests
     test_neural.cpp
     test_node_display.cpp
     test_numbers.cpp
+    test_intervals.cpp
     test_ontology.cpp
     test_output.cpp
     test_partial_anchor.cpp

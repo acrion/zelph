@@ -56,7 +56,6 @@ namespace zelph::network
         std::atomic<uint64_t> negated_conditions{0};
         std::atomic<uint64_t> negation_success{0};
         std::atomic<uint64_t> negation_fail{0};
-        std::atomic<uint64_t> neg_complement_subjects_tested{0};
 
         std::atomic<uint64_t> deduce_calls{0};
         std::atomic<uint64_t> termination_guard_checks{0};
@@ -157,7 +156,6 @@ namespace zelph::network
             RZ(negated_conditions);
             RZ(negation_success);
             RZ(negation_fail);
-            RZ(neg_complement_subjects_tested);
             RZ(deduce_calls);
             RZ(termination_guard_checks);
             RZ(termination_guard_skips);
@@ -328,8 +326,7 @@ namespace zelph::network
 
             oss << "  negation: cond=" << load(negated_conditions)
                 << " ok=" << load(negation_success)
-                << " fail=" << load(negation_fail)
-                << " complement_subjects=" << load(neg_complement_subjects_tested) << "\n";
+                << " fail=" << load(negation_fail) << "\n";
 
             oss << "  termination_guard: checks=" << load(termination_guard_checks)
                 << " skips=" << load(termination_guard_skips)

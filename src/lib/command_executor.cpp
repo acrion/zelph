@@ -3527,7 +3527,12 @@ private:
             out += branch + line + "  [axiom]\n";
             return;
         case network::ProofNode::Status::Unfounded:
-            out += branch + line + "  [no acyclic justification found in the current graph]\n";
+            // Not "the graph is broken": with a rule whose consequence has a
+            // VARIABLE predicate -- the meta-rules zelph exists for -- that
+            // consequence unifies with every fact there is, so a plainly
+            // typed axiom lands here too. All the engine can say is that the
+            // fact holds and that it found no derivation for it.
+            out += branch + line + "  [asserted; no derivation found]\n";
             return;
         case network::ProofNode::Status::Truncated:
             out += branch + line + "  … [depth limit -- use '.explain <pattern> 0' for the full proof]\n";

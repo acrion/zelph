@@ -163,6 +163,61 @@ w start w
         CHECK(any_output_contains(collector, "w s w")); });
 }
 
+TEST_CASE("stratified: a free variable inside a negation is quantified inside it")
+{
+    // `¬` has ONE reading: the condition succeeds exactly when no fact
+    // matches, and a free variable inside it produces no binding that
+    // leaves the rule. Both directions therefore answer the way their names
+    // suggest on the same graph.
+    //
+    // There used to be a second reading, chosen by whether the pattern's
+    // SUBJECT happened to be bound: with it free, the engine took the
+    // subjects of that relation as a domain and let the negation succeed
+    // once per candidate the pattern failed for, binding it. `is earliest`
+    // then came out for all three intervals, one of them justified by the
+    // self-fact `¬(b before b)` -- and adding a positive condition
+    // elsewhere silently switched between the two.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a ~ interval
+b ~ interval
+c ~ interval
+a before b
+b before c
+(A ~ interval, ¬(A before B)) => (A is latest)
+(A ~ interval, ¬(B before A)) => (A is earliest)
+)");
+        CHECK(any_output_contains(collector, "c is latest"));
+        CHECK_FALSE(any_output_contains(collector, "a is latest"));
+        CHECK_FALSE(any_output_contains(collector, "b is latest"));
+
+        CHECK(any_output_contains(collector, "a is earliest"));
+        CHECK_FALSE(any_output_contains(collector, "b is earliest"));
+        CHECK_FALSE(any_output_contains(collector, "c is earliest")); });
+}
+
+TEST_CASE("stratified: ranging over a domain is a positive condition")
+{
+    // What the second reading of `¬` used to do implicitly is written down
+    // instead: the positive condition says WHICH candidates are considered,
+    // the negation only filters them, and the justification of each result
+    // names both.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x flagged good
+y flagged bad
+z flagged good
+(X flagged S, ¬(X flagged bad)) => (X unflagged ok)
+)");
+        collector.clear();
+        interactive.process("Q unflagged ok");
+        CHECK(answers_contain(collector, "x unflagged ok"));
+        CHECK(answers_contain(collector, "z unflagged ok"));
+        CHECK_FALSE(any_output_contains(collector, "y unflagged")); });
+}
+
 TEST_CASE("stratified: doc example -- last element of a chain via negation")
 {
     run_both_modes([](auto& collector, auto& interactive)
