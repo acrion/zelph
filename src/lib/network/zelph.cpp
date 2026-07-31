@@ -542,6 +542,19 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         {
             // 1 13 13
             // ~ is for example is for example <= (~  is opposite of  is for example), (is for example  ~  ->)
+            //
+            // A chained "A => B => C" lands here: the parser reads one
+            // statement whose predicate `=>` also stands among the objects.
+            // Which of the two arrows binds tighter is genuinely undecided,
+            // so the answer is not a default reading but a demand to say
+            // which was meant.
+            if (predicate == core.Causes)
+            {
+                throw std::runtime_error("fact(): a rule inside a rule has to be parenthesised -- "
+                                         "write A => (B => C) or (A => B) => C, since \"A => B => C\" "
+                                         "does not say which arrow binds tighter");
+            }
+
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 

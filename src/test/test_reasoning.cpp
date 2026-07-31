@@ -939,6 +939,24 @@ x foo x
         CHECK_FALSE(any_output_contains(collector, "foo ?")); });
 }
 
+TEST_CASE("rules: a chained => says which arrow has to be parenthesised")
+{
+    // "A => B => C" is one statement whose predicate `=>` also stands among
+    // its objects, so it lands in the generic "same relation type and
+    // object" refusal -- accurate, and no help at all to someone writing a
+    // rule whose conclusion is a rule. Which arrow binds tighter is
+    // genuinely undecided, so the answer is a demand to say, not a default.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process("(R is transitive) => (X R Y, Y R Z) => (X R Z)"),
+                             doctest::Contains("has to be parenthesised"),
+                             std::runtime_error);
+
+        // The parenthesised form is accepted.
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))"); });
+}
+
 TEST_CASE("naming: a query variable does not take a real node's name")
 {
     // Variable names are cosmetic and statement-scoped, but they went into
