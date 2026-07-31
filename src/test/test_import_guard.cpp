@@ -70,6 +70,7 @@ namespace
 .lang wikidata
 Q10 P279 Q20
 Q20 P279 Q30
+Q10 P279 Q40
 )");
         interactive.process(".save \"" + path.string() + "\"");
         return path;
@@ -94,7 +95,10 @@ TEST_CASE("import: a definition-only script imports into a partial view silently
     // And it is usable, which is the reason the import has to be possible at
     // all: the class tools answer over the partially loaded graph.
     collector.clear();
-    interactive.process("%(culprits \"Q30\" \"Q30\")");
+    // Q30 and Q40 are unrelated and Q10 sits below both, so this is a real
+    // disjoint pair. It used to pass the same ID twice, which the class tools
+    // now refuse -- a class is not disjoint from itself.
+    interactive.process("%(culprits \"Q30\" \"Q40\")");
     CHECK(any_output_contains(collector, "topmost culprit(s)"));
 
     fs::remove(network);

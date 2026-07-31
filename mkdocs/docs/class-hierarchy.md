@@ -110,6 +110,8 @@ Each arrow is one `P279` statement in Wikidata. _employee_ reaches _organization
 
 The shortest chain is reported, because that is the one that can be checked by hand. If a class is reachable along several paths, fixing one may leave the others; re-run `culprits` after an edit to see what is left.
 
+Two inputs that look like a disjoint pair and are not: the same class twice is refused outright, and a pair where one class sits below the other is answered with a note, because everything under the lower one is then reported for that reason alone rather than because anything is wrong.
+
 A single class, if you want its immediate surroundings:
 
 ```

@@ -113,6 +113,13 @@
   (def p (p279))
   (def a (require-class a-id))
   (def b (require-class b-id))
+  # A class is not disjoint from itself, and the report for (A, A) is not a
+  # culprit report at all: every subclass of A is trivially "below both", so
+  # the function used to answer a mistyped pair with a plausible-looking work
+  # list of tens of thousands of classes.
+  (when (= a b)
+    (error (string "'" a-id "' is not disjoint from itself -- a culprit report "
+                   "needs two different classes")))
   (in-set (zelph/closure-sources a p false)
           (set-of (zelph/closure-sources b p false))))
 
@@ -123,6 +130,8 @@
    from the report at once."
   [a-id b-id &opt limit]
   (default limit 25)
+  (when (< limit 0)
+    (error (string "limit must not be negative, got " limit)))
   (def p (p279))
   (def all (culprit-set a-id b-id))
   (def all-set (set-of all))
@@ -150,6 +159,26 @@
   (array/push lines
     (string/format "-- %d topmost culprit(s) of %d affected class(es); showing %d --"
                    (length rows) (length all) shown))
+
+  # One class below the other is a legal input and a suspicious one: the pair
+  # is then not disjoint but nested, and everything under the lower class is
+  # reported for that reason alone. Say so rather than let the number stand.
+  # Asked forward from each class, which walks the few superclasses above it
+  # rather than the whole closure below the other one.
+  (def a (require-class a-id))
+  (def b (require-class b-id))
+  (def above-a (set-of (zelph/closure a p false)))
+  (def above-b (set-of (zelph/closure b p false)))
+  (cond
+    (get above-a b)
+    (array/push lines
+      (string/format "   note: %s is itself below %s, so this pair is nested rather than disjoint"
+                     (label a) (label b)))
+    (get above-b a)
+    (array/push lines
+      (string/format "   note: %s is itself below %s, so this pair is nested rather than disjoint"
+                     (label b) (label a))))
+
   (zelph/out (string/join lines "\n"))
   nil)
 

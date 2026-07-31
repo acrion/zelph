@@ -322,6 +322,48 @@ Q40 P279 Q50
     CHECK(q10 < q40);
 }
 
+TEST_CASE("wikidata-classes: a pair that is not a disjoint pair is refused or flagged")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    // Q30 and Q80 are unrelated to each other and Q10 sits below both, so
+    // (Q30, Q80) is a real disjoint pair; Q30 and Q20 are nested.
+    process_lines(interactive, R"(
+.lang wikidata
+Q10 P279 Q20
+Q20 P279 Q30
+Q10 P279 Q80
+Q60 P279 Q10
+)");
+    interactive.process(".import wikidata-classes");
+
+    // A class is not disjoint from itself, and the answer for (A, A) is not a
+    // culprit report at all: every subclass of A is trivially below both. On
+    // real data a mistyped second ID produced a plausible-looking work list of
+    // tens of thousands of classes.
+    CHECK_THROWS(interactive.process("%(culprits \"Q30\" \"Q30\")"));
+
+    // Same shape, legal input: one class below the other. The numbers are
+    // then a subclass count wearing the words of a culprit report, so the
+    // report says so -- in either argument order.
+    collector.clear();
+    interactive.process("%(culprits \"Q30\" \"Q20\")");
+    CHECK(any_output_contains(collector, "nested rather than disjoint"));
+
+    collector.clear();
+    interactive.process("%(culprits \"Q20\" \"Q30\")");
+    CHECK(any_output_contains(collector, "nested rather than disjoint"));
+
+    // A genuinely disjoint pair carries no such note.
+    collector.clear();
+    interactive.process("%(culprits \"Q30\" \"Q80\")");
+    CHECK(any_output_contains(collector, "topmost culprit(s)"));
+    CHECK_FALSE(any_output_contains(collector, "nested rather than disjoint"));
+
+    CHECK_THROWS(interactive.process("%(culprits \"Q30\" \"Q80\" -1)"));
+}
+
 TEST_CASE("wikidata-classes: the path names the statements to look at")
 {
     zelph::io::OutputCollector  collector;
