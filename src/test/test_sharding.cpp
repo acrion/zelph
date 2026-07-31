@@ -441,30 +441,30 @@ TEST_CASE("sharding: a seek-only manifest reads chunks from the .bin")
     fs::remove_all(artifact.root);
 }
 
-TEST_CASE("sharding: an out-of-range chunk selector is rejected")
+TEST_CASE("sharding: an out-of-range chunk selector is rejected without collateral")
 {
     const auto artifact = build_artifact(artifact_root("range"));
 
     const size_t left_chunks = artifact.sections.at("left").size();
 
-    with_fresh_session([&](auto&, auto& interactive)
-                       { CHECK_THROWS(interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
-                                                          + "\" left=" + std::to_string(left_chunks))); });
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        CHECK_THROWS(interactive.process(".load-partial \"" + artifact.sharded_manifest.string()
+                                         + "\" left=" + std::to_string(left_chunks)));
+
+        // A typo in a selector is the ordinary way to get this command wrong,
+        // so the refusal must cost nothing. The manifest loader always
+        // checked before touching the graph; the plain-.bin loader did not,
+        // and left a network without even its core nodes (see
+        // test_bin_inspection.cpp). Pinned on this side too, so the two
+        // loaders cannot drift apart again.
+        collector.clear();
+        interactive.process("a p b");
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
 
     fs::remove_all(artifact.root);
 }
-
-// ---------------------------------------------------------------------------
-// Route selectors.
-//
-// A manifest may advertise a node route index: a sidecar that says which chunk
-// holds a given node ID, and which holds a given name. It lets a caller ask
-// for "the neighbourhood of this node" instead of computing chunk numbers, and
-// a name route is the only selector that survives a regenerated .bin -- chunk
-// indices do not, and neither do node IDs, which are assigned at import time.
-// No published artifact carries such a sidecar, so the code below was never
-// exercised; the fixture writes one.
-// ---------------------------------------------------------------------------
 
 TEST_CASE("sharding: route-name selects the chunk of one language")
 {

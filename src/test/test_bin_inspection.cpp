@@ -199,3 +199,52 @@ TEST_CASE("bin inspection: the header report and the chunk walk divide the work"
 
     fs::remove_all(f.root);
 }
+
+TEST_CASE("bin inspection: a failed load says what happened to the network")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    // A load merges into whatever is there and discards the previous state on
+    // the way, so a file that stops in the middle leaves a graph that is
+    // neither. The message used to be the kj backtrace and said nothing about
+    // that; the way back is .new, and it now says so.
+    try
+    {
+        interactive.process(".load \"" + f.truncated.string() + "\"");
+        FAIL("expected .load to refuse a truncated file");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string message(e.what());
+        CHECK(message.find("zelph .bin") != std::string::npos);
+        CHECK(message.find(".new") != std::string::npos);
+        CHECK(message.find("stack:") == std::string::npos);
+    }
+
+    fs::remove_all(f.root);
+}
+
+TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    // The selectors are checked before the graph is touched. They used to be
+    // checked after it had been discarded, which left a network without even
+    // its core nodes: every following statement failed with "requested left
+    // node 1 does not exist", and nothing said that .new was the way out.
+    CHECK_THROWS_AS(interactive.process(".load-partial \"" + f.good.string() + "\" left=99"),
+                    std::runtime_error);
+
+    collector.clear();
+    interactive.process("a p b");
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
+
+    fs::remove_all(f.root);
+}

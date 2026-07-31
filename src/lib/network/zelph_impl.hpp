@@ -1152,56 +1152,25 @@ namespace zelph::network
             }
         }
 
-        void loadFromFile(const std::string& filename)
+        // kj reports through kj::Exception, whose what() carries a C++ source
+        // location and a hex stack trace. Neither belongs in front of someone
+        // who typed a file name; what does belong there is whether the graph
+        // they had is still the graph they have.
+        static std::string read_error_text(const std::string&   filename,
+                                           const kj::Exception& e,
+                                           const bool           state_discarded)
         {
-    #ifdef _WIN32
-        #define fileno _fileno
-    #endif
-            FILE* file = fopen(filename.c_str(), "rb");
-            if (!file)
+            std::string text = "Failed to read '" + filename
+                             + "' as a zelph .bin file (truncated, or not a .bin at all): "
+                             + std::string(e.getDescription().cStr());
+            if (state_discarded)
             {
-                throw std::runtime_error("Failed to open file for reading: " + filename);
+                text += ". The previous network was already discarded -- use .new to start over";
             }
-
-            ::capnp::ReaderOptions options;
-            options.traversalLimitInWords = 1ULL << 32;
-            options.nestingLimit          = 128;
-
-            kj::FdInputStream              rawInput(fileno(file));
-            kj::BufferedInputStreamWrapper bufferedInput(rawInput);
-
-            ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-            auto                         impl = mainMessage.getRoot<ZelphImpl>();
-
-            loadSmallData(impl);
-
-            uint32_t leftChunkCount       = impl.getLeftChunkCount();
-            uint32_t rightChunkCount      = impl.getRightChunkCount();
-            uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
-            uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
-            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                                                                           << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
-
-            loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
-            loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
-            loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
-
-            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
-
-            fclose(file);
-
-            // Enable predicate-index sidecar I/O for this file and take the
-            // validation snapshot of the freshly loaded, unmodified graph.
-            _pidx_base       = filename;
-            _pidx_node_count = _left.size();
-            _pidx_last       = _last;
-            _pidx_last_var   = _last_var;
-            _pidx_io_enabled.store(true, std::memory_order_release);
+            return text;
         }
 
-        void loadFromFile(const std::string&              filename,
-                          const Zelph::BinChunkSelection& selection,
-                          const bool                      skip_payload)
+        void loadFromFile(const std::string& filename)
         {
     #ifdef _WIN32
         #define fileno _fileno
@@ -1224,8 +1193,72 @@ namespace zelph::network
                 ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
                 auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
-                clear_loaded_state();
                 loadSmallData(impl);
+
+                uint32_t leftChunkCount       = impl.getLeftChunkCount();
+                uint32_t rightChunkCount      = impl.getRightChunkCount();
+                uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
+                uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                                                                               << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
+
+                loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
+                loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
+                loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
+
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
+
+                fclose(file);
+
+                // Enable predicate-index sidecar I/O for this file and take the
+                // validation snapshot of the freshly loaded, unmodified graph.
+                _pidx_base       = filename;
+                _pidx_node_count = _left.size();
+                _pidx_last       = _last;
+                _pidx_last_var   = _last_var;
+                _pidx_io_enabled.store(true, std::memory_order_release);
+            }
+            catch (const kj::Exception& e)
+            {
+                // A load merges into whatever is already there, so a failure
+                // partway leaves a graph that is neither the old one nor the
+                // file. Say so; the handle was leaked on every throw before.
+                fclose(file);
+                throw std::runtime_error(read_error_text(filename, e, true));
+            }
+            catch (...)
+            {
+                fclose(file);
+                throw;
+            }
+        }
+
+        void loadFromFile(const std::string&              filename,
+                          const Zelph::BinChunkSelection& selection,
+                          const bool                      skip_payload)
+        {
+    #ifdef _WIN32
+        #define fileno _fileno
+    #endif
+            FILE* file = fopen(filename.c_str(), "rb");
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open file for reading: " + filename);
+            }
+
+            bool state_cleared = false;
+
+            try
+            {
+                ::capnp::ReaderOptions options;
+                options.traversalLimitInWords = 1ULL << 32;
+                options.nestingLimit          = 128;
+
+                kj::FdInputStream              rawInput(fileno(file));
+                kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+
+                ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
+                auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
                 uint32_t leftChunkCount       = impl.getLeftChunkCount();
                 uint32_t rightChunkCount      = impl.getRightChunkCount();
@@ -1246,6 +1279,18 @@ namespace zelph::network
                 const size_t requestedNameOfNodeChunks = selection.name_of_node_explicit ? nameOfNodeSelector.size() : nameOfNodeChunkCount;
                 const size_t requestedNodeOfNameChunks = selection.node_of_name_explicit ? nodeOfNameSelector.size() : nodeOfNameChunkCount;
 
+                // BEFORE the graph is touched. A selector naming a chunk the
+                // file does not have is the most ordinary way to get this
+                // command wrong -- a typo -- and it used to arrive after
+                // clear_loaded_state(), which leaves a network without even
+                // its core nodes: every following statement then failed with
+                // "requested left node 1 does not exist" and only .new got
+                // the session back.
+                validate_chunk_selector(leftSelector, leftChunkCount, "left");
+                validate_chunk_selector(rightSelector, rightChunkCount, "right");
+                validate_chunk_selector(nameOfNodeSelector, nameOfNodeChunkCount, "nameOfNode");
+                validate_chunk_selector(nodeOfNameSelector, nodeOfNameChunkCount, "nodeOfName");
+
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
                     << "Partial loading: left chunks=" << requestedLeftChunks << "/" << leftChunkCount
                     << ", right chunks=" << requestedRightChunks << "/" << rightChunkCount
@@ -1255,10 +1300,9 @@ namespace zelph::network
                     << nodeOfNameChunkCount
                     << ", skip_payload=" << (skip_payload ? "true" : "false");
 
-                validate_chunk_selector(leftSelector, leftChunkCount, "left");
-                validate_chunk_selector(rightSelector, rightChunkCount, "right");
-                validate_chunk_selector(nameOfNodeSelector, nameOfNodeChunkCount, "nameOfNode");
-                validate_chunk_selector(nodeOfNameSelector, nodeOfNameChunkCount, "nodeOfName");
+                clear_loaded_state();
+                state_cleared = true;
+                loadSmallData(impl);
 
                 if (skip_payload)
                 {
@@ -1288,6 +1332,11 @@ namespace zelph::network
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after partial load: " << _string_pool.size();
 
                 fclose(file);
+            }
+            catch (const kj::Exception& e)
+            {
+                fclose(file);
+                throw std::runtime_error(read_error_text(filename, e, state_cleared));
             }
             catch (...)
             {

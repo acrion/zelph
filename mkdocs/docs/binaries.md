@@ -124,6 +124,8 @@ zelph> .load-partial /path/to/file.bin meta-only
 | _(selector omitted)_ | Load all chunks of that section                             |
 | `meta-only`          | Load only the header; skip all chunk payloads               |
 
+A selector naming a chunk the file does not have is refused before anything is loaded, so the network you already had is still there — use `.index-file` (or `.stat-file` for the counts alone) to find the valid indices. A load that fails *while reading*, on a truncated or corrupted file, is a different matter: the previous graph has been discarded by then and the message says so, with `.new` as the way back.
+
 ### Practical Example
 
 The following session loads a subset of the pruned Wikidata file and inspects it:
