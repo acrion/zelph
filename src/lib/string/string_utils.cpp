@@ -373,25 +373,67 @@ namespace zelph::string
         return result;
     }
 
-    std::vector<std::string> tokenize_quoted(const std::string& input)
+    std::vector<QuotedToken> tokenize_quoted_marked(const std::string& input)
     {
-        std::vector<std::string> tokens;
-        std::string              current;
+        std::vector<QuotedToken> tokens;
+        QuotedToken              current;
+        std::string              segment;   // the current quoted run
         bool                     in_quotes = false;
         bool                     escape    = false;
+
+        // A quoted run is closed back into `source` with its quotes and
+        // escapes restored, so that the parser reads the same atom the user
+        // wrote. Everything outside the quotes is copied through: that is
+        // where a nested fact, a term island or a bracket lives.
+        const auto close_segment = [&]
+        {
+            current.source += '"' + escape_atom(segment) + '"';
+            segment.clear();
+        };
+
+        const auto flush = [&]
+        {
+            // An empty token is dropped, quoted or not -- the behaviour
+            // this function has always had.
+            if (!current.text.empty()) tokens.push_back(std::move(current));
+            current = QuotedToken{};
+        };
 
         for (char c : input)
         {
             if (escape)
             {
-                if (c == '"' || c == '\\')
+                const bool known = (c == '"' || c == '\\');
+                if (in_quotes)
                 {
-                    current.push_back(c);
+                    if (known)
+                    {
+                        segment.push_back(c);
+                    }
+                    else
+                    {
+                        segment.push_back('\\');
+                        segment.push_back(c);
+                    }
+                }
+                else if (known)
+                {
+                    current.source.push_back(c);
                 }
                 else
                 {
-                    current.push_back('\\');
-                    current.push_back(c);
+                    current.source.push_back('\\');
+                    current.source.push_back(c);
+                }
+
+                if (known)
+                {
+                    current.text.push_back(c);
+                }
+                else
+                {
+                    current.text.push_back('\\');
+                    current.text.push_back(c);
                 }
                 escape = false;
                 continue;
@@ -405,26 +447,38 @@ namespace zelph::string
 
             if (c == '"')
             {
+                if (in_quotes) close_segment();
                 in_quotes = !in_quotes;
                 continue;
             }
 
             if (!in_quotes && (c == ' ' || c == '\t'))
             {
-                if (!current.empty())
-                {
-                    tokens.push_back(std::move(current));
-                    current.clear();
-                }
+                flush();
                 continue;
             }
 
-            current.push_back(c);
+            current.text.push_back(c);
+            if (in_quotes)
+                segment.push_back(c);
+            else
+                current.source.push_back(c);
         }
 
-        if (!current.empty())
-            tokens.push_back(std::move(current));
+        // An unterminated quote keeps what it collected rather than losing
+        // it; the parser then reports the syntax error, which is where it
+        // belongs.
+        if (in_quotes) close_segment();
+        flush();
 
+        return tokens;
+    }
+
+    std::vector<std::string> tokenize_quoted(const std::string& input)
+    {
+        std::vector<std::string> tokens;
+        for (auto& token : tokenize_quoted_marked(input))
+            tokens.push_back(std::move(token.text));
         return tokens;
     }
 }

@@ -278,6 +278,22 @@ namespace zelph::string
     ///   - Backslash escapes the next character inside and outside quotes.
     ///   - Quoted regions preserve whitespace; the quotes themselves are stripped.
     ///   - Empty tokens between delimiters are discarded.
+    /// One token of a command line, in the two forms a command needs.
+    /// `text` has the quotes stripped, which is what a name lookup wants.
+    /// `source` puts them back where they were, which is what the PARSER
+    /// wants: the quotes are the only thing that tells the NAME `x>y` from
+    /// the three atoms `x > y`, and they are gone by the time a command
+    /// sees its tokens -- so the line zelph printed could not be pasted
+    /// into `.explain` or `.prune-facts`. Quoting is per SEGMENT, so a
+    /// token that is only partly quoted (`"x>y")` at the end of a
+    /// parenthesised pattern) keeps both halves.
+    struct QuotedToken
+    {
+        std::string text;
+        std::string source;
+    };
+
+    std::vector<QuotedToken> tokenize_quoted_marked(const std::string& input);
     std::vector<std::string> tokenize_quoted(const std::string& input);
 
     /// Remove all leading and trailing occurrences of any string in `chars` (UTF-8 safe).

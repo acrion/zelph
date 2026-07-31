@@ -130,7 +130,7 @@ public:
     }
 
     // Member function to delegate to CommandExecutor
-    void process_command(const std::vector<std::string>& cmd);
+    void process_command(const std::vector<std::string>& cmd, const std::vector<std::string>& sources);
 
     std::unique_ptr<network::Reasoning> _n;
     std::unique_ptr<ScriptEngine>       _script_engine;
@@ -249,12 +249,22 @@ void console::Interactive::process(std::string line) const
         // --- 2. Commands starting with '.' (work in all modes) ---
         if (first_char_pos != std::string::npos && line[first_char_pos] == '.')
         {
-            std::vector<std::string> parts = zelph::string::tokenize_quoted(line);
+            const std::vector<zelph::string::QuotedToken> marked = zelph::string::tokenize_quoted_marked(line);
+
+            std::vector<std::string> parts;
+            std::vector<std::string> sources;
+            parts.reserve(marked.size());
+            sources.reserve(marked.size());
+            for (const auto& token : marked)
+            {
+                parts.push_back(token.text);
+                sources.push_back(token.source);
+            }
 
             if (!parts.empty() && !parts[0].empty() && parts[0][0] == '.')
             {
                 _pImpl->_n->profiler_reset_epoch();
-                _pImpl->process_command(parts);
+                _pImpl->process_command(parts, sources);
                 return;
             }
         }
@@ -498,9 +508,9 @@ void console::Interactive::import_file(const std::string& file) const
 }
 
 // Delegation method
-void console::Interactive::Impl::process_command(const std::vector<std::string>& cmd)
+void console::Interactive::Impl::process_command(const std::vector<std::string>& cmd, const std::vector<std::string>& sources)
 {
-    _command_executor->execute(cmd);
+    _command_executor->execute(cmd, sources);
 
     if (_repl_state->reset_requested)
     {

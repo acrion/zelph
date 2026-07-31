@@ -210,6 +210,62 @@ TEST_CASE("explain: a quoted multi-word predicate resolves")
         } });
 }
 
+TEST_CASE("explain: a quoted name without spaces resolves too")
+{
+    // Whitespace used to be the only surviving evidence that a token had
+    // been quoted, so only a name with a space could be re-quoted for the
+    // parser. Every other name that zelph prints quoted -- and the quoting
+    // work made that a large set -- could not be pasted back: `x>y` was
+    // handed to the parser bare and read as the three atoms `x > y`.
+    // The tokenizer now reports each token in parser form as well.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // One representative per reason a name gets quoted: a reserved
+        // character, each of the tokens the grammar reads by its first
+        // character, and a name carrying a quote of its own.
+        const char* names[] = {"x>y", ":foo", "&12", "_foo", "A", "a,b", "«Le Monde»"};
+        int         i       = 0;
+        for (const char* name : names)
+        {
+            const std::string subj = "s" + std::to_string(++i);
+            interactive.process(subj + " rel obj" + std::to_string(i));
+            interactive.process(".name obj" + std::to_string(i) + " \"" + name + "\"");
+
+            collector.clear();
+            interactive.process(".explain (" + subj + " rel \"" + name + "\")");
+            CHECK(any_output_contains(collector, "[axiom]"));
+            CHECK_FALSE(any_output_contains(collector, "cannot parse fact pattern"));
+        }
+
+        // A name carrying a quote, which needs the escape on both sides.
+        interactive.process("sq rel objq");
+        interactive.process(".name objq \"The \\\"Big\\\" One\"");
+        collector.clear();
+        interactive.process(".explain (sq rel \"The \\\"Big\\\" One\")");
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}
+
+TEST_CASE("pruning: a quoted name without spaces reaches the pattern")
+{
+    // Same cause, worse consequence: .prune-facts refused the pattern
+    // outright ("Could not parse pattern"), so the fact zelph printed could
+    // not be deleted by pasting the line back.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("sub rel obj");
+        interactive.process(".name obj \"x>y\"");
+        interactive.process("keep rel other");
+
+        collector.clear();
+        interactive.process(".prune-facts sub rel \"x>y\"");
+        CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, "keep rel other"));
+        CHECK_FALSE(any_output_contains(collector, "x>y")); });
+}
+
 TEST_CASE("explain: a rejected reading of the argument stays silent")
 {
     // cmd_explain TRIES readings of its argument; a failing one is a

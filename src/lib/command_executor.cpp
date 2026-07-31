@@ -236,20 +236,34 @@ public:
         _repl_state->script_mode               = ScriptMode::Zelph;
     }
 
-    void execute(const std::vector<std::string>& cmd)
+    // `sources` is each token in the form the PARSER needs, with the
+    // quotes the tokenizer stripped put back. Only the commands that hand a
+    // token back to the parser need it; everything else works on the plain
+    // text. It is kept for the duration of THIS command and restored
+    // afterwards, because a command can run a script whose lines are
+    // commands again.
+    void execute(const std::vector<std::string>& cmd, const std::vector<std::string>& sources)
     {
         if (cmd.empty()) return;
 
         auto it = _command_map.find(cmd[0]);
-        if (it != _command_map.end())
-        {
-            // Execute the specific handler
-            it->second(cmd);
-        }
-        else
+        if (it == _command_map.end())
         {
             throw std::runtime_error("Unknown command " + cmd[0] + ". Type .help for a list.");
         }
+
+        struct SourceScope
+        {
+            std::vector<std::string>& slot;
+            std::vector<std::string>  previous;
+
+            SourceScope(std::vector<std::string>& s, const std::vector<std::string>& next)
+                : slot(s)
+                , previous(std::move(s)) { slot = next; }
+            ~SourceScope() { slot = std::move(previous); }
+        } scope(_sources, sources);
+
+        it->second(cmd);
     }
 
 private:
@@ -263,6 +277,12 @@ private:
     // --- Dispatch Map ---
     using Handler = std::function<void(const std::vector<std::string>&)>;
     std::map<std::string, Handler> _command_map;
+
+    // The tokens of the command currently running, in parser form. Empty
+    // when the caller did not record them (the Janet command handler passes
+    // a ready-made vector), and the pattern builder then falls back to the
+    // only other evidence there is, whitespace.
+    std::vector<std::string> _sources;
 
     // --- Registration ---
     void register_commands()
@@ -2795,7 +2815,7 @@ private:
         // structured pattern with it: a nested fact, a term island, ¬, an
         // &-literal, a list, a set, and a pattern the user wrapped in
         // parentheses the way .explain and the documentation write them.
-        const std::string janet_code = pattern_code({cmd.begin() + 1, cmd.end()});
+        const std::string janet_code = pattern_code({cmd.begin() + 1, cmd.end()}, 1);
 
         if (janet_code.empty())
             throw std::runtime_error("Could not parse pattern");
@@ -3366,29 +3386,34 @@ private:
     // ".prune-nodes (s4 rel X)" into a fact of the three literal names
     // "(s4", "rel" and "X)" -- no variable left, and the command then said
     // so and did nothing.
-    std::string pattern_code(const std::vector<std::string>& parts) const
+    std::string pattern_code(const std::vector<std::string>& parts, const std::size_t first) const
     {
         if (parts.empty()) return {};
 
-        // tokenize_quoted has already STRIPPED the quotes, so a token that
-        // still contains whitespace can only have come from a quoted one --
-        // ".explain a \"is not\" b" arrives as {"a", "is not", "b"}. Joining
-        // that with blanks hands the parser a four-component statement and
-        // resolves the wrong node, so the fact zelph printed as `a "is not"
-        // b` could not be explained by pasting it back. Re-quote exactly
-        // those tokens; everything else (nested facts, term islands, ¬,
-        // &-literals) has to stay verbatim to keep parsing.
+        // The quotes are stripped by the time a command sees its tokens, so
+        // a token has to be RE-quoted to mean the name it named. Which ones
+        // is recorded per token (`first` is where `parts` starts in the
+        // command), because it cannot be recovered: `x>y` is a name the
+        // parser would otherwise read as the three atoms `x > y`, and
+        // everything structural -- a nested fact, a term island, ¬, an
+        // &-literal -- has to stay verbatim to keep parsing.
+        //
+        // Without the record, whitespace is the only evidence left that a
+        // token was quoted, which is what the Janet command handler falls
+        // back to.
         std::string pattern;
-        for (const auto& p : parts)
+        for (std::size_t i = 0; i < parts.size(); ++i)
         {
+            const std::string& p = parts[i];
             if (!pattern.empty()) pattern += ' ';
-            if (p.find_first_of(" \t") == std::string::npos)
-                pattern += p;
+
+            const std::size_t index = first + i;
+            if (index < _sources.size())
+                pattern += _sources[index];
+            else if (p.find_first_of(" \t") != std::string::npos)
+                pattern += '"' + string::escape_atom(p) + '"';
             else
-                pattern += '"' + p + '"'; // the PEG's quoted atom has no
-                                          // escapes, so a name containing a
-                                          // quote fails to parse -- honestly,
-                                          // rather than resolving something else
+                pattern += p;
         }
 
         // A pattern wrapped in a single pair of parentheses --
@@ -3402,9 +3427,9 @@ private:
         return code;
     }
 
-    network::Node resolve_explain_pattern(const std::vector<std::string>& parts)
+    network::Node resolve_explain_pattern(const std::vector<std::string>& parts, const std::size_t first = 1)
     {
-        const std::string code = pattern_code(parts);
+        const std::string code = pattern_code(parts, first);
         if (code.empty()) return 0;
 
         try
@@ -3545,7 +3570,12 @@ console::CommandExecutor::~CommandExecutor() = default;
 
 void console::CommandExecutor::execute(const std::vector<std::string>& cmd)
 {
-    _pImpl->execute(cmd);
+    _pImpl->execute(cmd, {});
+}
+
+void console::CommandExecutor::execute(const std::vector<std::string>& cmd, const std::vector<std::string>& sources)
+{
+    _pImpl->execute(cmd, sources);
 }
 
 void console::CommandExecutor::finish_input()
