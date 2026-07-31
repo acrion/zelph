@@ -76,6 +76,18 @@ namespace zelph::string
 
 namespace
 {
+    // Mark the NAME of a node as a leaf, so that quoting and the derivation
+    // export can tell it from the structure around it -- unless the node is
+    // a VARIABLE, whose name is meant to be read back as a variable and
+    // therefore has to stay bare. Which of the two it is cannot be seen in
+    // the string: a node can genuinely be named "A" or "_x", and printing
+    // that bare made the line read back as a variable instead.
+    std::string mark_leaf(const zelph::network::Node node, const std::string& name)
+    {
+        if (zelph::network::Zelph::is_var(node)) return name;
+        return zelph::string::mark_identifier(name);
+    }
+
     // In-place: dec (MSB-first decimal digit string) := dec * base + add.
     // Pure string arithmetic, so arbitrarily large numbers work. Used to
     // convert a registered-digit cons list (any base) to its decimal
@@ -229,7 +241,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             ctx->atomic      = true;
         }
 
-        result = string::mark_identifier(name);
+        result = mark_leaf(resolved, name);
         return;
     }
 
@@ -463,7 +475,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             // The rendering is marked, so the name it is
                             // compared against has to be marked too -- else a
                             // plain name with a space came out as ("a b").
-                            if (elem_str != string::mark_identifier(z->get_formatted_name(eff_e, lang)))
+                            if (elem_str != mark_leaf(eff_e, z->get_formatted_name(eff_e, lang)))
                                 elem_str = "(" + elem_str + ")";
                         }
 
@@ -538,7 +550,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 network::Node eff_e = resolve_var(e);
                 // Compare against the MARKED name, as the S-P-O formatter
                 // does: the rendering of a plain name is marked.
-                if (elem_str != string::mark_identifier(z->get_formatted_name(eff_e, lang)))
+                if (elem_str != mark_leaf(eff_e, z->get_formatted_name(eff_e, lang)))
                 {
                     elem_str = "(" + elem_str + ")";
                 }
@@ -821,7 +833,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             network::Node eff_subj = resolve_var(subject);
             std::string   raw_name = z->get_formatted_name(eff_subj, lang);
             // Compare the formatted string with the MARKED raw name
-            if (s_str != string::mark_identifier(raw_name))
+            if (s_str != mark_leaf(eff_subj, raw_name))
             {
                 needs_parens = true;
             }
@@ -841,7 +853,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         if (!raw_rel_name.empty())
         {
             // Relation has a name -> mark it manually, as we didn't recurse
-            relation_name = string::mark_identifier(raw_rel_name);
+            relation_name = mark_leaf(relation, raw_rel_name);
         }
         else
         {
@@ -897,7 +909,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 network::Node eff_obj  = resolve_var(object);
                 std::string   raw_name = z->get_formatted_name(eff_obj, lang);
                 // Compare formatted string with MARKED raw name
-                if (o_str != string::mark_identifier(raw_name))
+                if (o_str != mark_leaf(eff_obj, raw_name))
                 {
                     o_str = "(" + o_str + ")";
                 }

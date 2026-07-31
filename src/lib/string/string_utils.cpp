@@ -160,6 +160,19 @@ namespace zelph::string
         for (const auto& atom : bare_atoms)
             if (name == atom) return false;
 
+        // Some tokens the grammar recognises by their FIRST character rather
+        // than by the characters they contain, so a reserved SET cannot see
+        // them: "_x" and a single uppercase letter are variables, "&12" is a
+        // number literal, "≈net" opens a neural condition. A node really
+        // named that way exists -- Wikidata has single-letter labels -- and
+        // printing it bare made the line read back as something else, in the
+        // variable case without any complaint. The self-fact colon is
+        // deliberately NOT in this list: ":pred" is composed by the renderer
+        // out of a colon and a name, it is never a name itself.
+        if (name.size() == 1 && name[0] >= 'A' && name[0] <= 'Z') return true;
+        if (name.front() == '_' || name.front() == '&') return true;
+        if (name.rfind("≈", 0) == 0) return true;
+
         for (const unsigned char c : name)
         {
             if (c <= ' ') return true; // whitespace and control characters
@@ -183,18 +196,19 @@ namespace zelph::string
     }
 
     // Marks an identifier with guillemets so that later stages can tell a
-    // leaf NAME from the surrounding structure (brackets, spacing). Only a
-    // variable stays unmarked, because the parser reads it as a variable
-    // rather than as a name and no consumer may treat it as a node.
+    // leaf NAME from the surrounding structure (brackets, spacing).
     //
-    // Whether a string is a leaf name or a composed rendering is the CALLER's
-    // knowledge, not something to be guessed from its shape: this function
-    // used to leave anything bracket-shaped alone, which silently demoted
-    // every genuine name that looks like one -- "Mercury (planet)" and every
-    // other disambiguated Wikidata label, and the predicate ">". An unmarked
-    // name loses its quoting on output ("Mercury (planet) orbits sun" reads
-    // back as a four-atom statement) and degrades into literal text in the
-    // derivation export, where it is a node reference the converter needs.
+    // Whether a string is a leaf name at all is the CALLER's knowledge, not
+    // something to be guessed from its shape: this function used to leave
+    // anything bracket-shaped alone, which silently demoted every genuine
+    // name that looks like one -- "Mercury (planet)" and every other
+    // disambiguated Wikidata label, and the predicate ">". It also left
+    // variable-SHAPED names alone, although a node named "A" or "_x" is a
+    // node like any other; node_to_string asks the graph instead (mark_leaf).
+    // An unmarked name loses its quoting on output ("Mercury (planet) orbits
+    // sun" reads back as a four-atom statement) and degrades into literal
+    // text in the derivation export, where it is a node reference the
+    // converter needs.
     //
     // A name containing a guillemet itself cannot be marked: the markers are
     // in-band, so the first » inside the name would end the marker and split
@@ -206,20 +220,6 @@ namespace zelph::string
     std::string mark_identifier(const std::string& str)
     {
         if (str.empty())
-        {
-            return str;
-        }
-
-        // All sentinel characters are ASCII, so checking raw bytes is safe in UTF-8.
-        char front = str.front();
-
-        // Single uppercase ASCII letter = variable
-        if (str.size() == 1 && front >= 'A' && front <= 'Z')
-        {
-            return str;
-        }
-
-        if (front == '_') // variable
         {
             return str;
         }

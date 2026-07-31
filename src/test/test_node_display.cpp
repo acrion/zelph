@@ -285,6 +285,61 @@ TEST_CASE("display: a bracket-shaped name is still a name")
         CHECK(answers == 1); });
 }
 
+TEST_CASE("display: a name the grammar reads by its first character is quoted")
+{
+    // The quoting rule works from the PEG's reserved character SET, which
+    // cannot see the tokens the grammar recognises by their first character:
+    // "_x" and a single uppercase letter are variables, "&12" is a number
+    // literal, "≈net" opens a neural condition. A node really named that way
+    // exists -- Wikidata has single-letter labels -- and the variable case
+    // was the damaging one, because it failed SILENTLY: `a rel _foo` read
+    // back as a fact about the variable _foo, a different graph with no
+    // complaint.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process(".name b \"_foo\"");
+        collector.clear();
+        interactive.process("a rel Z");
+        CHECK(answers_contain(collector, "a rel \"_foo\""));
+
+        // Re-entering the printed form must denote the SAME fact.
+        interactive.process("a rel \"_foo\"");
+        collector.clear();
+        interactive.process("a rel Z");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1);
+
+        interactive.process("e rel f");
+        interactive.process(".name f \"&12\"");
+        collector.clear();
+        interactive.process("e rel Z");
+        CHECK(answers_contain(collector, "e rel \"&12\""));
+
+        interactive.process("p rel q");
+        interactive.process(".name q \"≈net\"");
+        collector.clear();
+        interactive.process("p rel Z");
+        CHECK(answers_contain(collector, "p rel \"≈net\"")); });
+}
+
+TEST_CASE("display: a variable keeps its bare name")
+{
+    // The counterpart: a VARIABLE is not a node reference and must stay
+    // unquoted, or every rule echo would come out as {("A" R "B")}. The
+    // difference is not in the string -- it is in the graph, and that is
+    // where the renderer now asks.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("(R is transitive, A R B, B R C) => (A R C)");
+        CHECK(any_output_contains(collector, "(A R C)"));
+        CHECK_FALSE(any_output_contains(collector, "\"A\""));
+        CHECK_FALSE(any_output_contains(collector, "\"R\"")); });
+}
+
 TEST_CASE("display: a sequence element is compared against the marked name")
 {
     // The S-P-O formatter wraps an element in parentheses when its rendering

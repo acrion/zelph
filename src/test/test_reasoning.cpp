@@ -953,7 +953,10 @@ TEST_CASE("naming: a query variable does not take a real node's name")
 
         collector.clear();
         interactive.process("A rel beta");
-        CHECK(answers_contain(collector, "A rel beta"));
+        // The answer binds the variable A to the node NAMED "A", and that
+        // name is quoted on the way out: bare, the line would read back as
+        // the very query that produced it rather than as its answer.
+        CHECK(answers_contain(collector, "\"A\" rel beta"));
         CHECK_FALSE(any_output_contains(collector, "??"));
 
         // The name still resolves to the node it was given to.
