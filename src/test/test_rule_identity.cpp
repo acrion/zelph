@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -197,4 +199,93 @@ TEST_CASE("rule identity: a rule built inside a cluster stays in that cluster")
         collector.clear();
         interactive.process(".list-rules");
         CHECK_FALSE(any_output_contains(collector, "(X cq Y)")); });
+}
+
+TEST_CASE("rule identity: talking about a rule does not assert it")
+{
+    // A fact node exists exactly when its edges exist, and the edges of
+    // `((X p Y) => (X q Y)) is nice` include those of the rule it mentions.
+    // So the rule FIRED: entering `a p b` derived `a q b`, although nobody
+    // had claimed the rule -- only that it is nice. Statements about
+    // statements are what zelph leads with, and this made a statement about
+    // a RULE impossible to write.
+    //
+    // An asserted rule is a part of nothing; a mentioned one is the subject,
+    // the predicate or an object of the statement that mentions it. That is
+    // decidable from the graph, so nothing has to be remembered and a
+    // save/load round trip cannot lose it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("as the subject of an ordinary fact")
+        {
+            interactive.process("((X p Y) => (X q Y)) is nice");
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK_FALSE(any_output_contains(collector, "=> (X q Y)"));
+
+            interactive.process("a p b");
+            collector.clear();
+            interactive.process("a q Z");
+            CHECK_FALSE(any_output_starts_with(collector, "Answer:"));
+        }
+        SUBCASE("as the conclusion of another rule")
+        {
+            // The inner rule must not hold for EVERY predicate just because
+            // the outer rule mentions it -- `foo` was never declared
+            // transitive.
+            interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+            process_lines(interactive, R"(
+a foo b
+b foo c
+)");
+            collector.clear();
+            interactive.process("a foo Z");
+            CHECK(answers_contain(collector, "a foo b"));
+            CHECK_FALSE(any_output_contains(collector, "a foo c"));
+        }
+        SUBCASE("a rule that was actually asserted still fires")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            interactive.process("a p b");
+            collector.clear();
+            interactive.process("a q Z");
+            CHECK(answers_contain(collector, "a q b"));
+        }
+        SUBCASE("mentioning a rule with variables leaves the asserted one alone")
+        {
+            // Each statement names its own variables, so the mentioned rule
+            // is a different node from the asserted one and both keep their
+            // meaning.
+            interactive.process("(X p Y) => (X q Y)");
+            interactive.process("((X p Y) => (X q Y)) is nice");
+            interactive.process("a p b");
+            collector.clear();
+            interactive.process("a q Z");
+            CHECK(answers_contain(collector, "a q b"));
+        } });
+}
+
+TEST_CASE("rule identity: a mentioned rule survives a save/load round trip as a mention")
+{
+    // The distinction is a property of the graph, not of anything the
+    // session remembers, so it does not have to be written to the .bin --
+    // and cannot be lost by not writing it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_mentioned_rule.bin";
+        std::filesystem::remove(out);
+
+        interactive.process("((X p Y) => (X q Y)) is nice");
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+        interactive.process(".auto-run");
+
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("a q Z");
+        CHECK_FALSE(any_output_starts_with(collector, "Answer:"));
+
+        std::filesystem::remove(out); });
 }

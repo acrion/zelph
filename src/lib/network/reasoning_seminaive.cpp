@@ -107,6 +107,11 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
     for (Node rule_node : _pImpl->get_left(core.Causes))
     {
+        // A rule some other statement merely MENTIONS was never claimed --
+        // see Zelph::is_mentioned. The index is built once per run, so this
+        // is where the check belongs.
+        if (is_mentioned(rule_node)) continue;
+
         IndexedRule ir;
         ir.rule        = rule_node;
         Node condition = parse_fact(rule_node, ir.deductions);
@@ -415,7 +420,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             out(">>> semi-naive check: classic verification pass <<<", true);
 
             for (Node rule_node : _pImpl->get_left(core.Causes))
-                apply_rule(rule_node, 0);
+                if (!is_mentioned(rule_node)) apply_rule(rule_node, 0);
             _pool->wait();
 
             if (!_done) break; // clean fixpoint confirmed

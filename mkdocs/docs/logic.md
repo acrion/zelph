@@ -66,6 +66,23 @@ This means the graph doesn't just _describe_ knowledge; it _structures the execu
 
 Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject, the object _or the predicate_ of further facts, enabling statements about statements without any special mechanism.
 
+A **rule** is such a fact too, so it can be talked about like any other — and
+talking about one does not claim it. Only the rule that was stated on its own
+fires; the one that is merely quoted is a part of the sentence quoting it:
+
+```
+zelph> (X p Y) => (X q Y)
+zelph> ((X buys Y) => (X owns Y)) "was proposed by" alice
+zelph> a buys car
+zelph> a p b
+(a q b) ⇐ (a p b)
+```
+
+`a buys car` derives nothing: alice's proposal is on record, not in force.
+Nothing has to be remembered for this — an asserted rule is a part of no
+other fact, a quoted one is the subject, the predicate or an object of the
+sentence that quotes it — so it survives `.save` and `.load` unchanged.
+
 Predicate position is the least obvious of the three, and it works like the others:
 
 ```

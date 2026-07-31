@@ -442,6 +442,11 @@ namespace zelph::network
         /// whenever the node took part in a fact -- the callers report it.
         size_t        remove_node(Node node) const;
         adjacency_set get_rules() const;
+
+        /// Is this node a PART of some other fact -- its subject, its
+        /// predicate or one of its objects? For a rule that is the
+        /// difference between stating it and stating something ABOUT it.
+        bool          is_mentioned(Node node) const;
         void          remove_rules() const;
         size_t        rule_count() const;
         void          save_to_file(const std::string& filename) const;

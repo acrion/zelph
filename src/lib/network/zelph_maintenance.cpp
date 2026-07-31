@@ -158,6 +158,44 @@ size_t Zelph::remove_node(Node node) const
 }
 
 // Returns all nodes that are subjects of a core.Causes relation
+// Building a fact in order to TALK about it cannot be told from asserting
+// it: a fact node exists exactly when its edges exist, and the edges of
+// `((X p Y) => (X q Y)) is nice` include those of the rule it mentions. So
+// the rule fired, and `a p b` derived `a q b` although nobody had claimed
+// the rule -- only that it is nice.
+//
+// A rule is the one construct where the difference is decidable from the
+// graph alone, and cheaply: a rule that was ASSERTED is a part of nothing,
+// while a mentioned one is the subject, the predicate or an object of the
+// statement that mentions it. Ordinary facts and mathematical terms are not
+// affected, and must not be: `(x + y) ≡ (y + x)` needs `x + y` to be a fact,
+// and `(a p b) q c` needs `a p b`.
+//
+// The corner this cannot reach is a fully GROUND rule that is both asserted
+// and mentioned -- hash-consing makes those one node. A rule with variables
+// is two, because each statement names its own variables.
+bool Zelph::is_mentioned(const Node node) const
+{
+    adjacency_set neighbours = _pImpl->get_right(node);
+    for (const Node from : _pImpl->get_left(node))
+    {
+        neighbours.insert(from);
+    }
+
+    for (const Node whole : neighbours)
+    {
+        if (whole == node) continue;
+        if (parse_relation(whole) == 0) continue; // not a fact
+
+        adjacency_set objects;
+        if (parse_fact(whole, objects, 0) == node) return true;
+        if (parse_relation(whole) == node) return true;
+        if (objects.count(node) != 0) return true;
+    }
+
+    return false;
+}
+
 adjacency_set Zelph::get_rules() const
 {
     const adjacency_set& rule_candidates = _pImpl->get_left(core.Causes);
@@ -172,7 +210,8 @@ adjacency_set Zelph::get_rules() const
         {
             adjacency_set deductions;
             Node          condition = parse_fact(rule_candidate, deductions);
-            if (condition && condition != core.Causes && !deductions.empty())
+            if (condition && condition != core.Causes && !deductions.empty()
+                && !is_mentioned(rule_candidate))
             {
                 rules.insert(rule_candidate);
             }

@@ -216,7 +216,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         if (!silent)
             diagnostic_stream() << "--- Reasoning iteration 1 (single pass) ---" << std::endl;
         for (Node rule : _pImpl->get_left(core.Causes))
-            apply_rule(rule, 0);
+            if (!is_mentioned(rule)) apply_rule(rule, 0);
         _pool->wait();
     }
     else
@@ -240,6 +240,13 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         std::vector<Node> deferred_rules;
         for (Node rule : _pImpl->get_left(core.Causes))
         {
+            // A rule that some other statement merely MENTIONS was never
+            // claimed -- see Zelph::is_mentioned. Filtered where the rules
+            // are COLLECTED, so the neighbour scan is paid once per rule per
+            // run rather than once per iteration; a graph without rules
+            // never reaches it at all.
+            if (is_mentioned(rule)) continue;
+
             adjacency_set deductions;
             Node          condition = parse_fact(rule, deductions);
             const bool    deferred  = condition && condition != core.Causes
