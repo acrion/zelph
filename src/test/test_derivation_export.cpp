@@ -182,3 +182,40 @@ TEST_CASE("run-export: a name that would break the format is escaped, not lost")
         REQUIRE_FALSE(lines.empty());
         CHECK(any_contains(lines, "«Le Monde»")); });
 }
+
+TEST_CASE("run-export: a bracket-shaped name stays a node reference")
+{
+    // The export splits the rendering at the markers the renderer puts
+    // around leaf names; whatever is not marked can only become literal
+    // text. A name that merely LOOKS structural -- ">" as a predicate, or a
+    // label ending in ")" -- used to go unmarked and reached the file as
+    // text, so a converter could neither link it nor show a different
+    // language for it. Which name to show is the converter's decision, and
+    // it needs the node to make it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_bracket_name.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process("(R is transitive, A R B, B R C) => (A R C)");
+        interactive.process("> is transitive");
+        interactive.process("6 > 5");
+        interactive.process("5 > 4");
+        interactive.process(".name 4 \"Mercury (planet)\"");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE_FALSE(lines.empty());
+        CHECK(any_contains(lines, "\"names\":{\"zelph\":\">\"}"));
+        CHECK(any_contains(lines, "\"names\":{\"zelph\":\"Mercury (planet)\"}"));
+        // The forms the bug produced: the name glued into the surrounding
+        // literal text instead of standing on its own.
+        CHECK_FALSE(any_contains(lines, "\"(> "));
+        CHECK_FALSE(any_contains(lines, " > ")); });
+}

@@ -183,9 +183,18 @@ namespace zelph::string
     }
 
     // Marks an identifier with guillemets so that later stages can tell a
-    // leaf NAME from the surrounding structure (brackets, spacing). Skipped
-    // for anything that is not a leaf name -- variables and renderings that
-    // already carry their own delimiters.
+    // leaf NAME from the surrounding structure (brackets, spacing). Only a
+    // variable stays unmarked, because the parser reads it as a variable
+    // rather than as a name and no consumer may treat it as a node.
+    //
+    // Whether a string is a leaf name or a composed rendering is the CALLER's
+    // knowledge, not something to be guessed from its shape: this function
+    // used to leave anything bracket-shaped alone, which silently demoted
+    // every genuine name that looks like one -- "Mercury (planet)" and every
+    // other disambiguated Wikidata label, and the predicate ">". An unmarked
+    // name loses its quoting on output ("Mercury (planet) orbits sun" reads
+    // back as a four-atom statement) and degrades into literal text in the
+    // derivation export, where it is a node reference the converter needs.
     //
     // A name containing a guillemet itself cannot be marked: the markers are
     // in-band, so the first » inside the name would end the marker and split
@@ -203,7 +212,6 @@ namespace zelph::string
 
         // All sentinel characters are ASCII, so checking raw bytes is safe in UTF-8.
         char front = str.front();
-        char back  = str.back();
 
         // Single uppercase ASCII letter = variable
         if (str.size() == 1 && front >= 'A' && front <= 'Z')
@@ -211,11 +219,7 @@ namespace zelph::string
             return str;
         }
 
-        if (front == '_'                    // variable
-            || front == '(' || back == ')'  // sub expression
-            || front == '<' || back == '>'  // sequence
-            || front == '{' || back == '}'  // set
-            || front == '[' || back == ']') // currently unused
+        if (front == '_') // variable
         {
             return str;
         }

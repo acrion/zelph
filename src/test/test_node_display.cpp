@@ -257,6 +257,50 @@ TEST_CASE("display: a name the parser would misread is quoted")
         CHECK(answers == 1); });
 }
 
+TEST_CASE("display: a bracket-shaped name is still a name")
+{
+    // Whether a rendering is a leaf name or a composed structure was guessed
+    // from its shape: anything starting with '(' '<' '{' or ending with ')'
+    // '>' '}' was taken for a sub-expression and left unmarked, which also
+    // took it past the quoting. "Mercury (planet)" -- the shape of every
+    // disambiguated Wikidata label -- therefore printed bare, and
+    // `Mercury (planet) orbits sun` reads back as four atoms, not as the
+    // fact that was printed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("sun body star");
+        interactive.process(".name body \"Mercury (planet)\"");
+
+        collector.clear();
+        interactive.process("sun X star");
+        CHECK(answers_contain(collector, "sun \"Mercury (planet)\" star"));
+
+        // What was printed must denote the same fact when entered again.
+        interactive.process("sun \"Mercury (planet)\" star");
+        collector.clear();
+        interactive.process("sun X star");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1); });
+}
+
+TEST_CASE("display: a sequence element is compared against the marked name")
+{
+    // The S-P-O formatter wraps an element in parentheses when its rendering
+    // differs from its own name, i.e. when it is composite. Inside a
+    // sequence that comparison was made against the UNmarked name, so every
+    // plain name containing a space looked composite: <"a b" item> came out
+    // as <("a b") item>.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("f maps <\"a b\" item2>");
+        collector.clear();
+        interactive.process("f maps X");
+        CHECK(answers_contain(collector, "f maps <\"a b\" item2>"));
+        CHECK_FALSE(any_output_contains(collector, "(\"a b\")")); });
+}
+
 TEST_CASE("display: a name containing guillemets survives the identifier marking")
 {
     // The renderer marks leaf names with « », in band. A name that contains

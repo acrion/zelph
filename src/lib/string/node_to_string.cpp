@@ -460,7 +460,10 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             && elem_str.front() != '{')
                         {
                             network::Node eff_e = resolve_var(e);
-                            if (elem_str != z->get_formatted_name(eff_e, lang))
+                            // The rendering is marked, so the name it is
+                            // compared against has to be marked too -- else a
+                            // plain name with a space came out as ("a b").
+                            if (elem_str != string::mark_identifier(z->get_formatted_name(eff_e, lang)))
                                 elem_str = "(" + elem_str + ")";
                         }
 
@@ -533,7 +536,9 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 && elem_str.front() != '{')
             {
                 network::Node eff_e = resolve_var(e);
-                if (elem_str != z->get_formatted_name(eff_e, lang))
+                // Compare against the MARKED name, as the S-P-O formatter
+                // does: the rendering of a plain name is marked.
+                if (elem_str != string::mark_identifier(z->get_formatted_name(eff_e, lang)))
                 {
                     elem_str = "(" + elem_str + ")";
                 }
@@ -864,7 +869,9 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     }
     else if (objects.size() > max_objects)
     {
-        objects_name = string::mark_identifier("(... " + std::to_string(objects.size()) + " objects ...)");
+        // Not a name but an elision, so it stays unmarked: a reader of the
+        // rendering must not mistake it for a node it could look up.
+        objects_name = "(... " + std::to_string(objects.size()) + " objects ...)";
     }
     else
     {
