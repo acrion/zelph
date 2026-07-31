@@ -2778,24 +2778,13 @@ private:
         if (cmd.size() < 2)
             throw std::runtime_error("Command requires a pattern");
 
-        // Reconstruct the pattern string from arguments to feed into the parser
-        std::string pattern_str;
-        for (size_t i = 1; i < cmd.size(); ++i)
-        {
-            const std::string& token = cmd[i];
-            // If it's a variable, keep as is (A). If not, quote it ("is") so PEG treats it as value.
-            // Note: Since cmd is already tokenized by escaped_list_separator, quotes were stripped.
-            // We re-add them for non-vars to be safe for parse_zelph_to_janet.
-            if (string::is_var(token))
-                pattern_str += token + " ";
-            else
-                pattern_str += "\"" + token + "\" ";
-        }
-
-        std::string utf8_pattern = pattern_str;
-
-        // Delegate parsing and evaluation to ScriptEngine
-        std::string janet_code = _script_engine->parse_zelph_to_janet(utf8_pattern);
+        // The same reading .explain gives the same tokens -- see
+        // pattern_code. Quoting every non-variable token, as this used to,
+        // reduces the pattern to a triple of literal names and takes every
+        // structured pattern with it: a nested fact, a term island, ¬, an
+        // &-literal, a list, a set, and a pattern the user wrapped in
+        // parentheses the way .explain and the documentation write them.
+        const std::string janet_code = pattern_code({cmd.begin() + 1, cmd.end()});
 
         if (janet_code.empty())
             throw std::runtime_error("Could not parse pattern");
@@ -3359,9 +3348,16 @@ private:
     // work out. Every failure mode is folded into 0 so that cmd_explain can
     // TRY a reading: parse failure, a statement the AST builder rejects
     // (too few components), and a pattern that denotes nothing.
-    network::Node resolve_explain_pattern(const std::vector<std::string>& parts)
+    // Tokens -> janet code for the fact pattern they denote, or {} if no
+    // reading works out. Shared by .explain and the prune commands: a
+    // pattern one of them accepts has to mean the same to the other, and
+    // .prune-* used to quote every non-variable token instead, which turned
+    // ".prune-nodes (s4 rel X)" into a fact of the three literal names
+    // "(s4", "rel" and "X)" -- no variable left, and the command then said
+    // so and did nothing.
+    std::string pattern_code(const std::vector<std::string>& parts) const
     {
-        if (parts.empty()) return 0;
+        if (parts.empty()) return {};
 
         // tokenize_quoted has already STRIPPED the quotes, so a token that
         // still contains whitespace can only have come from a quoted one --
@@ -3392,6 +3388,12 @@ private:
         std::string code = try_parse_pattern(pattern);
         if (code.empty() && is_fully_parenthesized(pattern))
             code = try_parse_pattern(pattern.substr(1, pattern.size() - 2));
+        return code;
+    }
+
+    network::Node resolve_explain_pattern(const std::vector<std::string>& parts)
+    {
+        const std::string code = pattern_code(parts);
         if (code.empty()) return 0;
 
         try

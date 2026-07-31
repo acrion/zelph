@@ -129,3 +129,73 @@ TEST_CASE("pruning: .prune-nodes insists on the one variable it deletes by")
         // The documented forms are unaffected.
         interactive.process(".prune-nodes A rel b"); });
 }
+
+TEST_CASE("pruning: the pattern reads the way .explain reads it")
+{
+    // The prune commands built their pattern by QUOTING every non-variable
+    // token, which reduces it to a triple of literal names. A pattern in
+    // parentheses -- the form .explain and the documentation use -- became
+    // a fact of the names "(a", "rel" and "b)", and the command then
+    // reported "Pruned 0", which its own help describes as the legitimate
+    // outcome of a pattern that matches nothing. Every structured pattern
+    // went the same way.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("parentheses around the whole pattern")
+        {
+            interactive.process("a rel b");
+            interactive.process("c rel d");
+            collector.clear();
+            interactive.process(".prune-facts (a rel b)");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+
+            collector.clear();
+            interactive.process("X rel Y");
+            CHECK(answers_contain(collector, "c rel d"));
+            CHECK_FALSE(any_output_contains(collector, "a rel b"));
+        }
+        SUBCASE("parentheses around a pattern with a variable")
+        {
+            interactive.process("s4 rel o4");
+            interactive.process("s4 rel o5");
+            collector.clear();
+            interactive.process(".prune-nodes (s4 rel X)");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts and 2 nodes"));
+        }
+        SUBCASE("a nested fact as subject")
+        {
+            interactive.process("(a p b) q c");
+            interactive.process("x q c");
+            collector.clear();
+            interactive.process(".prune-facts (a p b) q X");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(answers_contain(collector, "x q c"));
+        }
+        SUBCASE("a list as object")
+        {
+            interactive.process("f maps <a b>");
+            interactive.process("g maps <c d>");
+            collector.clear();
+            interactive.process(".prune-facts f maps <a b>");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+
+            collector.clear();
+            interactive.process("S maps O");
+            CHECK(answers_contain(collector, "g maps <c d>"));
+        }
+        SUBCASE("a quoted predicate still survives the re-quoting")
+        {
+            interactive.process("a \"is not\" b");
+            interactive.process("c \"is not\" d");
+            collector.clear();
+            interactive.process(".prune-facts a \"is not\" b");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+
+            collector.clear();
+            interactive.process("X \"is not\" Y");
+            CHECK(answers_contain(collector, "c \"is not\" d"));
+        } });
+}
