@@ -62,6 +62,8 @@ Saved 8 fact(s) of 1 predicate(s) and 1 rule(s) to leaf-slice.bin
 
 That does not change the recommended shape of a *published* artefact: publish the slice as **data** and import the rules when you use it (`.import wikidata-classes`), so the file stays independent of which rule set anyone happens to want.
 
+Two smaller things, for completeness. The **weight store** — synapses of a [neural substrate](neural.md), and any probability set explicitly — travels whole, unfiltered: its entries are keyed by a pair of nodes rather than by a node, and a synapse need not be an edge at all, so there is no honest way to ask which of them belong to the slice. For ordinary data this costs nothing, because an ordinary fact has no weight entry to begin with. **Clusters** are session state and are in no `.bin` at all, sliced or not.
+
 ### File naming
 
 Keep the name of the source network and append the predicates:

@@ -163,6 +163,46 @@ Everything above is computed from one file, and that file is one pinned dump. Th
 
 Wikidata itself moves on, of course: a class that is in violation in the file may already have been fixed on the Hub. The chain output gives you the statements to check, so verifying against the live item is one click per arrow.
 
+### A worked example of a disagreement
+
+That is not a footnote. Here is a query on the pruned 2026-03-09 slice — classes below _class_ ([Q5127848](https://www.wikidata.org/wiki/Q5127848)) that do not go through _class_ in the metaclass sense ([Q16889133](https://www.wikidata.org/wiki/Q16889133)):
+
+```
+zelph-> .import sparql
+zelph-> sparql
+SELECT ?cls WHERE {
+  ?cls wdt:P279* wd:Q5127848 .
+  MINUS { ?cls wdt:P279* wd:Q16889133 }
+}
+
+-- 201 result(s) --
+-- 1.628 s --
+```
+
+Against live Wikidata the same query answers a single-digit number. Neither side is miscounting. In the pinned dump, `Q5127848` has five direct subclasses, and two of them — _class of anatomical entity_ ([Q112826905](https://www.wikidata.org/wiki/Q112826905)) and _rank_ ([Q4120621](https://www.wikidata.org/wiki/Q4120621)) — have since been re-parented to `Q16889133`, which is exactly the kind of edit this page is meant to prompt. Their subtrees are the difference; subtract them and the file agrees:
+
+```
+zelph-> sparql
+SELECT ?cls WHERE {
+  ?cls wdt:P279* wd:Q5127848 .
+  MINUS { ?cls wdt:P279* wd:Q16889133 }
+  MINUS { ?cls wdt:P279* wd:Q112826905 }
+  MINUS { ?cls wdt:P279* wd:Q4120621 }
+}
+
+?cls
+Q5127848
+Q64549097
+Q3356722 (natural kind)
+Q111973176 (PM20 ware category)
+Q124883403 (Scope 3 category)
+Q125121174 (OpenStreetMap tool category)
+Q111282816 (Little brown mushrooms)
+-- 7 result(s) --
+```
+
+Two statements moved, 194 results changed. Both numbers are right about the data they were computed from — but only one of them can still be checked, a year from now, by someone who was not there.
+
 ## How it works, in one paragraph
 
 zelph is not a query engine over triples; it is an inference engine whose graph happens to answer queries. Two properties matter here. First, a network can be cut down to the statements of chosen predicates and still be a complete network — that is what `.save-predicates` produces, and why the class hierarchy can be shipped as a file that is three orders of magnitude smaller than the dump it comes from. Second, transitive questions are not answered by walking triples per query but by a closure engine over an adjacency index that is built once per predicate and cached next to the file (`.pidx.322` above). The 18,933 affected classes and the 81 culprits fall out of set operations on two closures. `stdlib/wikidata-classes.zph`, which `.import wikidata-classes` loads, is 200 lines of ordinary script on top of the public API — you can read it, change it, and ask different questions with it.

@@ -1845,6 +1845,13 @@ private:
                                  "name a predicate that was left out is carried intact and simply\n"
                                  "never matches. The command says how many rules went into the file.\n"
                                  "\n"
+                                 "The weight store (neural synapses, explicitly set probabilities)\n"
+                                 "travels whole: its entries are keyed by a PAIR of nodes and a\n"
+                                 "synapse need not be an edge, so which of them belong to the slice\n"
+                                 "cannot be asked. Ordinary facts have no weight entry, so this is\n"
+                                 "free unless the network carries a neural substrate. Clusters are\n"
+                                 "session state and are in no .bin at all.\n"
+                                 "\n"
                                  "Example (the Wikidata class hierarchy alone):\n"
                                  "  .lang wikidata\n"
                                  "  .save-predicates wikidata-20260309-P279.bin P279"},
