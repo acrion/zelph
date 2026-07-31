@@ -456,11 +456,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 }
                 else
                 {
-                    result     = "<";
-                    bool first = true;
+                    std::string content;
+                    bool        first = true;
                     for (network::Node e : list_elements)
                     {
-                        if (!first) result += " ";
+                        if (!first) content += " ";
                         std::string elem_str;
                         string::node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
 
@@ -479,10 +479,29 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                                 elem_str = "(" + elem_str + ")";
                         }
 
-                        result += elem_str;
+                        content += elem_str;
                         first = false;
                     }
-                    result += ">";
+
+                    // A list whose content carries no whitespace is read
+                    // back by the COMPACT rule, which makes one node per
+                    // CHARACTER: <item2> re-reads as <2 m e t i>, silently.
+                    // Only a one-element list can get there -- a separator
+                    // is whitespace -- and only when its element is longer
+                    // than one character, since for a single character both
+                    // readings mean the same list. That is what keeps <7>
+                    // and the digit lists untouched. The ambiguous case is
+                    // padded out to the input form that produces it.
+                    //
+                    // Judged on the PRINTED form, because the identifier
+                    // markers are still in `content` and would count as
+                    // characters of their own -- which made even <7> look
+                    // ambiguous.
+                    const std::string printed = string::unmark_identifiers(content);
+                    const bool        compact = printed.size() > 1
+                                      && printed.find_first_of(" \t\r\n>") == std::string::npos;
+
+                    result = compact ? "< " + content + " >" : "<" + content + ">";
                 }
                 return;
             }

@@ -75,6 +75,45 @@ TEST_CASE("display: improper cons chain with atomic tail")
         CHECK_FALSE(any_output_contains(collector, "<a>")); });
 }
 
+TEST_CASE("display: a one-element list does not read back as a compact list")
+{
+    // "<abc>" without whitespace is the COMPACT list, one node per
+    // character. A one-element node list has no separator, so it rendered
+    // into exactly that syntax: < item2 > printed as <item2>, which reads
+    // back as the five-element list <2 m e t i> -- a different structure,
+    // silently, and reachable from any list at all, since every inner cell
+    // of <item1 item2> is a one-element list.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("f maps < item2 >");
+        collector.clear();
+        interactive.process("f maps X");
+        CHECK(answers_contain(collector, "f maps < item2 >"));
+        CHECK_FALSE(any_output_contains(collector, "m e t i"));
+
+        // Re-entering what was printed must denote the SAME fact.
+        interactive.process("f maps < item2 >");
+        collector.clear();
+        interactive.process("f maps X");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1);
+
+        // Unambiguous renderings stay as they were: a single CHARACTER
+        // means the same list under either reading, and a separator or a
+        // quoted element already stops the compact rule.
+        interactive.process("g maps < 7 >");
+        collector.clear();
+        interactive.process("g maps X");
+        CHECK(answers_contain(collector, "g maps <7>"));
+
+        interactive.process("h maps < \"a b\" >");
+        collector.clear();
+        interactive.process("h maps X");
+        CHECK(answers_contain(collector, "h maps <\"a b\">")); });
+}
+
 TEST_CASE("display: proper lists keep their compact rendering")
 {
     // Guard against over-correction: nil-terminated chains must continue
@@ -393,6 +432,95 @@ TEST_CASE("display: a name the grammar has a token for stays bare")
         interactive.process("c => X");
         CHECK(answers_contain(collector, "c => d"));
         CHECK_FALSE(any_output_contains(collector, "\"=>\"")); });
+}
+
+namespace
+{
+    // Run a script in a network of its own and return its answers, sorted.
+    // The round-trip test below needs two INDEPENDENT networks, which is
+    // also why it does not go through run_both_modes: what a name prints as
+    // does not depend on the evaluation strategy.
+    std::vector<std::string> answers_of(const std::string& script)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        collector.clear();
+        process_lines(interactive, script);
+
+        std::vector<std::string> answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        answers.erase(std::unique(answers.begin(), answers.end()), answers.end());
+        return answers;
+    }
+
+    // Names covering the PEG's reserved characters and the tokens it reads
+    // by their first character, plus the shapes whose RENDERING is composed
+    // rather than named: a sequence element, a self-fact, and a fact used as
+    // subject and as object.
+    const std::string round_trip_network = R"zph(.deductions off
+p1 rel b1
+.name b1 "Mercury (planet)"
+p2 rel b2
+.name b2 "_foo"
+p3 rel b3
+.name b3 "A"
+p4 rel b4
+.name b4 "&12"
+p5 rel b5
+.name b5 "«Le Monde»"
+p6 rel b6
+.name b6 "x>y"
+p7 rel b7
+.name b7 "[a]"
+p8 rel b8
+.name b8 "a,b"
+p9 rel b9
+.name b9 "≈net"
+p10 rel b10
+.name b10 "*"
+p11 rel b11
+.name b11 ":foo"
+p12 rel b12
+.name b12 "¬x"
+p13 rel b13
+.name b13 "a b"
+p14 rel b14
+.name b14 "<odd>"
+p15 rel b15
+.name b15 "{s}"
+f maps <"a b" item2>
+g maps < item2 >
+narcissus friend narcissus
+(alice friend bob) supports (4 + 5)
+)zph";
+
+    const std::string round_trip_queries = R"zph(.deductions off
+S rel O
+S maps O
+S friend O
+S supports O
+)zph";
+}
+
+TEST_CASE("display: every printed answer is re-enterable as input")
+{
+    // "Output should round-trip" is a design rule, and it has been probed
+    // one name shape at a time -- each probe finding another shape that did
+    // not. This checks the rule as a whole rather than case by case: print
+    // a network whose names cover the reserved characters and the
+    // first-character tokens, enter the printed lines into a FRESH network,
+    // and ask the same questions again. Anything that does not read back as
+    // what it was shows up as a missing or an extra answer.
+    const std::vector<std::string> printed =
+        answers_of(round_trip_network + round_trip_queries);
+    REQUIRE(printed.size() >= 18);
+
+    std::string re_entered = ".deductions off\n";
+    for (const std::string& answer : printed)
+        re_entered += answer + "\n";
+
+    CHECK(answers_of(re_entered + round_trip_queries) == printed);
 }
 
 TEST_CASE("display: a fact used as a predicate keeps its structure")
