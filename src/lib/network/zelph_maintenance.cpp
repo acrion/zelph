@@ -163,7 +163,20 @@ void Zelph::save_to_file(const std::string& filename) const
 //     read back.
 size_t Zelph::save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept) const
 {
-    if (rules_kept) *rules_kept = 0;
+    // Every rule of the network travels with the slice. Which ones happened
+    // to be reachable from the retained facts was not an answer anyone could
+    // predict, and it silently excluded the class that matters most: a
+    // contradiction rule's consequence is the core `!` node, a fact of no
+    // predicate, so nothing retained ever reached it and a slice stopped
+    // reporting contradictions its source reports. Carrying all of them
+    // makes the slice reason exactly as its source does over the predicates
+    // it kept; a rule whose conditions name a predicate that stayed behind
+    // is complete and simply never matches.
+    //
+    // Read before the locks below: get_rules() takes its own.
+    const adjacency_set rules = get_rules();
+
+    if (rules_kept) *rules_kept = rules.size();
 
     ankerl::unordered_dense::set<Node> keep{
         core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction,
@@ -187,6 +200,7 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
         };
 
         for (const Node p : predicates) retain(p);
+        for (const Node rule : rules) retain(rule);
 
         // The declarations that make the predicates usable, including the
         // core ones (a freshly constructed network re-creates those, but a
@@ -271,21 +285,6 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             {
                 for (const Node participant : right_it->second) retain(participant);
             }
-        }
-    }
-
-    // Which rules end up in a slice follows from the closure, not from a
-    // decision: a rule travels when something retained happens to reach it,
-    // and a contradiction rule -- whose consequence is the core `!` node and
-    // therefore a fact of no predicate -- normally does not. A slice can thus
-    // stop reporting a contradiction its source reports, which is the kind of
-    // thing that has to be said at the moment it happens rather than found
-    // later.
-    if (rules_kept)
-    {
-        for (const Node rule : get_rules())
-        {
-            if (keep.find(rule) != keep.end()) ++*rules_kept;
         }
     }
 

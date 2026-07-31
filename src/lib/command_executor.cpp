@@ -1834,18 +1834,16 @@ private:
                                  "only involve those predicates -- which is what makes a large graph\n"
                                  "usable on a small machine.\n"
                                  "\n"
-                                 "Relation-type declarations, the structure of nested facts and the\n"
-                                 "conjunction/negation tags of any rule that comes along travel with\n"
-                                 "the slice automatically; a fact of another predicate between two\n"
+                                 "Relation-type declarations and the structure of nested facts travel\n"
+                                 "with the slice automatically; a fact of another predicate between two\n"
                                  "retained nodes does not.\n"
                                  "\n"
-                                 "WHICH rules come along is incidental: a rule travels when the\n"
-                                 "closure happens to reach it, and a contradiction rule (consequence\n"
-                                 "'!', a fact of no predicate) normally does not -- so a slice can\n"
-                                 "stop reporting a contradiction its source reports. The command says\n"
-                                 "how many of the network's rules travelled. Rules meant to run over\n"
-                                 "a slice are normally imported when it is used (.import ...), not\n"
-                                 "carried in the file.\n"
+                                 "EVERY rule travels, complete with its conjunction and negation tags,\n"
+                                 "so the slice reasons over the predicates it kept exactly as the\n"
+                                 "source does -- contradiction rules included, which used to stay\n"
+                                 "behind and take their reports with them. A rule whose conditions\n"
+                                 "name a predicate that was left out is carried intact and simply\n"
+                                 "never matches. The command says how many rules went into the file.\n"
                                  "\n"
                                  "Example (the Wikidata class hierarchy alone):\n"
                                  "  .lang wikidata\n"
@@ -3083,14 +3081,10 @@ private:
         size_t       rules = 0;
         const size_t facts = _n->save_predicate_slice(file, predicates, &rules);
 
-        const size_t rules_before = _n->rule_count();
-        std::string  message      = "Saved " + std::to_string(facts) + " fact(s) of "
-                             + std::to_string(predicates.size()) + " predicate(s) to " + file;
-        if (rules_before != 0)
-        {
-            message += "; " + std::to_string(rules) + " of " + std::to_string(rules_before)
-                     + " rule(s) travelled with it";
-        }
+        std::string message = "Saved " + std::to_string(facts) + " fact(s) of "
+                            + std::to_string(predicates.size()) + " predicate(s)";
+        if (rules != 0) message += " and " + std::to_string(rules) + " rule(s)";
+        message += " to " + file;
         _n->diagnostic(message, true);
     }
 #endif

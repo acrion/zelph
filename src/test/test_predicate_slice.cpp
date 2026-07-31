@@ -223,7 +223,7 @@ Q20 P279 Q30
     fs::remove(file);
 }
 
-TEST_CASE("slice: says how many rules travelled, and the file agrees")
+TEST_CASE("slice: every rule travels, including the ones that report contradictions")
 {
     const auto file = slice_path("rulecount");
 
@@ -243,31 +243,30 @@ Q30 P279 Q10
         // progress line of a save.
         for (const auto& event : collector.events())
         {
-            if (event.text.find("travelled with it") != std::string::npos) report = event.text;
+            if (event.text.find("Saved ") != std::string::npos) report = event.text;
         }
     }
 
-    // Which rules a slice keeps follows from the closure rather than from a
-    // decision -- a contradiction rule, whose consequence is a fact of no
-    // predicate, normally stays behind, so a slice can stop reporting a
-    // contradiction its source reports. The contract is not WHICH rules
-    // travel but that the command says how many did, and that the file backs
-    // the number up.
-    REQUIRE(report.find("rule(s) travelled with it") != std::string::npos);
-
-    REQUIRE(report.find("of 2 rule(s)") != std::string::npos); // the network had two
-
-    const std::size_t semicolon = report.find(';');
-    REQUIRE(semicolon != std::string::npos);
-    const std::size_t travelled = static_cast<std::size_t>(std::stoul(report.substr(semicolon + 1)));
+    CHECK(report.find("2 rule(s)") != std::string::npos);
 
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".load \"" + file.string() + "\"");
+    interactive.process(".auto-run");
+    interactive.process(".lang wikidata");
 
     collector.clear();
     interactive.process(".stat");
-    CHECK(any_output_contains(collector, "Rules: " + std::to_string(travelled)));
+    CHECK(any_output_contains(collector, "Rules: 2"));
+
+    // The contradiction rule is the one that used to stay behind: its
+    // consequence is the core "!" node, a fact of no predicate, so nothing
+    // the closure retained ever reached it. A slice then stopped reporting a
+    // contradiction its source reports -- silently, which is the part that
+    // made it worth changing.
+    collector.clear();
+    interactive.process("Q30 P279 Q20");
+    CHECK(has_contradiction(collector));
 
     fs::remove(file);
 }

@@ -50,17 +50,17 @@ Which predicates are worth slicing is a content question, not a technical one. `
 
 ### What travels with the facts
 
-A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of each named predicate (without it the loaded slice answers nothing at all), the **structure of nested facts** (a statement about a statement drags in what it is built from), and the **conjunction and negation tags** of any rule that ends up in the slice — a rule without them is still counted and still printed, but reads as a single condition and can never fire.
+A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of each named predicate (without it the loaded slice answers nothing at all), the **structure of nested facts** (a statement about a statement drags in what it is built from), and **every rule the network has**, complete with the conjunction and negation tags that make it readable as a rule.
 
 What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing.
 
-**Rules are a different matter, and worth knowing about before you rely on one.** Which rules end up in a slice is incidental: a rule travels when the closure happens to reach it, and a *contradiction* rule — whose consequence is `!`, a fact of no predicate — normally does not. A slice can therefore stop reporting a contradiction that its source reports, silently. `.save-predicates` says how many of the network's rules travelled:
+Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones you would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retained used to reach them, and the slice silently stopped reporting contradictions its source reports. A rule whose conditions name a predicate you left out is carried intact and simply never matches. `.save-predicates` says how many went into the file:
 
 ```
-Saved 8 fact(s) of 1 predicate(s) to leaf-slice.bin; 0 of 1 rule(s) travelled with it
+Saved 8 fact(s) of 1 predicate(s) and 1 rule(s) to leaf-slice.bin
 ```
 
-The workflow that avoids the question altogether is the one the class-hierarchy work uses: publish the slice as **data**, and import the rules when you use it (`.import wikidata-classes`). A rule that does travel is complete and behaves exactly as it did in the source.
+That does not change the recommended shape of a *published* artefact: publish the slice as **data** and import the rules when you use it (`.import wikidata-classes`), so the file stays independent of which rule set anyone happens to want.
 
 ### File naming
 
