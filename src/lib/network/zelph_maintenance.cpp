@@ -71,8 +71,88 @@ void Zelph::remove_node(Node node) const
 
     invalidate_fact_structures_cache();
 
-    _pImpl->remove(node);            // Disconnects edges and removes from adjacency maps
-    _pImpl->remove_node_names(node); // Separate method for name cleanup
+    // A fact minus one of its parts is not a fact -- and the graph cannot
+    // say which one it is missing. With the OBJECT gone, the subject is the
+    // only neighbour left, and a subject's link to its fact is
+    // bidirectional: exactly the shape of a self-fact. `outside rel d` was
+    // therefore indistinguishable from `outside rel outside`, answered
+    // `outside rel X` as that, and went into the .bin on the next .save --
+    // the engine asserting something nobody stated. So whatever the node is
+    // a PART of goes with it.
+    //
+    // Strictly upwards: a doomed fact takes the facts it occurs in, never
+    // its own subject, predicate or objects. Those exist in their own right
+    // -- a nested fact used elsewhere, a condition two rules share -- and
+    // walking down into them would delete knowledge that has nothing to do
+    // with the node being removed.
+    const auto is_part_of = [this](const Node whole, const Node part)
+    {
+        adjacency_set objects;
+        if (parse_fact(whole, objects, 0) == part) return true;
+        if (parse_relation(whole) == part) return true;
+        return objects.count(part) != 0;
+    };
+
+    std::vector<Node>                  pending{node};
+    ankerl::unordered_dense::set<Node> doomed{node};
+
+    const auto doom = [&](const Node candidate)
+    {
+        if (doomed.count(candidate) != 0) return;
+        // The engine's vocabulary is not data, as in prune_nodes.
+        if (!get_core_name(candidate).empty()) return;
+
+        doomed.insert(candidate);
+        pending.push_back(candidate);
+    };
+
+    while (!pending.empty())
+    {
+        const Node current = pending.back();
+        pending.pop_back();
+
+        // Subject and object both point AT their fact, the predicate is
+        // pointed at BY it, so both directions have to be looked at; which
+        // of the two nodes is the WHOLE is then decided by is_part_of.
+        adjacency_set neighbours = _pImpl->get_right(current);
+        for (const Node from : _pImpl->get_left(current))
+        {
+            neighbours.insert(from);
+        }
+
+        for (const Node candidate : neighbours)
+        {
+            if (parse_relation(candidate) == 0) continue; // ordinary data
+            if (!is_part_of(candidate, current)) continue;
+
+            doom(candidate);
+        }
+
+        // A set IS its elements, so a container that loses one is no longer
+        // the set anybody built -- and a rule's condition list is such a
+        // set. Without this the rule kept firing on the conditions that
+        // remained: removing `yellow` turned
+        // `(X is yellow, X has petals) => (X is flower)` into
+        // `(X has petals) => (X is flower)`, which then concluded that a
+        // rose is a flower. Nobody wrote that rule. Membership is itself a
+        // fact, so the container is reached from the doomed PartOf fact --
+        // one more step upwards, not a second direction.
+        if (parse_relation(current) == core.PartOf)
+        {
+            adjacency_set containers;
+            parse_fact(current, containers, 0);
+            for (const Node container : containers)
+            {
+                doom(container);
+            }
+        }
+    }
+
+    for (const Node dead : doomed)
+    {
+        _pImpl->remove(dead);            // Disconnects edges and removes from adjacency maps
+        _pImpl->remove_node_names(dead); // Separate method for name cleanup
+    }
 }
 
 // Returns all nodes that are subjects of a core.Causes relation

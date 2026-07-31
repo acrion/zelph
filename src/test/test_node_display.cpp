@@ -395,6 +395,60 @@ TEST_CASE("display: a sequence element is compared against the marked name")
         CHECK_FALSE(any_output_contains(collector, "(\"a b\")")); });
 }
 
+TEST_CASE("display: a name containing a quote is writable")
+{
+    // The quoted-atom rule had no escapes, so a name carrying a quote could
+    // not be written at all. It was therefore printed BARE, and
+    // `subj rel The "Big" One` reads back as a fact with THREE objects --
+    // silently. Wikidata values really do carry quotes; the fixture in
+    // test_wikidata_qualifiers.cpp is one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("subj rel obj");
+        interactive.process(".name obj \"The \\\"Big\\\" One\"");
+
+        collector.clear();
+        interactive.process("subj rel X");
+        CHECK(answers_contain(collector, "subj rel \"The \\\"Big\\\" One\""));
+
+        // Re-entering the printed form denotes the SAME fact.
+        interactive.process("subj rel \"The \\\"Big\\\" One\"");
+        collector.clear();
+        interactive.process("subj rel X");
+        std::size_t answers = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+        CHECK(answers == 1); });
+}
+
+TEST_CASE("display: a backslash in a name is a backslash")
+{
+    // A quoted atom was handed to Janet verbatim, so JANET's escape set
+    // applied to zelph text: a node written `a\b` arrived named
+    // `a<backspace>`, and a Windows path lost most of itself. zelph knows
+    // exactly two escapes inside a quoted atom, \" and \\; a backslash in
+    // front of anything else is an ordinary character.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("x rel a\\b");
+        collector.clear();
+        interactive.process("x rel X");
+        CHECK(answers_contain(collector, "x rel a\\b"));
+        CHECK_FALSE(any_output_contains(collector, "a\b"));
+
+        // Quoted, the escape is honoured and the printed form escapes it
+        // again, so the line stays re-enterable.
+        interactive.process("w rel \"C:\\\\Users\\\\x\"");
+        collector.clear();
+        interactive.process("w rel X");
+        CHECK(answers_contain(collector, "w rel C:\\Users\\x"));
+
+        interactive.process("v rel \"p\\\\b q\"");
+        collector.clear();
+        interactive.process("v rel X");
+        CHECK(answers_contain(collector, "v rel \"p\\\\b q\"")); });
+}
+
 TEST_CASE("display: a name containing guillemets survives the identifier marking")
 {
     // The renderer marks leaf names with « », in band. A name that contains
@@ -489,6 +543,10 @@ p14 rel b14
 .name b14 "<odd>"
 p15 rel b15
 .name b15 "{s}"
+p16 rel b16
+.name b16 "The \"Big\" One"
+p17 rel b17
+.name b17 "C:\\Users\\x"
 f maps <"a b" item2>
 g maps < item2 >
 narcissus friend narcissus

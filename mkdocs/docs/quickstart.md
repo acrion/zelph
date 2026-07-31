@@ -152,7 +152,7 @@ zelph provides powerful commands for targeted data removal:
 
 - `.prune-nodes <pattern>` – Removes matching facts **and** the nodes bound to the pattern's variable.  
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
-  **Warning**: the deleted nodes lose **all** their connections, including facts unrelated to the pattern, and their names go with them – use with caution!
+  **Warning**: a deleted node takes everything it is a **part** of with it — every fact naming it, every fact naming one of those, and every rule one of them is a condition or a conclusion of — including facts and rules unrelated to the pattern, plus its names. Use with caution!
 
 - `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
 
@@ -220,7 +220,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 #### Editing & Removing
 
-- `.remove <name|id>` – Remove a node (destructive: disconnects all edges and cleans names)
+- `.remove <name|id>` – Remove a node and everything it is a part of (destructive)
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
 - `.cleanup` – Remove isolated nodes and clean name mappings (core nodes exempt)

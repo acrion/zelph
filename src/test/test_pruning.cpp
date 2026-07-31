@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -128,6 +130,114 @@ TEST_CASE("pruning: .prune-nodes insists on the one variable it deletes by")
 
         // The documented forms are unaffected.
         interactive.process(".prune-nodes A rel b"); });
+}
+
+TEST_CASE("removal: a node takes what it is a part of with it")
+{
+    // Removing a node used to disconnect it and leave every fact it took
+    // part in standing. A fact minus its OBJECT is not recognisable as
+    // incomplete: the subject is the only neighbour left and a subject
+    // links to its fact bidirectionally, which is exactly the shape of a
+    // self-fact. So `outside rel d` became indistinguishable from
+    // `outside rel outside`, answered `outside rel X` as that, and went
+    // into the .bin on the next .save -- the engine asserting something
+    // nobody stated.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("outside rel d");
+        interactive.process("keep rel other");
+        interactive.process(".remove d");
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, "keep rel other"));
+        CHECK_FALSE(any_output_contains(collector, "outside"));
+
+        // Not a self-fact either, which is the form the leftover took.
+        CHECK_FALSE(any_output_contains(collector, ":rel outside")); });
+}
+
+TEST_CASE("removal: a rule goes with a node its condition names")
+{
+    // A rule that merely loses a condition keeps firing on the ones that
+    // remain, i.e. it concludes MORE than it was written to conclude.
+    // Removing 'yellow' left `(X has petals) => (X is flower)` behind,
+    // which then derived that a rose is a flower.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X is yellow, X has petals) => (X is flower)");
+        interactive.process("(X has thorns, X has petals) => (X is rose)");
+        interactive.process(".remove yellow");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X has thorns)"));
+        CHECK_FALSE(any_output_contains(collector, "(X is flower)"));
+
+        // And it does not fire on what is left of it.
+        interactive.process("rose has petals");
+        collector.clear();
+        interactive.process("rose is Y");
+        CHECK_FALSE(any_output_contains(collector, "flower")); });
+}
+
+TEST_CASE("removal: a condition another rule shares is not dragged along")
+{
+    // The cascade runs strictly UPWARDS: a doomed fact takes the facts it
+    // occurs in, never its own subject, predicate or objects. Walking down
+    // into the parts would delete a ground condition two rules share, and
+    // with it the second rule -- which has nothing to do with the node
+    // being removed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(m is n, X has p) => (X is q)");
+        interactive.process("(m is n, Y has r) => (Y is s)");
+        interactive.process(".remove p");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(Y has r)"));
+        CHECK(any_output_contains(collector, "(m is n)"));
+        CHECK_FALSE(any_output_contains(collector, "(X is q)")); });
+}
+
+TEST_CASE("removal: a nested fact goes with the node inside it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) q c");
+        interactive.process("x q c");
+        interactive.process(".remove b");
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "x q c"));
+        CHECK_FALSE(any_output_contains(collector, "a p")); });
+}
+
+TEST_CASE("removal: nothing incomplete reaches the .bin")
+{
+    // The leftover was structural, so .save wrote it out and .load read it
+    // back -- the false assertion outlived the session that caused it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_remove_roundtrip.bin";
+        std::filesystem::remove(out);
+
+        interactive.process("s5 rel o5");
+        interactive.process("keep rel other");
+        interactive.process(".remove o5");
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, "keep rel other"));
+        CHECK_FALSE(any_output_contains(collector, "s5"));
+
+        std::filesystem::remove(out); });
 }
 
 TEST_CASE("pruning: the pattern reads the way .explain reads it")

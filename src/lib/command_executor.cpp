@@ -1490,7 +1490,7 @@ private:
             "  .remove-rules                             – Remove all inference rules",
             "",
             "Editing & Removing",
-            "  .remove <name|id>                         – Remove a node (destructive: disconnects all edges and cleans names)",
+            "  .remove <name|id>                         – Remove a node and everything it is a part of (destructive)",
             "  .prune-facts <pattern>                    – Remove all facts matching the query pattern (only statements)",
             "  .prune-nodes <pattern>                    – Remove matching facts AND all involved subject/object nodes",
             "  .cleanup                                  – Remove isolated nodes and clean name mappings",
@@ -1526,6 +1526,8 @@ private:
             "Facts:    <subject> <predicate> <object>",
             "          Predicates with spaces must be quoted.",
             "          Example: peter \"is father of\" paul",
+            "          Inside a quoted name, \\\" is a quote and \\\\ a backslash;",
+            "          a backslash before anything else stands for itself.",
             "",
             "Queries:  Statements containing variables (A-Z or starting with _).",
             "          Example:",
@@ -1706,9 +1708,18 @@ private:
                               "Deletes all inference rules from the network."},
 
             {".remove", ".remove <name_or_id>\n"
-                        "Removes the specified node from the network, disconnecting all its edges\n"
-                        "and cleaning all name mappings. The argument can be a node name (looked up in the current language)\n"
+                        "Removes the specified node from the network, cleaning all name mappings.\n"
+                        "The argument can be a node name (looked up in the current language)\n"
                         "or a numeric node ID.\n"
+                        "Everything the node is a PART of goes with it, and so on upwards:\n"
+                        "  - every fact naming it as subject, predicate or object,\n"
+                        "  - every fact naming one of THOSE, so nested facts follow,\n"
+                        "  - every rule one of them is a condition or a conclusion of.\n"
+                        "A fact that merely lost one part could not be told from a different\n"
+                        "fact ('a rel b' minus 'b' reads exactly like 'a rel a'), and a rule\n"
+                        "that merely lost a condition would keep firing on the remaining ones.\n"
+                        "Facts the removed node is NOT part of are untouched, including a\n"
+                        "condition that another rule happens to share.\n"
                         "Core nodes of the engine ('~', '=>', '!', 'cons', ...) cannot be removed.\n"
                         "WARNING: This operation is destructive and irreversible!"},
 
@@ -1870,9 +1881,9 @@ private:
                              "- The relation (predicate) must be fixed (no variable in predicate position)\n"
                              "- EXACTLY ONE variable, in subject or object position: it names what gets\n"
                              "  deleted. Two variables are rejected rather than silently read as one.\n"
-                             "WARNING: This is highly destructive! The deleted nodes lose ALL of their\n"
-                             "connections, including facts that have nothing to do with the pattern,\n"
-                             "and their names go with them.\n"
+                             "WARNING: This is highly destructive! A deleted node takes everything\n"
+                             "it is a PART of with it -- see .help .remove -- including facts and\n"
+                             "rules that have nothing to do with the pattern, and its names.\n"
                              "Relation nodes left isolated by the deletion are removed by .cleanup.\n"
                              "Reports removed facts and nodes."},
 

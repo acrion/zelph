@@ -216,6 +216,15 @@ namespace zelph::string
     std::string unmark_identifiers(const std::string& str);
     std::string sanitize_filename(const std::string& name);
 
+    /// The two escapes a quoted atom knows, and nothing else: `\"` for a
+    /// quote and `\\` for a backslash. They are deliberately the same two
+    /// Janet spells that way, so an encoded atom can be handed to Janet as
+    /// a string literal unchanged -- but the DEcoding has to happen here,
+    /// or Janet's much larger escape set applies to zelph text and a node
+    /// written `a\b` ends up named `a<backspace>`.
+    std::string escape_atom(const std::string& name);
+    std::string unescape_atom(const std::string& body);
+
     /// Trim ASCII whitespace (space, tab, \r, \n, \v, \f) from both ends.
     inline std::string trim(const std::string& s)
     {

@@ -281,8 +281,16 @@ TEST_CASE("wikidata qualifiers: text values arrive decoded, scalars stay verbati
         collector.clear();
         interactive.process("Q400$ESC-1 pq:P1810 _v");
         // An escaped quote used to end the value at the backslash, and the
-        // \u escape used to reach the graph as its six characters.
-        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1810 The \"Chirping\" Crickets, grün"));
+        // \u escape used to reach the graph as its six characters. The value
+        // is printed QUOTED, with its own quotes escaped: bare, the line
+        // read back as several atoms instead of the one value it names.
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\""));
+
+        // And what was printed denotes that same value when entered again.
+        interactive.process("probe pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\"");
+        collector.clear();
+        interactive.process("_s pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\"");
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\""));
 
         collector.clear();
         interactive.process("Q400$ESC-1 pq:P1476 _w");

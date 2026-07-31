@@ -622,7 +622,13 @@ public:
                 :var-token (choice :var-underscore :var-uppercase)
 
                 # Atoms
-                :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
+                # A quoted atom knows exactly two escapes, \" and \\, so that
+                # every name is writable: without them a Wikidata label
+                # carrying a quote could not be entered at all, and the line
+                # zelph printed for it read back as several atoms. A
+                # backslash in front of anything else stays an ordinary
+                # character (Windows paths, LaTeX).
+                :quoted (capture (* "\"" (any (choice (* "\\" 1) (if-not "\"" 1))) "\""))
 
                 # Normal atoms (sequences of non-reserved chars)
                 :raw-atom (capture (some :symchars))
@@ -2535,23 +2541,24 @@ public:
         }
         else if (type == "atom")
         {
-            // Atoms are strings in Janet.
-            if (val_str.size() >= 2 && val_str.front() == '"' && val_str.back() == '"')
-            {
-                return val_str; // Already quoted
-            }
-            else
-            {
-                // Wrap in quotes and escape
-                return "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
-            }
+            // Atoms are strings in Janet -- but the capture is zelph TEXT,
+            // and handing it to Janet unchanged put zelph names through
+            // Janet's escape set: a node written `a\b` came out named
+            // `a<backspace>`. Decode zelph's own two escapes here, then
+            // re-encode for Janet, which spells those same two the same way.
+            std::string name = val_str;
+            if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
+                name = string::unescape_atom(name.substr(1, name.size() - 2));
+
+            return "\"" + string::escape_atom(name) + "\"";
         }
         else if (type == "list-compact")
         {
             // Convert <123> content to (zelph/list-chars "123").
             // janet_cfun_zelph_list_chars reverses the characters internally
             // so the LSB (rightmost char) becomes the outermost cons cell.
-            std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+            // The content is not quoted in zelph, so it is a name already.
+            std::string content = "\"" + string::escape_atom(val_str) + "\"";
             return "(zelph/list-chars " + content + ")";
         }
         else if (type == "number")

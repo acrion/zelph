@@ -140,16 +140,46 @@ namespace zelph::string
         return ss.str();
     }
 
+    std::string escape_atom(const std::string& name)
+    {
+        std::string out;
+        out.reserve(name.size());
+        for (const char c : name)
+        {
+            if (c == '\\' || c == '"') out += '\\';
+            out += c;
+        }
+        return out;
+    }
+
+    std::string unescape_atom(const std::string& body)
+    {
+        std::string out;
+        out.reserve(body.size());
+        for (std::size_t i = 0; i < body.size(); ++i)
+        {
+            // Only `\"` and `\\` are escapes. A backslash in front of
+            // anything else is an ordinary character, so a Windows path or
+            // a LaTeX fragment reads back as itself.
+            if (body[i] == '\\' && i + 1 < body.size()
+                && (body[i + 1] == '"' || body[i + 1] == '\\'))
+            {
+                ++i;
+            }
+            out += body[i];
+        }
+        return out;
+    }
+
     // A name that the parser would not read back as ONE atom has to be
     // quoted on output -- zelph's own printed form is meant to be
     // re-enterable. The set is the PEG's reserved characters plus
-    // whitespace; a name containing a double quote cannot be written at all
-    // (the quoted-atom rule has no escapes), so it is left alone rather
-    // than wrapped into something that silently parses as something else.
+    // whitespace. A double quote is among them: the quoted-atom rule now
+    // has an escape for it, so such a name is writable and gets quoted like
+    // any other instead of being printed bare and read back as several
+    // atoms.
     static bool needs_quotes(const std::string& name)
     {
-        if (name.find('"') != std::string::npos) return false;
-
         // Names the grammar has a dedicated token for. They consist of
         // reserved characters yet read back as ONE atom, so quoting them
         // would be noise -- and worse than noise for `*`, which the
@@ -226,7 +256,7 @@ namespace zelph::string
 
         if (str.find("«") != std::string::npos || str.find("»") != std::string::npos)
         {
-            return needs_quotes(str) ? "\"" + str + "\"" : str;
+            return needs_quotes(str) ? "\"" + escape_atom(str) + "\"" : str;
         }
 
         return "«" + str + "»";
@@ -292,8 +322,10 @@ namespace zelph::string
             const std::string content = str.substr(content_start, close_pos - content_start);
             if (needs_quotes(content))
             {
+                // escape_atom, not the bare name: a quote inside would end
+                // the atom, and a backslash would start an escape.
                 result += '"';
-                result += content;
+                result += escape_atom(content);
                 result += '"';
             }
             else
