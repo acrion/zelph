@@ -658,12 +658,21 @@ No contradiction — the coloring is valid. But assigning `r2 color red` instead
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.
 
 ```
+zelph> .deductions all
+Deduction printing mode: all
 zelph> (A is human) => (B nameof A)
 zelph> tim is human
- ??   nameof   tim  ⇐  tim   is   human
+(?? nameof tim) ⇐ (tim is human)
+zelph> X nameof tim
+Answer: ?? nameof tim
 ```
 
 The `??` represents a newly created node — an existential witness materialized in the graph.
+It is the same node in both lines; a node the engine generated has no name to print.
+
+`.deductions all` is needed here and is not decoration.
+The default mode is `focus`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
+The fact is derived and stored either way; only the line announcing it is suppressed.
 
 **Termination guarantee:** Before creating a new node, zelph checks whether the deduced facts (with the fresh variable as wildcard) already exist. If they do, no new deduction occurs. This ensures that generative rules converge.
 

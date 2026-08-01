@@ -682,3 +682,26 @@ TEST_CASE("display: a list in predicate position renders as a list")
         CHECK(any_output_contains(collector, "<=>"));
         CHECK_FALSE(any_output_contains(collector, "??")); });
 }
+
+TEST_CASE("display: a generated node prints the same way wherever it appears")
+{
+    // A fresh variable's witness is a node with no name and no structure.
+    // It is also the SUBJECT of the fact that was deduced about it -- and
+    // that link is symmetric, so asking the node for its own structure
+    // hands back the containing fact. The deduction line was rendered with
+    // that fact as `parent` and therefore said "??", while the answer to a
+    // query had no such parent and built a triple out of it: "(?? ?? ??)".
+    // Two renderings of one node, and the second one cannot be entered.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions all");
+        interactive.process("(A is human) => (B nameof A)");
+        collector.clear();
+        interactive.process("tim is human");
+        REQUIRE(any_output_contains(collector, "?? nameof tim"));
+
+        collector.clear();
+        interactive.process("X nameof tim");
+        CHECK(answers_contain(collector, "?? nameof tim"));
+        CHECK_FALSE(any_output_contains(collector, "?? ?? ??")); });
+}

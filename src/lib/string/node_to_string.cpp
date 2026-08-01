@@ -724,6 +724,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
     if (subject == 0) subject = z->parse_fact(resolved, objects, parent);
 
+    // A node is only readable as a fact if it points at a PREDICATE. The
+    // subject <-> fact link is symmetric, so parse_fact run on a node that
+    // merely IS some fact's subject hands back that very fact as the node's
+    // own "subject", and the triple built from it came out as "(?? ?? ??)" --
+    // an answer line nobody can enter again. The `parent` argument suppresses
+    // it while the containing fact is being rendered, which is why the same
+    // node printed as "??" in a deduction line and as "(?? ?? ??)" in the
+    // answer to a query. A generated node (a fresh variable's witness) hits
+    // this whenever it is the subject of anything, i.e. as a rule.
+    if (subject != 0 && fact_predicate() == 0)
+    {
+        result = string::mark_identifier("??");
+        return;
+    }
+
     bool is_condition = false;
 
 #ifdef DEBUG_FORMAT_FACT
