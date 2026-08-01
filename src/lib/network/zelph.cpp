@@ -377,6 +377,37 @@ adjacency_set Zelph::get_right(const Node b) const
     return _pImpl->get_right(b);
 }
 
+// Facts that use `relation` as their PREDICATE. get_left(relation) is NOT
+// that set: it also holds the facts in which the relation is the SUBJECT,
+// starting with its own `relation ~ ->` declaration.
+adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
+{
+    adjacency_set facts;
+
+    // The nodes pointing AT a relation are the facts that use it as their
+    // PREDICATE plus the facts that merely have it as their SUBJECT -- a
+    // fact points at both of them. What separates the two roles is the back
+    // edge: a subject (like an object) points at its fact, a predicate does
+    // not. Without that second test a predicate's own `relation ~ ->`
+    // declaration counted as a use of it, so .list-predicate-usage reported
+    // one use for a predicate nothing had ever used.
+    //
+    // A fact whose subject IS its predicate keeps both roles in one edge and
+    // is therefore excluded here -- which is exactly how unification reads
+    // such a fact, so the count stays in step with what a query answers.
+    const Network::ReadScope scope = read_scope();
+
+    for (const Node fact : scope.left(relation))
+    {
+        if (scope.left(fact).count(relation) == 0)
+        {
+            facts.insert(fact);
+        }
+    }
+
+    return facts;
+}
+
 bool Zelph::has_left_edge(Node b, Node a) const
 {
     return _pImpl->has_left_edge(b, a);
@@ -1300,9 +1331,29 @@ Network::ReadScope Zelph::read_scope() const
     return Network::ReadScope(*_pImpl);
 }
 
+// Anchored-candidate filter for Unification::increment_fact_index: from the
+// outgoing edges of `anchor`, collect the facts that use `relation` as their
+// PREDICATE. Same role test as get_facts_of_predicate, from the other end --
+// there the starting set is everything pointing at the relation, here it is
+// one anchor's adjacency.
+//
+// All checks under ONE shared lock pair on references; the implementation
+// before the ReadScope existed copied the anchor's full adjacency and paid
+// two locked edge probes per candidate. This used to live in Network, which
+// is the wrong layer: reading an edge pair as subject-versus-predicate is
+// knowledge about zelph's fact topology, and Network only stores edges.
 void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
 {
-    _pImpl->collect_anchored_facts(anchor, relation, out);
+    out.clear();
+
+    const Network::ReadScope scope = read_scope();
+
+    for (const Node fact : scope.right(anchor))
+    {
+        if (scope.right(fact).count(relation) == 0) continue; // not this predicate
+        if (scope.left(fact).count(relation) != 0) continue;  // relation is the fact's subject
+        out.insert(fact);
+    }
 }
 
 // Semantic caveat, deliberate: parse_relation's exact probe uses

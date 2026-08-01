@@ -1310,8 +1310,11 @@ private:
 
         for (const auto& pred : predicates)
         {
-            // Get all facts where this node is used as a relation type
-            const auto& facts_using_predicate = _n->get_left(pred);
+            // Get all facts where this node is used as a relation type --
+            // get_left would additionally count every fact ABOUT the
+            // predicate, starting with its own `pred ~ ->` declaration, so a
+            // declared but unused predicate reported one use.
+            const auto& facts_using_predicate = _n->get_facts_of_predicate(pred);
             predicate_usage_counts[pred]      = facts_using_predicate.size();
         }
 
@@ -1389,8 +1392,11 @@ private:
 
         ankerl::unordered_dense::map<network::Node, size_t> value_counts;
 
-        // All fact nodes that use this predicate: fact --> pred
-        network::adjacency_set facts = _n->get_left(pred);
+        // All fact nodes that use this predicate as their relation type.
+        // get_left would also bring in the facts ABOUT the predicate, whose
+        // objects then appeared as values of it -- `-> 1` from the
+        // `pred ~ ->` declaration on every predicate there is.
+        network::adjacency_set facts = _n->get_facts_of_predicate(pred);
 
         for (network::Node fact : facts)
         {

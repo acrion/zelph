@@ -171,6 +171,7 @@ namespace zelph::network
         static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
         adjacency_set        get_left(const Node b) const;
         adjacency_set        get_right(const Node b) const;
+        adjacency_set        get_facts_of_predicate(Node relation) const;
         bool                 has_left_edge(Node b, Node a) const;
         bool                 has_right_edge(Node a, Node b) const;
         static Node          create_hash(const adjacency_set& vec);

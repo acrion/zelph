@@ -224,6 +224,68 @@ TEST_CASE("naming: renaming a node to the name it already has is a no-op")
                              std::runtime_error); });
 }
 
+TEST_CASE("commands: predicate usage counts uses AS a predicate, not facts about it")
+{
+    // The nodes pointing at a predicate are the facts using it as their
+    // relation type PLUS the facts in which it is the SUBJECT -- a fact
+    // points at both. Counting them together made every predicate carry its
+    // own `pred ~ ->` declaration as a use of itself, so a freshly declared
+    // predicate reported one use before anything used it, and each fact
+    // ABOUT a predicate inflated the count further. On a Wikidata dump,
+    // where every property is an entity with labels and constraints of its
+    // own, that is not an off-by-one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a hasPart b");
+        interactive.process("hasPart coinedBy alice");
+        interactive.process("hasPart coinedBy bob");
+
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "hasPart 1"));
+        CHECK(any_output_contains(collector, "coinedBy 2"));
+        CHECK_FALSE(any_output_contains(collector, "hasPart 4"));
+
+        // The core vocabulary is declared but unused here, and says so.
+        CHECK(any_output_contains(collector, "cons 0"));
+
+        // Same root cause on the value side: the objects of the facts ABOUT
+        // hasPart appeared as values OF hasPart, led by the `->` of its own
+        // declaration.
+        collector.clear();
+        interactive.process(".list-predicate-value-usage hasPart");
+        CHECK(any_output_contains(collector, "b 1"));
+        CHECK(any_output_contains(collector, "Total unique values: 1"));
+        CHECK_FALSE(any_output_contains(collector, "alice"));
+        CHECK_FALSE(any_output_contains(collector, "bob")); });
+}
+
+TEST_CASE("commands: predicate usage agrees with what a query answers")
+{
+    // The count and the query are two readings of the same question, so a
+    // disagreement between them is a bug in one of the two whichever way it
+    // points. Pinning them against each other is what keeps the counting
+    // path from drifting away from unification's notion of a predicate.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process("c rel d");
+        interactive.process("rel coinedBy alice");
+
+        // The count comes FIRST: entering a query materializes its pattern,
+        // and that pattern is a fact of `rel` like any other.
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        const bool counted_two = any_output_contains(collector, "rel 2");
+
+        collector.clear();
+        interactive.process("S rel O");
+        const size_t answers = collect_answers(collector).size();
+
+        CHECK(answers == 2);
+        CHECK(counted_two); });
+}
+
 TEST_CASE("commands: a negative count is rejected, not wrapped")
 {
     // std::stoull turns "-1" into 18446744073709551615 rather than failing,
