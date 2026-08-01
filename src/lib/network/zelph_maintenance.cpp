@@ -227,15 +227,20 @@ Node Zelph::rule_pattern_predicate(const bool create) const
 
 bool Zelph::is_rule_pattern(const Node node) const
 {
+    if (!_pImpl->_has_rule_patterns.load(std::memory_order_acquire)) return false;
+
     std::shared_lock lock(_pImpl->_rule_patterns_mtx);
-    return !_pImpl->_rule_patterns.empty() && _pImpl->_rule_patterns.count(node) != 0;
+    return _pImpl->_rule_patterns.count(node) != 0;
 }
 
 bool Zelph::unmark_rule_pattern(const Node node) const
 {
+    if (!_pImpl->_has_rule_patterns.load(std::memory_order_acquire)) return false;
+
     {
         std::unique_lock lock(_pImpl->_rule_patterns_mtx);
         if (_pImpl->_rule_patterns.erase(node) == 0) return false;
+        _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
     }
 
     const Node pred = rule_pattern_predicate(false);
@@ -264,12 +269,15 @@ void Zelph::rebuild_rule_pattern_index() const
 {
     std::unique_lock lock(_pImpl->_rule_patterns_mtx);
     _pImpl->_rule_patterns.clear();
+    _pImpl->_has_rule_patterns.store(false, std::memory_order_release);
 
     const Node pred = rule_pattern_predicate(false);
     if (pred == 0) return;
 
     for (const Node subject : get_sources(core.IsA, pred, true))
         _pImpl->_rule_patterns.insert(subject);
+
+    _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
 }
 
 void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created) const
@@ -338,6 +346,7 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         self->fact(p, core.IsA, {pred});
         _pImpl->_rule_patterns.insert(p);
     }
+    _pImpl->_has_rule_patterns.store(true, std::memory_order_release);
 }
 
 adjacency_set Zelph::get_rules() const

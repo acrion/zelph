@@ -2136,6 +2136,11 @@ namespace zelph::network
         // nothing to switch off.
         mutable std::shared_mutex                                                           _rule_patterns_mtx;
         std::unordered_set<Node>                                                            _rule_patterns;
+        // Read before the mutex on both hot paths -- the per-candidate test in
+        // unification and the per-known-fact revocation in deduce. A graph
+        // whose rules all carry variables, which includes every bulk import,
+        // never marks anything and therefore never takes a lock at all.
+        std::atomic<bool>                                                                   _has_rule_patterns{false};
 
         // Genuine-structure store: the exact (subject, predicate, objects)
         // triple of every node materialized through triple-level
