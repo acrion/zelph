@@ -94,9 +94,12 @@ namespace zelph::network
         {
             Derived,   // justified by `rule` via `premises` and `absent`
             Axiom,     // asserted, and no rule consequence unifies: an input fact
-            Unfounded, // asserted, rule consequences unify, but no acyclic
-                       // instantiation verifies against the CURRENT graph
-                       // (e.g. a NAF premise that has since become true)
+            Unfounded,  // asserted, rule consequences unify, but no acyclic
+                        // instantiation verifies against the CURRENT graph
+                        // (e.g. a NAF premise that has since become true)
+            RulePattern, // the node exists only because a rule was written
+                        // with this statement as a ground pattern -- nobody
+                        // claimed it, so there is nothing to justify
             Truncated  // not expanded: depth limit reached
         };
 

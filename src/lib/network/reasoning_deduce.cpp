@@ -514,6 +514,14 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 {
                     Answer answer = check_fact(source, rel, targets);
 
+                    // The node may exist only because some rule was written
+                    // with this very statement as a ground pattern. Deriving
+                    // it is a claim, so the mark goes and the deduction
+                    // counts as new -- "(A is bad) => (alarm is on)" has to
+                    // start answering the moment something IS bad.
+                    const bool was_pattern = answer.is_known() && !answer.is_wrong()
+                                          && unmark_rule_pattern(answer.relation());
+
                     if (should_log(depth))
                     {
                         std::string targets_str;
@@ -529,7 +537,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
                         wrong = true;
                     }
-                    else if (!answer.is_known() && targets.count(rel) == 0)
+                    else if ((was_pattern || !answer.is_known()) && targets.count(rel) == 0)
                     {
                         if (logging_active())
                             _prof.check_fact_new.fetch_add(1, std::memory_order_relaxed);

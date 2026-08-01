@@ -1842,7 +1842,13 @@ public:
 
         if (twin == 0)
         {
+            // What the scratch cluster recorded is exactly what this statement
+            // brought into being -- which is how a GROUND pattern can be told
+            // from the same statement asserted earlier. Read it before the
+            // merge, which drops the bookkeeping.
+            const std::vector<network::Node> created = s_instance->_n->cluster_nodes(scratch);
             s_instance->_n->merge_cluster(scratch, previous);
+            if (rule) s_instance->_n->mark_rule_patterns(rule, created);
             return out;
         }
 
@@ -2824,6 +2830,13 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             network::Node n = zelph_unwrap_node(out);
             if (n)
             {
+                // A statement typed at the top level is a CLAIM, and a claim
+                // revokes the pattern-only status the same statement may have
+                // acquired by appearing in a rule. Nothing else can revoke it:
+                // the rule construction itself runs through the same fact()
+                // calls, so only the top level knows that this one was meant.
+                if (!_pImpl->has_scoped_variables()) _pImpl->_n->unmark_rule_pattern(n);
+
                 if (_pImpl->echo_enabled())
                 {
                     std::string output;

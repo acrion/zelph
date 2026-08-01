@@ -79,6 +79,7 @@ add_executable(zelph_tests
     test_pruning.cpp
     test_reasoning.cpp
     test_rule_identity.cpp
+    test_rule_patterns.cpp
     test_result_query.cpp
     test_save_memory.cpp
     test_script_query.cpp

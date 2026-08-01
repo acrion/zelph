@@ -893,6 +893,7 @@ Unification::Unification(
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
+                                       if (_n->is_rule_pattern(fact)) continue; // not data, see Next()
                                        auto structs = get_fact_structures(_n, fact, _log_depth);
                                        ++local_scanned;
 
@@ -1145,6 +1146,12 @@ std::shared_ptr<Variables> Unification::Next()
             while (increment_fact_index()) // iterate over all matching facts
             {
                 Node fact = *_fact_index;
+
+                // A ground rule pattern is not data: it exists because a rule
+                // was written, and nobody claimed it. See
+                // Zelph::is_rule_pattern -- one hash probe, and a single
+                // empty() test wherever no rule has a ground pattern.
+                if (_n->is_rule_pattern(fact)) continue;
 
                 if (_n->logging_active())
                     PROF(facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed));

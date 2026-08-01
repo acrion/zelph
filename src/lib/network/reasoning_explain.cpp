@@ -326,15 +326,18 @@ namespace zelph::network
             ctx.path.erase(fact);
 
             if (proof->status != ProofNode::Status::Derived)
-                proof->status = any_rule_unified ? ProofNode::Status::Unfounded
-                                                 : ProofNode::Status::Axiom;
+                proof->status = ctx.z->is_rule_pattern(fact) ? ProofNode::Status::RulePattern
+                              : any_rule_unified      ? ProofNode::Status::Unfounded
+                                                      : ProofNode::Status::Axiom;
 
             // Memoize only path-independent results: Derived (a found proof
             // stays a proof) and Axiom (no rule consequence unifies -- a
             // property of the fact alone). Unfounded may be an artifact of
             // the current path's exclusions and is recomputed; Truncated is
             // depth-dependent (see above).
-            if (proof->status == ProofNode::Status::Derived || proof->status == ProofNode::Status::Axiom)
+            if (proof->status == ProofNode::Status::Derived
+                || proof->status == ProofNode::Status::Axiom
+                || proof->status == ProofNode::Status::RulePattern)
                 ctx.memo.emplace(fact, proof);
 
             return proof;

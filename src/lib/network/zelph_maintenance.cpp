@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 
+#include "fact_structure.hpp"
+
 #include "zelph_impl.hpp"
 
 #include <algorithm>
@@ -194,6 +196,148 @@ bool Zelph::is_mentioned(const Node node) const
     }
 
     return false;
+}
+
+// --- Rule patterns that are not data ---------------------------------------
+// The rationale is in zelph.hpp; here is only how it is stored. The mark is
+// the fact `(pattern ~ "rule pattern")`, i.e. ordinary graph structure: it
+// survives a save, it prints and re-enters like anything else, and the
+// engine keeps an index of it purely so that the per-candidate test in
+// unification is a hash probe instead of a fact lookup.
+//
+// The predicate is a NAMED node rather than a core one on purpose. Core
+// nodes take the first IDs at construction, so adding an eleventh would
+// collide with node 11 of every .bin ever written.
+
+namespace
+{
+    constexpr const char* rule_pattern_name = "rule pattern";
+}
+
+Node Zelph::rule_pattern_predicate(const bool create) const
+{
+    auto* self = const_cast<Zelph*>(this);
+    if (!create)
+    {
+        const Node existing = self->get_node(rule_pattern_name, "zelph");
+        return existing;
+    }
+    return self->node(rule_pattern_name, "zelph");
+}
+
+bool Zelph::is_rule_pattern(const Node node) const
+{
+    std::shared_lock lock(_pImpl->_rule_patterns_mtx);
+    return !_pImpl->_rule_patterns.empty() && _pImpl->_rule_patterns.count(node) != 0;
+}
+
+bool Zelph::unmark_rule_pattern(const Node node) const
+{
+    {
+        std::unique_lock lock(_pImpl->_rule_patterns_mtx);
+        if (_pImpl->_rule_patterns.erase(node) == 0) return false;
+    }
+
+    const Node pred = rule_pattern_predicate(false);
+    if (pred != 0)
+    {
+        // Remove the marking FACT, not the pattern: the statement is a claim
+        // from now on, and everything else about the node stays.
+        const Answer mark = check_fact(node, core.IsA, {pred});
+        if (mark.is_known()) const_cast<Zelph*>(this)->remove_node(mark.relation());
+    }
+
+    // This is the moment the statement BECOMES data, and everything that
+    // reacts to a new fact has to hear about it -- semi-naive seeding above
+    // all, which would otherwise never offer it to the rules whose conditions
+    // it now satisfies. The node itself is old, so nothing else announces it.
+    if (_on_fact_created)
+    {
+        if (const Node predicate = parse_relation(node); predicate != 0)
+            _on_fact_created(node, predicate);
+    }
+
+    return true;
+}
+
+void Zelph::rebuild_rule_pattern_index() const
+{
+    std::unique_lock lock(_pImpl->_rule_patterns_mtx);
+    _pImpl->_rule_patterns.clear();
+
+    const Node pred = rule_pattern_predicate(false);
+    if (pred == 0) return;
+
+    for (const Node subject : get_sources(core.IsA, pred, true))
+        _pImpl->_rule_patterns.insert(subject);
+}
+
+void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created) const
+{
+    if (created.empty()) return;
+
+    const std::unordered_set<Node> fresh(created.begin(), created.end());
+
+    // The conditions and the consequences, and inside them every ground fact
+    // node at any depth: "((a p b) g c)" leaks `a p b` just as readily as
+    // itself. The `=>` fact is deliberately not walked as a pattern -- a rule
+    // is not data, and whether it was asserted or merely mentioned is
+    // decided by is_mentioned.
+    adjacency_set consequences;
+    const Node    condition = parse_fact(rule, consequences);
+    if (condition == 0) return;
+
+    std::vector<Node>        pending(consequences.begin(), consequences.end());
+    std::unordered_set<Node> seen;
+    std::vector<Node>        patterns;
+
+    // A conjunction set carries no structure of its own; its members hang off
+    // it as PartOf facts.
+    if (check_fact(condition, core.IsA, {core.Conjunction}).is_known())
+    {
+        for (const Node rel : get_right(condition))
+        {
+            if (parse_relation(rel) != core.PartOf) continue;
+            adjacency_set objs;
+            const Node    member = parse_fact(rel, objs, 0);
+            if (member != 0 && objs.count(condition) == 1) pending.push_back(member);
+        }
+    }
+    else
+    {
+        pending.push_back(condition);
+    }
+
+    while (!pending.empty())
+    {
+        const Node nd = pending.back();
+        pending.pop_back();
+        if (nd == 0 || !seen.insert(nd).second) continue;
+        if (!Impl::is_hash(nd) || Impl::is_var(nd)) continue;
+
+        const FactStructure fs = get_preferred_structure(this, nd, 3);
+        if (fs.predicate == 0 || fs.subject == 0) continue;
+
+        // Only what this construction brought into being, and only where
+        // there is no variable to give it away as a template.
+        if (fresh.count(nd) != 0 && !var_in_closure(nd)) patterns.push_back(nd);
+
+        pending.push_back(fs.subject);
+        for (const Node o : fs.objects)
+            pending.push_back(o);
+    }
+
+    if (patterns.empty()) return;
+
+    const Node pred = rule_pattern_predicate(true);
+    auto*      self = const_cast<Zelph*>(this);
+
+    std::unique_lock lock(_pImpl->_rule_patterns_mtx);
+    for (const Node p : patterns)
+    {
+        self->fact(p, core.IsA, {pred});
+        _pImpl->_rule_patterns.insert(p);
+    }
 }
 
 adjacency_set Zelph::get_rules() const
@@ -419,6 +563,7 @@ void Zelph::load_from_file(const std::string& filename) const
     invalidate_fact_structures_cache();
 
     _pImpl->loadFromFile(filename);
+    rebuild_rule_pattern_index();
 }
 
 void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const
@@ -426,6 +571,7 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
     invalidate_fact_structures_cache();
 
     _pImpl->loadFromFile(filename, selection, skip_payload);
+    rebuild_rule_pattern_index();
 }
 
 void Zelph::load_from_manifest(const std::string&       manifest_path,
@@ -437,6 +583,7 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
     invalidate_fact_structures_cache();
 
     _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
+    rebuild_rule_pattern_index();
 }
 #endif
 
@@ -445,6 +592,8 @@ void        Zelph::deactivate_cluster() const { _pImpl->deactivate_cluster(); }
 std::string Zelph::active_cluster_name() const { return _pImpl->active_cluster_name(); }
 
 std::vector<std::pair<std::string, size_t>> Zelph::list_clusters() const { return _pImpl->list_clusters(); }
+
+std::vector<Node> Zelph::cluster_nodes(const std::string& name) const { return _pImpl->cluster_nodes(name); }
 
 bool Zelph::merge_cluster(const std::string& from, const std::string& to) const
 {

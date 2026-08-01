@@ -2126,6 +2126,17 @@ namespace zelph::network
         ankerl::unordered_dense::map<Node, std::shared_ptr<const std::unordered_set<Node>>> _template_vars;
         std::atomic<bool>                                                                   _template_vars_authoritative{true};
 
+        // Ground rule patterns, i.e. fact nodes that exist only because a
+        // rule was written and that nobody ever claimed. See the block
+        // around Zelph::is_rule_pattern. This is an INDEX, not the record:
+        // the record is a fact in the graph, so a load can rebuild it and a
+        // save carries it. One entry per marked pattern, which is bounded by
+        // the number of rules with ground patterns -- it does not grow with
+        // the graph, so the memory budget does not apply and there is
+        // nothing to switch off.
+        mutable std::shared_mutex                                                           _rule_patterns_mtx;
+        std::unordered_set<Node>                                                            _rule_patterns;
+
         // Genuine-structure store: the exact (subject, predicate, objects)
         // triple of every node materialized through triple-level
         // construction (Zelph::fact), stored at creation as an immutable

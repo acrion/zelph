@@ -851,6 +851,18 @@ namespace zelph::network
             return out;
         }
 
+        // The nodes a cluster has recorded so far, WITHOUT touching the
+        // bookkeeping -- take_cluster's read-only sibling. What it answers is
+        // "which of these nodes are new", because a cluster records exactly
+        // what was created while it was active.
+        std::vector<Node> cluster_nodes(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _clusters.find(name);
+            if (it == _clusters.end()) return {};
+            return {it->second.begin(), it->second.end()};
+        }
+
         // Removes the bookkeeping and hands the node list to the caller
         // (Zelph::drop_cluster removes the nodes themselves). Deactivates
         // the cluster if it was active. Empty result if the name is unknown.

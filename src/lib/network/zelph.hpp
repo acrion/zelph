@@ -447,6 +447,51 @@ namespace zelph::network
         /// predicate or one of its objects? For a rule that is the
         /// difference between stating it and stating something ABOUT it.
         bool          is_mentioned(Node node) const;
+
+        // --- Rule patterns that are not data -------------------------------
+        //
+        // Writing a rule materializes its condition and consequence patterns
+        // as real fact nodes, because the engine has nothing else to match
+        // against. A pattern carrying a variable is recognisable as a
+        // template and rejected as data everywhere. A GROUND one is not:
+        // "(a p b) => (c q d)" made both `a p b` and `c q d` answer queries
+        // and drive other rules, although nobody had claimed either.
+        //
+        // The node itself cannot say which happened -- asserting a statement
+        // and building it as a pattern produce the same node with the same
+        // edges. What CAN say it is the moment of construction: a rule is
+        // built inside a scratch cluster (see zelph/dedup-rule), and a
+        // cluster records exactly the nodes that did not exist before. Those
+        // are pattern-only, and mark_rule_patterns records that as ordinary
+        // graph structure -- a fact, so a .save/.load round trip keeps it and
+        // nothing has to be remembered across sessions.
+        //
+        // Asserting the same statement later, or DERIVING it, revokes the
+        // mark: it is then a claim like any other.
+
+        /// The predicate that marks a pattern, or 0 when no graph has ever
+        /// needed it (`create` false).
+        Node          rule_pattern_predicate(bool create) const;
+
+        /// Mark the ground condition and consequence patterns of `rule` that
+        /// appear in `created`. Everything else -- patterns with variables,
+        /// nodes that already existed, the predicate declarations the
+        /// construction emitted -- is left alone.
+        void          mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
+
+        /// Was this fact node built as a rule pattern and never claimed?
+        /// One hash probe, and a single empty() test in the graphs -- the
+        /// overwhelming majority -- whose rules all carry variables.
+        bool          is_rule_pattern(Node node) const;
+
+        /// Revoke the mark: the statement has been asserted or derived.
+        /// Returns whether there was one.
+        bool          unmark_rule_pattern(Node node) const;
+
+        /// Rebuild the in-memory index from the graph. A binary load restores
+        /// the marking facts without going through fact(), so the index has
+        /// to be read back off the marker's extent afterwards.
+        void          rebuild_rule_pattern_index() const;
         void          remove_rules() const;
         size_t        rule_count() const;
         void          save_to_file(const std::string& filename) const;
@@ -470,6 +515,8 @@ namespace zelph::network
         void                                        deactivate_cluster() const;
         std::string                                 active_cluster_name() const;
         std::vector<std::pair<std::string, size_t>> list_clusters() const;
+        /// The nodes a cluster has recorded, i.e. which of them are NEW.
+        std::vector<Node>                           cluster_nodes(const std::string& name) const;
         size_t                                      drop_cluster(const std::string& name) const;
         bool                                        merge_cluster(const std::string& from, const std::string& to) const;
 

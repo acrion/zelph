@@ -3532,6 +3532,11 @@ private:
         case network::ProofNode::Status::Axiom:
             out += branch + line + "  [axiom]\n";
             return;
+        case network::ProofNode::Status::RulePattern:
+            // Not an axiom: the node exists because a rule was written with
+            // this statement as a ground pattern, and nobody claimed it.
+            out += branch + line + "  [rule pattern; not asserted]\n";
+            return;
         case network::ProofNode::Status::Unfounded:
             // Not "the graph is broken": with a rule whose consequence has a
             // VARIABLE predicate -- the meta-rules zelph exists for -- that
