@@ -241,6 +241,45 @@ namespace zelph::network
                                         Node                 parent,
                                         const int            depth);
 
+        // Is this deduction a RULE -- a statement whose predicate is `=>`?
+        // It decides two things a fact deduction settles differently: the
+        // variables inside it are quantified by that INNER rule and must
+        // survive instantiation as variables instead of becoming fresh nodes,
+        // and rebuilding it needs rebuild_rule, not instantiate_fact.
+        bool deduction_is_rule(Node deduction) const;
+
+        // Rebuild the RULE `pattern` under `variables` and return the `=>`
+        // fact. `created` reports whether anything new was added; false means
+        // the identical rule was already in the graph. 0 is returned when the
+        // pattern does not decompose into a rule at all.
+        //
+        // A rule is not just a fact: its subject is either one condition
+        // pattern or a conjunction SET node, and that set node is created
+        // rather than hash-consed, its members hang off it as separate PartOf
+        // facts, and the tags that make the engine read it as a conjunction --
+        // or a member as a negation -- are facts of their own. instantiate_fact
+        // reproduces none of that, which is why deriving a rule needs its own
+        // construction. Call it under _mtx_network.
+        Node rebuild_rule(Node pattern, const Variables& variables, int depth, Node parent, bool& created);
+
+        // Every variable of a rule, conditions and consequences alike. Unlike
+        // collect_variables this descends through the conjunction SET node,
+        // which carries no structure of its own -- so the variables of a
+        // multi-condition rule are reachable at all.
+        std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth);
+
+        // One condition of a derived rule, under the bindings: the
+        // instantiated pattern plus the tags that describe how the engine has
+        // to read it (negation, and a nested conjunction rebuilt as a set).
+        Node rebuild_condition(Node pattern, const Variables& variables, int depth);
+
+        // The conjunction set node whose members are exactly `members`, or 0.
+        // Deriving a rule that is already there must not build a second set
+        // node for it: the set node is created, not hash-consed, so nothing
+        // would collapse the two, the rule would be re-derived on every run,
+        // and the fixpoint would never be reached.
+        Node find_conjunction_set(const std::unordered_set<Node>& members) const;
+
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
         void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);

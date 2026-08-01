@@ -26,11 +26,255 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "reasoning.hpp"
 
 #include "contradiction_error.hpp"
+#include "rule_identity.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
 using namespace zelph::network;
+
+namespace
+{
+    // The elements of a conjunction set: the subjects of the PartOf facts
+    // pointing at it. The same reconstruction Reasoning::evaluate performs
+    // when it takes a rule condition apart, and node_to_string when it
+    // prints "{...}".
+    std::vector<Node> conjunction_members(const Zelph* const z, const Node set_node)
+    {
+        std::vector<Node> members;
+        for (const Node rel : z->get_right(set_node))
+        {
+            if (z->parse_relation(rel) != z->core.PartOf) continue;
+            adjacency_set objs;
+            const Node    s = z->parse_fact(rel, objs, 0);
+            if (s != 0 && objs.count(set_node) == 1) members.push_back(s);
+        }
+        return members;
+    }
+}
+
+bool Reasoning::deduction_is_rule(const Node deduction) const
+{
+    // The edge probe in front is what keeps this off the hot path: `=>` is a
+    // neighbour of a fact node only when it is that fact's predicate or its
+    // subject, which no ordinary deduction has -- so the exact reading is
+    // reconstructed for candidates only.
+    return has_right_edge(deduction, core.Causes) && parse_relation(deduction) == core.Causes;
+}
+
+Node Reasoning::find_conjunction_set(const std::unordered_set<Node>& members) const
+{
+    if (members.empty()) return 0;
+
+    // Every set a node belongs to is reachable from it through its PartOf
+    // facts, and a rule condition belongs to very few sets -- so one member
+    // is enough to enumerate all candidates.
+    const Node probe = *members.begin();
+
+    for (const Node rel : get_right(probe))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+
+        adjacency_set objs;
+        if (parse_fact(rel, objs, 0) != probe) continue;
+
+        for (const Node candidate : objs)
+        {
+            if (candidate == probe) continue;
+            if (!check_fact(candidate, core.IsA, {core.Conjunction}).is_known()) continue;
+
+            const std::vector<Node> have = conjunction_members(this, candidate);
+            if (have.size() != members.size()) continue;
+
+            bool same = true;
+            for (const Node m : have)
+            {
+                if (members.count(m) == 0)
+                {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return candidate;
+        }
+    }
+
+    return 0;
+}
+
+std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node parent, const int depth)
+{
+    std::unordered_set<Node> vars;
+
+    adjacency_set consequences;
+    const Node    condition = parse_fact(rule, consequences, parent);
+    if (condition == 0) return vars;
+
+    for (const Node c : consequences)
+    {
+        std::vector<Node> history;
+        collect_variables(this, c, vars, depth, history);
+    }
+
+    // A conjunction set node carries no structure a variable walk could
+    // follow -- Zelph::set creates it, and its members hang off it as
+    // separate PartOf facts. Without this step the variables of a
+    // multi-condition rule would be invisible.
+    std::vector<Node> pending{condition};
+    while (!pending.empty())
+    {
+        const Node cond = pending.back();
+        pending.pop_back();
+
+        if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
+        {
+            for (const Node m : conjunction_members(this, cond))
+                pending.push_back(m);
+            continue;
+        }
+
+        std::vector<Node> history;
+        collect_variables(this, cond, vars, depth, history);
+    }
+
+    return vars;
+}
+
+Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables, const int depth)
+{
+    // A conjunction nested inside a condition is a set of its own, and
+    // evaluate() reads it recursively -- so it has to be rebuilt recursively.
+    if (check_fact(pattern, core.IsA, {core.Conjunction}).is_known())
+    {
+        std::unordered_set<Node> members;
+        for (const Node m : conjunction_members(this, pattern))
+        {
+            const Node inst = rebuild_condition(m, variables, depth);
+            if (inst == 0) return 0;
+            members.insert(inst);
+        }
+        if (members.empty()) return 0;
+
+        Node set_node = find_conjunction_set(members);
+        if (set_node == 0)
+        {
+            set_node = set(members);
+            fact(set_node, core.IsA, {core.Conjunction});
+        }
+        return set_node;
+    }
+
+    std::vector<Node> history;
+    const Node        inst = instantiate_fact(this, pattern, variables, depth, history);
+    if (inst == 0) return 0;
+
+    // The negation tag is a fact ABOUT the pattern, not a part of it, so
+    // instantiation cannot carry it along -- it has to be restated. When the
+    // pattern came back unchanged the tag is already on the node.
+    if (inst != pattern && check_fact(pattern, core.IsA, {core.Negation}).is_known())
+        fact(inst, core.IsA, {core.Negation});
+
+    return inst;
+}
+
+Node Reasoning::rebuild_rule(const Node pattern, const Variables& variables, const int depth, const Node parent, bool& created)
+{
+    created = false;
+
+    adjacency_set var_consequences;
+    const Node    var_condition = parse_fact(pattern, var_consequences, parent);
+    if (var_condition == 0 || var_consequences.empty()) return 0;
+
+    adjacency_set consequences;
+    for (const Node c : var_consequences)
+    {
+        std::vector<Node> history;
+        const Node        inst = instantiate_fact(this, c, variables, depth, history);
+        if (inst == 0) return 0;
+        consequences.insert(inst);
+    }
+
+    Node condition = 0;
+
+    if (check_fact(var_condition, core.IsA, {core.Conjunction}).is_known())
+    {
+        std::unordered_set<Node> members;
+        for (const Node m : conjunction_members(this, var_condition))
+        {
+            const Node inst = rebuild_condition(m, variables, depth);
+            if (inst == 0) return 0;
+            members.insert(inst);
+        }
+        if (members.empty()) return 0;
+
+        condition = find_conjunction_set(members);
+        if (condition == 0)
+        {
+            condition = set(members);
+            fact(condition, core.IsA, {core.Conjunction});
+        }
+    }
+    else
+    {
+        // A single-condition rule has no set node at all -- its `=>` subject
+        // is the condition itself, and that one is hash-consed, so the
+        // check_fact below deduplicates it without any help.
+        condition = rebuild_condition(var_condition, variables, depth);
+        if (condition == 0) return 0;
+    }
+
+    // A rule that is already ASSERTED is not news.
+    const Answer existing = check_fact(condition, core.Causes, consequences);
+    if (existing.is_known())
+    {
+        if (!is_mentioned(existing.relation())) return existing.relation();
+
+        // It exists, but only as a MENTION -- and a mention was never
+        // claimed, so nothing fires (see Zelph::is_mentioned). That is not a
+        // corner case here: whenever the outer rule substitutes nothing into
+        // the inner one, hash-consing lands the rebuild on the very node the
+        // outer rule mentions. It is exactly the shape a switchable rule has,
+        //
+        //     (K is on) => ((X p Y) => (X q Y))
+        //
+        // which would otherwise turn the feature on and derive nothing.
+        //
+        // Claiming it needs a node of its own, and alpha-renaming gives one:
+        // each statement names its own variables anyway, so a renamed copy
+        // says exactly the same thing while being a statement rather than a
+        // reference to one.
+        for (const Node candidate : get_left(core.Causes))
+        {
+            if (candidate == existing.relation()) continue;
+            if (is_mentioned(candidate)) continue;
+            if (rules_alpha_equivalent(this, candidate, existing.relation())) return candidate;
+        }
+
+        Variables renamed = variables;
+        for (const Node v : rule_variables(pattern, parent, depth))
+        {
+            if (renamed.find(v) != renamed.end()) continue;
+
+            const Node fresh = var();
+            // The name travels along, or the rule prints as "(?? p ??)".
+            // Reusing it is what the parser does too -- every statement
+            // creates its own node for the variable it calls X.
+            const std::string name = get_name(v, _lang, true);
+            if (!name.empty()) set_name(fresh, name, _lang, false);
+            renamed[v] = fresh;
+        }
+
+        // No variable to rename: a GROUND rule that is asserted and mentioned
+        // at once is one node, and the graph cannot tell the two apart. The
+        // same corner Zelph::is_mentioned names.
+        if (renamed.size() == variables.size()) return existing.relation();
+
+        return rebuild_rule(pattern, renamed, depth, parent, created);
+    }
+
+    created = true;
+    return fact(condition, core.Causes, consequences);
+}
 
 void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx, const double confidence)
 {
@@ -51,10 +295,16 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     // This allows rules to construct new graph topology, enabling general-
     // purpose structural transformations such as arithmetic.
 
+    // A deduction that is itself a RULE is exempt: its variables are
+    // quantified by that inner rule, not by the outer one, and turning them
+    // into fresh nodes would derive a rule that says nothing -- conditions
+    // still carrying the unbound pattern variables, a conclusion over nodes
+    // no condition can ever bind. They stay variables; see rebuild_rule.
     std::unordered_set<Node> deduction_vars;
     for (const Node deduction : ctx.rule_deductions)
     {
         if (deduction == core.Contradiction) continue;
+        if (deduction_is_rule(deduction)) continue;
         std::vector<Node> history;
         collect_variables(this, deduction, deduction_vars, depth, history);
     }
@@ -165,12 +415,26 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
         // All instantiation and fact creation happens under one lock to
         // prevent races where parallel threads create the same node.
-        Node          source;
+        Node          source  = 0;
         adjacency_set targets;
         Node          d       = 0;
         bool          wrong   = false;
         bool          created = false;
+        // A derived RULE is not a statement ABOUT anything, so the focus
+        // filter has no subject to match it against -- and suppressing the
+        // one deduction that changes what the engine will do next is the
+        // wrong default. It prints whenever deductions print at all.
+        const bool    is_rule = rel == core.Causes;
 
+        if (is_rule)
+        {
+            std::lock_guard<std::mutex> lock_network(_mtx_network);
+            d = rebuild_rule(deduction, augmented, depth, parent, created);
+
+            if (should_log(depth))
+                log(depth, "deduce", "Derived rule: " + (d ? format(d) : "NULL") + (created ? " (new)" : " (already present)") + " (from pattern " + format(deduction) + ")");
+        }
+        else
         {
             std::lock_guard<std::mutex> lock_network(_mtx_network);
 
@@ -298,7 +562,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             // anchor: with session-wide accumulation, rule anchors would
             // make focus degenerate to "all" for any interactively entered
             // (or pasted) rule set.
-            const bool focus_reject = _print_deductions && _deduction_filter
+            const bool focus_reject = _print_deductions && _deduction_filter && !is_rule
                                    && _input_focus.count(source) == 0;
 
             bool do_print = _print_deductions && !focus_reject;
@@ -379,6 +643,11 @@ bool Reasoning::consequences_already_exist(
     for (Node deduction : deductions)
     {
         if (deduction == core.Contradiction) continue;
+
+        // A rule deduction contributes no fresh variable (deduce() exempts
+        // it) and carries its own exact duplicate check in rebuild_rule, so
+        // it neither satisfies this guard nor may it block the others.
+        if (deduction_is_rule(deduction)) continue;
 
         adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
         if (relations.size() != 1) return false;

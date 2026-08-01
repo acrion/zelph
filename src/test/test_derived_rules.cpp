@@ -1,0 +1,444 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include <doctest/doctest.h>
+
+#include "test_helpers.hpp"
+
+#include <filesystem>
+
+using namespace zelph::test;
+
+// ---------------------------------------------------------------------------
+// A rule as the CONSEQUENCE of another rule.
+//
+// Reasoning ABOUT statements is what zelph is for, and the sharpest form of
+// it is a rule that produces a rule: "whatever is transitive chains", "while
+// this switch is on, that rule holds". Nothing else in the engine can say
+// that -- a query language cannot, and a rule engine whose consequences are
+// facts cannot either.
+//
+// A rule is not a fact with a different predicate. Its subject is either one
+// condition pattern or a conjunction SET node, and that set node is created
+// rather than hash-consed; its members hang off it as separate PartOf facts;
+// and the tags that make the engine read it as a conjunction, or a member as
+// a negation, are facts of their own. Instantiating the top-level triple --
+// which is all a fact needs -- therefore produced a rule whose conditions
+// still carried the unbound pattern variables while its conclusion had been
+// filled with freshly created nodes: inert junk. These tests pin the two
+// halves that make the difference, the structure and the QUANTIFICATION (the
+// inner rule's variables stay variables), plus the three properties without
+// which the feature is unusable at all: it terminates, it survives a save,
+// and .explain can reconstruct through it.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    namespace fs = std::filesystem;
+
+    // How many rules ".list-rules" just listed.
+    std::size_t listed_rules(const zelph::io::OutputCollector& collector)
+    {
+        std::size_t n = 0;
+        for (const auto& e : collector.events())
+            if (normalize(e.text).find("=>") != std::string::npos) ++n;
+        return n;
+    }
+
+    // The "Nodes: N" line of .stat.
+    std::string node_count(const zelph::io::OutputCollector& collector)
+    {
+        for (const auto& e : collector.events())
+        {
+            const std::string t = normalize(e.text);
+            if (t.rfind("Nodes:", 0) == 0) return t;
+        }
+        return {};
+    }
+}
+
+TEST_CASE("derived rules: a transitivity meta-rule chains the relation it names")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.process("c before d");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A before D");
+        CHECK(answers_contain(collector, "a before c"));
+        CHECK(answers_contain(collector, "b before d"));
+        CHECK(answers_contain(collector, "a before d"));
+
+        // The meta-rule and exactly one derived rule.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+        // "??" is how an unnamed node prints. The derived rule used to be
+        // built out of them: its conclusion's variables had been replaced by
+        // freshly created nodes while its conditions kept the pattern
+        // variables, so it matched nothing and said nothing.
+        CHECK_FALSE(any_output_contains(collector, "??")); });
+}
+
+TEST_CASE("derived rules: the facts may be older than the rule that derives the rule")
+{
+    // A derived rule has to see the graph it was born into, not just what
+    // arrives after it. That is the classic pass the fixpoint loop repeats
+    // once the rule set has grown.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.process("c before d");
+        interactive.process("before is transitive");
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A before D");
+        CHECK(answers_contain(collector, "a before d")); });
+}
+
+TEST_CASE("derived rules: deriving the same rule again changes nothing")
+{
+    // The conjunction set node is CREATED, not hash-consed, so nothing
+    // collapses two copies of a derived rule by itself. Without an exact
+    // duplicate check every run would build another set node, another rule
+    // and another reason to run again -- the fixpoint would never arrive.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".stat");
+        const std::string before = node_count(collector);
+        REQUIRE_FALSE(before.empty());
+
+        interactive.run(true, false, false);
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(node_count(collector) == before);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}
+
+TEST_CASE("derived rules: one meta-rule, one derived rule per binding")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("smaller is transitive");
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.process("p smaller q");
+        interactive.process("q smaller r");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 3);
+
+        collector.clear();
+        interactive.process("A before B");
+        CHECK(answers_contain(collector, "a before c"));
+
+        collector.clear();
+        interactive.process("A smaller B");
+        CHECK(answers_contain(collector, "p smaller r"));
+        // The two derived rules must not blend: `before` and `smaller` share
+        // no facts, so a rule quantified over the wrong one would show up
+        // here as a cross-relation conclusion.
+        CHECK_FALSE(answers_contain(collector, "a smaller c")); });
+}
+
+TEST_CASE("derived rules: a rule under a switch stays inert until the switch is on")
+{
+    // The shape a user reaches for first, and the one that makes the
+    // difference between mentioning a rule and asserting it visible: the
+    // inner rule is written out in full, so it is IN the graph from the
+    // start -- but as the object of the outer rule, i.e. mentioned, not
+    // claimed. Only the outer rule firing claims it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(K is on) => ((X p Y) => (X q Y))");
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A q B");
+        REQUIRE_FALSE(answers_contain(collector, "a q b"));
+
+        interactive.process("k is on");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A q B");
+        CHECK(answers_contain(collector, "a q b")); });
+}
+
+TEST_CASE("derived rules: a switched multi-condition rule works the same way")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(K is on) => ((X p Y, Y p Z) => (X q Z))");
+        interactive.process("a p b");
+        interactive.process("b p c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A q B");
+        REQUIRE_FALSE(answers_contain(collector, "a q c"));
+
+        interactive.process("k is on");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A q B");
+        CHECK(answers_contain(collector, "a q c"));
+
+        // Switching it on twice is not two rules.
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}
+
+TEST_CASE("derived rules: a negated condition survives the derivation")
+{
+    // The negation tag is a fact ABOUT the condition pattern, not a part of
+    // it, so instantiation cannot carry it along -- it has to be restated.
+    // A derived rule that lost it would silently mean the opposite.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R needs check) => ((X R Y, ¬(Y bad yes)) => (X ok Y))");
+        interactive.process("p needs check");
+        interactive.process("c bad yes");
+        interactive.process("a p b");
+        interactive.process("a p c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "¬"));
+
+        collector.clear();
+        interactive.process("A ok B");
+        CHECK(answers_contain(collector, "a ok b"));
+        CHECK_FALSE(answers_contain(collector, "a ok c")); });
+}
+
+TEST_CASE("derived rules: a derived rule may derive a rule in turn")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(K is on) => ((P entails Q) => ((X P Y) => (X Q Y)))");
+        interactive.process("k is on");
+        interactive.process("parent entails ancestor");
+        interactive.process("a parent b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A ancestor B");
+        CHECK(answers_contain(collector, "a ancestor b"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 3); });
+}
+
+TEST_CASE("derived rules: .explain reconstructs a proof through the derived rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".explain (a before c)");
+        CHECK(any_output_contains(collector, "a before b"));
+        CHECK(any_output_contains(collector, "b before c")); });
+}
+
+TEST_CASE("derived rules: a derived rule survives .save and .load")
+{
+    const auto file = fs::temp_directory_path() / "zelph_derived_rule_test.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("a before b");
+        interactive.run(true, false, false);
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process(".load \"" + file.string() + "\"");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+
+        // .load disables auto-run, so the new fact needs an explicit run.
+        interactive.process("b before c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A before B");
+        CHECK(answers_contain(collector, "a before c"));
+    }
+
+    fs::remove(file);
+}
+
+TEST_CASE("derived rules: property axioms as data drive an RDFS-style closure")
+{
+    // The end-to-end case for the feature, and the argument for it: the six
+    // property axioms an ontology is usually described with -- transitive,
+    // symmetric, sub-property, sub-class, domain, range -- are stated ONCE as
+    // rule schemas, and every declaration a modeller writes afterwards is
+    // ordinary data that produces its own specialised rule.
+    //
+    // Nothing here is expressible as a query, and none of it works without
+    // rules deriving rules: a schema fires on a DECLARATION and has to leave
+    // a rule behind, quantified over the data the declaration says nothing
+    // about.
+    //
+    // The closure is countable by hand, which is what makes this a test:
+    // exactly seven facts follow, and one of them (m isa agent) only through
+    // a chain of three DERIVED rules -- sub-property, then domain, then
+    // sub-class.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(P is transitive) => ((X P Y, Y P Z) => (X P Z))
+(P is symmetric) => ((X P Y) => (Y P X))
+(P subpropertyof Q) => ((X P Y) => (X Q Y))
+(C subclassof D) => ((X isa C) => (X isa D))
+(P domain C) => ((X P Y) => (X isa C))
+(P range C) => ((X P Y) => (Y isa C))
+partof is transitive
+sibling is symmetric
+mother subpropertyof parent
+parent domain person
+parent range person
+person subclassof agent
+a partof b
+b partof c
+x sibling y
+m mother n
+)");
+        interactive.run(true, false, false);
+
+        // Six schemas plus one derived rule per declaration.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 12);
+
+        collector.clear();
+        interactive.process("S partof O");
+        CHECK(answers_contain(collector, "a partof c"));
+        // partof was declared transitive, not symmetric.
+        CHECK_FALSE(answers_contain(collector, "b partof a"));
+
+        collector.clear();
+        interactive.process("S sibling O");
+        CHECK(answers_contain(collector, "y sibling x"));
+
+        collector.clear();
+        interactive.process("S parent O");
+        CHECK(answers_contain(collector, "m parent n"));
+
+        collector.clear();
+        interactive.process("S isa O");
+        CHECK(answers_contain(collector, "m isa person"));
+        CHECK(answers_contain(collector, "n isa person"));
+        CHECK(answers_contain(collector, "m isa agent"));
+        CHECK(answers_contain(collector, "n isa agent"));
+        // Nothing types the endpoints of `sibling` or `partof`.
+        CHECK_FALSE(answers_contain(collector, "x isa person"));
+        CHECK_FALSE(answers_contain(collector, "a isa person"));
+
+        // The four-step chain, reconstructed: mother -> parent -> person
+        // -> agent, each step through a rule that was itself derived.
+        collector.clear();
+        interactive.process(".explain (m isa agent)");
+        CHECK(any_output_contains(collector, "m isa person"));
+        CHECK(any_output_contains(collector, "m parent n"));
+        CHECK(any_output_contains(collector, "m mother n")); });
+}
+
+TEST_CASE("derived rules: a whole chain of derived rules settles in one run")
+{
+    // Every `chains` declaration produces a rule, and those rules feed each
+    // other: `a p1 b` has to travel five of them. The fixpoint loop collects
+    // its rule set once, so all of this depends on it noticing that the set
+    // grew and collecting again -- and on stopping when it has not.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(R chains S) => ((X R Y) => (X S Y))
+p1 chains p2
+p2 chains p3
+p3 chains p4
+p4 chains p5
+a p1 b
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 5);
+
+        collector.clear();
+        interactive.process("A p5 B");
+        CHECK(answers_contain(collector, "a p5 b"));
+
+        collector.clear();
+        interactive.process("A p3 B");
+        CHECK(answers_contain(collector, "a p3 b")); });
+}

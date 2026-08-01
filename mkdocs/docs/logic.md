@@ -228,6 +228,100 @@ zelph> chimpanzee "has part" hand
 Declaring that `"has part"` is opposite of `"is part of"` causes every `has part` fact to automatically generate its inverse.
 The rule is generic: it works for any pair of opposite relations without modification.
 
+### Rules That Derive Rules
+
+A consequence does not have to be a fact.
+It can be a **rule** — and then the outer rule is a rule _schema_: firing it writes a new rule into the graph, which the engine picks up and applies within the same run.
+
+The inner rule's variables belong to the inner rule.
+Only what the outer rule's conditions bind is substituted; everything else comes through as a variable, so what arrives is a rule and not one instance of one.
+
+**Example — transitivity as a schema:**
+
+```
+zelph> (R is transitive) => ((X R Y, Y R Z) => (X R Z))
+zelph> before is transitive
+({(Y before Z) (X before Y)} => (X before Z)) ⇐ (before is transitive)
+zelph> a before b
+zelph> b before c
+(a before c) ⇐ {(b before c) (a before b)}
+zelph> c before d
+(a before d) ⇐ {(c before d) (a before c)}
+(b before d) ⇐ {(c before d) (b before c)}
+```
+
+`R` was bound to `before` and is gone; `X`, `Y` and `Z` were bound by nothing and stayed variables.
+What the second line derives is the transitivity rule _for_ `before`, and one such rule appears for every relation declared transitive.
+
+Compare this with the [meta-rule](#meta-rules-predicates-as-first-class-nodes) `(R is transitive, X R Y, Y R Z) => (X R Z)`, which expresses the same closure by quantifying over the predicate at match time.
+The schema instead pays that quantification once, when the relation is declared, and leaves a specialised rule behind.
+Both are available; the schema is the one that can make the _shape_ of a rule depend on data.
+
+**Example — a rule under a switch:**
+
+```
+zelph> (K is on) => ((X p Y) => (X q Y))
+zelph> a p b
+zelph> A q B
+zelph> k is on
+((X p Y) => (X q Y)) ⇐ (k is on)
+(a q b) ⇐ (a p b)
+zelph> A q B
+Answer: a q b
+```
+
+The inner rule is written out from the start and `a p b` is there before the switch, yet the query answers nothing until `k is on` arrives.
+That is not a scheduling accident, it is the next section.
+
+**Example — an ontology's property axioms as data:**
+
+Sub-property, domain and sub-class are the axioms an ontology is normally _described_ with.
+Written once as schemas, every declaration a modeller makes afterwards is ordinary data — and produces its own rule:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+zelph> (P is transitive) => ((X P Y, Y P Z) => (X P Z))
+zelph> (P subpropertyof Q) => ((X P Y) => (X Q Y))
+zelph> (C subclassof D) => ((X isa C) => (X isa D))
+zelph> (P domain C) => ((X P Y) => (X isa C))
+zelph> mother subpropertyof parent
+((X mother Y) => (X parent Y)) ⇐ (mother subpropertyof parent)
+zelph> parent domain person
+((X parent Y) => (X isa person)) ⇐ (parent domain person)
+zelph> person subclassof agent
+((X isa person) => (X isa agent)) ⇐ (person subclassof agent)
+zelph> m mother n
+(m parent n) ⇐ (m mother n)
+(m isa person) ⇐ (m parent n)
+(m isa agent) ⇐ (m isa person)
+```
+
+One statement of data, `m mother n`, walked three rules that nobody wrote — and each step carries its own justification, so `.explain (m isa agent)` reconstructs the chain back to it.
+
+### Mentioning a Rule Is Not Asserting It
+
+Writing a rule down _inside another statement_ talks about it; it does not claim it.
+
+```
+zelph> ((X p Y) => (X q Y)) is questionable
+zelph> a p b
+zelph> A q B
+zelph>
+```
+
+Nothing fires — which is the only defensible reading, since the alternative is that doubting a rule puts it to work.
+
+The distinction is decidable from the graph alone, and cheaply.
+Building a rule in order to talk about it creates the same nodes and the same edges as asserting it, so the rule node itself cannot say which happened — but its surroundings can: an **asserted** rule is a part of nothing, while a **mentioned** one is the subject, the predicate or an object of the statement that mentions it.
+Nothing is remembered, so a `.save`/`.load` round trip cannot lose the difference, and a graph without rules never pays for the test.
+
+This is what makes the switch above work.
+Until `k is on` fires, `(X p Y) => (X q Y)` is an object of the outer rule and therefore a mention; firing the outer rule asserts a copy of it, which is a part of nothing and consequently live.
+
+The one shape this cannot separate is a fully **ground** rule — no variables anywhere — that is asserted and mentioned at once: hash-consing makes those a single node.
+A rule with variables is two nodes, because every statement names its own variables.
+
 ### Deep Unification
 
 <a href="#" onclick="jumpTo(663); return false;">🎬 Watch this section</a>

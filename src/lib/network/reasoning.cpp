@@ -236,56 +236,70 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         // on rule order -- the classic limitation of non-stratifiable
         // programs. Contradiction-only deferred rules (consequence !) are
         // always safe: they produce no facts.
-        std::vector<Node> positive_rules;
-        std::vector<Node> deferred_rules;
-        for (Node rule : _pImpl->get_left(core.Causes))
-        {
-            // A rule that some other statement merely MENTIONS was never
-            // claimed -- see Zelph::is_mentioned. Filtered where the rules
-            // are COLLECTED, so the neighbour scan is paid once per rule per
-            // run rather than once per iteration; a graph without rules
-            // never reaches it at all.
-            if (is_mentioned(rule)) continue;
+        int iteration = 0;
 
-            adjacency_set deductions;
-            Node          condition = parse_fact(rule, deductions);
-            const bool    deferred  = condition && condition != core.Causes
-                                   && condition_contains_negation(condition, 1);
-            (deferred ? deferred_rules : positive_rules).push_back(rule);
-        }
-
-        if (!silent && !deferred_rules.empty())
-            diagnostic_stream() << "Stratified schedule: " << deferred_rules.size()
-                                << " rule(s) with negated conditions deferred until positive quiescence."
-                                << std::endl;
-
-        int  iteration = 0;
-        bool deferred_derived;
+        // A rule can DERIVE a rule, and the schedule below is built from the
+        // rule set as it stands here -- so a rule that appears during the run
+        // is in neither list. Collect again and repeat while the set keeps
+        // growing; the repeated pass is what lets a derived rule see the
+        // facts that are older than itself. When nothing derives a rule this
+        // costs one size comparison for the whole run.
+        size_t rules_before;
         do
         {
+            rules_before = _pImpl->get_left(core.Causes).size();
+
+            std::vector<Node> positive_rules;
+            std::vector<Node> deferred_rules;
+            for (Node rule : _pImpl->get_left(core.Causes))
+            {
+                // A rule that some other statement merely MENTIONS was never
+                // claimed -- see Zelph::is_mentioned. Filtered where the rules
+                // are COLLECTED, so the neighbour scan is paid once per rule per
+                // run rather than once per iteration; a graph without rules
+                // never reaches it at all.
+                if (is_mentioned(rule)) continue;
+
+                adjacency_set deductions;
+                Node          condition = parse_fact(rule, deductions);
+                const bool    deferred  = condition && condition != core.Causes
+                                       && condition_contains_negation(condition, 1);
+                (deferred ? deferred_rules : positive_rules).push_back(rule);
+            }
+
+            if (!silent && !deferred_rules.empty())
+                diagnostic_stream() << "Stratified schedule: " << deferred_rules.size()
+                                    << " rule(s) with negated conditions deferred until positive quiescence."
+                                    << std::endl;
+
+            bool deferred_derived;
             do
             {
-                _done = false;
-                ++iteration;
-                if (!silent && progress_due())
-                    diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
-                for (Node rule : positive_rules)
-                    apply_rule(rule, 0);
-                _pool->wait();
-            } while (_done);
+                do
+                {
+                    _done = false;
+                    ++iteration;
+                    if (!silent && progress_due())
+                        diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
+                    for (Node rule : positive_rules)
+                        apply_rule(rule, 0);
+                    _pool->wait();
+                } while (_done);
 
-            deferred_derived = false;
-            if (!deferred_rules.empty())
-            {
-                _done = false;
-                if (!silent && progress_due())
-                    diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
-                for (Node rule : deferred_rules)
-                    apply_rule(rule, 0);
-                _pool->wait();
-                deferred_derived = _done;
-            }
-        } while (deferred_derived);
+                deferred_derived = false;
+                if (!deferred_rules.empty())
+                {
+                    _done = false;
+                    if (!silent && progress_due())
+                        diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
+                    for (Node rule : deferred_rules)
+                        apply_rule(rule, 0);
+                    _pool->wait();
+                    deferred_derived = _done;
+                }
+            } while (deferred_derived);
+        } while (_pImpl->get_left(core.Causes).size() != rules_before);
+
         _done = false;
     }
 

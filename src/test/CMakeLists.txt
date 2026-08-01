@@ -50,6 +50,7 @@ add_executable(zelph_tests
     test_clusters.cpp
     test_core_names.cpp
     test_derivation_export.cpp
+    test_derived_rules.cpp
     test_display_scheme.cpp
     test_explain.cpp
     test_fact_cache.cpp
