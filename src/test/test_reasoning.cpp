@@ -957,6 +957,39 @@ TEST_CASE("rules: a chained => says which arrow has to be parenthesised")
         interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))"); });
 }
 
+TEST_CASE("rules: a ground condition is not a non-match")
+{
+    // Matching a condition that contains no variable binds nothing, and the
+    // engine read "nothing bound" as "no match" -- which silently disabled
+    // every rule one of whose conditions happens to name its nodes. Both
+    // conditions here are satisfied, so the rule has to fire.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions all");
+        interactive.process("(a p b, X q d) => (X r s)");
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("e q d");
+        CHECK(any_deduction_of(collector, "e r s"));
+
+        collector.clear();
+        interactive.process("X r Y");
+        CHECK(answers_contain(collector, "e r s")); });
+}
+
+TEST_CASE("rules: a ground condition that does NOT hold blocks the rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b, X q d) => (X r s)");
+        interactive.process("e q d");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("X r Y");
+        CHECK_FALSE(answers_contain(collector, "e r s")); });
+}
+
 TEST_CASE("rules: a negated consequence is refused, not ignored")
 {
     // "(A p B) => ¬(A q B)" used to derive (x q y) from (x p y) -- the exact

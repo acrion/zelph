@@ -328,7 +328,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             if (excluded_hit) continue;
 
             if (contradicts(*match, *u.Unequals())) continue;
-            if (match->empty()) continue; // consistent with process_match's empty-join reject
+            // Same reading as process_match's reject: an empty binding set
+            // is only a non-match where the pattern had a variable to bind.
+            if (match->empty() && var_in_closure(cond)) continue;
 
             adjacency_set remaining;
             for (Node e : ir.elements)

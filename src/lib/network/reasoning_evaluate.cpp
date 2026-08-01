@@ -528,7 +528,19 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 return;
             }
 
-            if (joined->empty())
+            // An empty binding set is only a non-match where the pattern
+            // HAD a variable to bind. A GROUND condition binds nothing by
+            // construction and is satisfied by existing -- so this reject
+            // silently disabled every rule with a ground condition, not
+            // just the purely propositional "(a p b) => (c q d)" but any
+            // rule one of whose conditions happens to name its nodes. That
+            // stayed invisible because a ground consequence is materialized
+            // by writing the rule, so the conclusion appeared to be there.
+            // A QUERY keeps the old reading: asking for a ground pattern is
+            // zelph/exists' job and stays a no-op (rule.node is 0 there).
+            // A QUERY keeps the old reading: asking for a ground pattern is
+            // zelph/exists' job and stays a no-op (rule.node is 0 there).
+            if (joined->empty() && (rule.node == 0 || var_in_closure(condition)))
             {
                 if (should_log(depth))
                     log(depth, "match", "REJECTED: joined bindings empty");
