@@ -249,7 +249,40 @@ bool Zelph::unmark_rule_pattern(const Node node) const
         // Remove the marking FACT, not the pattern: the statement is a claim
         // from now on, and everything else about the node stays.
         const Answer mark = check_fact(node, core.IsA, {pred});
-        if (mark.is_known()) const_cast<Zelph*>(this)->remove_node(mark.relation());
+        if (mark.is_known())
+        {
+            const Node marker = mark.relation();
+
+            // NOT through remove_node. That path invalidates through the
+            // WHOLESALE funnel, which DISARMS the genuine-structure store for
+            // the rest of the session -- and that store is what keeps
+            // get_fact_structures off the adjacency walk. Eight patterns
+            // unmarked during the Jacobian import were enough to turn 456k
+            // store hits into 667k reconstruction walks and to triple the
+            // runtime of the whole workload.
+            //
+            // The marking fact is the engine's own leaf: this function
+            // created it, and nothing is ever built on top of it, so the
+            // upward cascade of remove_node has nothing to find. What the
+            // removal does need is exactly the invalidation a fact() of the
+            // same shape performs, in the other direction -- the node's own
+            // entry, its components' and one bidirectional level around
+            // them. A marking somebody wrote ABOUT, on the other hand, is no
+            // longer a leaf and takes the general path, disarm included.
+            const bool is_leaf = _pImpl->get_right(marker).size() <= 2 // subject, predicate
+                              && _pImpl->get_left(marker).size() <= 2; // subject, object
+
+            if (is_leaf)
+            {
+                invalidate_fact_structures_for(node, core.IsA, {pred}, marker);
+                _pImpl->remove(marker);
+                _pImpl->remove_node_names(marker);
+            }
+            else
+            {
+                const_cast<Zelph*>(this)->remove_node(marker);
+            }
+        }
     }
 
     // This is the moment the statement BECOMES data, and everything that

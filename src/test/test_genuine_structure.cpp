@@ -126,6 +126,57 @@ TEST_CASE("genuine store: a subject == predicate fact decomposes like any other"
     CHECK(Zelph::create_hash((*s)[0].predicate, (*s)[0].subject, (*s)[0].objects) == f3);
 }
 
+TEST_CASE("genuine store: revoking a rule-pattern mark does not disarm it")
+{
+    // The marking fact is engine bookkeeping and a leaf, but it used to be
+    // deleted with remove_node -- and that goes through the WHOLESALE
+    // invalidation funnel, which disarms both fact stores for the rest of the
+    // session. Every later fs_cache miss then paid the full adjacency walk.
+    //
+    // It cost a factor of three on the Jacobian workload: eight patterns are
+    // revoked while it runs, the first of them killed the store, and
+    // `genuine: hits=456368 walks=0` became `hits=11133 walks=667540`. The
+    // import went from 1.5 s to 4.9 s. Red if the removal takes the general
+    // path again.
+    Zelph      z(null_handler());
+    const Node a = z.node("a");
+    const Node b = z.node("b");
+    const Node c = z.node("c");
+    const Node d = z.node("d");
+    const Node p = z.node("p");
+    const Node q = z.node("q");
+
+    const Node condition   = z.fact(a, p, {b});
+    const Node consequence = z.fact(c, q, {d});
+    const Node rule        = z.fact(condition, z.core.Causes, {consequence});
+
+    z.mark_rule_patterns(rule, {condition, consequence});
+    REQUIRE(z.is_rule_pattern(consequence));
+    REQUIRE(z.fact_stores_enabled());
+
+    REQUIRE(z.unmark_rule_pattern(consequence));
+    CHECK_FALSE(z.is_rule_pattern(consequence));
+
+    // The mark is gone from the graph too -- that part was never in doubt.
+    const Node pred = z.rule_pattern_predicate(false);
+    REQUIRE(pred != 0);
+    CHECK_FALSE(z.check_fact(consequence, z.core.IsA, {pred}).is_known());
+
+    // The point: the stores are still authoritative, and still recording.
+    CHECK(z.fact_stores_enabled());
+
+    // Probed on a fact created AFTERWARDS, which a disarmed store would not
+    // have recorded -- the mirror image of the trusted-import case below,
+    // which asserts hits == 0 and walks > 0.
+    z.set_logging(-1); // counter-only mode
+    z.reset_genuine_stats();
+    const Node e     = z.node("e");
+    const Node later = z.fact(a, p, {e});
+    CHECK(has_reading(*get_fact_structures(&z, later, 1), a, e));
+    CHECK(z.genuine_stats().hits == 1);
+    CHECK(z.genuine_stats().walks == 0);
+}
+
 TEST_CASE("genuine store: trusted import disarms; walk keeps readings identical")
 {
     Zelph      z(null_handler());
