@@ -43,28 +43,37 @@ TEST_CASE(".deductions focus: only input-anchored deductions are printed")
         // interactive.run calls here -- a second run would execute with an
         // already-cleared focus set and blur what is being tested.
         //
-        // Cascade with a CHANGING subject: qq1 derives a qq2 fact about
-        // the fresh term (h of A) -- its subject is materialized during
-        // reasoning, not by input, so focus mode must filter it -- and qq2
-        // derives qq3 back about A itself, which IS the input's subject,
-        // so focus mode must print it. The rule statements run before
-        // collector.clear(), so their echoes cannot contaminate the
-        // negative check.
+        // Cascade with a CHANGING subject. qq1 derives a qq2 fact about the
+        // term (h of A): that subject is materialized during reasoning, but
+        // it is materialized OUT OF the entered node, and a statement about
+        // (h of socrates) is a statement about socrates -- so focus prints
+        // it. qq2 derives qq3 back about A itself, which is the input's own
+        // subject.
+        //
+        // The negative case is a subject that reaches no anchor at all: the
+        // atom `sentinel` occurs in the rule and nowhere else. A rule is
+        // never an anchor -- with session-wide accumulation, rule anchors
+        // would make focus degenerate to "all" for any entered rule set.
+        //
+        // The rule statements run before collector.clear(), so their echoes
+        // cannot contaminate the negative check.
         interactive.process(".deductions focus");
         interactive.process("(A qq1 A) => ((h of A) qq2 (h of A))");
         interactive.process("((h of A) qq2 (h of A)) => (A qq3 A)");
+        interactive.process("(A qq1 A) => (sentinel qq4 A)");
         collector.clear();
         interactive.process(":qq1 socrates");
         CHECK(any_deduction_of(collector, "qq3"));
-        CHECK_FALSE(any_deduction_of(collector, "qq2"));
-        // Both facts exist regardless of printing (probe).
-        interactive.process(R"js(%(let [h (zelph/fact "h" "of" "socrates")] (string "FOCA-" (zelph/exists h "qq2" h))))js");
+        CHECK(any_deduction_of(collector, "qq2"));
+        CHECK_FALSE(any_deduction_of(collector, "qq4"));
+        // Every one of them exists regardless of printing (probe).
+        interactive.process(R"js(%(string "FOCA-" (zelph/exists "sentinel" "qq4" "socrates")))js");
         CHECK(any_output_contains(collector, "FOCA-true"));
-        // Control: in all mode the intermediate deduction prints.
+        // Control: in all mode the filtered deduction prints.
         interactive.process(".deductions all");
         collector.clear();
         interactive.process(":qq1 plato");
-        CHECK(any_deduction_of(collector, "qq2")); });
+        CHECK(any_deduction_of(collector, "qq4")); });
 }
 
 TEST_CASE(".deductions focus: subterms of the input are not focus anchors")

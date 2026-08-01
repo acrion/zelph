@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "reasoning.hpp"
 
 #include "contradiction_error.hpp"
+#include "fact_structure.hpp"
 #include "rule_identity.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
@@ -51,6 +52,22 @@ namespace
         }
         return members;
     }
+}
+
+bool Reasoning::in_input_focus(const Node node, const int depth_left) const
+{
+    if (node == 0) return false;
+    if (_input_focus.count(node) != 0) return true;
+    if (depth_left <= 0 || !Zelph::Impl::is_hash(node)) return false;
+
+    const FactStructure fs = get_preferred_structure(this, node, 3);
+    if (fs.subject == 0) return false;
+
+    if (in_input_focus(fs.subject, depth_left - 1)) return true;
+    for (const Node o : fs.objects)
+        if (in_input_focus(o, depth_left - 1)) return true;
+
+    return false;
 }
 
 bool Reasoning::deduction_is_rule(const Node deduction) const
@@ -561,9 +578,11 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             // subject are printed. The applied rule is deliberately NOT an
             // anchor: with session-wide accumulation, rule anchors would
             // make focus degenerate to "all" for any interactively entered
-            // (or pasted) rule set.
+            // (or pasted) rule set. A subject the deduction CONSTRUCTED is
+            // reached through what it was constructed of -- see
+            // in_input_focus.
             const bool focus_reject = _print_deductions && _deduction_filter && !is_rule
-                                   && _input_focus.count(source) == 0;
+                                   && !in_input_focus(source, _focus_subject_depth);
 
             bool do_print = _print_deductions && !focus_reject;
 

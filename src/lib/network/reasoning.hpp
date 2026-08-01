@@ -241,6 +241,24 @@ namespace zelph::network
                                         Node                 parent,
                                         const int            depth);
 
+        // Does this node reach the input focus -- as itself, or, when the
+        // deduction CONSTRUCTED it, through what it was constructed of?
+        // "((x f y) q c)" is a statement about x and y, which the user
+        // entered; the composed subject node itself never was and never can
+        // be, so the direct test alone hid every rule whose consequence has a
+        // composed subject -- with no unbound variable anywhere in sight.
+        //
+        // The depth bound is what keeps focus a filter: an anchor is a
+        // component of an ENTERED statement and therefore sits shallow, while
+        // the terms a computation builds nest arbitrarily deep and are exactly
+        // what focus exists to suppress.
+        bool in_input_focus(Node node, int depth_left) const;
+
+        // How far in_input_focus descends into a constructed subject. One
+        // level covers the shape that motivated it, "((x f y) q c)"; the
+        // value is a measured trade-off, see the tests.
+        static constexpr int _focus_subject_depth{1};
+
         // Is this deduction a RULE -- a statement whose predicate is `=>`?
         // It decides two things a fact deduction settles differently: the
         // variables inside it are quantified by that INNER rule and must
