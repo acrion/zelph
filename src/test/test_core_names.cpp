@@ -136,9 +136,14 @@ TEST_CASE("core names: pruning skips the core vocabulary instead of aborting")
         // the core predicates. Deleting those would break the engine;
         // refusing the command would leave the prune half-done, since nodes
         // are removed one after another.
+        //
+        // FIVE, not four: `~ ~ ->` is a declaration like the others, and the
+        // pattern reaches it since a fact whose subject IS its predicate
+        // became matchable. That it is counted here is the same visibility
+        // the query `S ~ ->` gained.
         collector.clear();
         interactive.process(".prune-nodes A ~ ->");
-        CHECK(any_output_contains(collector, "Kept 4 core node(s)"));
+        CHECK(any_output_contains(collector, "Kept 5 core node(s)"));
 
         collector.clear();
         interactive.process("X ~ human");

@@ -512,7 +512,10 @@ static bool climb_partial_anchor(
                 if (filter != 0)
                 {
                     if (scope.right(f).count(filter) == 0) continue; // wrong predicate
-                    if (scope.left(f).count(filter) != 0) continue;  // filter node is f's subject, not its predicate
+                    // Subject, not predicate -- unless the two are the same
+                    // node, which collapses f's outgoing adjacency to one
+                    // entry. Same test as Zelph::collect_anchored_facts.
+                    if (scope.left(f).count(filter) != 0 && scope.right(f).size() > 1) continue;
                 }
                 next.insert(f);
             }
@@ -1106,7 +1109,17 @@ bool Unification::increment_fact_index()
         {
             return false;
         }
-    } while (!_snapshot_prefiltered && _n->has_left_edge(*_fact_index, *_relation_index)); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
+        // Skip nodes that are not relations of type *_relation_index but
+        // relations having *_relation_index as their subject (recognised by
+        // the bidirectional connection to the subject). The second probe is
+        // the subject == predicate exemption: there both roles share one
+        // outgoing edge, so the relation IS the predicate. Order matters --
+        // has_left_edge answers no for every ordinary candidate, so the
+        // outgoing-degree lookup is paid only for the rare fact that really
+        // does have the relation as its subject.
+    } while (!_snapshot_prefiltered
+             && _n->has_left_edge(*_fact_index, *_relation_index)
+             && _n->_pImpl->right_count_of(*_fact_index) > 1);
 
     return true;
 }

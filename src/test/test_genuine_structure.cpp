@@ -39,7 +39,8 @@ using namespace zelph::network;
 // creates; get_fact_structures answers fs_cache misses from that store and
 // walks the adjacency only for nodes without an entry. Pins:
 //  (1) the stored reading IS the genuine triple across shapes;
-//  (2) subject == predicate facts are NOT stored (walk stays EMPTY);
+//  (2) subject == predicate facts decompose like any other -- both roles
+//      share one outgoing edge, which used to leave them without a reading;
 //  (3) the disarm funnel (trusted import): later queries AND later-created
 //      facts are answered by the walk, with identical readings;
 //  (4) growth-only full clears (relation-type declarations) do NOT disarm.
@@ -101,15 +102,28 @@ TEST_CASE("genuine store: created facts answer with their exact triple")
     CHECK(z.genuine_stats().hits > 0);
 }
 
-TEST_CASE("genuine store: subject == predicate facts stay walk-reconstructed and EMPTY")
+TEST_CASE("genuine store: a subject == predicate fact decomposes like any other")
 {
     Zelph      z(null_handler());
     const Node b   = z.node("b");
     const Node op3 = z.node("op3");
 
+    // insert_fact writes _left[fact] = {subject, predicate}, so when the two
+    // are the same node both roles share ONE entry. The walk used to read
+    // that as "subject, hence not the predicate" and returned no reading at
+    // all -- and since unification reads every candidate through this
+    // decomposition, such a fact answered no query and matched no rule.
+    // `~ ~ ->` is exactly this shape and exists in every network.
     const Node f3 = z.fact(op3, op3, {b});
-    CHECK(get_fact_structures(&z, f3, 1)->empty()); // red if the genuine triple were stored
-    CHECK(z.parse_relation(f3) == op3);             // subject==predicate fallback untouched
+    CHECK(has_reading(*get_fact_structures(&z, f3, 1), op3, b));
+    CHECK(z.parse_relation(f3) == op3);
+
+    // The reading has to hash back to the node, which is what keeps a
+    // parent fact that happens to be a relation type from being read as
+    // its own predicate.
+    const auto s = get_fact_structures(&z, f3, 1);
+    REQUIRE(s->size() == 1);
+    CHECK(Zelph::create_hash((*s)[0].predicate, (*s)[0].subject, (*s)[0].objects) == f3);
 }
 
 TEST_CASE("genuine store: trusted import disarms; walk keeps readings identical")

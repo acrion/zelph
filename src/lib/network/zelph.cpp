@@ -276,7 +276,11 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
             for (const Node subj : get_left(rel))
             {
                 // Subjects: bidirectional (in both left and right of rel).
-                if (subj != object && subj != predicate && !is_var(subj) && has_right_edge(rel, subj))
+                // Being the predicate as well is no disqualification -- a
+                // fact whose subject IS its predicate (`~ ~ ->`) still has
+                // that subject, and the bidirectionality test already rejects
+                // a node that is merely the predicate.
+                if (subj != object && !is_var(subj) && has_right_edge(rel, subj))
                 {
                     subjects.insert(subj);
                 }
@@ -392,14 +396,15 @@ adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
     // declaration counted as a use of it, so .list-predicate-usage reported
     // one use for a predicate nothing had ever used.
     //
-    // A fact whose subject IS its predicate keeps both roles in one edge and
-    // is therefore excluded here -- which is exactly how unification reads
-    // such a fact, so the count stays in step with what a query answers.
+    // A fact whose subject IS its predicate carries both roles in ONE edge,
+    // so the back edge cannot separate them: _left[fact] = {subject,
+    // predicate} then has a single entry, and the relation is the predicate
+    // after all. `~ ~ ->` is that fact, and every network has it.
     const Network::ReadScope scope = read_scope();
 
     for (const Node fact : scope.left(relation))
     {
-        if (scope.left(fact).count(relation) == 0)
+        if (scope.left(fact).count(relation) == 0 || scope.right(fact).size() == 1)
         {
             facts.insert(fact);
         }
@@ -738,13 +743,13 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
 
         // Record the genuine structure (reconstruction bypass): the exact
         // triple, known right here and immutable forever -- the node ID is
-        // its hash. subject == predicate is deliberately excluded: the
-        // reconstruction walk yields EMPTY for those (the subject loop
-        // skips s == p), and unification's atom treatment of them must not
-        // change. Self-facts arrive with objects == {subject}, matching
-        // the walk's self-referential repair exactly.
-        if (subject != predicate
-            && _pImpl->_genuine_authoritative.load(std::memory_order_acquire))
+        // its hash. Self-facts arrive with objects == {subject}, matching
+        // the walk's self-referential repair exactly, and subject ==
+        // predicate now matches the walk too: it used to be excluded here
+        // because the walk yielded EMPTY for those and the two stores had to
+        // agree, but the walk reads them since the s == p branch in
+        // get_fact_structures.
+        if (_pImpl->_genuine_authoritative.load(std::memory_order_acquire))
         {
             auto           list = std::make_shared<FactStructureList>(1);
             FactStructure& fs   = list->front();
@@ -1351,7 +1356,12 @@ void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjac
     for (const Node fact : scope.right(anchor))
     {
         if (scope.right(fact).count(relation) == 0) continue; // not this predicate
-        if (scope.left(fact).count(relation) != 0) continue;  // relation is the fact's subject
+        // relation -> fact makes the relation the fact's SUBJECT -- unless
+        // the fact's whole outgoing adjacency is that one node, which is how
+        // {subject, predicate} collapses when the two are the same. See
+        // get_facts_of_predicate, which applies the same test from the other
+        // end.
+        if (scope.left(fact).count(relation) != 0 && scope.right(fact).size() > 1) continue;
         out.insert(fact);
     }
 }

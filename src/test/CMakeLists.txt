@@ -84,6 +84,7 @@ add_executable(zelph_tests
     test_save_memory.cpp
     test_script_query.cpp
     test_script_run.cpp
+    test_self_predicate.cpp
     test_seminaive.cpp
     test_sharding.cpp
     test_sparql.cpp

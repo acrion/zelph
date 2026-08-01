@@ -163,7 +163,23 @@ namespace zelph::network
                 {
                     for (Node s : right)
                     {
-                        if (s == p) continue;
+                        // s == p is the fact whose SUBJECT IS its predicate.
+                        // insert_fact writes _left[fact] = {subject,
+                        // predicate}, so the two roles share a single entry
+                        // and skipping the candidate left such a fact with no
+                        // reading at all. Since unification reads every
+                        // candidate through this decomposition, those facts
+                        // matched nothing -- `~ ~ ->` included, which zelph
+                        // creates in every network and which is what licenses
+                        // reading `~` as a predicate in the first place.
+                        //
+                        // The reading is offered but must hash back to the
+                        // node (checked at the push below). That is exact
+                        // rather than heuristic -- a fact node's ID IS
+                        // create_hash(predicate, subject, objects) -- and it
+                        // is what separates this case from a parent fact that
+                        // happens to be a relation type as well.
+                        const bool subject_is_predicate = (s == p);
                         if (left.count(s) == 0) continue; // Subject must be bidirectional
 
                         // Filter out "child fact" nodes: nodes that use `fact` as THEIR
@@ -339,6 +355,11 @@ namespace zelph::network
                         if (fs.objects.empty())
                         {
                             fs.objects.insert(s);
+                        }
+                        if (subject_is_predicate
+                            && Zelph::create_hash(fs.predicate, fs.subject, fs.objects) != fact)
+                        {
+                            continue; // see the s == p note at the top of the loop
                         }
                         structures.push_back(fs);
                     }
