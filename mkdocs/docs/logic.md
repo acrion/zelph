@@ -504,6 +504,16 @@ consequence:
 Negating a group directly is an open direction, not a decision against it —
 see [Where the logic goes next](index.md#where-the-logic-goes-next).
 
+**Where `¬` may stand.** In a condition, and only there.
+A rule derives what holds, so a negated *consequence* has no reading, and writing one is refused rather than dropped:
+
+```
+zelph> (A p B) => ¬(A q B)
+Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no meaning as a consequence: a rule derives what holds, not what does not. To say that the two may not hold together, write a contradiction rule -- "(A p B, A q B) => !".
+```
+
+The [contradiction rule](#contradiction-detection) the message names is what "these two must not hold together" is written as.
+
 #### Stratified Evaluation
 
 A negated condition asks about _absence_ — but absence _when_? During a

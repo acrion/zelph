@@ -65,6 +65,26 @@ static bool is_atom(Janet node, const char* text)
     return false;
 }
 
+// True if a PEG-AST node is a `¬` pattern, through any number of plain
+// groupings -- "¬(F)" and "(¬(F))" are the same statement.
+//
+// The question has to be asked of the SYNTAX, not of the resulting node: the
+// negation tag is a fact about the pattern node, and a ground pattern is
+// hash-consed, so a node negated in one rule carries the tag everywhere. Only
+// the AST knows which statement wrote the "¬".
+static bool is_negation_ast(Janet node)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+    if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+    const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+    if (type == "negation") return true;
+    if (type == "nested" && len == 2) return is_negation_ast(data[1]);
+    return false;
+}
+
 // --- Implementation Class ---
 
 class ScriptEngine::Impl
@@ -2732,6 +2752,25 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
             {
                 fact_args.push_back(root_data[i]);
             }
+            // `¬` is a CONDITION operator. As a consequence it used to be
+            // ignored outright: "(A p B) => ¬(A q B)" derived (x q y) -- the
+            // exact opposite of what the rule says, without a word. What a
+            // derived negation should mean is a separate question (zelph can
+            // hold a fact as known-wrong, via the probability argument of
+            // fact()); until it is answered, saying so beats guessing.
+            if (is_atom(fact_args[1], "=>"))
+            {
+                for (std::size_t i = 2; i < fact_args.size(); ++i)
+                {
+                    if (is_negation_ast(fact_args[i]))
+                        throw std::runtime_error(
+                            "\"¬\" is a condition operator and has no meaning as a consequence: "
+                            "a rule derives what holds, not what does not. To say that the two "
+                            "may not hold together, write a contradiction rule -- "
+                            "\"(A p B, A q B) => !\".");
+                }
+            }
+
             const std::string call = _pImpl->build_smart_call("zelph/fact", fact_args);
 
             // A rule statement is wrapped so that the WHOLE construction --

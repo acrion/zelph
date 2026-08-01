@@ -957,6 +957,40 @@ TEST_CASE("rules: a chained => says which arrow has to be parenthesised")
         interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))"); });
 }
 
+TEST_CASE("rules: a negated consequence is refused, not ignored")
+{
+    // "(A p B) => ¬(A q B)" used to derive (x q y) from (x p y) -- the exact
+    // opposite of what it says, in silence: deduce reads the consequence's
+    // predicate and creates the fact, and the negation tag sits beside the
+    // pattern where nothing on that path looks.
+    //
+    // The test has to be asked of the SYNTAX. The tag is a fact ABOUT the
+    // pattern node, and a ground pattern is hash-consed, so a pattern negated
+    // in one rule carries the tag in every other rule that mentions it --
+    // only the statement itself knows where the "¬" was written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* rule : {"(A p B) => ¬(A q B)",
+                                 "(A p B) => (¬(A q B))",
+                                 "(A p B) => (A q B) ¬(A r B)"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("condition operator"),
+                                 std::runtime_error);
+        }
+
+        // A negated CONDITION is untouched, including when its pattern is
+        // ground and therefore shared with whatever else mentions it.
+        interactive.process("(A p B, ¬(A r B)) => (A q B)");
+        collector.clear();
+        interactive.process("x p y");
+        CHECK(any_deduction_of(collector, "x q y"));
+
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(answers_contain(collector, "x q y")); });
+}
+
 TEST_CASE("naming: a query variable does not take a real node's name")
 {
     // Variable names are cosmetic and statement-scoped, but they went into
