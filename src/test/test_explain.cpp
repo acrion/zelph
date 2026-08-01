@@ -297,3 +297,27 @@ TEST_CASE("help: an alias is documented under its canonical command")
         CHECK(any_output_contains(collector, "alias: .why"));
         CHECK_FALSE(any_output_contains(collector, "Unknown command")); });
 }
+
+TEST_CASE("help: a topic may be named with or without its dot")
+{
+    // The listing prints every command with its dot, so that is what gets
+    // pasted -- but the bare name is at least as natural to type, and
+    // ".help deductions" answered "Unknown command: deductions" about a
+    // command that not only exists but is one of the most used.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process(".help deductions");
+        CHECK(any_output_contains(collector, "Sets the deduction printing mode"));
+        CHECK_FALSE(any_output_contains(collector, "Unknown command"));
+
+        // Aliases resolve bare too, and an unknown topic is still an error.
+        collector.clear();
+        interactive.process(".help why");
+        CHECK(any_output_contains(collector, "alias: .why"));
+
+        collector.clear();
+        // The refusal goes to the error channel, not to Out.
+        interactive.process(".help nosuchthing");
+        CHECK(any_event_contains(collector, "Unknown command")); });
+}

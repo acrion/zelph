@@ -2119,7 +2119,13 @@ private:
             }
             else if (cmd.size() == 2)
             {
+                // The listing prints every command with its dot, so that is
+                // what gets pasted -- but typing the bare name is at least as
+                // natural, and ".help deductions" used to answer "Unknown
+                // command: deductions" about a command that exists.
                 std::string topic = cmd[1];
+                if (!topic.empty() && topic.front() != '.') topic.insert(topic.begin(), '.');
+
                 if (const auto alias = command_aliases.find(topic); alias != command_aliases.end())
                     topic = alias->second;
 
