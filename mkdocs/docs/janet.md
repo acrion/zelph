@@ -447,6 +447,36 @@ Note that facts created by an imported script count as ordinary additions here. 
 
 The safe pattern is therefore: define the rules, `zelph/run` once, then assert and `zelph/run-delta` per unit of new data.
 
+##### Scoped work: clusters
+
+The graph is monotonic. A program that asserts a fact base, reasons about it and reads the conclusions has no way to take the fact base out again, so every question it ever asks stays — and the pattern "one fact base per document, per position, per request" accumulates without bound.
+
+A **cluster** is the answer. It records the IDs of the nodes *created* while it is active, and dropping it removes exactly those. Nodes that already existed are never recorded, so a drop cannot reach them: a cluster is safe as scratch space over a graph loaded from disk. This is the same mechanism `.explain` uses internally to evaluate a pattern without asserting it.
+
+- **`(zelph/cluster &opt name)`**  
+  Activate the named cluster, creating it if needed. `nil` or `"default"` deactivates cluster tracking. Without an argument nothing changes. In every case the function returns the name of the cluster that is active afterwards, or `nil` for the default. Main thread only.
+
+- **`(zelph/cluster-drop name)`**  
+  Remove every node recorded in the cluster — with its edges and names — and return how many were removed. Facts *outside* the cluster that referenced cluster nodes lose those connections. The default cluster cannot be dropped; an unknown name removes nothing and returns 0. Main thread only.
+
+- **`(zelph/clusters)`**  
+  An array of `[name node-count]` tuples, one per existing cluster. Main thread only.
+
+The scratch-space pattern, which is what makes assert–reason–read–discard loops possible at all:
+
+```janet
+(zelph/cluster "scratch")
+(zelph/fact "subject-of-this-request" "~" "something")
+(zelph/run-delta)
+(def answer (zelph/query ...))
+(zelph/cluster nil)
+(zelph/cluster-drop "scratch")
+```
+
+Unlike `.cluster` and `.cluster-drop`, these print nothing. That is deliberate: a caller that scopes one question per iteration of its own loop invokes them thousands of times, and the commands' status lines would be noise on the caller's own output channel rather than information. The return values carry what a program actually wants to know.
+
+Clusters are session state and are not persisted by `zelph/save`.
+
 ##### Persistence
 
 - **`(zelph/save file)`**  
@@ -1044,6 +1074,9 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `.run`                          | `(zelph/run)`                                       | Run forward chaining to a fixed point                                       |
 | `.run-once`                     | `(zelph/run-once)`                                  | Run a single inference pass                                                 |
 | `.run-delta`                    | `(zelph/run-delta)`                                 | Run inference seeded only by the facts added since the last run             |
+| `.cluster <name>`               | `(zelph/cluster "name")`                            | Activate a cluster; returns the active name, or `nil` for the default       |
+| `.cluster-drop <name>`          | `(zelph/cluster-drop "name")`                       | Roll back everything created in the cluster; returns the node count removed |
+| `.cluster` (listing)            | `(zelph/clusters)`                                  | Array of `[name node-count]` tuples                                         |
 | `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
 | `&`-literal display             | `(zelph/set-number-digits ["0" "1" ...])`           | Register digit alphabet; digit lists display as decimal `&`-literals        |
 | `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |

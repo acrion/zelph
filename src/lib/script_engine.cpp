@@ -395,6 +395,17 @@ public:
                                                                                                    "Costs time in the size of the addition rather than of the graph, which is what makes assert-then-reason loops practical. "
                                                                                                    "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only.");
 
+        janet_def(_janet_env, "zelph/cluster", wrap((JanetCFunction)janet_cfun_zelph_cluster), "(zelph/cluster &opt name)\nActivate a named cluster, or with nil / \"default\" deactivate cluster tracking; without an argument only report. "
+                                                                                               "Returns the name of the cluster that is active afterwards, or nil for the default. "
+                                                                                               "Nodes CREATED while a cluster is active are recorded in it, which is what makes zelph/cluster-drop a rollback. "
+                                                                                               "Unlike the .cluster command this prints nothing, so it can be used per question inside a loop. Main thread only.");
+
+        janet_def(_janet_env, "zelph/cluster-drop", wrap((JanetCFunction)janet_cfun_zelph_cluster_drop), "(zelph/cluster-drop name)\nRemove every node recorded in the cluster, with its edges and names, and return how many were removed. "
+                                                                                                         "Nodes that already existed when the cluster was activated were never recorded, so a drop cannot remove them - which is what makes this safe as scratch space over a loaded graph. "
+                                                                                                         "Facts OUTSIDE the cluster that referenced cluster nodes lose those connections. The default cluster cannot be dropped. Main thread only.");
+
+        janet_def(_janet_env, "zelph/clusters", wrap((JanetCFunction)janet_cfun_zelph_clusters), "(zelph/clusters)\nReturn an array of [name node-count] tuples, one per existing cluster. Main thread only.");
+
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
         janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether a fact exists without creating it. Returns boolean.");
@@ -2095,6 +2106,89 @@ public:
     static Janet janet_cfun_zelph_run_delta(int32_t argc, Janet* argv)
     {
         return command_noarg_impl(argc, argv, "zelph/run-delta", ".run-delta");
+    }
+
+    // --- Clusters: the graph as a workspace rather than a store ---
+    //
+    // A cluster records the IDs of nodes CREATED while it is active, so
+    // dropping it removes exactly those again. That is the only form of
+    // retraction a monotonic graph can offer, and without it a program that
+    // asserts a fact base, reasons about it and reads the conclusions leaves
+    // every question it ever asked in the graph for good. .explain already
+    // uses a cluster internally for precisely this reason.
+    //
+    // These do NOT delegate to the REPL commands the way zelph/save and
+    // zelph/run do. .cluster and .cluster-drop each print a status line, and
+    // a caller that scopes one question per step of its own loop invokes
+    // them thousands of times, where that line is not information but noise
+    // on the caller's output channel. Returning the values instead is also
+    // what a program wants: the active cluster's name, and how many nodes a
+    // drop actually removed.
+    //
+    // Main thread only, like the commands they correspond to.
+    static void cluster_preamble(int32_t argc, Janet* argv, const char* name)
+    {
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
+
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+    }
+
+    static Janet janet_cfun_zelph_cluster(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 0, 1);
+        if (!s_instance) return janet_wrap_nil();
+        cluster_preamble(argc, argv, "zelph/cluster");
+
+        if (argc == 1)
+        {
+            // nil and "default" both mean "no cluster", matching .cluster.
+            if (janet_checktype(argv[0], JANET_NIL))
+            {
+                s_instance->_n->deactivate_cluster();
+            }
+            else
+            {
+                const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+                if (name.empty() || name == "default")
+                    s_instance->_n->deactivate_cluster();
+                else
+                    s_instance->_n->set_active_cluster(name);
+            }
+        }
+
+        const std::string active = s_instance->_n->active_cluster_name();
+        return active.empty() ? janet_wrap_nil() : janet_cstringv(active.c_str());
+    }
+
+    static Janet janet_cfun_zelph_cluster_drop(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        cluster_preamble(argc, argv, "zelph/cluster-drop");
+
+        const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+        if (name.empty() || name == "default")
+            janet_panicf("zelph/cluster-drop: the default cluster cannot be dropped");
+
+        return janet_wrap_integer(static_cast<int32_t>(s_instance->_n->drop_cluster(name)));
+    }
+
+    static Janet janet_cfun_zelph_clusters(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_nil();
+        cluster_preamble(argc, argv, "zelph/clusters");
+
+        const auto     listed = s_instance->_n->list_clusters();
+        JanetArray*    out    = janet_array(static_cast<int32_t>(listed.size()));
+        for (const auto& [name, count] : listed)
+        {
+            Janet pair[2] = {janet_cstringv(name.c_str()),
+                             janet_wrap_integer(static_cast<int32_t>(count))};
+            janet_array_push(out, janet_wrap_tuple(janet_tuple_n(pair, 2)));
+        }
+        return janet_wrap_array(out);
     }
 
     // Execute a query: print the pattern and trigger matching via apply_rule.
