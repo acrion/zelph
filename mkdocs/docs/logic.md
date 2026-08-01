@@ -189,7 +189,7 @@ zelph> (R is transitive, A R B, B R C) => (A R C)
 zelph> > is transitive
 zelph> 6 > 5
 zelph> 5 > 4
- 6  >  4  ⇐ {( 6  >  5 ) (>  is   transitive ) ( 5  >  4 )}
+(6 > 4) ⇐ {(6 > 5) (> is transitive) (5 > 4)}
 ```
 
 After entering `5 > 4`, the engine finds that the three conditions are jointly satisfiable with `R = >`, `A = 6`, `B = 5`, `C = 4`, and derives `6 > 4`.

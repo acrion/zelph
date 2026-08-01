@@ -25,9 +25,9 @@ least-significant first. Nothing else. You can verify it directly:
 zelph> %(string "SAME-" (= (zelph/number "42") (zelph/list-chars "42")))
 "SAME-true"
 zelph> %(print (zelph/car (zelph/number "42")))
-«2»
+2
 zelph> %(print (zelph/car (zelph/cdr (zelph/number "42"))))
-«4»
+4
 ```
 
 `&42` is the list `2 cons (4 cons nil)`. The `2` and the `4` are ordinary
@@ -234,7 +234,7 @@ natural layer.
    answers agree. The *display* is identical because every substrate
    registers a digit alphabet — but the structure is not. Compare
    `%(print (zelph/car (zelph/number "5")))` under `decimal-arithmetic`
-   (answers `«5»`) and under `binary-arithmetic` (answers `«1»`, the least
+   (answers `5`) and under `binary-arithmetic` (answers `1`, the least
    significant bit of 101).
 
 ## Next

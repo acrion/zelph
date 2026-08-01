@@ -390,8 +390,8 @@ the session reads:
 
 ```
 zelph> Auto-run is now disabled.
-zelph-> <zelph/node «socrates» «~» «human»>
-zelph-> <zelph/node {(X «~» «human»)}>
+zelph-> <zelph/node socrates ~ human>
+zelph-> <zelph/node {(X ~ human)}>
 zelph-> derived before run: false
 zelph-> Starting reasoning with 24 worker threads.
 (socrates ~ mortal) ⇐ {(socrates ~ human)}
@@ -419,7 +419,7 @@ The rule is in the graph from the moment it is created, but its consequence only
 ```
 
 ```
-zelph-> <zelph/node «plato» «~» «human»>
+zelph-> <zelph/node plato ~ human>
 zelph-> Starting reasoning with 24 worker threads.
 (plato ~ mortal) ⇐ {(plato ~ human)}
 Reasoning complete. Total unification matches processed: 0. Total contradictions found: 0.
