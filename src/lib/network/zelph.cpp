@@ -558,6 +558,28 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 
+        // A rule whose consequence is a CONJUNCTION. "A => (B, C)" reads as
+        // "A implies both", and zelph can say that -- but as several OBJECTS
+        // of one rule, not as a set. The engine deduces the objects of a `=>`
+        // fact and has no reading for a set node in that position, so the
+        // rule was built, was listed by .list-rules, and then derived nothing
+        // at all, without a word. The one comparison against core.Causes is
+        // what ordinary data pays for this.
+        if (predicate == core.Causes)
+        {
+            for (const Node t : objects)
+            {
+                if (check_fact(t, core.IsA, {core.Conjunction}).is_known())
+                {
+                    throw std::runtime_error(
+                        "fact(): a rule cannot have a conjunction as its consequence. "
+                        "Write the consequences as several objects of the same rule: "
+                        "\"A => (B) (C)\" instead of \"A => (B, C)\". They then share "
+                        "their fresh variables, which two separate rules would not.");
+                }
+            }
+        }
+
         // A node cannot be both a conjunction and a negation. The engine
         // reads the conjunction tag FIRST and would then never look at the
         // negation tag again, so "¬(A, B)" used to be evaluated as "A and

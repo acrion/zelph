@@ -991,6 +991,34 @@ TEST_CASE("rules: a negated consequence is refused, not ignored")
         CHECK(answers_contain(collector, "x q y")); });
 }
 
+TEST_CASE("rules: two consequences are two objects, not a conjunction")
+{
+    // "A => (B, C)" builds a rule whose consequence is a conjunction SET.
+    // The engine deduces the OBJECTS of a `=>` fact and has no reading for
+    // a set node in that position, so the rule was accepted, listed by
+    // .list-rules -- and derived nothing at all, in silence. zelph can say
+    // what was meant; it is spelled with several objects.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH_AS(interactive.process("(X p Y) => (X q N, N r Y)"),
+                             doctest::Contains("several objects"),
+                             std::runtime_error);
+
+        // The form the message names works, and the two consequences share
+        // the fresh variable N -- which is the reason it is one rule and
+        // not two.
+        interactive.process(".deductions all");
+        interactive.process("(X p Y) => (X q N) (N r Y)");
+        collector.clear();
+        interactive.process("a p b");
+        REQUIRE(any_deduction_of(collector, "a q"));
+        CHECK(any_deduction_of(collector, "r b"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "=>")); });
+}
+
 TEST_CASE("naming: a query variable does not take a real node's name")
 {
     // Variable names are cosmetic and statement-scoped, but they went into

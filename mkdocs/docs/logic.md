@@ -194,6 +194,26 @@ zelph> 5 > 4
 
 After entering `5 > 4`, the engine finds that the three conditions are jointly satisfiable with `R = >`, `A = 6`, `B = 5`, `C = 4`, and derives `6 > 4`.
 
+#### Several Consequences
+
+A rule may conclude more than one thing at once.
+The consequences are written as several **objects** of the same rule.
+The comma is the conjunction of _conditions_; on the right-hand side it is refused with a message naming this form, rather than guessed at:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+zelph> (A is human) => (A has consciousness) (A has mortality)
+zelph> tim is human
+(tim has mortality) ⇐ (tim is human)
+(tim has consciousness) ⇐ (tim is human)
+```
+
+The objects of a fact are an unordered set, so which of the two is announced first is not defined.
+
+This is not the same as writing two rules with the same conditions.
+One rule fires once, so its consequences share their [fresh variables](#fresh-variables-generative-rules): `(X p Y) => (X q N) (N r Y)` links `X` to a generated node and that same node to `Y`, while two separate rules would generate one node each.
+
 ### Meta-Rules: Predicates as First-Class Nodes
 
 <a href="#" onclick="jumpTo(446.5); return false;">🎬 Watch this section</a>
