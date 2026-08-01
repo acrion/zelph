@@ -442,3 +442,184 @@ a p1 b
         interactive.process("A p3 B");
         CHECK(answers_contain(collector, "a p3 b")); });
 }
+
+TEST_CASE("derived rules: many matches make many rules, and duplicates make one")
+{
+    // The shape a rule generator has in practice: the generating rule matches
+    // the network wherever it can, and each match fixes the variables of one
+    // new rule. Two matches that fix them the SAME way must not make two
+    // rules -- and nothing collapses them by itself, because the variables of
+    // a rule are nodes of their own and a conjunction set is created rather
+    // than hash-consed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("one condition")
+        {
+            interactive.process("(A knows B) => ((X p B) => (X q B))");
+            interactive.process("tom knows red");
+            interactive.process("sue knows red");  // same B -- same rule
+            interactive.process("ann knows blue"); // different B -- another rule
+            interactive.run(true, false, false);
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 3);
+        }
+        SUBCASE("several conditions, i.e. through the conjunction set")
+        {
+            interactive.process("(A knows B) => ((X p B, X r B) => (X q B))");
+            interactive.process("tom knows red");
+            interactive.process("sue knows red");
+            interactive.process("jim knows red");
+            interactive.run(true, false, false);
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 2);
+        } });
+}
+
+TEST_CASE("derived rules: one generator, one rule per declaration, all of them live")
+{
+    // Six declarations, six rules, and every one of them closes its own
+    // three-element chain -- the generated rules must stay apart, which is
+    // what "the variables are fixed by the match that made the rule" means.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))");
+        for (int i = 1; i <= 6; ++i)
+        {
+            const std::string r = "rel" + std::to_string(i);
+            const std::string s = std::to_string(i);
+            interactive.process(r + " is transitive");
+            interactive.process("a" + s + " " + r + " b" + s);
+            interactive.process("b" + s + " " + r + " c" + s);
+        }
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 7);
+
+        for (int i = 1; i <= 6; ++i)
+        {
+            const std::string r = "rel" + std::to_string(i);
+            const std::string s = std::to_string(i);
+            collector.clear();
+            interactive.process("S " + r + " O");
+            CHECK(answers_contain(collector, "a" + s + " " + r + " c" + s));
+            // and nothing crossed over into a neighbouring relation
+            CHECK_FALSE(answers_contain(collector, "a1 " + r + " c2"));
+        } });
+}
+
+TEST_CASE("derived rules: a generator may generate a generator")
+{
+    // Four levels: the outermost rule writes a rule that writes a rule that
+    // writes the rule which finally fires on data. Parsing the nesting and
+    // executing it are two different questions and both are asked here.
+    //
+    // Note what the second level is: "(k is on) => (…)" has a GROUND
+    // condition, so this chain also depends on a ground condition being
+    // allowed to match at all.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(G go H) => ((H is on) => ((P entails Q) => ((X P Y) => (X Q Y))))");
+        interactive.process("now go k");
+        interactive.process("k is on");
+        interactive.process("parent entails ancestor");
+        interactive.process("a parent b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A ancestor B");
+        CHECK(answers_contain(collector, "a ancestor b"));
+
+        // The generator, the two it generated, and the rule that fired.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 4); });
+}
+
+TEST_CASE("derived rules: order-theoretic properties as generators")
+{
+    // The application from mkdocs/docs/rule-generators.md. What makes a
+    // relation an order is a statement ABOUT the relation, so the properties
+    // are generators and declaring a relation installs its rules. Two
+    // relations declared the same way must stay apart -- each generated rule
+    // carries its predicate.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(R is partialorder) => ((X R Y, Y R Z) => (X R Z))
+(R is partialorder) => ((X R Y, Y R X) => (X sameas Y))
+divides is partialorder
+contains is partialorder
+two divides four
+four divides eight
+red contains pink
+pink contains rose
+)");
+        interactive.run(true, false, false);
+
+        // Two generators plus two rules per declared relation.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 6);
+
+        collector.clear();
+        interactive.process("S divides O");
+        CHECK(answers_contain(collector, "two divides eight"));
+        CHECK_FALSE(answers_contain(collector, "red divides rose"));
+
+        collector.clear();
+        interactive.process("S contains O");
+        CHECK(answers_contain(collector, "red contains rose"));
+
+        // Antisymmetry has nothing to fire on: the data is acyclic.
+        collector.clear();
+        interactive.process("S sameas O");
+        CHECK(collect_answers(collector).empty());
+
+        // ... until it does.
+        interactive.process("eight divides two");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S sameas O");
+        CHECK(answers_contain(collector, "two sameas four")); });
+}
+
+TEST_CASE("derived rules: a modal system's axioms as data")
+{
+    // The other application from the page: a normal modal logic is named by
+    // the axiom schemas it accepts, so WHICH schemas a system accepts becomes
+    // ordinary data and every system gets its own inference rules from the
+    // same graph.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(S accepts axiomT) => ((A necessaryin S) => (A holdsin S))
+(S accepts axiomD) => ((A necessaryin S) => (A possiblein S))
+kt accepts axiomT
+kd accepts axiomD
+p necessaryin kt
+q necessaryin kd
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A holdsin S");
+        CHECK(answers_contain(collector, "p holdsin kt"));
+        // kd does not accept T, so nothing HOLDS there.
+        CHECK_FALSE(answers_contain(collector, "q holdsin kd"));
+
+        collector.clear();
+        interactive.process("A possiblein S");
+        CHECK(answers_contain(collector, "q possiblein kd"));
+        CHECK_FALSE(answers_contain(collector, "p possiblein kt"));
+
+        // Two generators and one rule per system.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 4); });
+}

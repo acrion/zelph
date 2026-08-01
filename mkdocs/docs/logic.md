@@ -319,6 +319,8 @@ zelph> m mother n
 
 One statement of data, `m mother n`, walked three rules that nobody wrote — and each step carries its own justification, so `.explain (m isa agent)` reconstructs the chain back to it.
 
+Rules that write rules have a page of their own: [Rules That Write Rules](rule-generators.md) covers where the idea comes from (it is the [axiom schema](https://en.wikipedia.org/wiki/Axiom_schema) of logic, with the instances made real), what happens when a generator matches many times, generators that generate generators, and the edges of the construct.
+
 ### Mentioning a Rule Is Not Asserting It
 
 Writing a rule down _inside another statement_ talks about it; it does not claim it.

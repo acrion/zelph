@@ -19,6 +19,7 @@ nav:
   - Home: index.md
   - Playground: playground.md
   - Logic and Computation: logic.md
+  - Rules That Write Rules: rule-generators.md
   - Mathematics:
       - Why zelph for Mathematics: math/index.md
       - Tutorials:
