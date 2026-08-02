@@ -71,6 +71,7 @@ add_executable(zelph_tests
     test_ontology.cpp
     test_output.cpp
     test_partial_anchor.cpp
+    test_performance_guard.cpp
     test_polynomial.cpp
     test_pow.cpp
     test_predicate_slice.cpp
