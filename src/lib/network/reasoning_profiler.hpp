@@ -74,6 +74,14 @@ namespace zelph::network
         std::atomic<uint64_t> seminaive_seeds{0};
         std::atomic<uint64_t> seminaive_safety_extra{0};
 
+        // NOT WIRED, i.e. declared and reset but never incremented:
+        // snapshot_object_driven, unify_rule_atom_fail, unify_graph_atom_fail,
+        // unify_struct_success. Nothing prints them either, so they mislead
+        // no one today. Adding one to the dump without wiring it first would
+        // report a permanent 0 -- which is exactly how "Parallel unifications
+        // activated for N" came to lie for eight months. Wire it, or leave it
+        // out of the dump.
+
         // --- Unification-level counters ---
         std::atomic<uint64_t> unification_instances{0};
         std::atomic<uint64_t> unification_parallel_instances{0};
