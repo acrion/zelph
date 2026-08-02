@@ -86,9 +86,17 @@ namespace zelph
             // guillemets); this class turns the markers into node records
             // and writes the line. Thread-safe: the reasoner reports from
             // its worker threads.
+            // `reason` is written as an extra "refused" field when it is not
+            // empty. A contradiction the engine REFUSED to build -- a shape it
+            // cannot represent -- stops a rule exactly as a contradiction in
+            // the data does, and is reported as one on the console too, but a
+            // consumer counting contradictions of the DATA has to be able to
+            // tell them apart. The field is optional, so a reader that does
+            // not know it is unaffected.
             void add(const std::string&              kind,
                      const std::string&              conclusion,
-                     const std::vector<std::string>& premises) const;
+                     const std::vector<std::string>& premises,
+                     const std::string&              reason = {}) const;
 
         private:
             class Impl;

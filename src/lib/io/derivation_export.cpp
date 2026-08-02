@@ -225,11 +225,14 @@ namespace zelph::io
 
     DerivationExport::~DerivationExport() = default;
 
-    void DerivationExport::add(const std::string& kind, const std::string& conclusion, const std::vector<std::string>& premises) const
+    void DerivationExport::add(const std::string& kind, const std::string& conclusion, const std::vector<std::string>& premises, const std::string& reason) const
     {
         std::string line = "{\"kind\":" + json_string(kind)
-                         + ",\"conclusion\":" + _impl->segments_of(conclusion)
-                         + ",\"premises\":[";
+                         + ",\"conclusion\":" + _impl->segments_of(conclusion);
+
+        if (!reason.empty()) line += ",\"refused\":" + json_string(reason);
+
+        line += ",\"premises\":[";
 
         for (std::size_t i = 0; i < premises.size(); ++i)
         {

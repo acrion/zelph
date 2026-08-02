@@ -252,3 +252,59 @@ TEST_CASE("run-export: a bracket-shaped name stays a node reference")
         CHECK_FALSE(any_contains(lines, "\"(> "));
         CHECK_FALSE(any_contains(lines, " > ")); });
 }
+
+TEST_CASE("run-export: a refused deduction is marked as refused, a real contradiction is not")
+{
+    // deduce turns every refusal from fact() into a contradiction_error, so a
+    // shape the engine cannot represent stops a rule exactly as a
+    // contradiction in the data does -- and the console says which of the two
+    // it was since the reason rides along. The export did not: a consumer
+    // counting contradictions OF THE DATA, which is what the training-data
+    // pipeline does, could not tell them apart.
+    //
+    // The field is optional, so a reader that does not know it is unaffected;
+    // that is why the record keeps its kind.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path refused_out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_refused.jsonl";
+        std::filesystem::remove(refused_out);
+
+        interactive.process(".auto-run");
+        interactive.process("z rel {a b}");
+        interactive.process("q p r");
+        interactive.process("(X p Y) => (X in {a b})");
+        interactive.process(".run-export " + refused_out.string());
+
+        REQUIRE(std::filesystem::exists(refused_out));
+        const auto refused_lines = lines_of(refused_out);
+        std::filesystem::remove(refused_out);
+
+        REQUIRE_FALSE(refused_lines.empty());
+        CHECK(any_contains(refused_lines, "\"kind\":\"contradiction\""));
+        CHECK(any_contains(refused_lines, "\"refused\":\"a set constant cannot be extended"));
+        CHECK(any_contains(refused_lines, "@{...}")); });
+
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path genuine_out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_genuine.jsonl";
+        std::filesystem::remove(genuine_out);
+
+        interactive.process(".auto-run");
+        interactive.process("(X opp Y, A ~ X, A ~ Y, X != Y) => !");
+        interactive.process("bright opp dark");
+        interactive.process("yellow ~ bright");
+        interactive.process("yellow ~ dark");
+        interactive.process(".run-export " + genuine_out.string());
+
+        REQUIRE(std::filesystem::exists(genuine_out));
+        const auto genuine_lines = lines_of(genuine_out);
+        std::filesystem::remove(genuine_out);
+
+        // A contradiction of the DATA carries no reason at all.
+        CHECK(any_contains(genuine_lines, "\"kind\":\"contradiction\""));
+        CHECK_FALSE(any_contains(genuine_lines, "\"refused\"")); });
+}

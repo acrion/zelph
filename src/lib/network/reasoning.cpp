@@ -91,8 +91,7 @@ void Reasoning::report_contradiction(const contradiction_error& error)
     }
 
     if (_export_derivations)
-        _export->add("contradiction", contradiction_symbol(),
-                     render_premises(error.get_fact(), error.get_variables(), error.get_parent()));
+        _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
 }
 
 std::string Reasoning::contradiction_symbol() const
