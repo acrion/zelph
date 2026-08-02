@@ -354,3 +354,59 @@ TEST_CASE("pruning: the pattern reads the way .explain reads it")
             CHECK(answers_contain(collector, "c \"is not\" d"));
         } });
 }
+
+TEST_CASE("removal: a variable member does not take the container with it")
+{
+    // Removing a PartOf fact dooms its container, and rightly so: a set IS
+    // its elements, and a rule's condition list is such a set (see "a rule
+    // goes with a node its condition names" above).
+    //
+    // A VARIABLE member is not an element, though. `X in {a b}` is how a rule
+    // quantifies over the members rather than a claim about them, and both
+    // is_set_constant and the renderer skip such a member for that reason.
+    // Dooming the container for it destroyed a SHARED set constant -- and
+    // this was reachable without any removal command at all: the parse-time
+    // duplicate check builds every rule in a scratch cluster and rolls it
+    // back, so entering an alpha-equivalent rule a second time deleted the
+    // first one and left "No rules found".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(any_output_contains(collector, "(X in {a b})"));
+
+        // The duplicate is recognised and rolled back -- and the original
+        // survives that rollback.
+        interactive.process("(A in {a b}) => (A flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "in {a b}"));
+        CHECK_FALSE(any_output_contains(collector, "No rules found"));
+
+        // And it still works.
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S flagged yes");
+        CHECK(answers_contain(collector, "a flagged yes"));
+        CHECK(answers_contain(collector, "b flagged yes")); });
+}
+
+TEST_CASE("removal: a real element still takes the container with it")
+{
+    // The control for the case above: an element that is NOT a variable
+    // invalidates the set it is removed from, exactly as before, and the rule
+    // written against that set goes with it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("z rel {a b}");
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(any_output_contains(collector, "(X in {a b})"));
+
+        interactive.process(".prune-facts (a in {a b})");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found")); });
+}

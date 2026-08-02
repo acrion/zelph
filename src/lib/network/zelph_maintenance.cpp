@@ -142,10 +142,23 @@ size_t Zelph::remove_node(Node node) const
         if (parse_relation(current) == core.PartOf)
         {
             adjacency_set containers;
-            parse_fact(current, containers, 0);
-            for (const Node container : containers)
+            const Node    member = parse_fact(current, containers, 0);
+
+            // ... but a VARIABLE was never an element. `X in {a b}` is how a
+            // rule quantifies over the members, not a claim about them, and
+            // is_set_constant and the renderer both skip such a member for
+            // exactly that reason. Dooming the container for it destroyed a
+            // set constant that OTHER rules were written against -- reachable
+            // from the outside, because the parse-time duplicate check builds
+            // every rule in a scratch cluster and rolls it back: entering
+            // `(A in {a b}) => (A flagged yes)` a second time took the
+            // original rule with it and left `No rules found`.
+            if (!Zelph::is_var(member))
             {
-                doom(container);
+                for (const Node container : containers)
+                {
+                    doom(container);
+                }
             }
         }
     }
