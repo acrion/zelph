@@ -104,7 +104,16 @@ Answer: x (a p b) y
 
 (abridged — the query also lists the core relation types). This holds independently of how the network came to be: a graph read back from a `.bin` answers exactly as the one that was typed.
 
-A composite predicate may itself carry variables, and then it is a **pattern** like any other — it unifies structurally rather than being looked up by identity, so it reaches inside the predicate:
+A composite predicate may itself carry variables, and then it is a **pattern** like any other — it unifies structurally rather than being looked up by identity, so it reaches inside the predicate. In a query:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> S (a P b) O
+Answer: x (a p b) y
+```
+
+and in a rule, where the variables it binds are available to the consequence:
 
 ```
 zelph> a p b
