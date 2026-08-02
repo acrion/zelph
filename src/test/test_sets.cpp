@@ -231,3 +231,27 @@ r s {a b}
         interactive.process("S s O");
         CHECK(answers_contain(collector, "r s {a b}")); });
 }
+
+TEST_CASE("sets: a membership fact keeps its own member in the printed container")
+{
+    // The same node printed two ways depending on which command asked for it.
+    // A container left the membership fact it was rendered FROM out of its own
+    // element list, so `a in {a b}` came back as `a in {a}` -- and a set
+    // constant is its members, so `{a}` is a different node. The query path
+    // never had it, because there the container hangs off a pattern rather
+    // than off the fact itself.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("x rel {a b}");
+
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "a in {a b}"));
+        CHECK(answers_contain(collector, "b in {a b}"));
+
+        collector.clear();
+        interactive.process(".node a in {a b}");
+        CHECK(any_output_contains(collector, "Representation: a in {a b}"));
+        CHECK_FALSE(any_output_contains(collector, "Representation: a in {a}")); });
+}
+

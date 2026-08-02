@@ -561,8 +561,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     {
         for (network::Node rel : z->get_right(resolved))
         {
-            if (rel == parent) continue;
-
+            // The membership fact being rendered is NOT skipped. It is the one
+            // that establishes the very element the reader is looking at, so
+            // leaving it out printed `b in {a}` for the fact `b in {a b}` --
+            // and a set constant IS its members, so `{a}` is a different node.
+            // Recursion is not a concern here: an element is rendered with
+            // `resolved` as its parent and inside `child_history`, and a member
+            // never reaches back into the container through this branch.
             network::Node p = z->parse_relation(rel);
             if (p == z->core.PartOf)
             {
