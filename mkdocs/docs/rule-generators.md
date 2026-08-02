@@ -167,6 +167,25 @@ When a generator fires, the rule it writes is rebuilt under the bindings of that
 | a negated condition | stays negated; the `¬` tag is restated on the rebuilt pattern |
 | a `!=` guard | rebuilt like any other condition |
 | `!` as the consequence | rebuilt, so a generator can install a contradiction check |
+| a container, `{...}` or `@{...}` | rebuilt with its substituted members — except the one a consequence writes **into**, whose identity is the point |
+
+A container follows the renaming that a generator performs on the rule it
+writes, so the generated rule behaves like the same rule typed by hand:
+
+```
+zelph> k is on
+zelph> a p b
+zelph> c p d
+zelph> (K is on) => ((X p Y) => (X likes {Y}))
+((X p Y) => (X likes @{Y})) ⇐ (k is on)
+(a likes {b}) ⇐ (a p b)
+(c likes {d}) ⇐ (c p d)
+```
+
+The exception is the accumulator: `(K is on) => ((X reported Y) => (Y in @{X}))`
+keeps naming the one container the generator wrote, because putting something
+into a container is a statement about that container. See
+[Braces](index.md#braces-set-constants-and-collections) for the two literals.
 
 The one shape that cannot be told apart is a fully **ground** inner rule that is also merely mentioned somewhere: [hash-consing](logic.md#mentioning-a-rule-is-not-asserting-it) makes those a single node, and the graph carries no evidence of which was meant.
 A rule with variables is two nodes, because every statement names its own variables — which is why the generator can assert a rule that is written out, unasserted, elsewhere.
