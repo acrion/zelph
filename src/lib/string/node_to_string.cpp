@@ -303,7 +303,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // If so, walk the cons chain and format as < e1 e2 ... en >.
     if (z->exists(resolved))
     {
+        // parse_relation asks which NEIGHBOUR of the node is a declared
+        // relation type, and a cons cell whose own list is used as a PREDICATE
+        // somewhere has two -- `cons`, and the list head, which being a
+        // predicate declared. It then reports the ambiguity as "no relation",
+        // and the very same node printed `<b>` in a graph where no list
+        // happens to be a predicate and `b cons nil` in one where some list
+        // is. The exact structure settles it, but only where it has to: on the
+        // ambiguity, and only for a node that could be a cell at all. Asking
+        // it FIRST costs 2 % of the Jacobian import, because every atom the
+        // renderer passes then pays for a lookup that parse_relation answers
+        // by failing fast.
         network::Node rel_type = z->parse_relation(resolved);
+        if (rel_type == 0 && network::Zelph::is_hash(resolved))
+            rel_type = network::get_preferred_structure(z, resolved, 3).predicate;
+
         if (rel_type == z->core.Cons)
         {
 #ifdef DEBUG_FORMAT_FACT

@@ -731,3 +731,39 @@ TEST_CASE("display: a generated node prints the same way wherever it appears")
         CHECK(answers_contain(collector, "?? nameof tim"));
         CHECK_FALSE(any_output_contains(collector, "?? ?? ??")); });
 }
+
+TEST_CASE("display: a cons cell reads the same whether some list is a predicate or not")
+{
+    // The entry test of the list detection asked parse_relation which
+    // NEIGHBOUR of the node is a declared relation type. A cons cell whose
+    // own list is used as a predicate somewhere has two -- `cons`, and the
+    // list head, which being a predicate declared. parse_relation then
+    // reported the ambiguity as "no relation", the cell was not recognised,
+    // and the very same node printed one way in a graph where some list
+    // happens to be a predicate and another way in a graph where none is.
+    //
+    // Nothing about the cell itself differs between the two networks below,
+    // so the two renderings have to agree.
+    std::string as_predicate;
+    std::string as_object;
+
+    run_both_modes([&as_predicate](auto& collector, auto& interactive)
+                   {
+        interactive.process("x <a b> y");
+        collector.clear();
+        interactive.process("S Q O");
+        for (const std::string& a : collect_answers(collector))
+            if (a.starts_with("a cons")) as_predicate = a; });
+
+    run_both_modes([&as_object](auto& collector, auto& interactive)
+                   {
+        interactive.process("x p <a b>");
+        collector.clear();
+        interactive.process("S Q O");
+        for (const std::string& a : collect_answers(collector))
+            if (a.starts_with("a cons")) as_object = a; });
+
+    REQUIRE_FALSE(as_object.empty());
+    CHECK(as_predicate == as_object);
+    CHECK(as_object == "a cons <b>");
+}
