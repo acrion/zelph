@@ -153,7 +153,7 @@ zelph-> .stat
 Network Statistics:
 ------------------------
 Nodes: 1000000
-RAM Usage: 2.4 GiB
+RAM Usage: 2.3 GiB
 Name-of-Node Entries by language:
   wikidata: 1000000
 Node-of-Name Entries by language:
