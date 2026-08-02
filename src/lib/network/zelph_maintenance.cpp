@@ -354,7 +354,36 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         const Node nd = pending.back();
         pending.pop_back();
         if (nd == 0 || !seen.insert(nd).second) continue;
-        if (!Impl::is_hash(nd) || Impl::is_var(nd)) continue;
+        if (Impl::is_var(nd)) continue;
+
+        // A SET node carries no structure of its own -- its members hang off
+        // it as PartOf facts, exactly as for the conjunction set above -- and
+        // Zelph::set builds it with create(), so its ID is a COUNTER, not a
+        // triple hash. It therefore failed the is_hash gate below before the
+        // structural descent could even stop at it, and the membership facts
+        // a rule's own set literal created were never marked. They then read
+        // as data: `(X in {a b}) => (X flagged yes)` derived `a flagged yes`
+        // and `b flagged yes`, and `.explain` called `a in {a b}` an axiom,
+        // although the only reason that fact exists is that the rule was
+        // written. Same leak afc0f3e closed for the other shapes.
+        //
+        // Only a container THIS construction created is walked -- a set the
+        // rule merely refers to keeps its members and its own facts -- so the
+        // adjacency read stays inside what the rule brought into being.
+        if (fresh.count(nd) != 0)
+        {
+            for (const Node rel : get_right(nd))
+            {
+                if (parse_relation(rel) != core.PartOf) continue;
+                adjacency_set objs;
+                const Node    member = parse_fact(rel, objs, 0);
+                if (member == 0 || objs.count(nd) != 1) continue;
+                pending.push_back(rel); // the membership fact is the pattern
+                pending.push_back(member);
+            }
+        }
+
+        if (!Impl::is_hash(nd)) continue; // an atom has no fact structure
 
         const FactStructure fs = get_preferred_structure(this, nd, 3);
         if (fs.predicate == 0 || fs.subject == 0) continue;

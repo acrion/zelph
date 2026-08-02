@@ -229,6 +229,59 @@ TEST_CASE("rule patterns: .explain does not call a pattern an axiom")
         CHECK_FALSE(any_output_contains(collector, "rule pattern")); });
 }
 
+TEST_CASE("rule patterns: a set literal in a condition is not data either")
+{
+    // The leak this file is about, reached through a shape the walk could not
+    // see. A set literal builds a super-node plus one PartOf fact per member,
+    // and Zelph::set gives that super-node a COUNTER id rather than a triple
+    // hash -- so mark_rule_patterns skipped it at the is_hash gate and never
+    // reached the membership facts. They then read as data:
+    //
+    //     zelph> (X in {a b}) => (X flagged yes)
+    //     Answer: a flagged yes        <- nobody said this
+    //     Answer: b flagged yes
+    //
+    // and .explain called `a in {a b}` an axiom.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S flagged yes");
+        CHECK(collect_answers(collector).empty());
+
+        // Both membership facts carry the mark, as ordinary graph structure.
+        collector.clear();
+        interactive.process(R"(S ~ "rule pattern")");
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("rule patterns: a container the rule did not build keeps its facts")
+{
+    // The control for the walk's `fresh` gate. A set the rule merely REFERS
+    // to -- here by the name `s`, which the data made a container -- is not
+    // this construction's doing, so its membership facts stay data and the
+    // rule fires on them. Red if the container walk marked whatever it found.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x in s
+a in s
+(X in s) => (X flagged yes)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S flagged yes");
+        CHECK(answers_contain(collector, "x flagged yes"));
+        CHECK(answers_contain(collector, "a flagged yes"));
+
+        collector.clear();
+        interactive.process(R"(S ~ "rule pattern")");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 TEST_CASE("rule patterns: the mark survives .save and .load")
 {
     // The record is a fact in the graph, not something the session
