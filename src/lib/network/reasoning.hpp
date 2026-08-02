@@ -228,6 +228,8 @@ namespace zelph::network
 
         bool                               resolve_guard_side(Node item, const Variables& variables, Node& out) const;
         bool                               contradicts(const Variables& variables, const Variables& unequals) const;
+        bool                               guards_unresolved(const Variables& variables, const Variables& unequals) const;
+        bool                               guard_side_unbound(Node item, const Variables& variables) const;
         void                               end_input_capture();
 
         // --- Implemented in reasoning_evaluate.cpp ---

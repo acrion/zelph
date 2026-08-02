@@ -894,6 +894,55 @@ bool Reasoning::resolve_guard_side(const Node item, const Variables& variables, 
     return resolve_pattern(this, item, variables, out, history) == Resolve::Ok;
 }
 
+// Does any recorded `!=` guard still have an unresolved side?
+//
+// logic.md states the contract in as many words: `!=` is a guard
+// constraint, NOT a fact lookup, and it filters variable bindings AFTER
+// the involved variables are bound by positive conditions. Deferring an
+// undecidable guard is therefore right while conditions are still being
+// joined -- contradicts() skips it, and the binding usually arrives from a
+// later condition. At the TERMINAL point no binding can arrive any more,
+// so a guard that is still unresolved never filtered anything, and the
+// match it would license rests on a condition that said nothing.
+//
+// Without this, `S != O` answered `Answer: S != O` -- on an empty network
+// too -- claiming something with its variables unbound, which is exactly
+// what the page says `!=` does not do.
+// Was this side never bound at all?
+//
+// NOT the same as "resolve_guard_side answered no". That answers no for two
+// different reasons, and only one of them means the guard was never
+// applicable: an UNBOUND variable, versus a structured operand whose
+// variables are all bound but whose denoted fact is absent from the graph.
+// The absent one cannot be the node the other side holds, so the guard
+// passes -- the Resolve::Missing note in resolve_guard_side, and the test
+// "a structured operand denoting no existing fact does not block".
+bool Reasoning::guard_side_unbound(const Node item, const Variables& variables) const
+{
+    if (Zelph::Impl::is_var(item))
+    {
+        const auto it = variables.find(item);
+        return it == variables.end() || Zelph::Impl::is_var(it->second);
+    }
+
+    if (!Zelph::Impl::is_hash(item) || !var_in_closure(item)) return false;
+
+    Node              out = 0;
+    std::vector<Node> history;
+    return resolve_pattern(this, item, variables, out, history) == Resolve::Unbound;
+}
+
+bool Reasoning::guards_unresolved(const Variables& variables, const Variables& unequals) const
+{
+    for (const auto& var : unequals)
+    {
+        if (guard_side_unbound(var.first, variables)) return true;
+        if (guard_side_unbound(var.second, variables)) return true;
+    }
+
+    return false;
+}
+
 bool Reasoning::contradicts(const Variables& variables, const Variables& unequals) const
 {
     for (const auto& var : unequals)

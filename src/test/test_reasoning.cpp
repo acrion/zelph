@@ -571,6 +571,71 @@ a pairs b
         CHECK(any_output_contains(collector, "UNEQ-MISSING-true")); });
 }
 
+TEST_CASE("inequality: a guard that never gets its bindings is not a match")
+{
+    // logic.md states the contract: != is a guard constraint, NOT a fact
+    // lookup, and it filters variable bindings AFTER the involved variables
+    // are bound by positive conditions. With nothing bound there is nothing
+    // to filter -- but the guard used to succeed vacuously, so a query
+    // answered its own pattern with the variables still unbound:
+    //
+    //     zelph> S != O
+    //     Answer: S != O          <- on an EMPTY network, too
+    //
+    // Deferring an undecidable guard stays right while conditions are being
+    // joined; the check belongs at the terminal point, where no binding can
+    // arrive any more. See Reasoning::guards_unresolved.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("S != O");
+        CHECK(collect_answers(collector).empty());
+
+        interactive.process("a rel b");
+
+        // One side bound is no better: the other one still filtered nothing.
+        collector.clear();
+        interactive.process("a != O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S != b");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("inequality: a guard naming a variable no condition binds blocks the rule")
+{
+    // The rule-level half of the same contract, and the behaviour change it
+    // implies: Z is bound by no positive condition, so the guard never
+    // filters anything and the rule must not fire on it. It used to fire,
+    // because an unresolvable guard was skipped as "not contradicting".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X rel Y, Y != Z) => (X differs Y)
+a rel b
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S differs O");
+        CHECK(collect_answers(collector).empty());
+
+        // The same rule with a guard both of whose sides the conditions bind
+        // fires as before -- this is the control that the terminal check did
+        // not simply disable the guard.
+        process_lines(interactive, R"(
+(X rel Y, X != Y) => (X apart Y)
+c rel c
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S apart O");
+        CHECK(answers_contain(collector, "a apart b"));
+        CHECK_FALSE(answers_contain(collector, "c apart c")); });
+}
+
 TEST_CASE("inequality: reflexive opposite without != causes false positive")
 {
     // KEY MOTIVATION for !=:

@@ -229,7 +229,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     else
                     {
-                        // Terminal: all conditions satisfied
+                        // Terminal: all conditions satisfied -- unless a `!=`
+                        // guard is still undecided, in which case no positive
+                        // condition ever bound it and it filtered nothing.
+                        // See Reasoning::guards_unresolved.
+                        if (guards_unresolved(*vars, *uneqs))
+                        {
+                            if (should_log(depth))
+                                log(depth, "evaluate", "TERMINAL: != guard never got its bindings, no match");
+                            return;
+                        }
+
                         ReasoningContext ctx_copy = ctx;
 
                         if (!ctx_copy.rule_deductions.empty())
@@ -345,7 +355,15 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
                 else
                 {
-                    // Terminal: all conditions satisfied
+                    // Terminal: all conditions satisfied -- see
+                    // Reasoning::guards_unresolved for the `!=` exception.
+                    if (guards_unresolved(*bindings, *rule.unequals))
+                    {
+                        if (should_log(depth))
+                            log(depth, "evaluate", "TERMINAL: != guard never got its bindings, no match");
+                        return;
+                    }
+
                     ReasoningContext ctx_copy = ctx;
 
                     if (!ctx_copy.rule_deductions.empty())
@@ -585,6 +603,15 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             {
                 if (should_log(depth + 1))
                     log(depth, "match", "All conditions satisfied -> TERMINAL");
+
+                // ... unless a `!=` guard is still undecided; see
+                // Reasoning::guards_unresolved.
+                if (guards_unresolved(*joined, *joined_unequals))
+                {
+                    if (should_log(depth))
+                        log(depth, "evaluate", "TERMINAL: != guard never got its bindings, no match");
+                    return;
+                }
 
                 // Leaf: query or prune
                 ReasoningContext ctx_copy = ctx;
