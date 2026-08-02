@@ -407,3 +407,89 @@ TEST_CASE("commands: a multi-object fact is addressed whole, numeral object and 
         // it is what leaves the count reading no foothold.
         CHECK_THROWS_AS(interactive.process(".node a rel b"), std::runtime_error); });
 }
+
+TEST_CASE("commands: a composite predicate is named and counted like any other")
+{
+    // A fact in predicate position is a first-class predicate -- `logic.md`
+    // makes a point of it -- and the two usage listings could neither name
+    // nor count it.
+    //
+    // Naming: get_name is empty for a node the parser never named, and the
+    // column was simply blank, so the listing gave a count without saying
+    // what it counted.
+    //
+    // Counting: a COMPOSITE relation is pointed at by its own subject and
+    // objects as well, and both passed the role test that separates a
+    // predicate from a subject -- the subject through the
+    // single-outgoing-edge exemption that `~ ~ ->` needs, the object because
+    // a fact does not point back at it. So one use reported three.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+)");
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "a p b 2"));
+        CHECK_FALSE(any_output_contains(collector, "a p b 4"));
+
+        // The atomic predicate next to it is unaffected: `a p b` is its one
+        // use, and the facts that USE that fact are not uses of `p`.
+        CHECK(any_output_contains(collector, "p 1")); });
+}
+
+TEST_CASE("commands: a fact used as a predicate is not a value of itself")
+{
+    // The value listing read a fact's objects from its incoming set, keeping
+    // whatever the fact does not point back at. Every fact that uses it as a
+    // PREDICATE looks exactly like that -- it points at the fact and is not
+    // pointed back at -- so `x (a p b) y` made itself a value of `a p b`, and
+    // the listing for `p` reported a second, nameless value nobody wrote.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+)");
+        collector.clear();
+        interactive.process(".list-predicate-value-usage p");
+        CHECK(any_output_contains(collector, "b 1"));
+        CHECK(any_output_contains(collector, "Total unique values: 1")); });
+}
+
+TEST_CASE("commands: the value listing takes a predicate the way it prints")
+{
+    // `.list-predicate-value-usage (a p b)` was three arguments and was
+    // refused on arity, although a fact in predicate position is exactly what
+    // one asks this listing about. Same resolution as .node, .out and .in,
+    // trailing count included.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+)");
+        for (const char* form : {".list-predicate-value-usage (a p b)",
+                                 ".list-predicate-value-usage a p b"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(any_output_contains(collector, "Value Usage for predicate a p b"));
+            CHECK(any_output_contains(collector, "y 1"));
+        }
+
+        // The trailing count still separates, and a plain name still resolves.
+        process_lines(interactive, R"(
+a q c
+a q d
+a q e
+)");
+        collector.clear();
+        interactive.process(".list-predicate-value-usage q 2");
+        CHECK(any_output_contains(collector, "Showing top 2 of 3 values"));
+
+        CHECK_THROWS_AS(interactive.process(".list-predicate-value-usage nosuch"), std::runtime_error); });
+}

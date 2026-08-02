@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "chrono/stopwatch.hpp"
 #include "io/data_manager.hpp"
 #include "io/mermaid.hpp"
+#include "network/fact_structure.hpp"
 #include "network/network.hpp"
 #include "network/reasoning.hpp"
 #include "platform/platform_utils.hpp"
@@ -1343,6 +1344,16 @@ private:
             std::string predicate_name = _n->get_name(entry.first, "", true); // Current language, with fallback
             std::string line_output;
 
+            // A composite predicate -- a fact or a cons cell -- has no name,
+            // and the column was simply blank, so the listing named a count
+            // without naming what it counted. It renders like everything else.
+            if (predicate_name.empty())
+            {
+                std::string repr;
+                string::node_to_string(_n, repr, _n->lang(), entry.first, 3);
+                predicate_name = string::unmark_identifiers(repr);
+            }
+
             if (has_wikidata_lang && _n->get_lang() != "wikidata")
             {
                 // Three columns: current lang name \t wikidata name \t count
@@ -1364,28 +1375,17 @@ private:
             _n->out("Showing top " + std::to_string(limit) + " of " + std::to_string(total) + " predicates.", true);
     }
 
-    void list_predicate_value_usage(const std::string& pred_arg, size_t limit /*= 0*/)
+    void list_predicate_value_usage(const network::Node pred, size_t limit /*= 0*/)
     {
-        // Resolve the predicate node (accept name in current language or raw numeric ID)
-        network::Node pred = _n->get_node(pred_arg);
-        if (pred == 0)
-        {
-            try
-            {
-                size_t pos = 0;
-                pred       = std::stoull(pred_arg, &pos);
-                if (pos != pred_arg.length())
-                    throw std::runtime_error("");
-            }
-            catch (...)
-            {
-                throw std::runtime_error("Unknown predicate '" + pred_arg + "' in current language '" + _n->lang() + "'");
-            }
-        }
-
         std::string pred_display = _n->get_name(pred, _n->lang(), true);
         if (pred_display.empty())
-            pred_display = pred_arg;
+        {
+            // A composite predicate has no name; it renders like everything
+            // else rather than leaving the heading half-written.
+            std::string repr;
+            string::node_to_string(_n, repr, _n->lang(), pred, 3);
+            pred_display = string::unmark_identifiers(repr);
+        }
 
         _n->out("Value Usage for predicate " + pred_display + ":", true);
         _n->out("------------------------", true);
@@ -1400,15 +1400,17 @@ private:
 
         for (network::Node fact : facts)
         {
-            network::adjacency_set incoming = _n->get_left(fact); // subject(s) + object(s) --> fact
+            // The EXACT decomposition, not the adjacency reading. A fact's
+            // incoming set holds its subject and objects -- and every fact
+            // that uses it as a PREDICATE, which points at it and is not
+            // pointed back at, exactly like an object. So `x (a p b) y` made
+            // itself a value of `a p b`, and the listing for `p` reported a
+            // second, nameless value that nobody had written.
+            const network::FactStructure fs = network::get_preferred_structure(_n, fact, 3);
 
-            // Objects are incoming nodes where fact does NOT point back to them
-            for (network::Node cand : incoming)
+            for (network::Node obj : fs.objects)
             {
-                if (!_n->has_right_edge(fact, cand))
-                {
-                    value_counts[cand]++;
-                }
+                value_counts[obj]++;
             }
         }
 
@@ -1501,7 +1503,7 @@ private:
             "  .in <name|id|fact> [count]                – List details of incoming connected nodes (default 20)",
             "  .mermaid <node_name> [max_depth]          – Generate Mermaid HTML file for a node (default depth 3)",
             "  .list-predicate-usage [max]               – Show predicate usage statistics (top N most frequent predicates)",
-            "  .list-predicate-value-usage <pred> [max]  – Show object/value usage statistics for a specific predicate (top N most frequent values)",
+            "  .list-predicate-value-usage <name|id|fact> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             "",
             "Inference & Rules",
             "  .run                                      – Run full inference",
@@ -1729,9 +1731,10 @@ private:
                                       "If <max_entries> is specified, only the top N most frequent predicates are shown.\n"
                                       "If Wikidata language is active, Wikidata IDs are shown alongside names."},
 
-            {".list-predicate-value-usage", ".list-predicate-value-usage <predicate> [max_entries]\n"
+            {".list-predicate-value-usage", ".list-predicate-value-usage <name|id|fact> [max_entries]\n"
                                             "Shows how often each object (value) is used with the specified predicate, sorted by frequency.\n"
-                                            "The <predicate> can be a name (in the current language) or a numeric node ID.\n"
+                                            "The predicate can be a name (in the current language), a numeric node ID, or a printed\n"
+                                            "FACT such as (a p b) -- a fact in predicate position is addressed the way it prints.\n"
                                             "If <max_entries> is specified, only the top N most frequent values are shown.\n"
                                             "If the Wikidata language is available and active, Wikidata IDs are shown alongside names."},
 
@@ -2807,17 +2810,29 @@ private:
     }
     void cmd_list_predicate_value_usage(const std::vector<std::string>& cmd)
     {
-        if (cmd.size() < 2 || cmd.size() > 3)
+        if (cmd.size() < 2)
             throw std::runtime_error("Command .list-predicate-value-usage requires one required argument (<predicate>) and one optional (max entries)");
 
-        size_t             limit    = 0;
-        const std::string& pred_arg = cmd[1];
-        if (cmd.size() == 3) limit = string::parse_count(cmd[2]);
+        // Same resolve logic as .node: a name, an ID, or a printed FACT, with
+        // the trailing count separated the way .explain separates its depth.
+        // A composite predicate could not be named here at all -- the command
+        // saw `.list-predicate-value-usage (a p b)` as three arguments and
+        // refused on arity, although a fact in predicate position is exactly
+        // what one asks this listing about.
+        size_t              limit    = 0;
+        const network::Node pred     = resolve_node_or_fact({cmd.begin() + 1, cmd.end()}, &limit);
+        std::string         pred_arg = cmd[1];
+        for (size_t i = 2; i < cmd.size(); ++i)
+            pred_arg += " " + cmd[i];
+
+        if (pred == 0)
+            throw std::runtime_error("Unknown predicate '" + pred_arg + "' in current language '" + _n->lang() + "'");
+
         if (_data_manager)
         {
             _data_manager->set_logging(false);
         }
-        list_predicate_value_usage(pred_arg, limit);
+        list_predicate_value_usage(pred, limit);
         if (_data_manager)
         {
             _data_manager->set_logging(true);

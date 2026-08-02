@@ -418,10 +418,34 @@ adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
     // so the back edge cannot separate them: _left[fact] = {subject,
     // predicate} then has a single entry, and the relation is the predicate
     // after all. `~ ~ ->` is that fact, and every network has it.
+    // A COMPOSITE relation -- a fact or a cons cell in predicate position --
+    // is pointed at by its own subject and objects as well, and those passed
+    // both tests above: the subject through the single-outgoing-edge
+    // exemption, the object because a fact does not point back at it. So
+    // `x (a p b) y` reported THREE uses of `(a p b)` where there is one. The
+    // parts are excluded by name rather than by another edge test, because
+    // no edge distinguishes them -- one decomposition of the relation
+    // itself, and nothing at all for the atomic predicate every bulk import
+    // consists of.
+    adjacency_set own_parts;
+    if (Impl::is_hash(relation))
+    {
+        const FactStructure fs = get_preferred_structure(this, relation, 3);
+        if (fs.predicate != 0 && fs.subject != 0)
+        {
+            own_parts.insert(fs.subject);
+            own_parts.insert(fs.predicate);
+            for (const Node o : fs.objects)
+                own_parts.insert(o);
+        }
+    }
+
     const Network::ReadScope scope = read_scope();
 
     for (const Node fact : scope.left(relation))
     {
+        if (own_parts.count(fact) == 1) continue;
+
         if (scope.left(fact).count(relation) == 0 || scope.right(fact).size() == 1)
         {
             facts.insert(fact);
