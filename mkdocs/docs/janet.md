@@ -359,7 +359,14 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/import path & args)`**  
   Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
   This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "decimal-arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
-  Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+  Two restrictions apply: `.janet` files are rejected (use `zelph/run-script` below, or Janet's own `import`, `use`, or `dofile`, for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+
+- **`(zelph/run-script path & args)`**  
+  Run a Janet source file the way the `janet` CLI would, and the counterpart of `zelph/import` for `.janet` files: the file is evaluated in a fresh environment, and its `main` function — if it defines one — is then called with the script path followed by `args`. Returns `nil`.  
+  This is what the binary itself uses for `zelph <file.janet>`, so a script written for that invocation runs unchanged when called from Janet.  
+  Two properties are worth knowing, because neither follows from the name:
+    - Relative imports such as `(use ./helper)` resolve against the **script's** directory, not the process's working directory, so a script can be started from anywhere.
+    - Every run starts from an empty module cache. Janet's `require` caches modules process-wide, so without this a second run of the same script would keep the first version of every dependency it pulled in — an edit to `helper.janet` would be invisible for the rest of the session.
 
 ##### Running the engine
 
