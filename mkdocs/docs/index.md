@@ -275,6 +275,34 @@ This is also what keeps the engine's own conjunction form working, whose
 members are condition patterns and therefore never ground — see
 [the rule section](#rules-and-inference) for `*{...} ~ conjunction`.
 
+##### A literal a rule derives
+
+While the rule is being read its members are unknown, but a *binding* makes
+them known — so a container in a **consequence** is rebuilt from the
+substituted members, as a set constant. The rule keeps showing its own
+collection; each derived fact carries a set of its own:
+
+```
+zelph> a p b
+zelph> c p d
+zelph> (X p Y) => (X likes @{Y})
+(a likes {b}) ⇐ (a p b)
+(c likes {d}) ⇐ (c p d)
+zelph> S likes O
+Answer: c likes {d}
+Answer: a likes {b}
+```
+
+Set constants are hash-consed, which is what makes this safe: re-deriving
+lands on the same node, so the run reaches a fixpoint. A fresh collection per
+binding would be a new node on every run and never converge.
+
+Two containers are deliberately **not** rebuilt. One is the container a rule
+writes *into*: `Y in @{X}` says something about that container, so its
+identity survives substitution and the accumulator above keeps naming one
+bucket. The other is a literal with nothing to substitute — `{red green}` or
+`@{bucket}` — which is already what it will be.
+
 ##### Topology
 
 Both kinds create a **super-node** representing the grouping itself, and link

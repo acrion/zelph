@@ -966,7 +966,81 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
     return false; // no contradiction
 }
 
-Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& variables, const int depth, std::vector<Node>& history)
+namespace
+{
+    // A container has no fact structure of its own: its members hang off it as
+    // separate PartOf facts, which is the same reconstruction node_to_string
+    // performs when it prints "{...}".
+    bool collect_container_members(const Zelph* const z, const Node node, std::unordered_set<Node>& members)
+    {
+        // predicate_of before parse_fact, and predicate_of rather than
+        // parse_relation: this runs over the adjacency of every atom a
+        // deduction instantiates, so a node that is merely a busy constant --
+        // the object of ten thousand facts -- must be rejected by an O(1)
+        // store lookup per neighbour, not by reconstructing each one.
+        for (const Node rel : z->get_right(node))
+        {
+            if (z->predicate_of(rel) != z->core.PartOf) continue;
+
+            adjacency_set objs;
+            const Node    member = z->parse_fact(rel, objs, 0);
+
+            if (member != 0 && objs.count(node) == 1) members.insert(member);
+        }
+
+        return !members.empty();
+    }
+
+    // A container in a deduced fact denotes what the bindings put into it, so
+    // substitution has to REBUILD it. instantiate_fact alone finds no fact
+    // structure on a container node and handed it back unchanged, so every
+    // derived fact named the RULE's own container and the substituted member
+    // never arrived: `(X p Y) => (X likes {Y})` derived `a likes @{Y}`, with
+    // the rule's template variable in place of `b` and one single object
+    // shared by every binding.
+    //
+    // The rebuild produces a SET CONSTANT, and that is what makes it safe:
+    // a set constant hash-conses, so re-deriving lands on the same node and
+    // the fixpoint arrives. A fresh COLLECTION per binding would be a new node
+    // on every run and would never converge -- the trap find_conjunction_set
+    // had to solve for derived rules.
+    //
+    // Three cases are deliberately left alone:
+    //   - a container whose members are all ground, since there is nothing to
+    //     substitute. That is `{red green}` and the accumulator `@{bucket}`,
+    //     both unchanged;
+    //   - a container still carrying a variable afterwards, since
+    //     extensionality needs KNOWN members;
+    //   - a conjunction set, which is rule structure and belongs to
+    //     rebuild_condition.
+    // Writing INTO a container is left alone as well -- see instantiate_fact.
+    Node instantiate_container(Zelph* z, const Node node, const Variables& variables, const int depth, std::vector<Node>& history)
+    {
+        if (z->check_fact(node, z->core.IsA, {z->core.Conjunction}).is_known()) return node;
+
+        std::unordered_set<Node> members;
+        if (!collect_container_members(z, node, members)) return node;
+
+        std::unordered_set<Node> instantiated;
+        bool                     changed = false;
+
+        for (const Node m : members)
+        {
+            const Node im = instantiate_fact(z, m, variables, depth, history);
+
+            if (im == 0 || Zelph::Impl::is_var(im) || z->var_in_closure(im)) return node;
+
+            if (im != m) changed = true;
+            instantiated.insert(im);
+        }
+
+        if (!changed) return node;
+
+        return z->set(instantiated);
+    }
+}
+
+Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& variables, const int depth, std::vector<Node>& history, const bool rebuild_container)
 {
     // 1. Variable substitution
     if (Zelph::Impl::is_var(pattern))
@@ -989,8 +1063,12 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
 
     if (fs.subject == 0)
     {
+        // Atomic, or a container -- the latter has no fact structure but does
+        // have members to substitute. `pattern` stays on the history while
+        // they are rebuilt, so a container that reaches itself terminates.
+        const Node atom = rebuild_container ? instantiate_container(z, pattern, variables, depth, history) : pattern;
         history.pop_back();
-        return pattern; // Atomic / No structure found
+        return atom;
     }
 
     Node inst_subject  = instantiate_fact(z, fs.subject, variables, depth, history);
@@ -999,9 +1077,16 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
     adjacency_set inst_objects;
     bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);
 
+    // Putting something INTO a container is an assertion ABOUT that container,
+    // so its identity has to survive substitution: `(X reported Y) =>
+    // (Y in @{X})` is the accumulator idiom and names ONE bucket across every
+    // binding. Everywhere else a container is a value describing this binding
+    // and is rebuilt.
+    const bool objects_rebuild = inst_relation != z->core.PartOf;
+
     for (Node o : fs.objects)
     {
-        Node io = instantiate_fact(z, o, variables, depth, history);
+        Node io = instantiate_fact(z, o, variables, depth, history, objects_rebuild);
         inst_objects.insert(io);
         if (io != o) changed = true;
     }

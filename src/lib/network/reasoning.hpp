@@ -74,7 +74,10 @@ namespace zelph::network
 
     // Recursively substitute variables in a fact pattern to produce a concrete fact.
     // Used by evaluate and deduce to instantiate rule patterns with current bindings.
-    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history);
+    // rebuild_container = false keeps a container's identity instead of rebuilding
+    // it from the substituted members; the object of a PartOf fact is written INTO
+    // and must stay the same container across bindings.
+    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history, bool rebuild_container = true);
 
     // Recursively collect all variable nodes from a fact pattern.
     // Used to detect "fresh variables" that appear only in rule consequences.

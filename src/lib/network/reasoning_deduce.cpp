@@ -472,7 +472,11 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 for (Node var_t : var_targets)
                 {
                     history = {deduction};
-                    Node t  = instantiate_fact(this, var_t, augmented, depth, history);
+                    // A PartOf object is written INTO, so it stays the very
+                    // container the rule names -- that is the accumulator
+                    // idiom. Anywhere else a container is a value of this
+                    // binding and instantiate_fact rebuilds it.
+                    Node t = instantiate_fact(this, var_t, augmented, depth, history, rel != core.PartOf);
 
                     if (should_log(depth))
                         log(depth, "deduce", "Instantiated target: " + (t ? format(t) : "NULL") + " (from pattern " + format(var_t) + ")");
@@ -710,7 +714,8 @@ bool Reasoning::consequences_already_exist(
         for (Node vt : var_targets)
         {
             history = {deduction};
-            Node t  = instantiate_fact(this, vt, working, depth, history);
+            // Same reading as in deduce(): a PartOf object keeps its identity.
+            Node t = instantiate_fact(this, vt, working, depth, history, rel != core.PartOf);
             if (t == 0) return false;
             targets.insert(t);
         }

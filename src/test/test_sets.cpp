@@ -255,6 +255,96 @@ TEST_CASE("sets: a membership fact keeps its own member in the printed container
         CHECK_FALSE(any_output_contains(collector, "Representation: a in {a}")); });
 }
 
+TEST_CASE("sets: substitution rebuilds a container in a consequence as a set constant")
+{
+    // instantiate_fact substitutes into FACTS, and a container is not one --
+    // its members hang off it as separate PartOf facts, so it has no fact
+    // structure to recurse into and came back unchanged. Every derived fact
+    // therefore named the RULE's own container and the substituted member
+    // never arrived: `(X p Y) => (X likes {Y})` derived `a likes @{Y}` and
+    // `c likes @{Y}`, with the rule's template variable in place of the value
+    // and ONE object shared by both bindings.
+    //
+    // The rebuild produces a set constant, and that is what makes it safe: it
+    // hash-conses, so re-deriving lands on the same node and the fixpoint
+    // arrives. A fresh collection per binding would be a new node every run.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+c p d
+(X p Y) => (X likes {Y})
+(X p Y) => (X holds <{Y} Y>)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(answers_contain(collector, "a likes {b}"));
+        CHECK(answers_contain(collector, "c likes {d}"));
+        CHECK(collect_answers(collector).size() == 2);
+
+        // Nested inside a list, which is where the recursion has to reach.
+        collector.clear();
+        interactive.process("S holds O");
+        CHECK(answers_contain(collector, "a holds <{b} b>"));
+        CHECK(answers_contain(collector, "c holds <{d} d>"));
+
+        // A second run derives nothing new: the set constants are the same
+        // nodes, so the fixpoint is reached.
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("sets: a ground literal in a consequence is not rebuilt")
+{
+    // Nothing to substitute, so the literal keeps the node it had -- both
+    // kinds, and the collection therefore still accumulates.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+c p d
+(X p Y) => (X likes {red green})
+(X p Y) => (X in @{bucket})
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(answers_contain(collector, "a likes {red green}"));
+        CHECK(answers_contain(collector, "c likes {red green}"));
+
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "a in @{a c bucket}"));
+        CHECK(answers_contain(collector, "c in @{a c bucket}")); });
+}
+
+TEST_CASE("sets: writing into a container keeps that container")
+{
+    // `Y in @{X}` says something ABOUT the container, so its identity has to
+    // survive substitution -- rebuilding it per binding would turn the one
+    // bucket the rule names into one container per derived fact. This is the
+    // control for the PartOf exemption in deduce().
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+alice reported bug1
+bob reported bug2
+(X reported Y) => (Y in @{X})
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "bug1 in @{bug1 bug2}"));
+        CHECK(answers_contain(collector, "bug2 in @{bug1 bug2}"));
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
 TEST_CASE("sets: a rule that would extend a set constant says why, not just `!`")
 {
     // Extending a set constant is refused wherever it is attempted, and a rule
