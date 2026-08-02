@@ -894,6 +894,21 @@ format:
   The export hands over its elements, so no one has to take braces apart
   again.
 
+A contradiction record carries one more field when the engine **refused** to
+build the deduced fact — a shape it cannot represent — rather than finding the
+knowledge base contradictory. Both stop the rule, and both are reported as
+`!`, so the reason is what tells them apart:
+
+```json
+{"kind":"contradiction",
+ "conclusion":[{"core":"!"}],
+ "refused":"a set constant cannot be extended -- {a b} IS its members. Write the collection literal @{...} for a container that membership can grow.",
+ "premises":[["(",{"names":{"zelph":"q"}}," ",{"names":{"zelph":"p"}}," ",{"names":{"zelph":"r"}},")"]]}
+```
+
+The field is absent on a contradiction of the data, so counting those means
+counting the records that do **not** have it.
+
 Deduction printing is off during the run: rendering large derived terms
 dominates the wall-clock time, and the file is the point.
 
