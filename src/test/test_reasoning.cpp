@@ -1371,3 +1371,74 @@ g (h r t) i
         // `(h r t)` still differs in the object.
         CHECK(collect_answers(collector).size() == 2); });
 }
+
+TEST_CASE("reasoning: the two strategies agree on what is REPORTED, not only on what is derived")
+{
+    // `.semi-naive check` compares derived FACTS. Anything the engine REPORTS
+    // rather than derives -- a contradiction, and since this session a refusal
+    // -- is invisible to it by construction, so a divergence there would be
+    // caught by nothing at all.
+    //
+    // This closes that gap for one deliberately awkward network: a rule
+    // GENERATOR writes the transitivity rule, the closure it produces is what
+    // a contradiction rule then fires on (so the contradiction depends on
+    // DERIVED facts, which is where delta seeding differs from a classic
+    // pass), a COMPOSITE PREDICATE PATTERN runs beside it, and a REFUSED
+    // deduction is reported from a third rule. Both strategies have to agree
+    // on the derived facts AND on how many `!` lines come out.
+    const std::string network = R"(
+p is transitive
+a p b
+b p c
+c p d
+m (n r s) o
+z rel {a b}
+q p2 r
+(R is transitive) => ((X R Y, Y R Z) => (X R Z))
+(A p d, A p b) => !
+(X (Y r s) Z) => (Y links X)
+(X p2 Y) => (X in {a b})
+)";
+
+    const auto contradiction_lines = [](const zelph::io::OutputCollector& c)
+    {
+        return std::count_if(c.events().begin(), c.events().end(), [](const auto& e)
+                             { return normalize(e.text).find("⇐") != std::string::npos
+                                   && normalize(e.text).starts_with("!"); });
+    };
+
+    const auto run_with = [&](const char* mode)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(mode);
+        process_lines(interactive, network);
+        interactive.run(true, false, false);
+
+        const auto bangs = contradiction_lines(collector);
+
+        collector.clear();
+        interactive.process("S p O");
+        auto answers = collect_answers(collector);
+
+        collector.clear();
+        interactive.process("S links O");
+        for (const auto& a : collect_answers(collector))
+            answers.push_back(a);
+
+        std::sort(answers.begin(), answers.end());
+        return std::make_pair(answers, bangs);
+    };
+
+    const auto delta   = run_with(".semi-naive on");
+    const auto classic = run_with(".semi-naive off");
+
+    // The closure, the pattern-predicate consequence, and nothing else.
+    REQUIRE(delta.first.size() == 7);
+    CHECK(delta.first == classic.first);
+
+    // One contradiction from the closure, two refusals from the third rule --
+    // and the same number either way.
+    CHECK(delta.second > 0);
+    CHECK(delta.second == classic.second);
+}
