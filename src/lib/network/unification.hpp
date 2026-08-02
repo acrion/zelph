@@ -56,7 +56,7 @@ namespace zelph::network
     struct PatternInfo
     {
         Node          condition{0};
-        Node          relation{0}; // raw pattern predicate; may be a variable
+        Node          relation{0}; // raw pattern predicate; may be a variable or a composite pattern
         Node          subject{0};
         adjacency_set objects;
         Node          subject_pred_hint{0};
@@ -121,6 +121,7 @@ namespace zelph::network
         std::shared_ptr<Variables> _unequals;
         adjacency_set              _relation_list;
         Node                       _relation_variable{};
+        Node                       _relation_pattern{};
         Node                       _subject{};
         adjacency_set              _objects;
         Node                       _subject_pred_hint{};

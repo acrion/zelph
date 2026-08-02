@@ -466,6 +466,20 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             if (should_log(depth))
                 log(depth, "deduce", "Instantiated source: " + (source ? format(source) : "NULL") + " (from pattern " + format(var_source) + ")");
 
+            // The predicate is a pattern like the rest of the consequence. The
+            // substitution above it covers a predicate that IS a variable and
+            // nothing else, so a COMPOSITE one kept the rule's own variables:
+            // `(X p Y) => (X (Y r s) c)` derived `a (Y r s) c`, a fact carrying
+            // a template variable that no query can ever match.
+            const Node var_rel = rel;
+            history            = {deduction};
+            rel                = instantiate_fact(this, rel, augmented, depth, history);
+
+            if (rel != var_rel && should_log(depth))
+                log(depth, "deduce", "Instantiated relation: " + (rel ? format(rel) : "NULL") + " (from pattern " + format(var_rel) + ")");
+
+            if (!rel || Zelph::Impl::is_var(rel)) source = 0;
+
             if (source)
             {
                 bool done = true;
@@ -504,6 +518,11 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                     std::unordered_set<Node> residual;
                     std::vector<Node>        ground_history;
                     collect_variables(this, source, residual, depth, ground_history);
+                    // The predicate too: it was left out, which is how a
+                    // composite predicate carrying a rule variable reached the
+                    // graph before the instantiation above was added.
+                    ground_history.clear();
+                    collect_variables(this, rel, residual, depth, ground_history);
                     for (Node t : targets)
                     {
                         ground_history.clear();
@@ -706,9 +725,15 @@ bool Reasoning::consequences_already_exist(
         adjacency_set var_targets;
         Node          var_source = parse_fact(deduction, var_targets, parent);
 
-        // Instantiate subject and objects with current working bindings
+        // Instantiate subject, predicate and objects with current working
+        // bindings -- the predicate for the same reason as in deduce(), and
+        // because this check has to ask about the fact deduce() would build.
         std::vector<Node> history;
         Node              source = instantiate_fact(this, var_source, working, depth, history);
+
+        history = {deduction};
+        rel     = instantiate_fact(this, rel, working, depth, history);
+        if (!rel || Zelph::Impl::is_var(rel)) return false;
 
         adjacency_set targets;
         for (Node vt : var_targets)

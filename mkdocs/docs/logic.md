@@ -104,6 +104,19 @@ Answer: x (a p b) y
 
 (abridged — the query also lists the core relation types). This holds independently of how the network came to be: a graph read back from a `.bin` answers exactly as the one that was typed.
 
+A composite predicate may itself carry variables, and then it is a **pattern** like any other — it unifies structurally rather than being looked up by identity, so it reaches inside the predicate:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> (S (a P b) O) => (P links S)
+(p links x) ⇐ (x (a p b) y)
+zelph> S links O
+Answer: p links x
+```
+
+The same holds in a consequence: `(X p Y) => (X (Y r s) c)` derives `a (b r s) c`, and the instantiated predicate is declared a relation type like every other.
+
 This is in contrast to [RDF](https://en.wikipedia.org/wiki/Resource_Description_Framework), where a triple is an edge with no inherent identity. To make a statement _about_ a triple in classic RDF, you need [reification](<https://en.wikipedia.org/wiki/Reification_(knowledge_representation)#RDF_reification>): four additional triples that decompose and name the original one. The [RDF-star](https://www.w3.org/2021/12/rdf-star.html) extension was introduced specifically to address this limitation.
 
 In zelph, this problem does not exist. Every statement is already a node. The relation node serves a purpose analogous to [Gödel numbering](https://en.wikipedia.org/wiki/G%C3%B6del_numbering) — it makes the system self-referential by giving every statement a first-class identity within the system. But where Gödel had to route through arithmetic encoding (prime factorization), zelph's reification is _structural_: the node _is_ the statement, with no encoding or decoding step.

@@ -622,6 +622,24 @@ Unification::Unification(
             }
             _relation_variable = relation;
         }
+        else if (_n->var_in_closure(relation))
+        {
+            // A COMPOSITE predicate carrying a variable -- `(X (Y r s) Z)` --
+            // is a pattern, exactly as a structured subject is, and the two
+            // other positions have unified structurally all along. Only the
+            // predicate was compared by identity, so the rule matched nothing
+            // whatsoever: the graph holds `(b r s)`, never `(Y r s)`.
+            //
+            // The candidate set is the one a relation VARIABLE gets; what
+            // separates the two is that extract_bindings unifies the pattern
+            // against each candidate instead of binding one variable to it.
+            if (_seed_fact != 0)
+                _relation_list.insert(_seed_predicate);
+            else
+                _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+
+            _relation_pattern = relation;
+        }
         else
         {
             _relation_list.insert(relation); // leaving _relation_variable==0, ...
@@ -778,8 +796,12 @@ Unification::Unification(
         // Gated on use_anchors() alone, NOT use_parallel(): the climbed
         // candidate set is consumed by the sequential iterator and is
         // exactly as valid in single-core mode.
+        // _relation_pattern excluded for the same reason as _relation_variable:
+        // both leave _relation_list holding EVERY relation type, and the two
+        // paths below take *begin() as though it were the only one.
         if (_n->use_anchors()
-            && !subject_is_bound && !object_is_bound && _relation_variable == 0 && !_relation_list.empty())
+            && !subject_is_bound && !object_is_bound && _relation_variable == 0 && _relation_pattern == 0
+            && !_relation_list.empty())
         {
             const Node fixed_rel = *_relation_list.begin();
 
@@ -835,7 +857,8 @@ Unification::Unification(
             }
         }
 
-        if (_pool && _n->use_parallel() && _relation_variable == 0 && !subject_is_bound && !object_is_bound
+        if (_pool && _n->use_parallel() && _relation_variable == 0 && _relation_pattern == 0
+            && !subject_is_bound && !object_is_bound
             && !_partial_snapshot_valid && !concurrency::tl_is_pool_worker)
         {
             Node fixed_rel = *_relation_list.begin();
@@ -1254,6 +1277,27 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
             PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
         }
         return results;
+    }
+
+    // --- Predicate unification ---
+    // Only for a composite predicate carrying a variable; a fixed one is
+    // already the relation this candidate was reached through, and a
+    // predicate VARIABLE is bound at the end of the enumeration below.
+    if (_relation_pattern != 0)
+    {
+        if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation))
+            return results; // the candidate's predicate is itself a template
+
+        history.clear();
+        if (!unify_nodes(_n, _relation_pattern, relation, base_result, *_variables, history, _log_depth, _prof))
+        {
+            if (_n->logging_active())
+            {
+                U_LOG(depth, "  -> Predicate pattern failed");
+                PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
+            }
+            return results;
+        }
     }
 
     // --- Reject rule-template fact nodes ---

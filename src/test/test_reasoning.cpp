@@ -1228,3 +1228,86 @@ TEST_CASE("rules: a consequence subject that is itself a predicate stays the sub
         interactive.process("p scored O");
         CHECK(answers_contain(collector, "p scored alarm")); });
 }
+
+TEST_CASE("rules: a composite predicate in a consequence is instantiated")
+{
+    // deduce() substituted a predicate that IS a variable and nothing else, so
+    // a COMPOSITE one kept the rule's own variables. `(X p Y) => (X (Y r s) c)`
+    // derived `a (Y r s) c` -- a fact carrying a template variable, which no
+    // query can match and which the ground guard did not catch either, because
+    // that guard read the subject and the objects but not the predicate.
+    //
+    // Both halves are pinned here: the predicate is substituted, and nothing
+    // with a residual variable reaches the graph.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(q r s) ~ ->
+(X p Y) => (X (Y r s) c)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "a (b r s) c"));
+        CHECK_FALSE(answers_contain(collector, "a (Y r s) c"));
+
+        // The instantiated predicate is declared as a relation type, which is
+        // what keeps the derived fact readable after a reload.
+        collector.clear();
+        interactive.process("S ~ ->");
+        CHECK(answers_contain(collector, "(b r s) ~ ->")); });
+}
+
+TEST_CASE("rules: a container in predicate position is rebuilt like any other")
+{
+    // Same path, reached through a container rather than a fact: the
+    // predicate is not exempt from the rebuild that objects get, since only
+    // the object of a PartOf deduction is written INTO.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(X p Y) => (X {Y} c)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "a {b} c"));
+        CHECK_FALSE(answers_contain(collector, "a @{Y} c")); });
+}
+
+TEST_CASE("rules: a composite predicate in a condition unifies structurally")
+{
+    // Subject and object positions have unified structurally all along --
+    // `((Y r s) p Z)` and `(X p (Y r s))` both match -- but the predicate was
+    // compared by IDENTITY, so `(X (Y r s) Z)` matched nothing whatsoever: the
+    // graph holds `(b r s)`, never `(Y r s)`. The rule was accepted and
+    // silently inert, and no binding order helped, because the candidate set
+    // is fixed when the condition is set up rather than when it is joined.
+    //
+    // The candidate set is now the one a predicate VARIABLE gets; what
+    // separates the two is that extract_bindings unifies the pattern against
+    // each candidate instead of binding one variable to it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e r s) f
+a (b r t) c
+a p c
+(X (Y r s) Z) => (Y links X)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links a"));
+        CHECK(answers_contain(collector, "e links d"));
+
+        // The fixed parts of the pattern still select: `(b r t)` differs in
+        // its object, `p` is not composite at all.
+        CHECK(collect_answers(collector).size() == 2); });
+}
