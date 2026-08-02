@@ -258,35 +258,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         else if (_prune_mode)
                         {
-                            adjacency_set objects;
-                            Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
-                            subject               = string::get(*vars, subject, subject);
-                            Node relation         = parse_relation(ctx_copy.current_condition);
-                            relation              = string::get(*vars, relation, relation);
-
-                            adjacency_set targets;
-                            for (Node obj : objects)
-                            {
-                                Node iobj = string::get(*vars, obj, obj);
-                                if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
-                            }
-
-                            if (subject && relation && !targets.empty()
-                                && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
-                            {
-                                Answer ans = check_fact(subject, relation, targets);
-                                if (ans.is_known() && ans.relation())
-                                {
-                                    _facts_to_prune.insert(ans.relation());
-                                    if (_prune_nodes_mode)
-                                    {
-                                        if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
-                                            _nodes_to_prune.insert(subject);
-                                        else if (objects.size() == 1)
-                                            _nodes_to_prune.insert(*targets.begin());
-                                    }
-                                }
-                            }
+                            collect_prune_targets(ctx_copy.current_condition, *vars, rule.node);
                         }
                         else
                         {
@@ -382,35 +354,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     else if (_prune_mode)
                     {
-                        adjacency_set objects;
-                        Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
-                        subject               = string::get(*bindings, subject, subject);
-                        Node relation         = parse_relation(ctx_copy.current_condition);
-                        relation              = string::get(*bindings, relation, relation);
-
-                        adjacency_set targets;
-                        for (Node obj : objects)
-                        {
-                            Node iobj = string::get(*bindings, obj, obj);
-                            if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
-                        }
-
-                        if (subject && relation && !targets.empty()
-                            && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
-                        {
-                            Answer ans = check_fact(subject, relation, targets);
-                            if (ans.is_known() && ans.relation())
-                            {
-                                _facts_to_prune.insert(ans.relation());
-                                if (_prune_nodes_mode)
-                                {
-                                    if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
-                                        _nodes_to_prune.insert(subject);
-                                    else if (objects.size() == 1)
-                                        _nodes_to_prune.insert(*targets.begin());
-                                }
-                            }
-                        }
+                        collect_prune_targets(ctx_copy.current_condition, *bindings, rule.node);
                     }
                     else
                     {
@@ -632,34 +576,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
                 else if (_prune_mode)
                 {
-                    adjacency_set objects;
-                    Node          subject = parse_fact(ctx_copy.current_condition, objects, rule.node);
-                    subject               = string::get(*joined, subject, subject);
-                    Node relation         = parse_relation(ctx_copy.current_condition);
-                    relation              = string::get(*joined, relation, relation);
-
-                    adjacency_set targets;
-                    for (Node obj : objects)
-                    {
-                        Node iobj = string::get(*joined, obj, obj);
-                        if (iobj && !Zelph::Impl::is_var(iobj)) targets.insert(iobj);
-                    }
-
-                    if (subject && relation && !targets.empty() && !Zelph::Impl::is_var(subject) && !Zelph::Impl::is_var(relation))
-                    {
-                        Answer ans = check_fact(subject, relation, targets);
-                        if (ans.is_known() && ans.relation())
-                        {
-                            _facts_to_prune.insert(ans.relation());
-                            if (_prune_nodes_mode)
-                            {
-                                if (Zelph::Impl::is_var(parse_fact(ctx_copy.current_condition, objects)))
-                                    _nodes_to_prune.insert(subject);
-                                else if (objects.size() == 1)
-                                    _nodes_to_prune.insert(*targets.begin());
-                            }
-                        }
-                    }
+                    collect_prune_targets(ctx_copy.current_condition, *joined, rule.node);
                 }
                 else
                 {

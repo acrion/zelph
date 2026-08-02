@@ -169,6 +169,11 @@ namespace zelph::network
         // strictly less than the report each of them produces anyway.
         void report_contradiction(const contradiction_error& error);
 
+        // Prune mode: record what the matched CONDITION denotes under these
+        // bindings. Called from every terminal site of evaluate(), which is
+        // why it is a function rather than the three copies it replaces.
+        void collect_prune_targets(Node condition, const Variables& bindings, Node parent);
+
         // The rendered "!" as a MARKED identifier -- the conclusion of a
         // contradiction, in the same form node_to_string produces for any
         // other name, so console and export read it the same way.

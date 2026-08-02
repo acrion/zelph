@@ -410,3 +410,100 @@ TEST_CASE("removal: a real element still takes the container with it")
         interactive.process(".list-rules");
         CHECK(any_output_contains(collector, "No rules found")); });
 }
+
+TEST_CASE("pruning: a pattern that is not a bare variable is pruned too")
+{
+    // .prune-facts takes a rule condition and removes what it matches, and
+    // the matching itself was never the problem -- unification resolves a
+    // structured subject, object and (since it learned to) predicate alike.
+    // What did not follow was the reconstruction of WHAT to remove: it
+    // substituted only where the pattern was a bare variable and then asked
+    // check_fact about the pattern node itself. So the command reported
+    // "Pruned 0 matching facts" for facts it had just matched, in all three
+    // positions.
+    SUBCASE("composite predicate")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a (b r s) c
+d (e r s) f
+g p h
+)");
+        collector.clear();
+        interactive.process(".prune-facts (X (Y r s) Z)");
+        CHECK(any_output_contains(collector, "Pruned 2"));
+
+        // The fact of another predicate is untouched.
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "g p h"));
+    }
+
+    SUBCASE("composite subject")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(b r s) p c
+(e r s) p f
+)");
+        collector.clear();
+        interactive.process(".prune-facts ((Y r s) p Z)");
+        CHECK(any_output_contains(collector, "Pruned 2"));
+    }
+
+    SUBCASE("composite object")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+c p (b r s)
+f p (e r s)
+)");
+        collector.clear();
+        interactive.process(".prune-facts (X p (Y r s))");
+        CHECK(any_output_contains(collector, "Pruned 2"));
+    }
+
+    SUBCASE("a list pattern in subject position")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("<a b> p c");
+
+        collector.clear();
+        interactive.process(".prune-facts ((H cons T) p Z)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+    }
+
+    SUBCASE("the plain shapes are unchanged")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+d p e
+)");
+        collector.clear();
+        interactive.process(".prune-facts (X p Y)");
+        CHECK(any_output_contains(collector, "Pruned 2"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+    }
+
+    SUBCASE("a ground composite predicate is unchanged")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+)");
+        collector.clear();
+        interactive.process(".prune-facts (X (a p b) Y)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+    }
+}
