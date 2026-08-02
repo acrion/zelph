@@ -230,6 +230,8 @@ The current implementation is a deliberate foundation, not a finished ML framewo
 
 The following is a complete, unedited session log of `stdlib/examples/neural/nn-wikidata-demo.zph` running against a pruned Wikidata dump (zelph 0.9.7), including the test-suite run: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph.
 
+> **Reproducing it today:** every number below still comes out identically — 145 countries, 118 samples, `final mean loss 0.10311`, 99 `P30-verified` and 43 `P30-candidate` facts. The one thing that differs is the per-deduction echo: the `⇐` lines are printed here because the default deduction mode was `all` when the log was taken. Focus mode, the default since, deliberately anchors only on statements you entered yourself — an imported script does not contribute anchors (see `.help .deductions`) — so the same run now reports `(skipped 142 deductions)` instead. Prefix the session with `.deductions all` to get the log below.
+
 ```text
 ❯ zelph
 zelph 0.9.7-dev
@@ -430,7 +432,7 @@ P30-candidate facts: 43
   Q1530762 (Kingdom of Kandy) -> Q46  conf=0.527
   Q109534069 (Kingdom of Wolaita) -> Q46  conf=0.527
   Q3136869 (Kingdom of Dambadeniya) -> Q46  conf=0.527
-  Q3267672 (Republic of Entre R\u00edos) -> Q46  conf=0.527
+  Q3267672 (Republic of Entre Ríos) -> Q46  conf=0.527
   Q814959 (Beiyang Government) -> Q46  conf=0.527
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
 -- 2.497 s --

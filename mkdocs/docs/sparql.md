@@ -28,7 +28,23 @@ SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
 
 ```
 
+The order of the first two lines does not matter, and both work on a
+[partially loaded](sharding.md) view as well: the script only defines functions
+and registers the `sparql` keyword, so importing it neither needs nor touches
+the graph.
+
 Blank lines _inside_ a pasted query (for example between the `PREFIX` prologue and the `SELECT`) are harmless: the handler only executes once the query is structurally complete (a `SELECT` has been seen and all braces are balanced). Two consecutive blank lines force execution, which is useful to surface a syntax error in an incomplete paste.
+
+The end of the input does the same, so the query needs no terminating blank
+line when zelph is driven non-interactively:
+
+```bash
+printf '.import sparql\nsparql\nSELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }\n' | zelph
+```
+
+A query that is still incomplete when the input ends is reported as an
+error rather than dropped — a mistyped `SELECT` would otherwise look exactly
+like a query with no results.
 
 Results are printed as tab-separated rows. For nodes that carry names, both the Wikidata ID and the English label are shown when available, e.g. `Q703534 (employee)`.
 
@@ -46,7 +62,7 @@ Results are printed as tab-separated rows. For nodes that carry names, both the 
 | `FILTER`                        | Single comparisons (`= != < > <= >=`) over variables, literals, numbers; `str()` and `lang()`     |
 | Subqueries                      | Including nested subqueries                                                                       |
 | `GROUP BY` + `COUNT`            | Also `COUNT(DISTINCT ?x)`                                                                         |
-| `ORDER BY`                      | `ASC(?x)` / `DESC(?x)`                                                                            |
+| `ORDER BY`                      | `ASC(?x)` / `DESC(?x)` / `?x`; several keys, each breaking the ties of the ones before it          |
 | `LIMIT`                         |                                                                                                   |
 | `PREFIX`                        | Custom prefixes expand to full IRIs                                                               |
 
@@ -167,7 +183,7 @@ Q135778356 (continuing agency)
 Q137602928 (SomosNosotros)
 Q2289279 (point of contact)
 Q137826327 (musical group, band, or musician)
-Q1020480 (B\u00fcdner)
+Q1020480 (Büdner)
 Q1097498
 Q96409555 (The Purple Parade)
 Q1404015 (Fellagha)
@@ -203,7 +219,7 @@ Q137795660 (criminal duo)
 Q130412841
 Q104772439 (nephew-in-law or niece-in-law)
 Q16658574 (sibling-in-law)
-Q11425649 (b\u014dmori)
+Q11425649 (bōmori)
 Q159438 (Hero City of the Soviet Union)
 Q703534 (employee)
 Q2576826 (Rubber soldiers)
@@ -214,7 +230,7 @@ Q15622260 (Opryshoks)
 Q1073921 (50 Cent Party)
 Q111597957 (anti-transgender activist)
 Q84062072
-Q48300914 (Director of the Propaganda and Agitation Department of the Workers\u2019 Party of Korea)
+Q48300914 (Director of the Propaganda and Agitation Department of the Workers’ Party of Korea)
 Q2533745
 Q63433867 (court photographer)
 Q1304271 (one-man band)
@@ -258,7 +274,7 @@ Q1932580 (Mozabite people)
 Q357670 (Adivasi)
 Q16147340 (Maori Muslims)
 Q10658390 (rescue diver)
-Q10274748 (escriv\u00e3o de pol\u00edcia)
+Q10274748 (escrivão de polícia)
 Q125954719 (Antifa movement in France)
 Q3684723 (prefectural commissioner)
 Q6954191 (NHS primary care trust)
@@ -268,7 +284,7 @@ Q42898653 (Member of the Uitvoerend Bewind)
 Q543219 (pharmacy technician)
 Q11974939 (health professional)
 Q10329551 (Formal freelancer)
-Q813385 (Beauftragter der Bundesregierung f\u00fcr Informationstechnik)
+Q813385 (Beauftragter der Bundesregierung für Informationstechnik)
 Q12836422 (Parliament of the Azerbaijan Democratic Republic)
 Q2630843 (Albazinians)
 Q97302076
@@ -281,7 +297,7 @@ Q30185
 Q113958153 (Vocera de Salinas Priego)
 Q1266169 (telephone company)
 Q5453438 (First Nations in Alberta)
-Q5747846 (vivandi\u00e8re)
+Q5747846 (vivandière)
 Q6680232 (Lord of Bowland)
 Q21531924 (ironmonger)
 Q2061864 (caravan dweller)
@@ -333,7 +349,7 @@ Q135778356 (continuing agency)
 Q137602928 (SomosNosotros)
 Q2289279 (point of contact)
 Q137826327 (musical group, band, or musician)
-Q1020480 (B\u00fcdner)
+Q1020480 (Büdner)
 Q1097498
 Q96409555 (The Purple Parade)
 Q1404015 (Fellagha)
@@ -369,7 +385,7 @@ Q137795660 (criminal duo)
 Q130412841
 Q104772439 (nephew-in-law or niece-in-law)
 Q16658574 (sibling-in-law)
-Q11425649 (b\u014dmori)
+Q11425649 (bōmori)
 Q159438 (Hero City of the Soviet Union)
 Q703534 (employee)
 Q2576826 (Rubber soldiers)
@@ -380,7 +396,7 @@ Q15622260 (Opryshoks)
 Q1073921 (50 Cent Party)
 Q111597957 (anti-transgender activist)
 Q84062072
-Q48300914 (Director of the Propaganda and Agitation Department of the Workers\u2019 Party of Korea)
+Q48300914 (Director of the Propaganda and Agitation Department of the Workers’ Party of Korea)
 Q2533745
 Q63433867 (court photographer)
 Q1304271 (one-man band)
@@ -424,7 +440,7 @@ Q1932580 (Mozabite people)
 Q357670 (Adivasi)
 Q16147340 (Maori Muslims)
 Q10658390 (rescue diver)
-Q10274748 (escriv\u00e3o de pol\u00edcia)
+Q10274748 (escrivão de polícia)
 Q125954719 (Antifa movement in France)
 Q3684723 (prefectural commissioner)
 Q6954191 (NHS primary care trust)
@@ -434,7 +450,7 @@ Q42898653 (Member of the Uitvoerend Bewind)
 Q543219 (pharmacy technician)
 Q11974939 (health professional)
 Q10329551 (Formal freelancer)
-Q813385 (Beauftragter der Bundesregierung f\u00fcr Informationstechnik)
+Q813385 (Beauftragter der Bundesregierung für Informationstechnik)
 Q12836422 (Parliament of the Azerbaijan Democratic Republic)
 Q2630843 (Albazinians)
 Q97302076
@@ -447,7 +463,7 @@ Q30185
 Q113958153 (Vocera de Salinas Priego)
 Q1266169 (telephone company)
 Q5453438 (First Nations in Alberta)
-Q5747846 (vivandi\u00e8re)
+Q5747846 (vivandière)
 Q6680232 (Lord of Bowland)
 Q21531924 (ironmonger)
 Q2061864 (caravan dweller)

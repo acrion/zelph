@@ -51,6 +51,15 @@ candidate sets are pruned by **hash verification**: a candidate reading is
 genuine iff `create_hash` over it reproduces the node's ID (foundation
 fact 1 at work).
 
+One asymmetry of the topology has to be undone by hand. `fact()` draws
+`F → P` for the predicate and `O → F` for an object, so both the objects of
+a node and the facts that _use_ it as their predicate arrive in its incoming
+set, on edges that are indistinguishable locally. A node in predicate
+position would therefore read back with its own users appended to its
+objects. What separates them is the candidate's own reading — a user is a
+fact whose predicate is this very node — and that test is only run for nodes
+that are relation types to begin with, which no ordinary data node is.
+
 This reconstruction is correct but expensive — O(deg²) on hub neighborhoods
 — and the engine consults structures on its hottest paths (unification,
 template rejection, grounding, anchoring). The layered lookup below exists
@@ -244,6 +253,38 @@ mutex (`locked_stream`) — a correctness contract, not an optimization: pool
 workers log concurrently, and an unserialized stateful output handler is a
 data race.
 
+## What a Save Costs
+
+Everywhere else on this page the budget is time. For `.save` it is memory,
+because the operation that matters — writing a network freshly imported from
+a Wikidata dump — runs on a machine that is already deep into swap.
+
+A saved network is a stream of Cap'n Proto messages: a small header, then
+the adjacency and name maps in chunks of `chunk_entries` (1M) each. Cap'n
+Proto allocates the **first segment of a message up front**, so the size
+handed to `MallocMessageBuilder` is a floor on what the write needs
+resident, not a hint — and under mimalloc, which the zelph binary links, the
+pages are there immediately. A flat first segment of 64 Mi words therefore
+cost 512 MiB per message regardless of content: measured, saving an 11 kB
+network moved process RSS from 0.0 to 0.5 GiB, and the same half gigabyte
+was charged on top of every large save.
+
+`serialization_layout.hpp` sizes it from the entry count of the chunk being
+written instead — eight words per entry, which covers a node plus a list
+header plus a typical adjacency, or a key plus a short label. Where the
+estimate falls short Cap'n Proto **appends** a segment rather than copying,
+each new one as large as all previous together, so a miss costs at most a
+factor of two in memory and never a `memcpy`. It does grow the file a little
+(a segment table entry per segment, and cross-segment references become far
+pointers), which is why the estimate is generous enough to keep the common
+chunk in one segment.
+
+On a 2.6M-node network (0.7 GiB resident, 169 MB on disk) this takes the
+peak RSS of the save from 1.22 GiB to 0.84 GiB at unchanged wall time, and
+the file comes out byte-identical. No off switch accompanies this: unlike
+the acceleration stores, nothing here trades memory for speed — the segment
+is simply as large as the data going into it.
+
 ## Reading the Code
 
 The map, in dependency order:
@@ -258,6 +299,8 @@ The map, in dependency order:
 (store members — included only by `zelph.cpp`, see the layering rule above);
 [`fact_structure.hpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/fact_structure.hpp)
 (the layered lookup and the reconstruction walk);
+[`serialization_layout.hpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/serialization_layout.hpp)
+(chunk size and first-segment sizing, i.e. what a save costs);
 [`unification.cpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/unification.cpp) /
 [`unification.hpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/unification.hpp)
 (grounding, anchoring, `PatternInfo`, the scan loops);

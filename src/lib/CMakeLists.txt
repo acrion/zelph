@@ -309,8 +309,8 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     concurrency/thread_pool.hpp
 
     io/data_manager.hpp
-    io/markdown.cpp
-    io/markdown.hpp
+    io/derivation_export.cpp
+    io/derivation_export.hpp
     io/mermaid.cpp
     io/mermaid.hpp
     io/output.cpp
@@ -336,6 +336,8 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     network/reasoning_seminaive.cpp
     network/reasoning.hpp
     network/reasoning_profiler.hpp
+    network/rule_identity.cpp
+    network/rule_identity.hpp
     network/unification.cpp
     network/unification.hpp
     network/zelph.cpp
@@ -353,7 +355,6 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     string/string_utils.hpp
 
     wikidata/import_diagnostics.hpp
-    wikidata/wikidata_text_compressor.hpp
     wikidata/wikidata_token_encoder.hpp
     wikidata/wikidata.hpp
 

@@ -45,13 +45,18 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(unordered_dense)
 
 add_executable(zelph_tests
+    test_bin_inspection.cpp
     test_check_fact.cpp
     test_clusters.cpp
+    test_core_names.cpp
+    test_derivation_export.cpp
+    test_derived_rules.cpp
     test_display_scheme.cpp
     test_explain.cpp
     test_fact_cache.cpp
     test_genuine_structure.cpp
     test_hf_cache.cpp
+    test_import_guard.cpp
     test_inline_keyword.cpp
     test_integers.cpp
     test_jacobian.cpp
@@ -62,25 +67,39 @@ add_executable(zelph_tests
     test_neural.cpp
     test_node_display.cpp
     test_numbers.cpp
+    test_intervals.cpp
+    test_ontology.cpp
     test_output.cpp
     test_partial_anchor.cpp
+    test_performance_guard.cpp
     test_polynomial.cpp
     test_pow.cpp
+    test_predicate_slice.cpp
     test_primes.cpp
     test_profiler.cpp
+    test_pruning.cpp
     test_reasoning.cpp
+    test_rule_identity.cpp
+    test_rule_patterns.cpp
     test_result_query.cpp
+    test_save_memory.cpp
     test_script_cluster.cpp
     test_script_query.cpp
     test_script_run.cpp
     test_script_runner.cpp
+    test_self_predicate.cpp
     test_seminaive.cpp
+    test_sets.cpp
+    test_sharding.cpp
     test_sparql.cpp
     test_stratified.cpp
     test_symbolic.cpp
     test_symbolic_integers.cpp
     test_topoly.cpp
     test_var_closure.cpp
+    test_wikidata_constraints.cpp
+    test_wikidata_export.cpp
+    test_wikidata_import.cpp
     test_wikidata_qualifiers.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)

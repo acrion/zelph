@@ -51,6 +51,49 @@ bool zelph::string::is_var(std::string token)
     return *token.begin() == '_';
 }
 
+// The self-fact sugar ":pred subject" is only used where it reads back
+// as the fact it renders, and that is a property of the PREDICATE's
+// name. Two conditions, each for its own reason:
+//
+//   - the sugar's own rule captures the predicate as `(some :symchars)`,
+//     so a name carrying a reserved character ends it early -- and that
+//     rules out the bare atoms `>` or `=>`, which needs_quotes exempts;
+//   - the name has to print BARE, since there is no way to quote it
+//     inside the sugar. That is exactly !needs_quotes, so the sugar
+//     follows the quoting rules instead of restating them: a predicate
+//     named "&12" or "≈net" keeps the verbose form.
+//
+// Whether a predicate is suppressed by a module is graph state and stays
+// with the caller.
+bool zelph::string::selffact_sugar_safe(const std::string& name)
+{
+    if (name.empty() || is_var(name)) return false;
+
+    for (const char ch : name)
+    {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c <= ' ') return false; // whitespace and ASCII control characters
+        switch (c)
+        {
+        case '<':
+        case '>':
+        case '(':
+        case ')':
+        case '{':
+        case '}':
+        case '*':
+        case ',':
+        case '"':
+            return false; // PEG-reserved structure characters
+        default:
+            break;
+        }
+        if (c == 0xC2) return false; // UTF-8 lead byte of '¬', '«', '»'
+    }
+
+    return prints_bare(name);
+}
+
 bool zelph::string::is_inside_node_to_wstring()
 {
     return format_fact_level > 0;
@@ -76,6 +119,18 @@ namespace zelph::string
 
 namespace
 {
+    // Mark the NAME of a node as a leaf, so that quoting and the derivation
+    // export can tell it from the structure around it -- unless the node is
+    // a VARIABLE, whose name is meant to be read back as a variable and
+    // therefore has to stay bare. Which of the two it is cannot be seen in
+    // the string: a node can genuinely be named "A" or "_x", and printing
+    // that bare made the line read back as a variable instead.
+    std::string mark_leaf(const zelph::network::Node node, const std::string& name)
+    {
+        if (zelph::network::Zelph::is_var(node)) return name;
+        return zelph::string::mark_identifier(name);
+    }
+
     // In-place: dec (MSB-first decimal digit string) := dec * base + add.
     // Pure string arithmetic, so arbitrarily large numbers work. Used to
     // convert a registered-digit cons list (any base) to its decimal
@@ -229,7 +284,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             ctx->atomic      = true;
         }
 
-        result = string::mark_identifier(name);
+        result = mark_leaf(resolved, name);
         return;
     }
 
@@ -248,7 +303,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // If so, walk the cons chain and format as < e1 e2 ... en >.
     if (z->exists(resolved))
     {
+        // parse_relation asks which NEIGHBOUR of the node is a declared
+        // relation type, and a cons cell whose own list is used as a PREDICATE
+        // somewhere has two -- `cons`, and the list head, which being a
+        // predicate declared. It then reports the ambiguity as "no relation",
+        // and the very same node printed `<b>` in a graph where no list
+        // happens to be a predicate and `b cons nil` in one where some list
+        // is. The exact structure settles it, but only where it has to: on the
+        // ambiguity, and only for a node that could be a cell at all. Asking
+        // it FIRST costs 2 % of the Jacobian import, because every atom the
+        // renderer passes then pays for a lookup that parse_relation answers
+        // by failing fast.
         network::Node rel_type = z->parse_relation(resolved);
+        if (rel_type == 0 && network::Zelph::is_hash(resolved))
+            rel_type = network::get_preferred_structure(z, resolved, 3).predicate;
+
         if (rel_type == z->core.Cons)
         {
 #ifdef DEBUG_FORMAT_FACT
@@ -266,17 +335,25 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 if (visited_cells.count(current)) break; // cycle protection
                 visited_cells.insert(current);
 
-                if (z->parse_relation(current) != z->core.Cons) break; // not a cons cell
+                // The EXACT decomposition, not the adjacency reading. A cell's
+                // object set as parse_fact returns it is polluted by every
+                // fact that merely USES the cell, and a list in PREDICATE
+                // position collects two of those: the fact it is the predicate
+                // of, and the `~ ->` declaration that being a predicate
+                // creates. The walk then left the chain at one of them instead
+                // of at nil, the list was reported improper, and `x <a b> y`
+                // printed as `x (a cons b cons nil) y` -- which the parser
+                // rejects, so the printed line did not read back as input.
+                const network::FactStructure cell = network::get_preferred_structure(z, current, 3);
+                if (cell.predicate != z->core.Cons || cell.subject == 0) break; // not a cons cell
 
-                network::adjacency_set objs;
-                network::Node          car = z->parse_fact(current, objs, 0);
-                if (car != 0) car = resolve_var(car);
+                network::Node car = resolve_var(cell.subject);
                 if (car != 0)
                     list_elements.push_back(car);
 
                 // Get cdr (rest of list) — the single object of this cons cell
                 network::Node cdr = z->core.Nil;
-                for (network::Node o : objs)
+                for (network::Node o : cell.objects)
                 {
                     cdr = resolve_var(o);
                     break;
@@ -329,7 +406,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             if (!list_elements.empty())
             {
                 // Number display: if a digit alphabet is registered via
-                // zelph/set-number-digits (see stdlib/arithmetic.zph), a
+                // zelph/set-number-digits (see stdlib/decimal-arithmetic.zph), a
                 // properly nil-terminated cons list consisting solely of
                 // registered digit nodes is rendered as a decimal &-literal
                 // -- the exact inverse of the &-input syntax (zelph/number).
@@ -444,11 +521,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 }
                 else
                 {
-                    result     = "<";
-                    bool first = true;
+                    std::string content;
+                    bool        first = true;
                     for (network::Node e : list_elements)
                     {
-                        if (!first) result += " ";
+                        if (!first) content += " ";
                         std::string elem_str;
                         string::node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history);
 
@@ -457,17 +534,40 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             && elem_str.find(' ') != std::string::npos
                             && elem_str.front() != '('
                             && elem_str.front() != '<'
-                            && elem_str.front() != '{')
+                            && elem_str.front() != '{'
+                            && !elem_str.starts_with("@{"))
                         {
                             network::Node eff_e = resolve_var(e);
-                            if (elem_str != z->get_formatted_name(eff_e, lang))
+                            // The rendering is marked, so the name it is
+                            // compared against has to be marked too -- else a
+                            // plain name with a space came out as ("a b").
+                            if (elem_str != mark_leaf(eff_e, z->get_formatted_name(eff_e, lang)))
                                 elem_str = "(" + elem_str + ")";
                         }
 
-                        result += elem_str;
+                        content += elem_str;
                         first = false;
                     }
-                    result += ">";
+
+                    // A list whose content carries no whitespace is read
+                    // back by the COMPACT rule, which makes one node per
+                    // CHARACTER: <item2> re-reads as <2 m e t i>, silently.
+                    // Only a one-element list can get there -- a separator
+                    // is whitespace -- and only when its element is longer
+                    // than one character, since for a single character both
+                    // readings mean the same list. That is what keeps <7>
+                    // and the digit lists untouched. The ambiguous case is
+                    // padded out to the input form that produces it.
+                    //
+                    // Judged on the PRINTED form, because the identifier
+                    // markers are still in `content` and would count as
+                    // characters of their own -- which made even <7> look
+                    // ambiguous.
+                    const std::string printed = string::unmark_identifiers(content);
+                    const bool        compact = printed.size() > 1
+                                      && printed.find_first_of(" \t\r\n>") == std::string::npos;
+
+                    result = compact ? "< " + content + " >" : "<" + content + ">";
                 }
                 return;
             }
@@ -477,13 +577,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // 4. Container Detection (Set)
     // Check if 'resolved' acts as a container (Object in a PartOf relation).
     std::unordered_set<network::Node> elements;
+    std::unordered_set<network::Node> variable_elements;
 
     if (z->exists(resolved))
     {
         for (network::Node rel : z->get_right(resolved))
         {
-            if (rel == parent) continue;
-
+            // The membership fact being rendered is NOT skipped. It is the one
+            // that establishes the very element the reader is looking at, so
+            // leaving it out printed `b in {a}` for the fact `b in {a b}` --
+            // and a set constant IS its members, so `{a}` is a different node.
+            // Recursion is not a concern here: an element is rendered with
+            // `resolved` as its parent and inside `child_history`, and a member
+            // never reaches back into the container through this branch.
             network::Node p = z->parse_relation(rel);
             if (p == z->core.PartOf)
             {
@@ -491,13 +597,30 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 network::Node          s = z->parse_fact(rel, objs, 0);
                 if (s != 0) s = resolve_var(s);
 
+                // An UNBOUND variable is not an element of the container:
+                // it is there because a rule pattern named it, since
+                // `(X in @{...})` makes X a member by construction. Printing
+                // it made a DERIVED fact read `a in @{a c Y X}`, with the
+                // rule's own template variables among the elements.
+                // resolve_var above has already substituted every variable
+                // that HAS a binding.
+                //
+                // Kept aside rather than dropped: while the RULE itself is
+                // displayed there is nothing else in the container, and
+                // `@{Y}` is exactly what that rule says. Only once real
+                // elements exist do the variables step back.
                 if (s != 0 && objs.count(resolved) > 0)
                 {
-                    elements.insert(s);
+                    if (network::Zelph::is_var(s))
+                        variable_elements.insert(s);
+                    else
+                        elements.insert(s);
                 }
             }
         }
     }
+
+    if (elements.empty()) elements = variable_elements;
 
     if (!elements.empty())
     {
@@ -510,7 +633,15 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         std::vector<network::Node> sorted_elements(elements.begin(), elements.end());
         std::sort(sorted_elements.begin(), sorted_elements.end());
 
-        result     = "{";
+        // A COLLECTION prints with its own marker, because that is what it
+        // is: a container with an identity, which `{...}` re-entered would
+        // not rebuild. A rule's conjunction set keeps the bare brace -- it
+        // is rule structure rather than a value, and the rule renders around
+        // it.
+        const bool bare_brace = z->is_set_constant(resolved)
+                             || z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
+
+        result     = bare_brace ? "{" : "@{";
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
@@ -530,10 +661,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 && elem_str.find(' ') != std::string::npos
                 && elem_str.front() != '('
                 && elem_str.front() != '<'
-                && elem_str.front() != '{')
+                && elem_str.front() != '{'
+                && !elem_str.starts_with("@{"))
             {
                 network::Node eff_e = resolve_var(e);
-                if (elem_str != z->get_formatted_name(eff_e, lang))
+                // Compare against the MARKED name, as the S-P-O formatter
+                // does: the rendering of a plain name is marked.
+                if (elem_str != mark_leaf(eff_e, z->get_formatted_name(eff_e, lang)))
                 {
                     elem_str = "(" + elem_str + ")";
                 }
@@ -606,7 +740,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 #endif
 
     network::adjacency_set objects;
-    network::Node          subject = 0;
+    network::Node          subject            = 0;
+    network::Node          recorded_predicate = 0;
 
     // Prefer the RECORDED structure over any reconstruction: the genuine-
     // structure store holds the exact triple fact() was called with, so
@@ -621,12 +756,43 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const network::FactStructure fs = network::get_preferred_structure(z, resolved, 3);
         if (fs.predicate != 0 && fs.subject != 0 && fs.subject != parent && !fs.objects.empty())
         {
-            subject = fs.subject;
-            objects = fs.objects;
+            subject            = fs.subject;
+            objects            = fs.objects;
+            recorded_predicate = fs.predicate;
         }
     }
 
+    // The predicate comes from the same recorded triple as subject and
+    // objects. z->parse_relation only recognises a predicate that is a
+    // DECLARED relation type, so a fact or cons node used as a predicate
+    // ("x (a p b) y", "deep_nesting ~ (Level1 (Level2 ...) Level1Object)")
+    // resolved to 0 and rendered as "??" -- a line that cannot be entered
+    // again, although the very same statement parses and matches as input.
+    // Where parse_relation succeeds it returns exactly fs.predicate, so
+    // nothing else changes; where no triple was recorded (a subject ==
+    // predicate fact, or a network whose stores a .load has disarmed) the
+    // reconstruction is still the only source.
+    const auto fact_predicate = [&]() -> network::Node
+    {
+        return recorded_predicate != 0 ? recorded_predicate : z->parse_relation(resolved);
+    };
+
     if (subject == 0) subject = z->parse_fact(resolved, objects, parent);
+
+    // A node is only readable as a fact if it points at a PREDICATE. The
+    // subject <-> fact link is symmetric, so parse_fact run on a node that
+    // merely IS some fact's subject hands back that very fact as the node's
+    // own "subject", and the triple built from it came out as "(?? ?? ??)" --
+    // an answer line nobody can enter again. The `parent` argument suppresses
+    // it while the containing fact is being rendered, which is why the same
+    // node printed as "??" in a deduction line and as "(?? ?? ??)" in the
+    // answer to a query. A generated node (a fresh variable's witness) hits
+    // this whenever it is the subject of anything, i.e. as a rule.
+    if (subject != 0 && fact_predicate() == 0)
+    {
+        result = string::mark_identifier("??");
+        return;
+    }
 
     bool is_condition = false;
 
@@ -702,44 +868,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // '¬'), and not shaped like a variable (":A x" would re-parse with
     // variable semantics). Everything else -- including hash-consed numeric
     // self-facts on '*' such as (&9 * &9) -- keeps the verbose "S P S" form.
-    bool        self_fact_sugar = false;
-    std::string self_fact_pred;
+    bool          self_fact_sugar = false;
+    std::string   self_fact_pred;
+    network::Node self_fact_rel = 0;
     if (subject != 0 && objects.size() == 1
         && resolve_var(*objects.begin()) == resolve_var(subject))
     {
-        const auto sugar_safe_name = [](const std::string& name) -> bool
-        {
-            if (name.empty() || string::is_var(name)) return false;
-            for (const char ch : name)
-            {
-                const unsigned char c = static_cast<unsigned char>(ch);
-                if (c <= ' ') return false; // whitespace and ASCII control characters
-                switch (c)
-                {
-                case '<':
-                case '>':
-                case '(':
-                case ')':
-                case '{':
-                case '}':
-                case '*':
-                case ',':
-                case '"':
-                    return false; // PEG-reserved structure characters
-                default:
-                    break;
-                }
-                if (c == 0xC2) return false; // UTF-8 lead byte of U+00AC ('¬'), U+00AB/U+00BB ('«'/'»')
-            }
-            return true;
-        };
-
-        const network::Node rel_node = resolve_var(z->parse_relation(resolved));
+        const network::Node rel_node = resolve_var(fact_predicate());
         const std::string   rel_name = z->get_formatted_name(rel_node, lang);
-        if (sugar_safe_name(rel_name) && !z->selffact_sugar_suppressed(rel_node))
+        if (string::selffact_sugar_safe(rel_name) && !z->selffact_sugar_suppressed(rel_node))
         {
             self_fact_sugar = true;
             self_fact_pred  = rel_name;
+            self_fact_rel   = rel_node;
         }
     }
 
@@ -752,7 +893,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     const network::OperatorDisplay* op = nullptr;
     if (scheme_enabled && !is_negation && subject != 0 && objects.size() == 1 && !self_fact_sugar)
     {
-        const network::Node pred = resolve_var(z->parse_relation(resolved));
+        const network::Node pred = resolve_var(fact_predicate());
         const auto          it   = ctx->tables->operators.find(pred);
         if (it != ctx->tables->operators.end()) op = &it->second;
     }
@@ -794,12 +935,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             && s_str.find(' ') != std::string::npos
             && s_str.front() != '('
             && s_str.front() != '<'
-            && s_str.front() != '{')
+            && s_str.front() != '{'
+            && !s_str.starts_with("@{")) // the collection literal delimits itself too
         {
             network::Node eff_subj = resolve_var(subject);
             std::string   raw_name = z->get_formatted_name(eff_subj, lang);
             // Compare the formatted string with the MARKED raw name
-            if (s_str != string::mark_identifier(raw_name))
+            if (s_str != mark_leaf(eff_subj, raw_name))
             {
                 needs_parens = true;
             }
@@ -810,7 +952,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         else
             subject_name = s_str.empty() ? (is_condition ? "" : string::mark_identifier("?")) : s_str;
 
-        network::Node relation = z->parse_relation(resolved);
+        network::Node relation = fact_predicate();
         // Recursion for Relation (usually just get name, but handle complex relations)
         // Here we can assume relations are mostly named or simple, preventing deep noise
         relation = resolve_var(relation);
@@ -819,7 +961,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         if (!raw_rel_name.empty())
         {
             // Relation has a name -> mark it manually, as we didn't recurse
-            relation_name = string::mark_identifier(raw_rel_name);
+            relation_name = mark_leaf(relation, raw_rel_name);
         }
         else
         {
@@ -847,7 +989,9 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     }
     else if (objects.size() > max_objects)
     {
-        objects_name = string::mark_identifier("(... " + std::to_string(objects.size()) + " objects ...)");
+        // Not a name but an elision, so it stays unmarked: a reader of the
+        // rendering must not mistake it for a node it could look up.
+        objects_name = "(... " + std::to_string(objects.size()) + " objects ...)";
     }
     else
     {
@@ -868,12 +1012,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 && o_str.find(' ') != std::string::npos
                 && o_str.front() != '('
                 && o_str.front() != '<'
-                && o_str.front() != '{')
+                && o_str.front() != '{'
+                && !o_str.starts_with("@{")) // the collection literal delimits itself too
             {
                 network::Node eff_obj  = resolve_var(object);
                 std::string   raw_name = z->get_formatted_name(eff_obj, lang);
                 // Compare formatted string with MARKED raw name
-                if (o_str != string::mark_identifier(raw_name))
+                if (o_str != mark_leaf(eff_obj, raw_name))
                 {
                     o_str = "(" + o_str + ")";
                 }
@@ -894,7 +1039,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
     // The components (subject_name, relation_name, objects_name) are already marked.
     if (self_fact_sugar)
-        result = string::mark_identifier(":" + self_fact_pred) + " " + subject_name;
+        // The colon is the SUGAR, the predicate is a NAME -- marking them
+        // as one leaf made the two indistinguishable downstream. The
+        // derivation export had to split the colon off again by hand to
+        // keep the predicate a node reference, and the quoting rules could
+        // not say anything about a name that starts with a colon, since
+        // every self-fact looked like one.
+        result = ":" + mark_leaf(self_fact_rel, self_fact_pred) + " " + subject_name;
     else if (application)
         result = subject_name + "(" + objects_name + ")";
     else
@@ -967,7 +1118,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // wrap the whole triple in parentheses to make it valid input syntax.
     else if (parent != 0 && resolved_is_stmt)
     {
-        network::Node pred = z->parse_relation(resolved);
+        network::Node pred = fact_predicate();
         if (pred != z->core.Cons) // lists are handled earlier; don't wrap "<...>"
             result = "(" + result + ")";
     }

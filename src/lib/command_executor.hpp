@@ -80,6 +80,18 @@ namespace zelph::console
          */
         void execute(const std::vector<std::string>& cmd);
 
+        /// As above, plus each token in the form the PARSER needs -- with
+        /// the quotes the tokenizer stripped put back. Only `.explain` and
+        /// the prune commands use it: they hand a token back to the parser,
+        /// and by then nothing else records what was quoted.
+        void execute(const std::vector<std::string>& cmd, const std::vector<std::string>& sources);
+
+        // Dispatch whatever is still half-read: an unterminated keyword
+        // block, zelph statement or Janet block. Called at the end of an
+        // imported script AND at end of input, because both are the point
+        // where "waiting for more lines" turns into "there are none".
+        void finish_input();
+
         /**
          * @brief Imports a zelph script file, processing it line by line.
          *

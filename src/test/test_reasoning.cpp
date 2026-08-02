@@ -64,15 +64,10 @@ atom_C <= atom_D
         CHECK(any_output_starts_with(collector, "atom_C <= atom_D")); });
 }
 
-// NOTE: <=> parsing is currently broken (displays as ??). Uncomment when fixed.
-// TEST_CASE("parsing: biconditional arrow")
-// {
-//     run_both_modes([](const auto& collector, const auto& interactive)
-//     {
-//         process_lines(interactive, "(a <=> b) is_type equivalence");
-//         CHECK(any_output_contains(collector, "<=>"));
-//     });
-// }
+// NOTE: there is no biconditional arrow in the grammar. `<=>` is read as the
+// list <=>, which then sits in predicate position; that it renders as such is
+// pinned by "display: a list in predicate position renders as a list" in
+// test_node_display.cpp. It used to print as "??".
 
 // ---------------------------------------------------------------------------
 // Sequences and lists
@@ -108,6 +103,37 @@ TEST_CASE("parsing: quoted sequence keeps its order")
 // Nested structures
 // ---------------------------------------------------------------------------
 
+TEST_CASE("parsing: an empty container denotes nil")
+{
+    // `<>` is the empty cons list, and the empty cons list IS the
+    // terminator every list ends at; Zelph::set() has always answered nil
+    // for the empty set. The parser used to answer neither: it produced
+    // Janet's nil, which zelph/fact reads as "no object", so the whole
+    // statement vanished without a word.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("the empty node list")
+        {
+            process_lines(interactive, "q p <>");
+            CHECK(any_output_contains(collector, "q p nil"));
+        }
+        SUBCASE("the empty set")
+        {
+            process_lines(interactive, "q p {}");
+            CHECK(any_output_contains(collector, "q p nil"));
+        }
+        SUBCASE("all three spellings are the same node")
+        {
+            process_lines(interactive, "q p <>\nq p {}\nq p nil");
+            collector.clear();
+            interactive.process("q p X");
+            std::size_t answers = 0;
+            for (const auto& e : collector.events())
+                if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
+            CHECK(answers == 1);
+        } });
+}
+
 TEST_CASE("parsing: nested sequence in set")
 {
     run_both_modes([](const auto& collector, const auto& interactive)
@@ -133,7 +159,6 @@ TEST_CASE("parsing: deep nesting")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
-        // Display truncates inner levels to ??, but the parser must accept the input.
         CHECK(any_output_contains(collector, "Level1"));
         CHECK(any_output_contains(collector, "Level1Object")); });
 }
@@ -546,6 +571,71 @@ a pairs b
         CHECK(any_output_contains(collector, "UNEQ-MISSING-true")); });
 }
 
+TEST_CASE("inequality: a guard that never gets its bindings is not a match")
+{
+    // logic.md states the contract: != is a guard constraint, NOT a fact
+    // lookup, and it filters variable bindings AFTER the involved variables
+    // are bound by positive conditions. With nothing bound there is nothing
+    // to filter -- but the guard used to succeed vacuously, so a query
+    // answered its own pattern with the variables still unbound:
+    //
+    //     zelph> S != O
+    //     Answer: S != O          <- on an EMPTY network, too
+    //
+    // Deferring an undecidable guard stays right while conditions are being
+    // joined; the check belongs at the terminal point, where no binding can
+    // arrive any more. See Reasoning::guards_unresolved.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("S != O");
+        CHECK(collect_answers(collector).empty());
+
+        interactive.process("a rel b");
+
+        // One side bound is no better: the other one still filtered nothing.
+        collector.clear();
+        interactive.process("a != O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S != b");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("inequality: a guard naming a variable no condition binds blocks the rule")
+{
+    // The rule-level half of the same contract, and the behaviour change it
+    // implies: Z is bound by no positive condition, so the guard never
+    // filters anything and the rule must not fire on it. It used to fire,
+    // because an unresolvable guard was skipped as "not contradicting".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X rel Y, Y != Z) => (X differs Y)
+a rel b
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S differs O");
+        CHECK(collect_answers(collector).empty());
+
+        // The same rule with a guard both of whose sides the conditions bind
+        // fires as before -- this is the control that the terminal check did
+        // not simply disable the guard.
+        process_lines(interactive, R"(
+(X rel Y, X != Y) => (X apart Y)
+c rel c
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S apart O");
+        CHECK(answers_contain(collector, "a apart b"));
+        CHECK_FALSE(answers_contain(collector, "c apart c")); });
+}
+
 TEST_CASE("inequality: reflexive opposite without != causes false positive")
 {
     // KEY MOTIVATION for !=:
@@ -787,11 +877,13 @@ y ancestor z
         CHECK(any_output_starts_with(collector, "( x ancestor z )"));
         CHECK(any_output_starts_with(collector, "( 5 > 3 )"));
 
-        // Display: rule 1's variables are still shown by name in .list-rules.
+        // Display: rule 1's variables are still shown by name in
+        // .list-rules -- which prints the same unmarked form as every other
+        // command, so a listed rule can be pasted straight back in.
         collector.clear();
         interactive.process(".list-rules");
-        CHECK(any_output_contains(collector, "(A «ancestor» B)"));
-        CHECK_FALSE(any_output_contains(collector, "«??» «ancestor»")); });
+        CHECK(any_output_contains(collector, "(A ancestor B)"));
+        CHECK_FALSE(any_output_contains(collector, "?? ancestor")); });
 }
 
 // ---------------------------------------------------------------------------
@@ -910,4 +1002,443 @@ x foo x
         interactive.process("(x foo x) baz b");
         CHECK(any_output_contains(collector, "x foo x"));
         CHECK_FALSE(any_output_contains(collector, "foo ?")); });
+}
+
+TEST_CASE("rules: a chained => says which arrow has to be parenthesised")
+{
+    // "A => B => C" is one statement whose predicate `=>` also stands among
+    // its objects, so it lands in the generic "same relation type and
+    // object" refusal -- accurate, and no help at all to someone writing a
+    // rule whose conclusion is a rule. Which arrow binds tighter is
+    // genuinely undecided, so the answer is a demand to say, not a default.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process("(R is transitive) => (X R Y, Y R Z) => (X R Z)"),
+                             doctest::Contains("has to be parenthesised"),
+                             std::runtime_error);
+
+        // The parenthesised form is accepted.
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) => (X R Z))"); });
+}
+
+TEST_CASE("rules: a ground condition is not a non-match")
+{
+    // Matching a condition that contains no variable binds nothing, and the
+    // engine read "nothing bound" as "no match" -- which silently disabled
+    // every rule one of whose conditions happens to name its nodes. Both
+    // conditions here are satisfied, so the rule has to fire.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions all");
+        interactive.process("(a p b, X q d) => (X r s)");
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("e q d");
+        CHECK(any_deduction_of(collector, "e r s"));
+
+        collector.clear();
+        interactive.process("X r Y");
+        CHECK(answers_contain(collector, "e r s")); });
+}
+
+TEST_CASE("rules: a ground condition that does NOT hold blocks the rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b, X q d) => (X r s)");
+        interactive.process("e q d");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("X r Y");
+        CHECK_FALSE(answers_contain(collector, "e r s")); });
+}
+
+TEST_CASE("rules: a negated consequence is refused, not ignored")
+{
+    // "(A p B) => ¬(A q B)" used to derive (x q y) from (x p y) -- the exact
+    // opposite of what it says, in silence: deduce reads the consequence's
+    // predicate and creates the fact, and the negation tag sits beside the
+    // pattern where nothing on that path looks.
+    //
+    // The test has to be asked of the SYNTAX. The tag is a fact ABOUT the
+    // pattern node, and a ground pattern is hash-consed, so a pattern negated
+    // in one rule carries the tag in every other rule that mentions it --
+    // only the statement itself knows where the "¬" was written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* rule : {"(A p B) => ¬(A q B)",
+                                 "(A p B) => (¬(A q B))",
+                                 "(A p B) => (A q B) ¬(A r B)"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("condition operator"),
+                                 std::runtime_error);
+        }
+
+        // A negated CONDITION is untouched, including when its pattern is
+        // ground and therefore shared with whatever else mentions it.
+        interactive.process("(A p B, ¬(A r B)) => (A q B)");
+        collector.clear();
+        interactive.process("x p y");
+        CHECK(any_deduction_of(collector, "x q y"));
+
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(answers_contain(collector, "x q y")); });
+}
+
+TEST_CASE("rules: two consequences are two objects, not a conjunction")
+{
+    // "A => (B, C)" builds a rule whose consequence is a conjunction SET.
+    // The engine deduces the OBJECTS of a `=>` fact and has no reading for
+    // a set node in that position, so the rule was accepted, listed by
+    // .list-rules -- and derived nothing at all, in silence. zelph can say
+    // what was meant; it is spelled with several objects.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH_AS(interactive.process("(X p Y) => (X q N, N r Y)"),
+                             doctest::Contains("several objects"),
+                             std::runtime_error);
+
+        // The form the message names works, and the two consequences share
+        // the fresh variable N -- which is the reason it is one rule and
+        // not two.
+        interactive.process(".deductions all");
+        interactive.process("(X p Y) => (X q N) (N r Y)");
+        collector.clear();
+        interactive.process("a p b");
+        REQUIRE(any_deduction_of(collector, "a q"));
+        CHECK(any_deduction_of(collector, "r b"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "=>")); });
+}
+
+TEST_CASE("naming: a query variable does not take a real node's name")
+{
+    // Variable names are cosmetic and statement-scoped, but they went into
+    // the same map as real names and won. A graph holding a node named "A"
+    // -- a single-letter Wikidata label is enough -- lost that name to the
+    // first query that mentioned the variable A, and the node afterwards
+    // rendered as "(?? ?? ??)". Asking a question deleted data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("alpha rel beta");
+        interactive.process(".name alpha A");
+
+        collector.clear();
+        interactive.process("A rel beta");
+        // The answer binds the variable A to the node NAMED "A", and that
+        // name is quoted on the way out: bare, the line would read back as
+        // the very query that produced it rather than as its answer.
+        CHECK(answers_contain(collector, "\"A\" rel beta"));
+        CHECK_FALSE(any_output_contains(collector, "??"));
+
+        // The name still resolves to the node it was given to.
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Name in language"));
+        CHECK_FALSE(any_output_contains(collector, "No node found")); });
+}
+
+TEST_CASE("rules: a rule whose only condition quantifies over predicates fires")
+{
+    // "For every declared relation type R, ..." is the shape that makes zelph
+    // different from a query engine, and as the SOLE condition of a rule it
+    // derived nothing at all -- silently. Adding any second condition, even a
+    // pure guard like `R != p`, made it work again, which is why it went
+    // unnoticed: every example that quantifies over predicates in the stdlib
+    // and the documentation carries a second condition.
+    //
+    // The cause was in Zelph::filter, the three-argument form that answers
+    // "which node of this fact is its predicate". A fact's outgoing edges
+    // hold its PARENTS as well as its subject and predicate, so the
+    // consequence `R declared yes` has the rule among them -- and the rule
+    // points at its own subject, the condition `R ~ ->`. That condition has
+    // the right predicate and the right object, so the walk reported the RULE
+    // as a second relation type of the consequence, and deduce() refused the
+    // ambiguity. The exact probe `check_fact(nd, ~, ->)` asks the question
+    // that was meant: not "does nd reach such a fact" but "is nd its
+    // subject".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+
+        collector.clear();
+        interactive.process("(R ~ ->) => (R declared yes)");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("S declared yes");
+
+        // Every relation type in the graph: the one the data declared, the
+        // rule's own consequence predicate, and the core vocabulary --
+        // including `~` itself, which is a relation type declared by a fact
+        // whose subject IS its predicate.
+        CHECK(answers_contain(collector, "p declared yes"));
+        CHECK(answers_contain(collector, "declared declared yes"));
+        CHECK(answers_contain(collector, "~ declared yes"));
+        CHECK(answers_contain(collector, "cons declared yes"));
+        CHECK(answers_contain(collector, "in declared yes"));
+
+        // Not a relation type: `a` and `b` are data, `->` is the category.
+        CHECK_FALSE(answers_contain(collector, "a declared yes"));
+        CHECK_FALSE(answers_contain(collector, "b declared yes"));
+        CHECK_FALSE(answers_contain(collector, "-> declared yes"));
+
+        // A COMPOSITE predicate is bound like any other. logic.md claims
+        // exactly this -- "the fact is found by a rule quantifying over
+        // predicates just like any other" -- and the claim was false for the
+        // single-condition form the sentence describes.
+        interactive.process("x (a p b) y");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("S declared yes");
+        CHECK(answers_contain(collector, "(a p b) declared yes")); });
+}
+
+TEST_CASE("rules: a consequence subject that is itself a predicate stays the subject")
+{
+    // The control for the fix above: the exact probe replaced the
+    // neighbourhood walk, but the SUBJECT exclusion in front of it still has
+    // to hold. It only bites when the consequence's subject is a GROUND node
+    // that is itself a declared relation type -- `p` here, used as data by a
+    // rule that has nothing to do with predicates. Drop the exclusion and
+    // `check_fact(p, ~, ->)` succeeds, the consequence has two candidate
+    // predicates, and deduce() refuses it.
+    //
+    // A variable subject would not do: the pattern node carries the variable,
+    // and a variable is not a declared relation type, so the test would pass
+    // either way. That was the first version of this case, and it was
+    // vacuous.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("alarm ranks high");
+
+        collector.clear();
+        interactive.process("(X ranks high) => (p scored X)");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("p scored O");
+        CHECK(answers_contain(collector, "p scored alarm")); });
+}
+
+TEST_CASE("rules: a composite predicate in a consequence is instantiated")
+{
+    // deduce() substituted a predicate that IS a variable and nothing else, so
+    // a COMPOSITE one kept the rule's own variables. `(X p Y) => (X (Y r s) c)`
+    // derived `a (Y r s) c` -- a fact carrying a template variable, which no
+    // query can match and which the ground guard did not catch either, because
+    // that guard read the subject and the objects but not the predicate.
+    //
+    // Both halves are pinned here: the predicate is substituted, and nothing
+    // with a residual variable reaches the graph.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(q r s) ~ ->
+(X p Y) => (X (Y r s) c)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "a (b r s) c"));
+        CHECK_FALSE(answers_contain(collector, "a (Y r s) c"));
+
+        // The instantiated predicate is declared as a relation type, which is
+        // what keeps the derived fact readable after a reload.
+        collector.clear();
+        interactive.process("S ~ ->");
+        CHECK(answers_contain(collector, "(b r s) ~ ->")); });
+}
+
+TEST_CASE("rules: a container in predicate position is rebuilt like any other")
+{
+    // Same path, reached through a container rather than a fact: the
+    // predicate is not exempt from the rebuild that objects get, since only
+    // the object of a PartOf deduction is written INTO.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(X p Y) => (X {Y} c)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "a {b} c"));
+        CHECK_FALSE(answers_contain(collector, "a @{Y} c")); });
+}
+
+TEST_CASE("rules: a composite predicate in a condition unifies structurally")
+{
+    // Subject and object positions have unified structurally all along --
+    // `((Y r s) p Z)` and `(X p (Y r s))` both match -- but the predicate was
+    // compared by IDENTITY, so `(X (Y r s) Z)` matched nothing whatsoever: the
+    // graph holds `(b r s)`, never `(Y r s)`. The rule was accepted and
+    // silently inert, and no binding order helped, because the candidate set
+    // is fixed when the condition is set up rather than when it is joined.
+    //
+    // The candidate set is now the one a predicate VARIABLE gets; what
+    // separates the two is that extract_bindings unifies the pattern against
+    // each candidate instead of binding one variable to it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e r s) f
+a (b r t) c
+a p c
+(X (Y r s) Z) => (Y links X)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links a"));
+        CHECK(answers_contain(collector, "e links d"));
+
+        // The fixed parts of the pattern still select: `(b r t)` differs in
+        // its object, `p` is not composite at all.
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("rules: a pattern predicate is narrowed by its own predicate")
+{
+    // A predicate pattern gets the candidate set a predicate VARIABLE gets --
+    // every declared relation type -- which is correct but is the cost of a
+    // variable, and the pattern says far more than a variable does. A
+    // candidate has to unify with `(Y r s)`, and unify_nodes matches
+    // predicates before anything else, so no fact whose predicate is not `r`
+    // can survive; the candidates are therefore the facts of `r` alone.
+    //
+    // What is checked here is that the narrowing loses NOTHING. `bulk` is the
+    // relation the narrowed scan never looks at, and its facts must be
+    // exactly as absent from the answers as they were before.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e r s) f
+g (h r t) i
+j (k q s) l
+m bulk n
+o bulk p
+(X (Y r s) Z) => (Y links X)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links a"));
+        CHECK(answers_contain(collector, "e links d"));
+
+        // `(h r t)` differs in the object, `(k q s)` in the predicate, and
+        // `bulk` is not composite at all.
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("rules: a pattern predicate whose own predicate is a variable still matches")
+{
+    // The fallback the narrowing needs: with `(Y R s)` there is no ground
+    // predicate to narrow by, so the candidate set stays every declared
+    // relation type -- and the rule has to keep working, or the optimisation
+    // would have silently taken a shape away.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e q s) f
+g (h r t) i
+(X (Y R s) Z) => (Y links Z)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links c"));
+        CHECK(answers_contain(collector, "e links f"));
+
+        // `(h r t)` still differs in the object.
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("reasoning: the two strategies agree on what is REPORTED, not only on what is derived")
+{
+    // `.semi-naive check` compares derived FACTS. Anything the engine REPORTS
+    // rather than derives -- a contradiction, and since this session a refusal
+    // -- is invisible to it by construction, so a divergence there would be
+    // caught by nothing at all.
+    //
+    // This closes that gap for one deliberately awkward network: a rule
+    // GENERATOR writes the transitivity rule, the closure it produces is what
+    // a contradiction rule then fires on (so the contradiction depends on
+    // DERIVED facts, which is where delta seeding differs from a classic
+    // pass), a COMPOSITE PREDICATE PATTERN runs beside it, and a REFUSED
+    // deduction is reported from a third rule. Both strategies have to agree
+    // on the derived facts AND on how many `!` lines come out.
+    const std::string network = R"(
+p is transitive
+a p b
+b p c
+c p d
+m (n r s) o
+z rel {a b}
+q p2 r
+(R is transitive) => ((X R Y, Y R Z) => (X R Z))
+(A p d, A p b) => !
+(X (Y r s) Z) => (Y links X)
+(X p2 Y) => (X in {a b})
+)";
+
+    const auto contradiction_lines = [](const zelph::io::OutputCollector& c)
+    {
+        return std::count_if(c.events().begin(), c.events().end(), [](const auto& e)
+                             { return normalize(e.text).find("⇐") != std::string::npos
+                                   && normalize(e.text).starts_with("!"); });
+    };
+
+    const auto run_with = [&](const char* mode)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(mode);
+        process_lines(interactive, network);
+        interactive.run(true, false, false);
+
+        const auto bangs = contradiction_lines(collector);
+
+        collector.clear();
+        interactive.process("S p O");
+        auto answers = collect_answers(collector);
+
+        collector.clear();
+        interactive.process("S links O");
+        for (const auto& a : collect_answers(collector))
+            answers.push_back(a);
+
+        std::sort(answers.begin(), answers.end());
+        return std::make_pair(answers, bangs);
+    };
+
+    const auto delta   = run_with(".semi-naive on");
+    const auto classic = run_with(".semi-naive off");
+
+    // The closure, the pattern-predicate consequence, and nothing else.
+    REQUIRE(delta.first.size() == 7);
+    CHECK(delta.first == classic.first);
+
+    // One contradiction from the closure, two refusals from the third rule --
+    // and the same number either way.
+    CHECK(delta.second > 0);
+    CHECK(delta.second == classic.second);
 }

@@ -32,7 +32,7 @@ A Janet input helper is provided for signed literals:
 
 ```
 zelph> %(print (zelph/int "-0"))
-«pos» «zint» &0
+pos zint &0
 ```
 
 `zelph/int` delegates the magnitude to `zelph/number`, so a `-0` literal

@@ -81,4 +81,9 @@ namespace zelph::string
     void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr, SchemeContext* ctx = nullptr);
     bool          is_inside_node_to_wstring();
     bool          is_var(std::string token);
+
+    /// Is the self-fact sugar ":pred subject" re-enterable for this
+    /// predicate NAME? Display and the test helpers ask the same function,
+    /// so the two cannot drift apart.
+    bool          selffact_sugar_safe(const std::string& name);
 }

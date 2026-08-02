@@ -274,16 +274,7 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
         }
         catch (const contradiction_error& error)
         {
-            std::lock_guard<std::mutex> lock(_mtx_output);
-            _contradiction = true;
-            ++_total_contradictions;
-
-            std::string output;
-            string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-            std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
-
-            if (_print_deductions) out(string::unmark_identifiers(message), true);
-            if (_generate_markdown) _markdown->add("Contradictions", message);
+            report_contradiction(error);
         }
         return;
     }

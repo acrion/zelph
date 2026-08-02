@@ -93,20 +93,24 @@ TEST_CASE("semi-naive: classic mode (off) still computes full results (all arith
 
 TEST_CASE("semi-naive: negation over a growing domain stays complete across iterations")
 {
-    // The negation in the consumer rule contains the variable X, which no
-    // positive condition of that rule binds. Its complementary enumeration
-    // therefore ranges over the DOMAIN of the flagged relation -- and the
-    // producer rule EXTENDS that domain during reasoning. Pure delta
-    // seeding could never re-fire the consumer (its only positive leaf has
-    // predicate marker, which gains no new facts), so the engine must
-    // classify such rules as delta-unsafe and re-apply them classically in
-    // every iteration. The consumer is defined first (see NOTE above), so
-    // in the classic first pass it runs before the producer has created
-    // (t1 flagged good) -- the derivation is forced across iterations.
+    // The consumer rule ranges over the DOMAIN of the flagged relation, and
+    // the producer EXTENDS that domain during reasoning: (t1 flagged good)
+    // exists only because the producer derived it. The consumer is defined
+    // FIRST (see NOTE above), so in the classic first pass it runs before
+    // that fact exists and the derivation is forced across iterations.
+    //
+    // The domain used to be implicit: `¬(X flagged bad)` alone, with X bound
+    // by nothing positive, made the negation enumerate the subjects of
+    // `flagged` and bind them. That second reading of `¬` is gone -- it
+    // depended on whether some other condition happened to bind the subject
+    // -- so the domain is now written down, which is what it always meant.
+    // The rule stays the delta hazard it was: `X flagged S` is a positive
+    // leaf that gains facts during the run, so a strategy that only seeds
+    // from the previous iteration's delta has to pick it up.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
-(M marker K, ¬(X flagged bad)) => (X unflagged K)
+(M marker K, X flagged S, ¬(X flagged bad)) => (X unflagged K)
 (A trigger B) => (B flagged good)
 m marker k
 a flagged good

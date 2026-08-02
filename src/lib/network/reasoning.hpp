@@ -27,7 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "chrono/stopwatch.hpp"
 #include "concurrency/thread_pool.hpp"
-#include "io/markdown.hpp"
+#include "contradiction_error.hpp"
+#include "io/derivation_export.hpp"
 #include "io/output.hpp"
 #include "network_types.hpp"
 #include "neural.hpp"
@@ -73,7 +74,10 @@ namespace zelph::network
 
     // Recursively substitute variables in a fact pattern to produce a concrete fact.
     // Used by evaluate and deduce to instantiate rule patterns with current bindings.
-    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history);
+    // rebuild_container = false keeps a container's identity instead of rebuilding
+    // it from the substituted members; the object of a PartOf fact is written INTO
+    // and must stay the same container across bindings.
+    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history, bool rebuild_container = true);
 
     // Recursively collect all variable nodes from a fact pattern.
     // Used to detect "fresh variables" that appear only in rule consequences.
@@ -93,9 +97,12 @@ namespace zelph::network
         {
             Derived,   // justified by `rule` via `premises` and `absent`
             Axiom,     // asserted, and no rule consequence unifies: an input fact
-            Unfounded, // asserted, rule consequences unify, but no acyclic
-                       // instantiation verifies against the CURRENT graph
-                       // (e.g. a NAF premise that has since become true)
+            Unfounded,  // asserted, rule consequences unify, but no acyclic
+                        // instantiation verifies against the CURRENT graph
+                        // (e.g. a NAF premise that has since become true)
+            RulePattern, // the node exists only because a rule was written
+                        // with this statement as a ground pattern -- nobody
+                        // claimed it, so there is nothing to justify
             Truncated  // not expanded: depth limit reached
         };
 
@@ -104,6 +111,15 @@ namespace zelph::network
         Status                                  status = Status::Axiom;
         std::vector<std::shared_ptr<ProofNode>> premises; // positive conditions
         std::vector<Node>                       absent;   // NAF conditions, verified absent NOW
+
+        // The instantiation that justifies this step (Derived only). The
+        // positive premises are already ground nodes, but a NAF condition
+        // usually has no node -- absence is why it holds -- so `absent`
+        // carries the rule's PATTERN and needs these bindings to be
+        // rendered as the concrete premise that was checked. Variables
+        // occurring only inside the negation stay unbound: that is what
+        // "for no D" means, and it must remain visible as such.
+        Variables bindings;
     };
 
     class ZELPH_EXPORT Reasoning : public Zelph
@@ -112,14 +128,15 @@ namespace zelph::network
         // --- Implemented in reasoning.cpp (orchestration) ---
 
         explicit Reasoning(const io::OutputHandler& output = io::default_output_handler);
-        void set_markdown_subdir(const std::string& subdir);
+        // Path of the JSON Lines file the next run(export=true) writes.
+        void set_export_file(const std::string& path);
         void set_query_collector(std::vector<std::shared_ptr<Variables>>* collector);
         // incremental: skip the classic first pass and seed the fixpoint from
         // the facts created since the previous run (see .run-delta). Only
         // sound when the graph was already saturated under the current rule
         // set; run() falls back to a classic pass when it cannot establish
         // that, so the flag is a request, not an override.
-        void run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent = false, const bool incremental = false);
+        void run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent = false, const bool incremental = false);
         void apply_rule(const network::Node& rule, network::Node condition);
         void profiler_reset_epoch()
         {
@@ -132,6 +149,43 @@ namespace zelph::network
         // application/created facts). reset_after additionally zeroes the
         // counters, starting a fresh measurement window (.prof reset).
         void profiler_dump(bool reset_after = false);
+
+        // --- Rendering helpers shared by the console and the export ---
+
+        // Count and report one detected contradiction. Every catch site in
+        // the engine calls this and nothing else, so what a contradiction
+        // costs and how it is presented is decided in one place.
+        //
+        // The SAME instantiation arrives several times: semi-naive
+        // evaluation seeds a rule once per newly derived premise, and a
+        // contradiction has no result node that hash-consing could
+        // collapse the way it collapses a repeated deduction. Reporting
+        // each arrival made the number of violations depend on the
+        // evaluation strategy -- 10 semi-naive, 6 classic, 3 real -- and
+        // that number is the headline of the Wikidata work. Repeats are
+        // therefore dropped here.
+        //
+        // Costs one 64-bit hash per DISTINCT contradiction, which is
+        // strictly less than the report each of them produces anyway.
+        void report_contradiction(const contradiction_error& error);
+
+        // Prune mode: record what the matched CONDITION denotes under these
+        // bindings. Called from every terminal site of evaluate(), which is
+        // why it is a function rather than the three copies it replaces.
+        void collect_prune_targets(Node condition, const Variables& bindings, Node parent);
+
+        // The rendered "!" as a MARKED identifier -- the conclusion of a
+        // contradiction, in the same form node_to_string produces for any
+        // other name, so console and export read it the same way.
+        std::string contradiction_symbol() const;
+
+        // The premises of one rule instantiation, rendered individually.
+        // The printed line shows the condition SET -- "{(a p b) (b p c)}" --
+        // because that is what the rule's subject IS; a consumer of the
+        // export should not have to take those braces apart again, so the
+        // export asks for the elements. A single-condition rule has no set,
+        // and then this is that one condition.
+        std::vector<std::string> render_premises(Node condition, const Variables& variables, Node parent) const;
 
         // --- Deduction focus (implemented in reasoning.cpp) ---
 
@@ -182,6 +236,8 @@ namespace zelph::network
 
         bool                               resolve_guard_side(Node item, const Variables& variables, Node& out) const;
         bool                               contradicts(const Variables& variables, const Variables& unequals) const;
+        bool                               guards_unresolved(const Variables& variables, const Variables& unequals) const;
+        bool                               guard_side_unbound(Node item, const Variables& variables) const;
         void                               end_input_capture();
 
         // --- Implemented in reasoning_evaluate.cpp ---
@@ -197,6 +253,63 @@ namespace zelph::network
                                         const adjacency_set& deductions,
                                         Node                 parent,
                                         const int            depth);
+
+        // Does this node reach the input focus -- as itself, or, when the
+        // deduction CONSTRUCTED it, through what it was constructed of?
+        // "((x f y) q c)" is a statement about x and y, which the user
+        // entered; the composed subject node itself never was and never can
+        // be, so the direct test alone hid every rule whose consequence has a
+        // composed subject -- with no unbound variable anywhere in sight.
+        //
+        // The depth bound is what keeps focus a filter: an anchor is a
+        // component of an ENTERED statement and therefore sits shallow, while
+        // the terms a computation builds nest arbitrarily deep and are exactly
+        // what focus exists to suppress.
+        bool in_input_focus(Node node, int depth_left) const;
+
+        // How far in_input_focus descends into a constructed subject. One
+        // level covers the shape that motivated it, "((x f y) q c)"; the
+        // value is a measured trade-off, see the tests.
+        static constexpr int _focus_subject_depth{1};
+
+        // Is this deduction a RULE -- a statement whose predicate is `=>`?
+        // It decides two things a fact deduction settles differently: the
+        // variables inside it are quantified by that INNER rule and must
+        // survive instantiation as variables instead of becoming fresh nodes,
+        // and rebuilding it needs rebuild_rule, not instantiate_fact.
+        bool deduction_is_rule(Node deduction) const;
+
+        // Rebuild the RULE `pattern` under `variables` and return the `=>`
+        // fact. `created` reports whether anything new was added; false means
+        // the identical rule was already in the graph. 0 is returned when the
+        // pattern does not decompose into a rule at all.
+        //
+        // A rule is not just a fact: its subject is either one condition
+        // pattern or a conjunction SET node, and that set node is created
+        // rather than hash-consed, its members hang off it as separate PartOf
+        // facts, and the tags that make the engine read it as a conjunction --
+        // or a member as a negation -- are facts of their own. instantiate_fact
+        // reproduces none of that, which is why deriving a rule needs its own
+        // construction. Call it under _mtx_network.
+        Node rebuild_rule(Node pattern, const Variables& variables, int depth, Node parent, bool& created);
+
+        // Every variable of a rule, conditions and consequences alike. Unlike
+        // collect_variables this descends through the conjunction SET node,
+        // which carries no structure of its own -- so the variables of a
+        // multi-condition rule are reachable at all.
+        std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth);
+
+        // One condition of a derived rule, under the bindings: the
+        // instantiated pattern plus the tags that describe how the engine has
+        // to read it (negation, and a nested conjunction rebuilt as a set).
+        Node rebuild_condition(Node pattern, const Variables& variables, int depth);
+
+        // The conjunction set node whose members are exactly `members`, or 0.
+        // Deriving a rule that is already there must not build a second set
+        // node for it: the set node is created, not hash-consed, so nothing
+        // would collapse the two, the rule would be re-derived on every run,
+        // and the fixpoint would never be reached.
+        Node find_conjunction_set(const std::unordered_set<Node>& members) const;
 
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
@@ -215,10 +328,10 @@ namespace zelph::network
         // --- Members ---
 
         std::atomic<bool>                        _done{false};
-        std::unique_ptr<io::Markdown>            _markdown;
+        std::unique_ptr<io::DerivationExport>    _export;
         std::atomic<uint64_t>                    _running{0};
         bool                                     _print_deductions{true};
-        bool                                     _generate_markdown{true};
+        bool                                     _export_derivations{false};
         std::atomic<bool>                        _contradiction{false};
         chrono::StopWatch                        _stop_watch;
         std::atomic<size_t>                      _skipped{0};
@@ -226,8 +339,11 @@ namespace zelph::network
         std::mutex                               _mtx_network;
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
+        // Instantiations already reported this run, see
+        // first_contradiction_report. Guarded by _mtx_output; cleared by run().
+        std::unordered_set<uint64_t>             _reported_contradictions;
         std::unique_ptr<concurrency::ThreadPool> _pool;
-        std::string                              _markdown_subdir;
+        std::string                              _export_file;
         bool                                     _prune_mode{false};
         bool                                     _prune_nodes_mode{false};
         std::unordered_set<Node>                 _facts_to_prune;

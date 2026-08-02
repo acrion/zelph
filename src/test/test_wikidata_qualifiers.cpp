@@ -205,3 +205,155 @@ Q300 P279 Q102
         CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
     std::filesystem::remove(dump);
 }
+// ---------------------------------------------------------------------------
+// Value decoding, and the two importers agreeing on node identity.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // One statement with three qualifier value kinds: a string and a
+    // monolingual text carrying JSON escapes (including an escaped quote,
+    // which used to truncate the value at the backslash), and a time value,
+    // which has no escapes and must stay exactly as the dump spells it.
+    const char* kEscapeDump = R"json([
+{"type":"item","id":"Q400","labels":{"en":{"language":"en","value":"escapes"}},"claims":{"P2738":[{"mainsnak":{"snaktype":"value","property":"P2738","datavalue":{"value":{"entity-type":"item","numeric-id":900,"id":"Q900"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P1810":[{"snaktype":"value","property":"P1810","hash":"e1","datavalue":{"value":"The \"Chirping\" Crickets, gr\u00fcn","type":"string"},"datatype":"string"}],"P1476":[{"snaktype":"value","property":"P1476","hash":"e2","datavalue":{"value":{"text":"Caf\u00e9","language":"de"},"type":"monolingualtext"},"datatype":"monolingualtext"}],"P580":[{"snaktype":"value","property":"P580","hash":"e3","datavalue":{"value":{"time":"+2020-01-01T00:00:00Z","timezone":0,"before":0,"after":0,"precision":11,"calendarmodel":"http://www.wikidata.org/entity/Q1985727"},"type":"time"},"datatype":"time"}]},"qualifiers-order":["P1810","P1476","P580"],"id":"Q400$ESC-1","rank":"normal"}]},"sitelinks":{}}
+]
+)json";
+
+    // A complete miniature dump: the class hierarchy as direct triples AND a
+    // disjoint-union statement whose members are qualifiers. Both importers
+    // read the same file, which is the documented workflow.
+    const char* kWorkflowDump =
+        "[\n"
+        "{\"type\":\"item\",\"id\":\"Q1\",\"labels\":{\"en\":{\"language\":\"en\",\"value\":\"below three\"}},"
+        "\"claims\":{\"P279\":[{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P279\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":3,\"id\":\"Q3\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"id\":\"Q1$a\",\"rank\":\"normal\"}]},"
+        "\"sitelinks\":{}},\n"
+        "{\"type\":\"item\",\"id\":\"Q5\",\"labels\":{\"en\":{\"language\":\"en\",\"value\":\"the culprit\"}},"
+        "\"claims\":{\"P279\":[{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P279\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":3,\"id\":\"Q3\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"id\":\"Q5$a\",\"rank\":\"normal\"},"
+        "{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P279\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":4,\"id\":\"Q4\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"id\":\"Q5$b\",\"rank\":\"normal\"}]},"
+        "\"sitelinks\":{}},\n"
+        "{\"type\":\"item\",\"id\":\"Q10\",\"labels\":{\"en\":{\"language\":\"en\",\"value\":\"disjoint union\"}},"
+        "\"claims\":{\"P2738\":[{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P2738\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":99,\"id\":\"Q99\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"qualifiers\":{\"P11260\":["
+        "{\"snaktype\":\"value\",\"property\":\"P11260\",\"hash\":\"w1\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":3,\"id\":\"Q3\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},"
+        "{\"snaktype\":\"value\",\"property\":\"P11260\",\"hash\":\"w2\",\"datavalue\":"
+        "{\"value\":{\"entity-type\":\"item\",\"numeric-id\":4,\"id\":\"Q4\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"}]},\"qualifiers-order\":[\"P11260\"],"
+        "\"id\":\"Q10$u\",\"rank\":\"normal\"}]},\"sitelinks\":{}}\n"
+        "]\n";
+
+    std::filesystem::path write_named_dump(const std::string& name, const char* content)
+    {
+        const auto    path = std::filesystem::temp_directory_path() / name;
+        std::ofstream out(path, std::ios::binary);
+        out << content;
+        return path;
+    }
+
+    // .load on a .json writes a .bin cache next to it.
+    void remove_dump_and_cache(const std::filesystem::path& dump)
+    {
+        std::filesystem::path cache = dump;
+        cache.replace_extension(".bin");
+        std::filesystem::remove(cache);
+        std::filesystem::remove(dump);
+    }
+}
+
+TEST_CASE("wikidata qualifiers: text values arrive decoded, scalars stay verbatim")
+{
+    const auto dump = write_named_dump("zelph_qualifier_escape_test.json", kEscapeDump);
+
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+        interactive.process(".lang wikidata");
+
+        collector.clear();
+        interactive.process("Q400$ESC-1 pq:P1810 _v");
+        // An escaped quote used to end the value at the backslash, and the
+        // \u escape used to reach the graph as its six characters. The value
+        // is printed QUOTED, with its own quotes escaped: bare, the line
+        // read back as several atoms instead of the one value it names.
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\""));
+
+        // And what was printed denotes that same value when entered again.
+        interactive.process("probe pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\"");
+        collector.clear();
+        interactive.process("_s pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\"");
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1810 \"The \\\"Chirping\\\" Crickets, grün\""));
+
+        collector.clear();
+        interactive.process("Q400$ESC-1 pq:P1476 _w");
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P1476 Café"));
+
+        // Time and quantity are documented as the dump's own spelling; they
+        // carry no escapes and must not be reformatted.
+        collector.clear();
+        interactive.process("Q400$ESC-1 pq:P580 _t");
+        CHECK(answers_contain(collector, "Q400$ESC-1 pq:P580 +2020-01-01T00:00:00Z")); });
+
+    std::filesystem::remove(dump);
+}
+
+TEST_CASE("wikidata qualifiers: the two importers agree on node identity")
+{
+    const auto dump = write_named_dump("zelph_qualifier_workflow_test.json", kWorkflowDump);
+
+    // The documented workflow: direct triples from .load, statement layer from
+    // .wikidata-qualifiers, same file. It only answers if the qualifier import
+    // attaches its entity values to the nodes the dump import created -- if
+    // the two disagreed, the query below would silently find nothing.
+    run_parallel_mode([&](auto& collector, auto& interactive)
+                      {
+        interactive.process(".load \"" + dump.string() + "\"");
+        interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+        interactive.process_file("sparql", {});
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT DISTINCT ?i ?class ?disj1 ?disj2 WHERE {
+  ?class p:P2738 ?l .
+  MINUS { ?l wikibase:rank wikibase:DeprecatedRank . }
+  ?l pq:P11260 ?disj1 . ?l pq:P11260 ?disj2 .
+  FILTER ( ( str(?disj1) < str(?disj2) ) )
+  ?i wdt:P279* ?disj1 . ?i wdt:P279* ?disj2 .
+})");
+
+        CHECK(any_output_contains(collector, "Q5 (the culprit) Q10 (disjoint union) Q3 Q4"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+
+    remove_dump_and_cache(dump);
+}
+
+TEST_CASE("wikidata qualifiers: a second import of the same file changes nothing")
+{
+    const auto dump = write_named_dump("zelph_qualifier_idempotence_test.json", kWorkflowDump);
+
+    run_parallel_mode([&](auto& collector, auto& interactive)
+                      {
+        interactive.process(".load \"" + dump.string() + "\"");
+        interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+
+        collector.clear();
+        interactive.process(".stat");
+        const std::string after_first = last_out_text(collector);
+
+        interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+        collector.clear();
+        interactive.process(".stat");
+
+        // Facts are content-addressed, which is what the documentation
+        // promises when it calls the import idempotent and incremental.
+        CHECK(last_out_text(collector) == after_first); });
+
+    remove_dump_and_cache(dump);
+}

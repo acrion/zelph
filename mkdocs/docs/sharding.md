@@ -14,7 +14,17 @@ Partial loading and sharding address this with three goals:
 2. **Enable cloud-native, on-demand access.** Host the network as many small objects on Hugging Face and fetch only the requested ranges over the network, without downloading multi-gigabyte files first.
 3. **Provide a foundation for external tools.** Programmatic consumers can query specific parts of a hosted zelph graph without embedding zelph's full in-memory representation.
 
-A partial load always produces a **read-only, incomplete graph view**. Node and name lookups, adjacency inspection (`.out`, `.in`, `.node`), and statistics (`.stat`) work normally. Operations that require the full graph — inference (`.run`), pruning, cleanup, and destructive edits — are blocked while partial mode is active.
+A partial load always produces a **read-only, incomplete graph view**. Node and name lookups, adjacency inspection (`.out`, `.in`, `.node`), and statistics (`.stat`) work normally. Operations that require the full graph — inference (`.run`), pruning, cleanup, renaming, saving, and destructive edits — are blocked while partial mode is active, whether they are invoked as a command or through the Janet API.
+
+`.import` is **not** blocked: the query layers are ordinary scripts, and `.import sparql` on a partial view is exactly what one wants. A script that only defines things (which is what a query layer does) imports silently. One that adds facts to the view says so afterwards:
+
+```
+WARNING: 'examples/english' added 239 node(s) to a partial view.
+  Inference over them is blocked (.run), and the adjacency-index cache is
+  disabled for this session because the graph no longer matches its file.
+```
+
+Nothing is undone — the addition is as legitimate as a typed statement, which was always allowed — but the two consequences are worth knowing, and the second one is otherwise invisible.
 
 Partial loading has been available since version 0.9.6.
 
@@ -29,7 +39,11 @@ A `.bin` file is a sequence of [Cap'n Proto](https://capnproto.org/) packed mess
 | `nameOfNode` | node ID → human-readable name, grouped by language   |
 | `nodeOfName` | human-readable name → node ID, grouped by language   |
 
-Each section is split into chunks of up to 1,000,000 entries. The `left` and `right` sections are keyed and ordered by node ID. The two name sections are grouped by language and ordered by their respective key: `nameOfNode` is sorted by node ID, `nodeOfName` is sorted by the name string.
+Each section is split into chunks of up to 1,000,000 entries.
+
+The two name sections are grouped by language and sorted within it: `nameOfNode` by node ID, `nodeOfName` by the name string. Their chunk boundaries are therefore key ranges, and a chunk can be located by its key.
+
+The `left` and `right` sections are **not** sorted. They are written in the order the nodes stand in the in-memory map, which for an imported network is roughly the order in which they were created; only the adjacency list inside each entry is sorted. `left=0` thus means "the first million nodes that were created", not an ID range, and there is no way to tell from a node ID which adjacency chunk holds it — that is what a [node route index](#route-selectors) is for.
 
 The header message records the number of chunks in each section (it is read by `.stat-file`). For example, the full Wikidata file has 984 left + 984 right + 204 nameOfNode + 204 nodeOfName = 2376 chunks; the pruned file has 75 + 75 + 21 + 21 = 192 chunks.
 
@@ -41,7 +55,7 @@ This invariant matters for selection: it guarantees that the selector `nameOfNod
 
 Two consequences are worth keeping in mind:
 
-- Because `nameOfNode` is sorted by node ID and `nodeOfName` by name string, the same index in the two sections covers **different** sets. A node that appears in `nameOfNode` chunk 0 is not generally resolvable through `nodeOfName` chunk 0.
+- Because `nameOfNode` is sorted by node ID and `nodeOfName` by name string, the same index in the two sections covers **different** sets. A node that appears in `nameOfNode` chunk 0 is not generally resolvable through `nodeOfName` chunk 0. In a view that loaded only one of the two directions this is visible directly: `.clist` walks `nodeOfName` and will list nodes for which `.node` — which reads `nameOfNode` — reports no name, and the other way round.
 - Chunk indices are **file-local**. They are not guaranteed to be stable across regenerated `.bin` files, because chunk boundaries depend on map iteration order at save time.
 
 ## Inspecting a File Without Loading It
@@ -139,7 +153,7 @@ zelph-> .stat
 Network Statistics:
 ------------------------
 Nodes: 1000000
-RAM Usage: 2.4 GiB
+RAM Usage: 2.3 GiB
 Name-of-Node Entries by language:
   wikidata: 1000000
 Node-of-Name Entries by language:
@@ -219,7 +233,7 @@ This writes an upload-ready artifact tree under `/tmp/file/`, mirroring the layo
 
 Shard filenames follow `chunk-<index>.capnp-packed` for the adjacency sections and `chunk-<index>-<lang>.capnp-packed` for the name sections. Because the local tree mirrors the advertised layout, uploading `/tmp/file/` to the repo as `file` publishes exactly the paths referenced by the manifest; the tool prints the matching `hf upload` command. Overriding `--shard-root` breaks this mirror and requires manual path mapping at upload time (the tool warns in that case).
 
-The manifest's `source.binPath` is advertised as `<hf-root>/<bin filename>` by default (override with `--bin-object-path`), so that pure-remote loads can fetch the `.bin` header without passing `source-bin=`. This assumes the source `.bin` is published at the repository root. For fully local use, pass `source-bin=<local .bin>` to `.load-partial`.
+The manifest's `source.binPath` is advertised as `<hf-root>/<bin filename>` by default (override with `--bin-object-path`), so that pure-remote loads can fetch the `.bin` header without passing `source-bin=`. This assumes the source `.bin` is published at the repository root. A local copy of that file next to the tree is used automatically (see [Where a Chunk Is Read From](#where-a-chunk-is-read-from)); `source-bin=` is only needed for a `.bin` kept elsewhere.
 
 ### Using a Manifest
 
@@ -231,13 +245,39 @@ zelph> .load-partial /path/to/file.hf-v2.json left=0 right=0
 
 Additional options for manifest mode:
 
-| Option              | Effect                                                            |
-| ------------------- | ----------------------------------------------------------------- |
-| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)    |
-| `shard-root=<path>` | Local directory containing pre-downloaded shard files             |
-| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg) |
+| Option              | Effect                                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `source-bin=<path>` | Override the `.bin` path in the manifest (used for the header)                |
+| `shard-root=<path>` | Directory holding the shards, when they are **not** next to the manifest      |
+| `manifest=<path>`   | Explicitly specify a manifest path (alternative to the first arg)             |
 
-When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them with `curl` and caches them in a temporary directory. If `shard-root` is set, zelph looks there first before downloading.
+### Where a Chunk Is Read From
+
+A chunk entry advertises an `objectPath`, which in the published artifacts is
+an `hf://` URL. That URL says where the object lives in the repository — it
+does not say that the network has to be used. zelph resolves it in this order
+and takes the first hit:
+
+1. the path as written, if it happens to be a local file;
+2. relative to the **manifest's own directory** — an artifact tree keeps
+   `shards/` next to the manifest, so a downloaded or freshly emitted tree
+   resolves without any further option;
+3. below `shard-root=`, if given;
+4. the remote object, fetched with `curl` and cached.
+
+Only step 4 touches the network, and it announces itself
+(`Shard left-0 has no local copy; fetching …`). `shard-root=` is therefore
+needed only when the shards were moved away from their manifest, and a purely
+local artifact never reaches the network — earlier versions went straight to
+step 4 whenever `shard-root=` was absent and downloaded files that were lying
+next to the manifest they had just read.
+
+The `.bin` named in `source.binPath` follows the same rule: if a file of that
+name exists next to the manifest or one directory above it (the layout of the
+published repository, where the `.bin` sits at the root and the artifact tree
+below it), the header is read from that file instead of over the network, and
+`source-bin=` is not needed. Passing `source-bin=` remains the way to point at
+a `.bin` kept somewhere else.
 
 ## Hosting on Hugging Face
 
@@ -319,7 +359,17 @@ transport layer is the later extension for instantaneous throughput and exact
 last-progress timestamps; its measurements will also inform shard sizing and
 the planned progressive query/join executor.
 
-If you have already downloaded the shards (for example via `huggingface-cli download`), point `shard-root` at the local copy to skip network access:
+If you have already downloaded the artifact (for example via
+`huggingface-cli download`), address the **local** manifest instead of the
+`hf://` one — the shards next to it are then read from disk and nothing goes
+over the network:
+
+```
+zelph> .load-partial /local/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json left=0 right=0
+```
+
+Only if the shards were separated from their manifest does the location have
+to be spelled out:
 
 ```
 zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all/wikidata-20260309-all.hf-v2.json \
@@ -336,12 +386,65 @@ When a manifest advertises a **node route index** — a sidecar JSON that maps n
 | `route-name=<name>`   | Resolve a name to the nodeOfName chunk that contains it                      |
 | `route-lang=<lang>`   | Language for the route-name lookup (required with `route-name`)              |
 
-Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support; they can be combined with explicit chunk selectors.
+Route selectors require manifest mode and a manifest that advertises `nodeRouteIndex` support; they can be combined with explicit chunk selectors, and the two selections are unioned.
 
 ```
 zelph> .load-partial manifest.json route-node=1
 zelph> .load-partial manifest.json route-name=A route-lang=wikidata
 ```
+
+A node route and a name route answer different questions, and the difference is
+not a limitation but the layout: `nameOfNode` is sorted by node ID, `nodeOfName`
+by name string. `route-node` therefore selects adjacency and the node's own
+name; `route-name` selects the one chunk in which that name can be found. A
+name route alone gives a view in which the name resolves to a node ID while the
+node carries no names — enough to route, not enough to display. Ask for both
+when you want both.
+
+Chunk selectors are file-local, and so are node IDs: both are assigned when the
+`.bin` is written. `route-name` is the only selector that survives a
+regenerated network, because names are the one identifier the graph carries
+itself.
+
+### The Sidecar Format
+
+The route index is a JSON file listing, per section, which chunk holds which
+keys. Nothing generates it yet, so it is written by whoever produces the
+artifact:
+
+```json
+{
+  "routing": {
+    "left":       [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "right":      [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "nameOfNode": [{"chunkIndex": 0, "nodes": [11, 12]}],
+    "nodeOfName": [{"chunkIndex": 0, "lang": "zelph", "names": ["alpha", "beta"]},
+                   {"chunkIndex": 1, "lang": "de",    "names": ["alpha_de"]}]
+  }
+}
+```
+
+Every field shown is required for the entries of that section; an entry with a
+missing `chunkIndex`, `nodes`, `lang` or `names` is an error rather than a
+skipped line. Sections may be omitted entirely — a sidecar that only routes
+names is valid. Listing only the keys that callers are expected to route by is
+also valid, and is what keeps the sidecar small: a route selector that resolves
+no chunk at all is reported as an error, so an incomplete index shows up as
+such instead of loading a wrong subset.
+
+The manifest points at the file and declares the capability:
+
+```json
+{
+  "selectorModel": {"supportedOperations": ["header-probe", "selected-chunk-read", "node-route"]},
+  "hfObjects": {"nodeRouteIndex": {"path": "hf://datasets/<owner>/<repo>/<artifact>/net.route.json"}}
+}
+```
+
+`localPath` may be used instead of `path` for a purely local artifact. As for
+the shards, an advertised remote path is resolved against the local tree first
+(see [Where a Chunk Is Read From](#where-a-chunk-is-read-from)), so a
+downloaded artifact routes without touching the network.
 
 ## Producing and Publishing Shards
 
@@ -393,6 +496,19 @@ A Cap'n Proto message can span multiple segments; the save path uses a 512 MiB f
 - Selecting a node in one section does not imply it is resolvable through the same index in another section, because the name sections are sorted by different keys.
 
 ## Performance
+
+What a manifest buys locally, measured on the published pruned artifact
+(`wikidata-20260309-all-pruned`, 75 left chunks, 6.0 GB) by loading its first
+left chunk and nothing else, alternating the two commands over two rounds:
+
+| Command                                                                       | Time            |
+| ----------------------------------------------------------------------------- | --------------- |
+| `.load-partial …-pruned.bin left=0 right=none nameOfNode=none nodeOfName=none` | 7.05 s / 7.10 s |
+| `.load-partial …-pruned.hf-v2.json left=0 right=none …` (shards on disk)       | 1.07 s / 1.03 s |
+
+Both produce the same 1,000,000-node view. The difference is the packed stream:
+the `.bin` path walks it from the beginning, the manifest path seeks — or, with
+shards, opens one small file.
 
 Observed timings for selective chunk access on the proof-of-concept artifact at [chbwa/zelph-sharded](https://huggingface.co/datasets/chbwa/zelph-sharded):
 

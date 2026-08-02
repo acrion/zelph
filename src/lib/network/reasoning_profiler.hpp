@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace zelph::network
@@ -56,7 +57,6 @@ namespace zelph::network
         std::atomic<uint64_t> negated_conditions{0};
         std::atomic<uint64_t> negation_success{0};
         std::atomic<uint64_t> negation_fail{0};
-        std::atomic<uint64_t> neg_complement_subjects_tested{0};
 
         std::atomic<uint64_t> deduce_calls{0};
         std::atomic<uint64_t> termination_guard_checks{0};
@@ -73,6 +73,14 @@ namespace zelph::network
 
         std::atomic<uint64_t> seminaive_seeds{0};
         std::atomic<uint64_t> seminaive_safety_extra{0};
+
+        // NOT WIRED, i.e. declared and reset but never incremented:
+        // snapshot_object_driven, unify_rule_atom_fail, unify_graph_atom_fail,
+        // unify_struct_success. Nothing prints them either, so they mislead
+        // no one today. Adding one to the dump without wiring it first would
+        // report a permanent 0 -- which is exactly how "Parallel unifications
+        // activated for N" came to lie for eight months. Wire it, or leave it
+        // out of the dump.
 
         // --- Unification-level counters ---
         std::atomic<uint64_t> unification_instances{0};
@@ -120,6 +128,32 @@ namespace zelph::network
         std::atomic<uint64_t> max_reasoning_depth{0};
         std::atomic<uint64_t> max_unify_depth{0};
 
+        // The relations a parallel snapshot was launched for. NOT gated on
+        // logging, unlike everything below: the run summary reports it on
+        // every run, and reporting a set nothing ever fills is what this
+        // replaces -- the counter lived in a second static of the same name
+        // in unification.cpp, so the one being read was always empty and the
+        // line has said "0 distinct fixed relations" since 457b14b.
+        std::unordered_set<Node> parallel_relations;
+
+        void note_parallel_relation(const Node rel)
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            parallel_relations.insert(rel);
+        }
+
+        std::size_t parallel_relation_count()
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            return parallel_relations.size();
+        }
+
+        void clear_parallel_relations()
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            parallel_relations.clear();
+        }
+
         // Context aggregation (coarse-grained; guarded by mutex)
         std::mutex                         _mtx;
         std::unordered_map<Node, uint64_t> rel_scanned_facts;  // per relation: candidate facts scanned (snapshot size or actual scan)
@@ -157,7 +191,6 @@ namespace zelph::network
             RZ(negated_conditions);
             RZ(negation_success);
             RZ(negation_fail);
-            RZ(neg_complement_subjects_tested);
             RZ(deduce_calls);
             RZ(termination_guard_checks);
             RZ(termination_guard_skips);
@@ -328,8 +361,7 @@ namespace zelph::network
 
             oss << "  negation: cond=" << load(negated_conditions)
                 << " ok=" << load(negation_success)
-                << " fail=" << load(negation_fail)
-                << " complement_subjects=" << load(neg_complement_subjects_tested) << "\n";
+                << " fail=" << load(negation_fail) << "\n";
 
             oss << "  termination_guard: checks=" << load(termination_guard_checks)
                 << " skips=" << load(termination_guard_skips)

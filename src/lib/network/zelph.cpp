@@ -276,7 +276,11 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
             for (const Node subj : get_left(rel))
             {
                 // Subjects: bidirectional (in both left and right of rel).
-                if (subj != object && subj != predicate && !is_var(subj) && has_right_edge(rel, subj))
+                // Being the predicate as well is no disqualification -- a
+                // fact whose subject IS its predicate (`~ ~ ->`) still has
+                // that subject, and the bidirectionality test already rejects
+                // a node that is merely the predicate.
+                if (subj != object && !is_var(subj) && has_right_edge(rel, subj))
                 {
                     subjects.insert(subj);
                 }
@@ -341,14 +345,32 @@ adjacency_set Zelph::filter(const Node fact, const Node relationType, const Node
 
     for (Node nd : source)
     {
-        adjacency_set possible_relations = _pImpl->get_right(nd);
-        for (Node relation : filter(possible_relations, relationType))
+        // Exclude the subject of the fact, since it is connected
+        // bidirectionally. If <subject relationType target> is true, the
+        // subject would be included in the result by mistake.
+        if (left_nodes.count(nd) != 0) continue;
+
+        // The question is whether `nd relationType target` HOLDS, and the
+        // exact probe is the only way to ask it. Walking nd's neighbourhood
+        // for a fact with the right predicate and the right node among its
+        // objects answers a weaker question -- it never checks that nd is
+        // that fact's SUBJECT -- and the two come apart on the one shape
+        // that matters most here.
+        //
+        // A fact's outgoing edges hold its parents as well as its subject
+        // and predicate, so for the consequence of a rule, `source` contains
+        // the RULE. The rule in turn points at its own subject, the
+        // condition; and if that condition happens to be a relation-type
+        // declaration -- `(R ~ ->) => (R declared yes)`, the natural way to
+        // write a rule that quantifies over all predicates -- the walk found
+        // `R ~ ->` from the rule, saw the right predicate and the right
+        // object, and reported the RULE as a second relation type of the
+        // consequence. deduce() then refused the ambiguity and the rule
+        // derived nothing at all, silently. Adding any second condition hid
+        // it again.
+        if (check_fact(nd, relationType, {target}).is_known())
         {
-            if (_pImpl->get_left(relation).count(target) == 1
-                && left_nodes.count(nd) == 0) // exclude the subject of the fact, since it is connected bidirectional. If <subject relationType target> is true, the subject would be included in the result by mistake
-            {
-                result.insert(nd);
-            }
+            result.insert(nd);
         }
     }
 
@@ -375,6 +397,62 @@ adjacency_set Zelph::get_left(const Node b) const
 adjacency_set Zelph::get_right(const Node b) const
 {
     return _pImpl->get_right(b);
+}
+
+// Facts that use `relation` as their PREDICATE. get_left(relation) is NOT
+// that set: it also holds the facts in which the relation is the SUBJECT,
+// starting with its own `relation ~ ->` declaration.
+adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
+{
+    adjacency_set facts;
+
+    // The nodes pointing AT a relation are the facts that use it as their
+    // PREDICATE plus the facts that merely have it as their SUBJECT -- a
+    // fact points at both of them. What separates the two roles is the back
+    // edge: a subject (like an object) points at its fact, a predicate does
+    // not. Without that second test a predicate's own `relation ~ ->`
+    // declaration counted as a use of it, so .list-predicate-usage reported
+    // one use for a predicate nothing had ever used.
+    //
+    // A fact whose subject IS its predicate carries both roles in ONE edge,
+    // so the back edge cannot separate them: _left[fact] = {subject,
+    // predicate} then has a single entry, and the relation is the predicate
+    // after all. `~ ~ ->` is that fact, and every network has it.
+    // A COMPOSITE relation -- a fact or a cons cell in predicate position --
+    // is pointed at by its own subject and objects as well, and those passed
+    // both tests above: the subject through the single-outgoing-edge
+    // exemption, the object because a fact does not point back at it. So
+    // `x (a p b) y` reported THREE uses of `(a p b)` where there is one. The
+    // parts are excluded by name rather than by another edge test, because
+    // no edge distinguishes them -- one decomposition of the relation
+    // itself, and nothing at all for the atomic predicate every bulk import
+    // consists of.
+    adjacency_set own_parts;
+    if (Impl::is_hash(relation))
+    {
+        const FactStructure fs = get_preferred_structure(this, relation, 3);
+        if (fs.predicate != 0 && fs.subject != 0)
+        {
+            own_parts.insert(fs.subject);
+            own_parts.insert(fs.predicate);
+            for (const Node o : fs.objects)
+                own_parts.insert(o);
+        }
+    }
+
+    const Network::ReadScope scope = read_scope();
+
+    for (const Node fact : scope.left(relation))
+    {
+        if (own_parts.count(fact) == 1) continue;
+
+        if (scope.left(fact).count(relation) == 0 || scope.right(fact).size() == 1)
+        {
+            facts.insert(fact);
+        }
+    }
+
+    return facts;
 }
 
 bool Zelph::has_left_edge(Node b, Node a) const
@@ -542,10 +620,106 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         {
             // 1 13 13
             // ~ is for example is for example <= (~  is opposite of  is for example), (is for example  ~  ->)
+            //
+            // A chained "A => B => C" lands here: the parser reads one
+            // statement whose predicate `=>` also stands among the objects.
+            // Which of the two arrows binds tighter is genuinely undecided,
+            // so the answer is not a default reading but a demand to say
+            // which was meant.
+            if (predicate == core.Causes)
+            {
+                throw std::runtime_error("fact(): a rule inside a rule has to be parenthesised -- "
+                                         "write A => (B => C) or (A => B) => C, since \"A => B => C\" "
+                                         "does not say which arrow binds tighter");
+            }
+
             throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
         }
 
-        if (predicate != core.IsA && (!Impl::is_hash(predicate) || Network::is_var(predicate))) // note that the initial constructor call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed as intended
+        // A rule whose consequence is a CONJUNCTION. "A => (B, C)" reads as
+        // "A implies both", and zelph can say that -- but as several OBJECTS
+        // of one rule, not as a set. The engine deduces the objects of a `=>`
+        // fact and has no reading for a set node in that position, so the
+        // rule was built, was listed by .list-rules, and then derived nothing
+        // at all, without a word. The one comparison against core.Causes is
+        // what ordinary data pays for this.
+        if (predicate == core.Causes)
+        {
+            for (const Node t : objects)
+            {
+                if (check_fact(t, core.IsA, {core.Conjunction}).is_known())
+                {
+                    throw std::runtime_error(
+                        "fact(): a rule cannot have a conjunction as its consequence. "
+                        "Write the consequences as several objects of the same rule: "
+                        "\"A => (B) (C)\" instead of \"A => (B, C)\". They then share "
+                        "their fresh variables, which two separate rules would not.");
+                }
+            }
+        }
+
+        // A node cannot be both a conjunction and a negation. The engine
+        // reads the conjunction tag FIRST and would then never look at the
+        // negation tag again, so "¬(A, B)" used to be evaluated as "A and
+        // B" -- the opposite of what was written, silently. Rejecting the
+        // combination here catches both spellings, because the sugar and
+        // the explicit "*(...) ~ negation" form both end up creating this
+        // very fact. The cost for ordinary data is one comparison against
+        // core.IsA.
+        if (predicate == core.IsA && objects.size() == 1)
+        {
+            const Node tag   = *objects.begin();
+            const Node other = tag == core.Negation ? core.Conjunction
+                             : tag == core.Conjunction ? core.Negation
+                                                       : 0;
+
+            if (other != 0 && check_fact(subject, core.IsA, {other}).is_known())
+            {
+                throw std::runtime_error(
+                    "fact(): a condition cannot be a conjunction and a negation at once. "
+                    "zelph negates a single fact pattern, not a group of them. "
+                    "Use De Morgan: not(A and B) is the same as (not A) or (not B), and a "
+                    "disjunction is written as several rules with the same consequence.");
+            }
+        }
+
+        // A set constant is its members -- that is what identifies it -- so
+        // there is nothing to add to. `x in {a b}` used to extend the very
+        // set it named, leaving a node whose identity said {a b} while it
+        // rendered {a b x}. The extensible container has its own literal and
+        // the message names it. One comparison against core.PartOf for
+        // ordinary data; is_set_constant then rejects every collection on the
+        // id alone, without reading a member.
+        // A pattern is not a claim. `X in {a b}` is how a rule quantifies
+        // over the members, and the fact has to exist for unification to
+        // match it; only a variable-free subject would really be adding an
+        // element. (The already-known case never reaches here: this branch
+        // runs only when the fact is about to be CREATED, so writing
+        // `a in {a b}` -- true by construction -- is a no-op, not an error.)
+        if (predicate == core.PartOf && objects.size() == 1
+            && !Impl::is_var(subject) && !var_in_closure(subject)
+            && is_set_constant(*objects.begin()))
+        {
+            std::string rendered;
+            zelph::string::node_to_string(this, rendered, _lang, *objects.begin(), 3);
+            throw std::runtime_error(
+                "fact(): a set constant cannot be extended -- " + zelph::string::unmark_identifiers(rendered)
+                + " IS its members. Write the collection literal @{...} for a container that membership can grow.");
+        }
+
+        // Whatever stands in predicate position IS a relation type, and saying
+        // so is what makes the fact readable again later. The declaration used
+        // to be skipped for hash nodes, i.e. for a predicate that is itself a
+        // fact or a cons cell ("x (a p b) y", "a <=> b"): the fact was created,
+        // the genuine store held its triple, and everything worked -- until a
+        // .save/.load disarmed the store, after which the reconstruction had no
+        // way to recognise the predicate and the fact silently stopped
+        // answering queries. Declaring it costs one extra fact per DISTINCT
+        // composite predicate, and only for those; ordinary data, every import
+        // and the whole stdlib name their predicates and are unaffected.
+        // (Note that the initial constructor call fact(core.IsA, core.IsA,
+        // core.RelationTypeCategory) is executed as intended.)
+        if (predicate != core.IsA)
         {
             fact(predicate, core.IsA, {core.RelationTypeCategory});
         }
@@ -635,13 +809,13 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
 
         // Record the genuine structure (reconstruction bypass): the exact
         // triple, known right here and immutable forever -- the node ID is
-        // its hash. subject == predicate is deliberately excluded: the
-        // reconstruction walk yields EMPTY for those (the subject loop
-        // skips s == p), and unification's atom treatment of them must not
-        // change. Self-facts arrive with objects == {subject}, matching
-        // the walk's self-referential repair exactly.
-        if (subject != predicate
-            && _pImpl->_genuine_authoritative.load(std::memory_order_acquire))
+        // its hash. Self-facts arrive with objects == {subject}, matching
+        // the walk's self-referential repair exactly, and subject ==
+        // predicate now matches the walk too: it used to be excluded here
+        // because the walk yielded EMPTY for those and the two stores had to
+        // agree, but the walk reads them since the s == p branch in
+        // get_fact_structures.
+        if (_pImpl->_genuine_authoritative.load(std::memory_order_acquire))
         {
             auto           list = std::make_shared<FactStructureList>(1);
             FactStructure& fs   = list->front();
@@ -969,20 +1143,101 @@ Node Zelph::list(const std::vector<std::string>& elements)
  *
  * Empty input returns core.Nil (consistent with sequence() and the canonical empty list/set in Lisp).
  */
-Node Zelph::set(const std::unordered_set<Node>& elements)
+// A COLLECTION -- the `@{...}` literal, and a rule's conjunction set.
+//
+// A container with an identity of its OWN: two collections written the same
+// way are two different containers, and membership is asserted, so `x in c`
+// extends one. That is the mereological reading zelph's own predicate name
+// (PartOf) already carries.
+Node Zelph::collection(const std::unordered_set<Node>& elements)
 {
     if (elements.empty()) return core.Nil;
 
-    // Create the super-node representing the set itself
-    Node set_node = _pImpl->create();
+    // Create the super-node representing the collection itself
+    Node collection_node = _pImpl->create();
 
     for (const auto& current_node : elements)
     {
-        // Link to the set container
+        // Link to the container
+        fact(current_node, core.PartOf, {collection_node});
+    }
+
+    return collection_node;
+}
+
+// A SET CONSTANT -- the `{...}` literal.
+//
+// Identified by its members, as the axiom of extensionality demands: two
+// occurrences of `{a b}` are ONE node. That identity is the whole point --
+// it is what lets a set literal in a rule condition denote the same thing
+// as the same literal in the data, which a collection never can.
+//
+// Its membership is definitional rather than asserted, so it cannot be
+// extended; the guard in fact() refuses that and names the alternative.
+Node Zelph::set(const std::unordered_set<Node>& elements)
+{
+    if (elements.empty()) return core.Nil; // the empty set IS nil, as for `<>`
+
+    // Extensionality needs KNOWN members. A literal carrying a variable
+    // denotes a different set for every binding, so it is a pattern, not a
+    // constant -- and it becomes the container that a pattern can be. This is
+    // not a fallback but the definition: `{a b}` IS its members and can be
+    // hash-consed; `{Y}` has none yet and cannot.
+    //
+    // It is also what keeps the engine's own conjunction sugar
+    // `*{(A rel B) (B rel C)} ~ conjunction` working: those members are
+    // condition patterns, never ground.
+    for (const Node e : elements)
+    {
+        if (Impl::is_var(e) || var_in_closure(e)) return collection(elements);
+    }
+
+    adjacency_set members;
+    for (const Node e : elements)
+        members.insert(e);
+
+    const Node set_node = Impl::create_hash(members);
+
+    if (!_pImpl->exists(set_node)) _pImpl->create(set_node);
+
+    for (const auto& current_node : elements)
+    {
+        // Written a second time, the literal lands on the very same node and
+        // every membership fact is already there. Skipping those is not an
+        // optimisation: creating one would hit the extension guard, since by
+        // then the node IS a complete set constant. While the FIRST occurrence
+        // is being built the members are still incomplete, so the guard cannot
+        // fire on it either.
+        if (check_fact(current_node, core.PartOf, {set_node}).is_known()) continue;
         fact(current_node, core.PartOf, {set_node});
     }
 
     return set_node;
+}
+
+// Is this node a set constant, i.e. does it hash back to its own members?
+//
+// No marker and no side table: the identity IS the answer. A collection gets
+// a counter id from create(), which cannot equal the hash of anything, so the
+// cheap is_hash test rejects every collection before the members are read.
+bool Zelph::is_set_constant(const Node node) const
+{
+    if (node == 0 || !Impl::is_hash(node) || Impl::is_var(node)) return false;
+
+    adjacency_set members;
+
+    for (const Node rel : _pImpl->get_right(node))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    member = parse_fact(rel, objs, 0);
+        // A VARIABLE member is a rule pattern, not an element: the
+        // condition `X in {a b}` has to exist as a fact for unification to
+        // match against, and it would otherwise change what the set is.
+        if (member != 0 && !Impl::is_var(member) && objs.count(node) == 1) members.insert(member);
+    }
+
+    return !members.empty() && Impl::create_hash(members) == node;
 }
 
 Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
@@ -1228,9 +1483,34 @@ Network::ReadScope Zelph::read_scope() const
     return Network::ReadScope(*_pImpl);
 }
 
+// Anchored-candidate filter for Unification::increment_fact_index: from the
+// outgoing edges of `anchor`, collect the facts that use `relation` as their
+// PREDICATE. Same role test as get_facts_of_predicate, from the other end --
+// there the starting set is everything pointing at the relation, here it is
+// one anchor's adjacency.
+//
+// All checks under ONE shared lock pair on references; the implementation
+// before the ReadScope existed copied the anchor's full adjacency and paid
+// two locked edge probes per candidate. This used to live in Network, which
+// is the wrong layer: reading an edge pair as subject-versus-predicate is
+// knowledge about zelph's fact topology, and Network only stores edges.
 void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
 {
-    _pImpl->collect_anchored_facts(anchor, relation, out);
+    out.clear();
+
+    const Network::ReadScope scope = read_scope();
+
+    for (const Node fact : scope.right(anchor))
+    {
+        if (scope.right(fact).count(relation) == 0) continue; // not this predicate
+        // relation -> fact makes the relation the fact's SUBJECT -- unless
+        // the fact's whole outgoing adjacency is that one node, which is how
+        // {subject, predicate} collapses when the two are the same. See
+        // get_facts_of_predicate, which applies the same test from the other
+        // end.
+        if (scope.left(fact).count(relation) != 0 && scope.right(fact).size() > 1) continue;
+        out.insert(fact);
+    }
 }
 
 // Semantic caveat, deliberate: parse_relation's exact probe uses

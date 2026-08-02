@@ -48,9 +48,9 @@ Reasoning::Reasoning(const io::OutputHandler& output)
 {
 }
 
-void Reasoning::set_markdown_subdir(const std::string& subdir)
+void Reasoning::set_export_file(const std::string& path)
 {
-    _markdown_subdir = subdir;
+    _export_file = path;
 }
 
 void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* collector)
@@ -58,7 +58,76 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
-void Reasoning::run(const bool print_deductions, const bool generate_markdown, const bool suppress_repetition, const bool silent, const bool incremental)
+void Reasoning::report_contradiction(const contradiction_error& error)
+{
+    std::lock_guard<std::mutex> lock(_mtx_output);
+
+    // The instantiation IS the condition pattern plus the bindings that
+    // satisfied it. Variables is an ordered map, so the fold below is
+    // deterministic without sorting anything, and it reuses the engine's
+    // own mixing function rather than inventing a second one.
+    uint64_t h = error.get_fact();
+    for (const auto& [var, value] : error.get_variables())
+        h = Impl::create_hash(Impl::create_hash(h, var), value);
+
+    if (!_reported_contradictions.insert(h).second) return;
+
+    _contradiction = true;
+    ++_total_contradictions;
+
+    if (!_print_deductions && !_export_derivations) return;
+
+    std::string output;
+    string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+
+    if (_print_deductions)
+    {
+        out(string::unmark_identifiers(contradiction_symbol() + " ⇐ " + output), true);
+
+        // A refusal is not a contradiction in the data, and the `!` line alone
+        // named neither the shape nor what to write instead.
+        if (!error.get_reason().empty())
+            out("   └─ refused: " + string::unmark_identifiers(error.get_reason()), true);
+    }
+
+    if (_export_derivations)
+        _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
+}
+
+std::string Reasoning::contradiction_symbol() const
+{
+    return string::mark_identifier(get_formatted_name(core.Contradiction, _lang));
+}
+
+std::vector<std::string> Reasoning::render_premises(const Node condition, const Variables& variables, const Node parent) const
+{
+    std::vector<std::string> out;
+
+    // Elements of the conjunction set, found the same way node_to_string
+    // finds them when it prints "{...}".
+    for (const Node rel : get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    element = parse_fact(rel, objs, 0);
+        if (element == 0 || objs.count(condition) != 1) continue;
+
+        std::string rendered;
+        string::node_to_string(this, rendered, _lang, element, 3, variables, condition);
+        out.push_back(std::move(rendered));
+    }
+
+    if (out.empty())
+    {
+        std::string rendered;
+        string::node_to_string(this, rendered, _lang, condition, 3, variables, parent);
+        out.push_back(std::move(rendered));
+    }
+
+    return out;
+}
+
+void Reasoning::run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent, const bool incremental)
 {
     // Input capture must not extend into evaluation: in classic mode the
     // observer would otherwise collect every deduced fact into the focus
@@ -116,21 +185,22 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     watch.start();
 
     _print_deductions     = print_deductions;
-    _generate_markdown    = generate_markdown;
+    _export_derivations   = export_derivations;
     _skipped              = 0;
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
+    _reported_contradictions.clear();
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 
-    if (_generate_markdown)
+    if (_export_derivations)
     {
-        if (_markdown_subdir.empty())
+        if (_export_file.empty())
         {
-            throw std::runtime_error("Markdown subdirectory not set for .run-md command");
+            throw std::runtime_error("No export file set for .run-export");
         }
-        _markdown = std::make_unique<io::Markdown>(std::filesystem::path("mkdocs") / "docs" / _markdown_subdir, this);
+        _export = std::make_unique<io::DerivationExport>(std::filesystem::path(_export_file), this);
     }
 
     if (!silent)
@@ -152,7 +222,7 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         if (!silent)
             diagnostic_stream() << "--- Reasoning iteration 1 (single pass) ---" << std::endl;
         for (Node rule : _pImpl->get_left(core.Causes))
-            apply_rule(rule, 0);
+            if (!is_mentioned(rule)) apply_rule(rule, 0);
         _pool->wait();
     }
     else
@@ -172,49 +242,70 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
         // on rule order -- the classic limitation of non-stratifiable
         // programs. Contradiction-only deferred rules (consequence !) are
         // always safe: they produce no facts.
-        std::vector<Node> positive_rules;
-        std::vector<Node> deferred_rules;
-        for (Node rule : _pImpl->get_left(core.Causes))
-        {
-            adjacency_set deductions;
-            Node          condition = parse_fact(rule, deductions);
-            const bool    deferred  = condition && condition != core.Causes
-                                   && condition_contains_negation(condition, 1);
-            (deferred ? deferred_rules : positive_rules).push_back(rule);
-        }
+        int iteration = 0;
 
-        if (!silent && !deferred_rules.empty())
-            diagnostic_stream() << "Stratified schedule: " << deferred_rules.size()
-                                << " rule(s) with negated conditions deferred until positive quiescence."
-                                << std::endl;
-
-        int  iteration = 0;
-        bool deferred_derived;
+        // A rule can DERIVE a rule, and the schedule below is built from the
+        // rule set as it stands here -- so a rule that appears during the run
+        // is in neither list. Collect again and repeat while the set keeps
+        // growing; the repeated pass is what lets a derived rule see the
+        // facts that are older than itself. When nothing derives a rule this
+        // costs one size comparison for the whole run.
+        size_t rules_before;
         do
         {
+            rules_before = _pImpl->get_left(core.Causes).size();
+
+            std::vector<Node> positive_rules;
+            std::vector<Node> deferred_rules;
+            for (Node rule : _pImpl->get_left(core.Causes))
+            {
+                // A rule that some other statement merely MENTIONS was never
+                // claimed -- see Zelph::is_mentioned. Filtered where the rules
+                // are COLLECTED, so the neighbour scan is paid once per rule per
+                // run rather than once per iteration; a graph without rules
+                // never reaches it at all.
+                if (is_mentioned(rule)) continue;
+
+                adjacency_set deductions;
+                Node          condition = parse_fact(rule, deductions);
+                const bool    deferred  = condition && condition != core.Causes
+                                       && condition_contains_negation(condition, 1);
+                (deferred ? deferred_rules : positive_rules).push_back(rule);
+            }
+
+            if (!silent && !deferred_rules.empty())
+                diagnostic_stream() << "Stratified schedule: " << deferred_rules.size()
+                                    << " rule(s) with negated conditions deferred until positive quiescence."
+                                    << std::endl;
+
+            bool deferred_derived;
             do
             {
-                _done = false;
-                ++iteration;
-                if (!silent && progress_due())
-                    diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
-                for (Node rule : positive_rules)
-                    apply_rule(rule, 0);
-                _pool->wait();
-            } while (_done);
+                do
+                {
+                    _done = false;
+                    ++iteration;
+                    if (!silent && progress_due())
+                        diagnostic_stream() << "--- Reasoning iteration " << iteration << " ---" << std::endl;
+                    for (Node rule : positive_rules)
+                        apply_rule(rule, 0);
+                    _pool->wait();
+                } while (_done);
 
-            deferred_derived = false;
-            if (!deferred_rules.empty())
-            {
-                _done = false;
-                if (!silent && progress_due())
-                    diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
-                for (Node rule : deferred_rules)
-                    apply_rule(rule, 0);
-                _pool->wait();
-                deferred_derived = _done;
-            }
-        } while (deferred_derived);
+                deferred_derived = false;
+                if (!deferred_rules.empty())
+                {
+                    _done = false;
+                    if (!silent && progress_due())
+                        diagnostic_stream() << "--- Deferred stratum (negation) ---" << std::endl;
+                    for (Node rule : deferred_rules)
+                        apply_rule(rule, 0);
+                    _pool->wait();
+                    deferred_derived = _done;
+                }
+            } while (deferred_derived);
+        } while (_pImpl->get_left(core.Causes).size() != rules_before);
+
         _done = false;
     }
 
@@ -237,15 +328,20 @@ void Reasoning::run(const bool print_deductions, const bool generate_markdown, c
     if (!silent)
         diagnostic_stream() << "Reasoning summary: " << _total_matches << " matches processed, "
                             << _total_contradictions << " contradictions found." << std::endl;
-    static std::unordered_set<Node> logged_relations;
-
     if (_pool && !silent)
     {
-        diagnostic_stream() << "Parallel unifications activated for " << logged_relations.size()
+        diagnostic_stream() << "Parallel unifications activated for " << _prof.parallel_relation_count()
                             << " distinct fixed relations." << std::endl;
     }
 
-    logged_relations.clear();
+    _prof.clear_parallel_relations();
+
+    // Close the export here rather than at the next run: the worker threads
+    // are joined, so nothing more will be written, and a caller that keeps
+    // the engine alive (a library, a test) must still find a complete file
+    // the moment run() returns.
+    _export.reset();
+    _export_derivations = false;
 
     // The graph is a fixpoint of these rules now, which is the precondition a
     // later incremental run relies on. Facts created from here on are new to
@@ -318,26 +414,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
         }
         catch (const contradiction_error& error)
         {
-            std::lock_guard<std::mutex> lock(_mtx_output);
-            _contradiction = true;
-            ++_total_contradictions;
-
-            if (_print_deductions || _generate_markdown)
-            {
-                std::string output;
-                string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
-                std::string message = "«" + get_formatted_name(core.Contradiction, _lang) + "» ⇐ " + output;
-
-                if (_print_deductions)
-                {
-                    out(string::unmark_identifiers(message), true);
-                }
-
-                if (_generate_markdown)
-                {
-                    _markdown->add("Contradictions", message);
-                }
-            }
+            report_contradiction(error);
         }
 
         _pool->wait();
@@ -821,6 +898,55 @@ bool Reasoning::resolve_guard_side(const Node item, const Variables& variables, 
     return resolve_pattern(this, item, variables, out, history) == Resolve::Ok;
 }
 
+// Does any recorded `!=` guard still have an unresolved side?
+//
+// logic.md states the contract in as many words: `!=` is a guard
+// constraint, NOT a fact lookup, and it filters variable bindings AFTER
+// the involved variables are bound by positive conditions. Deferring an
+// undecidable guard is therefore right while conditions are still being
+// joined -- contradicts() skips it, and the binding usually arrives from a
+// later condition. At the TERMINAL point no binding can arrive any more,
+// so a guard that is still unresolved never filtered anything, and the
+// match it would license rests on a condition that said nothing.
+//
+// Without this, `S != O` answered `Answer: S != O` -- on an empty network
+// too -- claiming something with its variables unbound, which is exactly
+// what the page says `!=` does not do.
+// Was this side never bound at all?
+//
+// NOT the same as "resolve_guard_side answered no". That answers no for two
+// different reasons, and only one of them means the guard was never
+// applicable: an UNBOUND variable, versus a structured operand whose
+// variables are all bound but whose denoted fact is absent from the graph.
+// The absent one cannot be the node the other side holds, so the guard
+// passes -- the Resolve::Missing note in resolve_guard_side, and the test
+// "a structured operand denoting no existing fact does not block".
+bool Reasoning::guard_side_unbound(const Node item, const Variables& variables) const
+{
+    if (Zelph::Impl::is_var(item))
+    {
+        const auto it = variables.find(item);
+        return it == variables.end() || Zelph::Impl::is_var(it->second);
+    }
+
+    if (!Zelph::Impl::is_hash(item) || !var_in_closure(item)) return false;
+
+    Node              out = 0;
+    std::vector<Node> history;
+    return resolve_pattern(this, item, variables, out, history) == Resolve::Unbound;
+}
+
+bool Reasoning::guards_unresolved(const Variables& variables, const Variables& unequals) const
+{
+    for (const auto& var : unequals)
+    {
+        if (guard_side_unbound(var.first, variables)) return true;
+        if (guard_side_unbound(var.second, variables)) return true;
+    }
+
+    return false;
+}
+
 bool Reasoning::contradicts(const Variables& variables, const Variables& unequals) const
 {
     for (const auto& var : unequals)
@@ -837,7 +963,101 @@ bool Reasoning::contradicts(const Variables& variables, const Variables& unequal
     return false; // no contradiction
 }
 
-Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& variables, const int depth, std::vector<Node>& history)
+namespace
+{
+    // A container has no fact structure of its own: its members hang off it as
+    // separate PartOf facts, which is the same reconstruction node_to_string
+    // performs when it prints "{...}".
+    bool collect_container_members(const Zelph* const z, const Node node, std::unordered_set<Node>& members)
+    {
+        // predicate_of before parse_fact, and predicate_of rather than
+        // parse_relation: this runs over the adjacency of every atom a
+        // deduction instantiates, so a node that is merely a busy constant --
+        // the object of ten thousand facts -- must be rejected by an O(1)
+        // store lookup per neighbour, not by reconstructing each one.
+        for (const Node rel : z->get_right(node))
+        {
+            if (z->predicate_of(rel) != z->core.PartOf) continue;
+
+            adjacency_set objs;
+            const Node    member = z->parse_fact(rel, objs, 0);
+
+            if (member != 0 && objs.count(node) == 1) members.insert(member);
+        }
+
+        return !members.empty();
+    }
+
+    // A container in a deduced fact denotes what the bindings put into it, so
+    // substitution has to REBUILD it. instantiate_fact alone finds no fact
+    // structure on a container node and handed it back unchanged, so every
+    // derived fact named the RULE's own container and the substituted member
+    // never arrived: `(X p Y) => (X likes {Y})` derived `a likes @{Y}`, with
+    // the rule's template variable in place of `b` and one single object
+    // shared by every binding.
+    //
+    // The rebuild produces a SET CONSTANT, and that is what makes it safe:
+    // a set constant hash-conses, so re-deriving lands on the same node and
+    // the fixpoint arrives. A fresh COLLECTION per binding would be a new node
+    // on every run and would never converge -- the trap find_conjunction_set
+    // had to solve for derived rules.
+    //
+    // Three cases are deliberately left alone:
+    //   - a container whose members are all ground, since there is nothing to
+    //     substitute. That is `{red green}` and the accumulator `@{bucket}`,
+    //     both unchanged;
+    //   - a container still carrying a variable afterwards, since
+    //     extensionality needs KNOWN members;
+    //   - a conjunction set, which is rule structure and belongs to
+    //     rebuild_condition.
+    // Writing INTO a container is left alone as well -- see instantiate_fact.
+    Node instantiate_container(Zelph* z, const Node node, const Variables& variables, const int depth, std::vector<Node>& history)
+    {
+        if (z->check_fact(node, z->core.IsA, {z->core.Conjunction}).is_known()) return node;
+
+        std::unordered_set<Node> members;
+        if (!collect_container_members(z, node, members)) return node;
+
+        std::unordered_set<Node> instantiated;
+        bool                     changed = false;
+
+        for (const Node m : members)
+        {
+            const Node im = instantiate_fact(z, m, variables, depth, history);
+            if (im == 0) return node;
+
+            if (Zelph::Impl::is_var(im) || z->var_in_closure(im))
+            {
+                // Not ground, so extensionality has nothing to work with --
+                // with ONE exception: a variable RENAMED to another variable.
+                // That is rebuild_rule alpha-renaming an inner rule, and the
+                // container has to follow it, or the derived rule keeps the
+                // variables of the rule it was written from and its own
+                // bindings never reach the members. A variable that maps to
+                // itself is the opposite case: nothing to substitute, the
+                // container is the rule's own pattern and stays as it is.
+                //
+                // A COMPOSITE member that is still variable-carrying is
+                // refused either way. Rebuilding it would create a container
+                // per attempt, and the ground guard in deduce may then throw
+                // the deduction away, leaving the node behind.
+                if (!Zelph::Impl::is_var(im) || im == m) return node;
+            }
+
+            if (im != m) changed = true;
+            instantiated.insert(im);
+        }
+
+        if (!changed) return node;
+
+        // A member that is still a variable makes this a collection rather
+        // than a set constant -- Zelph::set falls back on its own, for the
+        // same reason: extensionality needs known members.
+        return z->set(instantiated);
+    }
+}
+
+Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& variables, const int depth, std::vector<Node>& history, const bool rebuild_container)
 {
     // 1. Variable substitution
     if (Zelph::Impl::is_var(pattern))
@@ -860,8 +1080,12 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
 
     if (fs.subject == 0)
     {
+        // Atomic, or a container -- the latter has no fact structure but does
+        // have members to substitute. `pattern` stays on the history while
+        // they are rebuilt, so a container that reaches itself terminates.
+        const Node atom = rebuild_container ? instantiate_container(z, pattern, variables, depth, history) : pattern;
         history.pop_back();
-        return pattern; // Atomic / No structure found
+        return atom;
     }
 
     Node inst_subject  = instantiate_fact(z, fs.subject, variables, depth, history);
@@ -870,9 +1094,16 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
     adjacency_set inst_objects;
     bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);
 
+    // Putting something INTO a container is an assertion ABOUT that container,
+    // so its identity has to survive substitution: `(X reported Y) =>
+    // (Y in @{X})` is the accumulator idiom and names ONE bucket across every
+    // binding. Everywhere else a container is a value describing this binding
+    // and is rebuilt.
+    const bool objects_rebuild = inst_relation != z->core.PartOf;
+
     for (Node o : fs.objects)
     {
-        Node io = instantiate_fact(z, o, variables, depth, history);
+        Node io = instantiate_fact(z, o, variables, depth, history, objects_rebuild);
         inst_objects.insert(io);
         if (io != o) changed = true;
     }

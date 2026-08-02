@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "io/read_async.hpp"
 #include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -51,6 +52,27 @@ using namespace std::string_literals;
 using std::chrono::duration_cast;
 
 // #define SINGLE_THREADED_IMPORT
+
+namespace
+{
+    // Index of the closing quote of a JSON string whose first character is at
+    // `from`. A quote preceded by an odd number of backslashes is part of the
+    // value, not its end -- a label like  The \"Chirping\" Crickets  used to
+    // be truncated to  The \  because the first quote found ended the scan.
+    size_t find_json_string_end(const std::string& line, size_t from)
+    {
+        for (size_t i = from; i < line.size(); ++i)
+        {
+            if (line[i] == '\\')
+            {
+                ++i; // the escaped character cannot end the string
+                continue;
+            }
+            if (line[i] == '"') return i;
+        }
+        return std::string::npos;
+    }
+}
 
 class Wikidata::Impl
 {
@@ -375,20 +397,44 @@ struct ConstraintInfo
         : short_desc(sd), long_desc(ld), generator(gen) {}
 };
 
-// Helper to extract ids from qualifier arrays (searches for "id":"Pxx" or "id":"Qxx")
+// The entity ids that one qualifier of a statement was given, in order.
+// `qualifier_key` arrives quoted, e.g. "\"P2306\"".
+//
+// Scanning for the key alone is not enough: it also matches the key of the
+// qualifiers object and the entry in "qualifiers-order", and the id search
+// that followed was unbounded, so a snak WITHOUT a value of its own -- a
+// novalue or somevalue snak, or a value that is a string rather than an
+// entity -- silently adopted the next id it could find, which belongs to a
+// different qualifier. A conflicts-with constraint whose P2306 is novalue
+// came out as the rule "(I P7777 Y, I Q5 Q5) => !", built from the Q-id of
+// the P2305 next to it.
+//
+// A snak names its own property, so "property":<key> visits exactly the
+// snaks of this qualifier, and the id has to lie before the next snak
+// begins.
 std::vector<std::string> extract_ids(const std::string& str, const std::string& qualifier_key)
 {
+    const std::string prop_tag  = "\"property\":" + qualifier_key;
+    const std::string next_snak = "\"property\":";
+    const std::string id_tag    = "\"id\":\"";
+
     std::vector<std::string> ids;
-    size_t                   pos    = 0;
-    std::string              id_tag = "\"id\":\"";
-    while ((pos = str.find(qualifier_key, pos)) != std::string::npos)
+    size_t                   pos = 0;
+    while ((pos = str.find(prop_tag, pos)) != std::string::npos)
     {
-        size_t start = str.find(id_tag, pos);
+        pos += prop_tag.size();
+
+        const size_t snak_end = str.find(next_snak, pos);
+        size_t       start    = str.find(id_tag, pos);
         if (start == std::string::npos) break;
+        if (snak_end != std::string::npos && start > snak_end) continue; // this snak has no entity value
+
         start += id_tag.size();
         size_t end = str.find('\"', start);
         if (end == std::string::npos) break;
         std::string id = str.substr(start, end - start);
+        // The statement's own id ("P9999$C1") is the one thing that can still
+        // follow the last snak of a statement that has no value.
         if (id.find('$') == std::string::npos)
         {
             ids.push_back(id);
@@ -429,14 +475,14 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             if (conflict_qs.empty())
             {
                 // No specific value: conflict with presence of conflict_p
-                result << "I " << id_str << " Y, I " << conflict_p << " Z => !" << std::endl;
+                result << "(I " << id_str << " Y, I " << conflict_p << " Z) => !" << std::endl;
             }
             else
             {
                 // One rule per forbidden value
                 for (const auto& q : conflict_qs)
                 {
-                    result << "I " << id_str << " Y, I " << conflict_p << " " << q << " => !" << std::endl;
+                    result << "(I " << id_str << " Y, I " << conflict_p << " " << q << ") => !" << std::endl;
                 }
             }
 
@@ -483,7 +529,7 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             // One rule per forbidden value
             for (const auto& q : forbidden_qs)
             {
-                result << "I " << id_str << " " << q << " => !" << std::endl;
+                result << "(I " << id_str << " " << q << ") => !" << std::endl;
             }
 
             return result.str();
@@ -548,14 +594,29 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
 
 void Wikidata::process_constraints(const std::string& line, std::string id_str, const std::string& dir)
 {
-    // Create directory if not exists
-    std::filesystem::create_directory(dir);
+    // Built in memory and written only if a generator produced at least one
+    // rule. Most properties either carry no constraint at all or only
+    // constraint types nothing can be derived from yet, and a directory of
+    // twelve thousand files that are pure comment is not a work-list.
+    std::ostringstream out;
+    size_t             rules = 0;
 
-    // Output file path
-    std::string   filename = dir + "/" + id_str + ".zph";
-    std::ofstream out(filename);
+    // A rule is a line that is neither blank nor a comment. Generators report
+    // a constraint they could not read as a "# ..." line, and those must not
+    // make the property look actionable.
+    const auto count_rules = [](const std::string& text)
+    {
+        size_t             n = 0;
+        std::istringstream lines(text);
+        std::string        l;
+        while (std::getline(lines, l))
+        {
+            const size_t first = l.find_first_not_of(" \t\r");
+            if (first != std::string::npos && l[first] != '#') ++n;
+        }
+        return n;
+    };
 
-    if (out)
     {
         out << ".lang wikidata" << std::endl
             << std::endl;
@@ -627,14 +688,15 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
 
                     if (it != constraints_map.end() && it->second.generator)
                     {
-                        std::string rules = it->second.generator(stmt_json, id_str);
-                        if (rules.empty())
+                        const std::string generated = it->second.generator(stmt_json, id_str);
+                        if (generated.empty())
                         {
                             out << "# (Generator delivered empty rule set)" << std::endl;
                         }
                         else
                         {
-                            out << rules << std::endl;
+                            rules += count_rules(generated);
+                            out << generated << std::endl;
                         }
                     }
                     else
@@ -649,9 +711,23 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
             pos = stmt_end + 1; // Move past this constraint
         }
     }
+
+    if (rules == 0) return;
+
+    // The command handler has already created the tree; this is the
+    // belt-and-braces for a direct call. Non-throwing on purpose: this runs
+    // per entity on a worker thread, where an exception is a std::terminate.
+    std::error_code dir_ec;
+    std::filesystem::create_directories(dir, dir_ec);
+
+    const std::string filename = dir + "/" + id_str + ".zph";
+    std::ofstream     file(filename);
+    if (file)
+    {
+        file << out.str();
+    }
     else
     {
-        // Error handling if file can't be opened
         _pImpl->_n->error("Failed to open file: " + filename, true);
     }
 }
@@ -687,8 +763,18 @@ void Wikidata::process_import(const std::string& line,
 
                     if (descriptions == std::string::npos || language0 < descriptions)
                     {
-                        id1                         = line.find('\"', language0 + language_tag.size() + 1);
-                        name_in_additional_language = line.substr(language0 + language_tag.size(), id1 - language0 - language_tag.size());
+                        const size_t value0 = language0 + language_tag.size();
+                        const size_t value1 = find_json_string_end(line, value0);
+
+                        if (value1 != std::string::npos)
+                        {
+                            id1 = value1;
+                            // The dump escapes every non-ASCII character, so
+                            // the label has to be decoded here -- otherwise
+                            // the node carries the escape sequences instead
+                            // of the letters they stand for.
+                            name_in_additional_language = string::unicode::unescape(line.substr(value0, value1 - value0));
+                        }
                     }
                 }
             }
@@ -1003,13 +1089,17 @@ void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
                 {
                     std::string   filename = id_str + ".json";
                     std::ofstream out(filename, std::ios::binary);
+                    remaining.erase(it); // seen; whether it could be written is reported below
                     if (out)
                     {
                         out.write(line.data(), static_cast<std::streamsize>(line.size()));
                         out << '\n';
                         found++;
-                        remaining.erase(it);
                         _pImpl->_n->out_stream() << "→ " << filename << std::endl;
+                    }
+                    else
+                    {
+                        _pImpl->_n->error("Failed to write " + filename, true);
                     }
                 }
             }
@@ -1047,6 +1137,25 @@ void Wikidata::export_entities(const std::vector<std::string>& entity_ids)
     }
 
     _pImpl->_n->diagnostic_stream() << "Export completed." << std::endl;
+
+    // An ID that is not in the dump used to leave no trace at all: the run
+    // simply produced one file fewer. On a dump that takes hours to scan, and
+    // for a command whose entire job is "give me these lines", that is the
+    // one outcome that has to be said out loud.
+    if (!remaining.empty())
+    {
+        std::vector<std::string> missing(remaining.begin(), remaining.end());
+        std::sort(missing.begin(), missing.end());
+
+        std::string list;
+        for (const auto& id : missing)
+        {
+            if (!list.empty()) list += " ";
+            list += id;
+        }
+
+        _pImpl->_n->error("Not found in " + source.string() + ": " + list, true);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,26 +1213,19 @@ namespace
 
     // Extract the string value of  <key_tag>value"  searching in [from, to).
     // key_tag must include the opening quote of the value, e.g. "\"time\":\"".
-    // Skips escaped quotes when locating the closing quote; the value itself
-    // is returned with raw JSON escapes (consistent with the label import).
+    // Escaped quotes do not end the value, and JSON escapes are decoded, so
+    // that a monolingual text or string qualifier becomes a node named by the
+    // text it stands for -- the same rule as for imported labels.
     std::string extract_json_string(const std::string& line, const std::string& key_tag, size_t from, size_t to)
     {
         const size_t k = line.find(key_tag, from);
         if (k == std::string::npos || k >= to) return {};
         const size_t v0 = k + key_tag.size();
 
-        size_t v1 = v0;
-        while (true)
-        {
-            v1 = line.find('"', v1);
-            if (v1 == std::string::npos || v1 >= to) return {};
-            size_t backslashes = 0;
-            while (v1 >= v0 + backslashes + 1 && line[v1 - backslashes - 1] == '\\')
-                ++backslashes;
-            if (backslashes % 2 == 0) break; // unescaped quote
-            ++v1;
-        }
-        return line.substr(v0, v1 - v0);
+        const size_t v1 = find_json_string_end(line, v0);
+        if (v1 == std::string::npos || v1 >= to) return {};
+
+        return zelph::string::unicode::unescape(line.substr(v0, v1 - v0));
     }
 
     // The statement id is the only "id" value inside a claim object that

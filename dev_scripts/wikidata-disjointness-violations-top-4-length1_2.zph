@@ -25,4 +25,4 @@
 (*{(X "P31" "Q215627")  (X "P31" Y)  (Y "P31" "Q43229")}  ~ conjunction) => !
 (*{(X "P31" "Q43229")   (X "P31" Y)  (Y "P31" "Q215627")}  ~ conjunction) => !
 
-.run-md disjointness-violations-top4-length1-2
+.run-export disjointness-violations-top4-length1-2.jsonl

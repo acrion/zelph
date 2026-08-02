@@ -158,10 +158,17 @@ namespace zelph::string
         return it == container.end() ? key : it->second;
     }
 
+    // A positive count argument (".list 20", ".out node 5"). std::stoull
+    // WRAPS a negative literal into a huge unsigned instead of failing, so
+    // ".list -1" reported "Listing 18446744073709551615 nodes" -- rejecting
+    // the sign explicitly is the only way to tell the two apart afterwards.
     inline size_t parse_count(const std::string& str)
     {
         try
         {
+            if (str.empty() || str.front() == '-' || str.front() == '+')
+                throw std::exception();
+
             size_t pos = 0;
             size_t c   = std::stoull(str, &pos);
             if (pos != str.length() || c == 0)
@@ -170,7 +177,7 @@ namespace zelph::string
         }
         catch (...)
         {
-            throw std::runtime_error("Invalid count value");
+            throw std::runtime_error("Invalid count value '" + str + "': expected a positive number");
         }
     }
 
@@ -208,6 +215,19 @@ namespace zelph::string
     std::string mark_identifier(const std::string& str);
     std::string unmark_identifiers(const std::string& str);
     std::string sanitize_filename(const std::string& name);
+
+    /// The two escapes a quoted atom knows, and nothing else: `\"` for a
+    /// quote and `\\` for a backslash. They are deliberately the same two
+    /// Janet spells that way, so an encoded atom can be handed to Janet as
+    /// a string literal unchanged -- but the DEcoding has to happen here,
+    /// or Janet's much larger escape set applies to zelph text and a node
+    /// written `a\b` ends up named `a<backspace>`.
+    /// Does printing this name add no quotes? Asked by a rendering that
+    /// has no way to quote the name it embeds.
+    bool prints_bare(const std::string& name);
+
+    std::string escape_atom(const std::string& name);
+    std::string unescape_atom(const std::string& body);
 
     /// Trim ASCII whitespace (space, tab, \r, \n, \v, \f) from both ends.
     inline std::string trim(const std::string& s)
@@ -258,6 +278,22 @@ namespace zelph::string
     ///   - Backslash escapes the next character inside and outside quotes.
     ///   - Quoted regions preserve whitespace; the quotes themselves are stripped.
     ///   - Empty tokens between delimiters are discarded.
+    /// One token of a command line, in the two forms a command needs.
+    /// `text` has the quotes stripped, which is what a name lookup wants.
+    /// `source` puts them back where they were, which is what the PARSER
+    /// wants: the quotes are the only thing that tells the NAME `x>y` from
+    /// the three atoms `x > y`, and they are gone by the time a command
+    /// sees its tokens -- so the line zelph printed could not be pasted
+    /// into `.explain` or `.prune-facts`. Quoting is per SEGMENT, so a
+    /// token that is only partly quoted (`"x>y")` at the end of a
+    /// parenthesised pattern) keeps both halves.
+    struct QuotedToken
+    {
+        std::string text;
+        std::string source;
+    };
+
+    std::vector<QuotedToken> tokenize_quoted_marked(const std::string& input);
     std::vector<std::string> tokenize_quoted(const std::string& input);
 
     /// Remove all leading and trailing occurrences of any string in `chars` (UTF-8 safe).

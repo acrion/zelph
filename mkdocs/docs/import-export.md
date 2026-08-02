@@ -88,6 +88,9 @@ zelph> .import examples/import-export/import_taxonomy
 Imported 6 species.
 ```
 
+The two paths in that line are resolved differently, and it is worth knowing which is which: `.import` finds the SCRIPT in the standard library, while `slurp` reads `taxonomy.json` from the **current working directory**.
+Start zelph in the directory holding the data file, or give `slurp` an absolute path — otherwise the run stops at `could not open file taxonomy.json`.
+
 At this point, the graph contains facts like `Wolf "member of" Canidae`, `Canidae "member of" Carnivora`, and so on. Note that `zelph/fact` is idempotent — importing the same family-to-order relationship multiple times (once per species) does not create duplicate facts.
 
 ### Applying Rules to Imported Data

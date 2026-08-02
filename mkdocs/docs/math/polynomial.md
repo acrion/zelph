@@ -26,9 +26,14 @@ the digit recursions of [`common-arithmetic`](arithmetic.md) with the carry
 removed.
 
 ```
+zelph> .import math
+zelph> <x> ~ polyring
 zelph> ? :topoly $( 3*x^2 - 5 )
 Answer: (:topoly $( &3 * x ^ &2 - &5 )) = (x poly <(neg zint &5) (pos zint &0) (pos zint &3)>)
 ```
+
+The `<x> ~ polyring` line is what fixes the variable ORDER, and without it the
+query answers nothing at all — see [Variable order](#variable-order) below.
 
 ⟨−5, 0, 3⟩ is −5 + 0·x + 3·x².
 

@@ -66,6 +66,22 @@ namespace
         interactive.process("");
     }
 
+    // Position of the first Out line containing `needle`, or npos. Result
+    // ORDER is only observable through the line sequence, so ordering tests
+    // compare positions rather than membership.
+    size_t out_line_index(const zelph::io::OutputCollector& collector, const std::string& needle)
+    {
+        const std::string exp = normalize(needle);
+        size_t            i   = 0;
+        for (const auto& e : collector.events())
+        {
+            if (e.channel != zelph::io::OutputChannel::Out) continue;
+            if (normalize(e.text).find(exp) != std::string::npos) return i;
+            ++i;
+        }
+        return std::string::npos;
+    }
+
     // Base test graph (Wikidata-flavored IDs as plain node names).
     // wd:/wdt: terms resolve explicitly in the "wikidata" language, so the
     // test data must be created there as well.
@@ -559,6 +575,39 @@ ORDER BY DESC(?c) LIMIT 1)");
         // String ordering: "Q500" > "Q50" > "Q5"
         CHECK(any_output_contains(collector, "Q500"));
         CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: ORDER BY breaks ties with the following keys")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        collector.clear();
+
+        // Q5 is the class of both Q1 and Q2, so the second key decides
+        // between those two rows.
+        run_sparql(interactive, R"(SELECT ?class ?x WHERE {
+  ?x wdt:P31 ?class .
+}
+ORDER BY DESC(?class) ASC(?x))");
+
+        const size_t q6q3 = out_line_index(collector, "Q6 Q3");
+        const size_t q5q1 = out_line_index(collector, "Q5 Q1");
+        const size_t q5q2 = out_line_index(collector, "Q5 Q2");
+        REQUIRE(q6q3 != std::string::npos);
+        REQUIRE(q5q1 != std::string::npos);
+        REQUIRE(q5q2 != std::string::npos);
+        CHECK(q6q3 < q5q1);
+        CHECK(q5q1 < q5q2);
+
+        collector.clear();
+        run_sparql(interactive, R"(SELECT ?class ?x WHERE {
+  ?x wdt:P31 ?class .
+}
+ORDER BY DESC(?class) DESC(?x))");
+
+        CHECK(out_line_index(collector, "Q5 Q2") < out_line_index(collector, "Q5 Q1")); });
 }
 
 // ---------------------------------------------------------------------------

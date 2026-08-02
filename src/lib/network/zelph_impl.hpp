@@ -35,6 +35,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #endif
 
 #include "network.hpp"
+#include "serialization_layout.hpp"
 #include "zelph.hpp"
 
 #include <ankerl/unordered_dense.h>
@@ -605,7 +606,7 @@ namespace zelph::network
 
             if (header_source.empty())
             {
-                throw std::runtime_error("Manifest requires --source-bin (or source.binPath in manifest)");
+                throw std::runtime_error("Manifest names no .bin: pass source-bin=<file> or add source.binPath to the manifest");
             }
 
             const uint32_t leftChunkCount       = static_cast<uint32_t>(manifest_description.left.chunks.size());
@@ -654,10 +655,35 @@ namespace zelph::network
                                     nodeOfNameChunkCount,
                                     "nodeOfName");
 
+            bool        header_is_remote   = detail::is_hf_uri(header_source);
+            std::string header_source_path = header_source;
+            if (header_is_remote)
+            {
+                // Same rule as for the shards: a local copy of the named .bin
+                // beats fetching it. Finding it also turns a non-sharded
+                // manifest into plain seeks in that file instead of one
+                // ranged request per chunk. Costs nothing and fetches
+                // nothing, so it belongs before the graph is discarded.
+                if (const auto local_bin = detail::resolve_local_source_bin(local_manifest_path, header_source, shard_root);
+                    !local_bin.empty())
+                {
+                    header_source_path = local_bin.string();
+                    header_is_remote   = false;
+                }
+            }
+
+            // Also before the graph is discarded. A manifest naming a .bin
+            // that is not there left a network without even its core nodes,
+            // and said only "Failed to open file for reading": every
+            // following statement then failed with "requested left node 1
+            // does not exist" and nothing pointed at .new.
+            if (!header_is_remote && !std::filesystem::exists(header_source_path))
+            {
+                throw std::runtime_error("Manifest names a source .bin that is not there: " + header_source_path);
+            }
+
             clear_loaded_state();
 
-            const bool  header_is_remote   = detail::is_hf_uri(header_source);
-            std::string header_source_path = header_source;
             if (header_is_remote)
             {
                 if (manifest_description.source_header_length_bytes == 0)
@@ -702,6 +728,45 @@ namespace zelph::network
                 return;
             }
 
+            // Where one chunk is read from. A sharded reference is looked up
+            // locally FIRST -- next to the manifest, then below shard-root --
+            // and only fetched from the remote object when no local copy
+            // exists. The published artifact tree contains manifest and
+            // shards together, so the previous "no shard-root means remote"
+            // rule downloaded files that were already on disk: 232 MB over
+            // the network for one chunk of the pruned network, 50x slower
+            // than reading it, with nothing in the output saying so.
+            auto chunk_source_path = [&](const detail::ManifestChunkRef& ref,
+                                         const bool                      is_sharded_ref,
+                                         const uint64_t                  source_offset,
+                                         const std::string&              cache_label) -> std::string
+            {
+                if (is_sharded_ref)
+                {
+                    try
+                    {
+                        return detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
+                    }
+                    catch (const std::exception&)
+                    {
+                        // A path that is not remote cannot be recovered from.
+                        if (!detail::is_hf_uri(ref.object_path)) throw;
+                    }
+
+                    io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                        << "Shard " << cache_label << " has no local copy; fetching " << ref.object_path;
+
+                    return detail::fetch_chunk_to_cache(ref.object_path, 0, ref.length, cache_label).string();
+                }
+
+                if (header_is_remote)
+                {
+                    return detail::fetch_chunk_to_cache(header_source, source_offset, ref.length, cache_label).string();
+                }
+
+                return header_source_path;
+            };
+
             if (leftSelectionPtr == nullptr || !leftSelection.empty())
             {
                 for (const auto& ref : manifest_description.left.chunks)
@@ -711,46 +776,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file =
-                                        detail::fetch_chunk_to_cache(ref.object_path, 0, source_length, "left-" + std::to_string(ref.chunk_index)).string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path, 0, source_length, "left-" + std::to_string(ref.chunk_index)).string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "left-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "left-" + std::to_string(ref.chunk_index));
 
                     try
                     {
@@ -780,52 +808,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "right-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                           0,
-                                                                           source_length,
-                                                                           "right-" + std::to_string(ref.chunk_index))
-                                                  .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "right-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "right-" + std::to_string(ref.chunk_index));
 
                     try
                     {
@@ -859,53 +844,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "nameOfNode-" + std::to_string(ref.chunk_index));
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "nameOfNode-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path,
-                                                                 0,
-                                                                 source_length,
-                                                                 "nameOfNode-" + std::to_string(ref.chunk_index))
-                                        .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "nameOfNode-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
                     try
                     {
                         loadNameOfNodeChunkFromPath(source_file, read_chunk_start, nameOfNodeSelectionPtr);
@@ -934,53 +875,9 @@ namespace zelph::network
                     const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
                     const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
                     const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
-                    const uint64_t source_length    = ref.length;
-                    std::string    source_file;
+                    const std::string source_file =
+                        chunk_source_path(ref, is_sharded_ref, source_offset, "nodeOfName-" + std::to_string(ref.chunk_index));
 
-                    if (is_sharded_ref)
-                    {
-                        if (detail::is_hf_uri(ref.object_path))
-                        {
-                            try
-                            {
-                                if (!shard_root.empty())
-                                {
-                                    source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                                }
-                                else
-                                {
-                                    source_file = detail::fetch_chunk_to_cache(ref.object_path,
-                                                                               0,
-                                                                               source_length,
-                                                                               "nodeOfName-" + std::to_string(ref.chunk_index))
-                                                      .string();
-                                }
-                            }
-                            catch (...)
-                            {
-                                source_file =
-                                    detail::fetch_chunk_to_cache(ref.object_path,
-                                                                 0,
-                                                                 source_length,
-                                                                 "nodeOfName-" + std::to_string(ref.chunk_index))
-                                        .string();
-                            }
-                        }
-                        else
-                        {
-                            source_file = detail::resolve_manifest_chunk_path(local_manifest_path, ref.object_path, shard_root).string();
-                        }
-                    }
-                    else if (header_is_remote)
-                    {
-                        source_file =
-                            detail::fetch_chunk_to_cache(header_source, source_offset, source_length, "nodeOfName-" + std::to_string(ref.chunk_index))
-                                .string();
-                    }
-                    else
-                    {
-                        source_file = header_source_path;
-                    }
                     try
                     {
                         loadNodeOfNameChunkFromPath(source_file, read_chunk_start, nodeOfNameSelectionPtr);
@@ -1001,10 +898,103 @@ namespace zelph::network
             }
 
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after partial load: " << _string_pool.size();
+
+            // The route index is a sidecar written by the emitter, and the
+            // loader trusts it: it says which chunks hold a node, and those
+            // chunks are what gets read. An index that points somewhere else
+            // therefore produced a perfectly ordinary load of the wrong
+            // pieces -- the requested node simply was not in the result, with
+            // nothing said. Checking afterwards costs one lookup per
+            // requested node and turns that into a sentence.
+            if (route_requested && !skip_payload)
+            {
+                const auto has_a_name = [this](const Node nd)
+                {
+                    for (const auto& lang : _name_of_node)
+                    {
+                        if (lang.second.find(nd) != lang.second.end()) return true;
+                    }
+                    return false;
+                };
+
+                for (const Node nd : selection.route_nodes)
+                {
+                    if (!exists(nd))
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-node=" << nd
+                            << ": the chunks the route index named do not contain that node"
+                            << " -- the index and the shards disagree";
+                    }
+                    else if (!routed_selection.name_of_node.empty() && !has_a_name(nd))
+                    {
+                        // The index routed a nameOfNode chunk for this node,
+                        // so it claims to know where the name is.
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-node=" << nd
+                            << ": the nameOfNode chunk the route index named carries no name for it"
+                            << " -- the index and the shards disagree";
+                    }
+                }
+
+                if (selection.route_name_explicit && !selection.route_name.empty())
+                {
+                    const auto lang_it = _node_of_name.find(selection.route_lang);
+                    if (lang_it == _node_of_name.end()
+                        || lang_it->second.find(selection.route_name) == lang_it->second.end())
+                    {
+                        io::OutputStream(_output, io::OutputChannel::Error, true)
+                            << "route-name=" << selection.route_name
+                            << ": the chunk the route index named does not contain that name in '"
+                            << selection.route_lang << "' -- the index and the shards disagree";
+                    }
+                }
+            }
         }
-        void saveToFile(const std::string& filename) const
+        // Write the network, or the part of it that `keep` selects.
+        //
+        // A filtered save produces a smaller network that is complete in
+        // itself: the caller is responsible for handing in a node set that is
+        // structurally closed (see Zelph::save_predicate_slice), this function
+        // only drops everything else -- including the edges POINTING at
+        // dropped nodes, which is what keeps the result loadable.
+        void saveToFile(const std::string&                              filename,
+                        const ankerl::unordered_dense::set<Node>* const keep = nullptr) const
         {
-            const size_t chunkSize = 1000000; // 1M entries per chunk
+            const size_t chunkSize = serialization::chunk_entries;
+
+            // See serialization_layout.hpp for why this is sized from the data
+            // rather than fixed.
+            const auto firstSegmentWords = [](const size_t entries) -> ::capnp::uint
+            { return static_cast<::capnp::uint>(serialization::first_segment_words(entries)); };
+
+            const auto kept = [keep](const Node nd)
+            { return keep == nullptr || keep->find(nd) != keep->end(); };
+
+            // Number of entries a section contributes under the filter.
+            const auto count_kept = [&kept](const auto& map, const size_t unfiltered, const bool filtering)
+            {
+                if (!filtering) return unfiltered;
+                size_t n = 0;
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.first)) ++n;
+                }
+                return n;
+            };
+
+            // Adjacency of one node, without the neighbours that were dropped.
+            const auto kept_neighbours = [&kept](const adjacency_set& adj)
+            {
+                std::vector<Node> sorted;
+                sorted.reserve(adj.size());
+                for (const Node nd : adj)
+                {
+                    if (kept(nd)) sorted.push_back(nd);
+                }
+                std::sort(sorted.begin(), sorted.end());
+                return sorted;
+            };
 
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _weights.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
             io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
@@ -1022,7 +1012,7 @@ namespace zelph::network
             kj::FdOutputStream output(fileno(file));
 
             // Main message (small data)
-            ::capnp::MallocMessageBuilder mainMessage(1u << 26);
+            ::capnp::MallocMessageBuilder mainMessage(firstSegmentWords(_weights.size()));
             auto                          impl = mainMessage.initRoot<ZelphImpl>();
 
             // Serialize probabilities
@@ -1037,10 +1027,18 @@ namespace zelph::network
             impl.setLast(_last);
             impl.setLastVar(_last_var);
 
+            const bool filtering = keep != nullptr;
+
+            // Per-language entry counts under the filter; needed twice (chunk
+            // counts in the header, chunk sizes below), so computed once.
+            std::unordered_map<std::string, size_t> nameOfNodeKept;
+            std::unordered_map<std::string, size_t> nodeOfNameKept;
+
             size_t nameOfNodeChunkTotal = 0;
             for (const auto& langMap : _name_of_node)
             {
-                size_t mapSize = langMap.second.size();
+                size_t mapSize                = count_kept(langMap.second, langMap.second.size(), filtering);
+                nameOfNodeKept[langMap.first] = mapSize;
                 nameOfNodeChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
             impl.setNameOfNodeChunkCount(static_cast<uint32_t>(nameOfNodeChunkTotal));
@@ -1048,13 +1046,27 @@ namespace zelph::network
             size_t nodeOfNameChunkTotal = 0;
             for (const auto& langMap : _node_of_name)
             {
+                // node_of_name is keyed by NAME; the node is the value, so the
+                // filter has to look at the other side of the pair.
                 size_t mapSize = langMap.second.size();
+                if (filtering)
+                {
+                    mapSize = 0;
+                    for (const auto& entry : langMap.second)
+                    {
+                        if (kept(entry.second)) ++mapSize;
+                    }
+                }
+                nodeOfNameKept[langMap.first] = mapSize;
                 nodeOfNameChunkTotal += (mapSize + chunkSize - 1) / chunkSize;
             }
             impl.setNodeOfNameChunkCount(static_cast<uint32_t>(nodeOfNameChunkTotal));
 
-            size_t leftChunkCount  = (_left.size() + chunkSize - 1) / chunkSize;
-            size_t rightChunkCount = (_right.size() + chunkSize - 1) / chunkSize;
+            const size_t leftKept  = count_kept(_left, _left.size(), filtering);
+            const size_t rightKept = count_kept(_right, _right.size(), filtering);
+
+            size_t leftChunkCount  = (leftKept + chunkSize - 1) / chunkSize;
+            size_t rightChunkCount = (rightKept + chunkSize - 1) / chunkSize;
             impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
             impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
 
@@ -1064,20 +1076,23 @@ namespace zelph::network
             auto leftIt = _left.begin();
             for (size_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
             {
-                ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                const size_t thisChunkSize = std::min(chunkSize, leftKept - chunkIdx * chunkSize);
+
+                ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisChunkSize));
                 auto                          chunk = chunkMessage.initRoot<AdjChunk>();
                 chunk.setWhich("left");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, _left.size() - chunkIdx * chunkSize);
-                auto   pairList      = chunk.initPairs(thisChunkSize);
-                size_t pIdx          = 0;
+                auto   pairList = chunk.initPairs(thisChunkSize);
+                size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
                 {
+                    while (leftIt != _left.end() && !kept(leftIt->first))
+                        ++leftIt;
+
                     pairList[pIdx].setNode(leftIt->first);
-                    std::vector<Node> sorted(leftIt->second.begin(), leftIt->second.end());
-                    std::sort(sorted.begin(), sorted.end());
-                    auto adj = pairList[pIdx].initAdj(sorted.size());
+                    const std::vector<Node> sorted = kept_neighbours(leftIt->second);
+                    auto                    adj    = pairList[pIdx].initAdj(sorted.size());
                     for (size_t j = 0; j < sorted.size(); ++j)
                     {
                         adj.set(j, sorted[j]);
@@ -1091,20 +1106,23 @@ namespace zelph::network
             auto rightIt = _right.begin();
             for (size_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
             {
-                ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                const size_t thisChunkSize = std::min(chunkSize, rightKept - chunkIdx * chunkSize);
+
+                ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisChunkSize));
                 auto                          chunk = chunkMessage.initRoot<AdjChunk>();
                 chunk.setWhich("right");
                 chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
 
-                size_t thisChunkSize = std::min(chunkSize, _right.size() - chunkIdx * chunkSize);
-                auto   pairList      = chunk.initPairs(thisChunkSize);
-                size_t pIdx          = 0;
+                auto   pairList = chunk.initPairs(thisChunkSize);
+                size_t pIdx     = 0;
                 for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
                 {
+                    while (rightIt != _right.end() && !kept(rightIt->first))
+                        ++rightIt;
+
                     pairList[pIdx].setNode(rightIt->first);
-                    std::vector<Node> sorted(rightIt->second.begin(), rightIt->second.end());
-                    std::sort(sorted.begin(), sorted.end());
-                    auto adj = pairList[pIdx].initAdj(sorted.size());
+                    const std::vector<Node> sorted = kept_neighbours(rightIt->second);
+                    auto                    adj    = pairList[pIdx].initAdj(sorted.size());
                     for (size_t j = 0; j < sorted.size(); ++j)
                     {
                         adj.set(j, sorted[j]);
@@ -1130,7 +1148,12 @@ namespace zelph::network
             {
                 std::string                                    lang = langMap.first;
                 const auto&                                    map  = langMap.second;
-                std::vector<std::pair<Node, std::string_view>> sorted(map.begin(), map.end());
+                std::vector<std::pair<Node, std::string_view>> sorted;
+                sorted.reserve(nameOfNodeKept[lang]);
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.first)) sorted.emplace_back(entry.first, entry.second);
+                }
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -1138,13 +1161,14 @@ namespace zelph::network
                 size_t numChunks = (sorted.size() + chunkSize - 1) / chunkSize;
                 for (size_t chunkIdx = 0; chunkIdx < numChunks; ++chunkIdx)
                 {
-                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    const size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
+
+                    ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
                     auto                          chunk = chunkMessage.initRoot<NameChunk>();
                     chunk.setLang(lang);
                     chunk.setChunkIndex(nameOfNodeChunkIndex++);
 
-                    size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
-                    auto   pairs    = chunk.initPairs(thisSize);
+                    auto pairs = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         pairs[i].setKey(it->first);
@@ -1162,7 +1186,12 @@ namespace zelph::network
             {
                 std::string                                    lang = langMap.first;
                 const auto&                                    map  = langMap.second;
-                std::vector<std::pair<std::string_view, Node>> sorted(map.begin(), map.end());
+                std::vector<std::pair<std::string_view, Node>> sorted;
+                sorted.reserve(nodeOfNameKept[lang]);
+                for (const auto& entry : map)
+                {
+                    if (kept(entry.second)) sorted.emplace_back(entry.first, entry.second);
+                }
                 std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                           { return a.first < b.first; });
 
@@ -1170,13 +1199,14 @@ namespace zelph::network
                 size_t numChunks = (sorted.size() + chunkSize - 1) / chunkSize;
                 for (size_t chunkIdx = 0; chunkIdx < numChunks; ++chunkIdx)
                 {
-                    ::capnp::MallocMessageBuilder chunkMessage(1u << 26);
+                    const size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
+
+                    ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
                     auto                          chunk = chunkMessage.initRoot<NodeNameChunk>();
                     chunk.setLang(lang);
                     chunk.setChunkIndex(nodeOfNameChunkIndex++);
 
-                    size_t thisSize = std::min(chunkSize, sorted.size() - chunkIdx * chunkSize);
-                    auto   pairs    = chunk.initPairs(thisSize);
+                    auto pairs = chunk.initPairs(thisSize);
                     for (size_t i = 0; i < thisSize; ++i, ++it)
                     {
                         // Pool-backed string_view: data() is null-terminated
@@ -1188,56 +1218,25 @@ namespace zelph::network
             }
         }
 
-        void loadFromFile(const std::string& filename)
+        // kj reports through kj::Exception, whose what() carries a C++ source
+        // location and a hex stack trace. Neither belongs in front of someone
+        // who typed a file name; what does belong there is whether the graph
+        // they had is still the graph they have.
+        static std::string read_error_text(const std::string&   filename,
+                                           const kj::Exception& e,
+                                           const bool           state_discarded)
         {
-    #ifdef _WIN32
-        #define fileno _fileno
-    #endif
-            FILE* file = fopen(filename.c_str(), "rb");
-            if (!file)
+            std::string text = "Failed to read '" + filename
+                             + "' as a zelph .bin file (truncated, or not a .bin at all): "
+                             + std::string(e.getDescription().cStr());
+            if (state_discarded)
             {
-                throw std::runtime_error("Failed to open file for reading: " + filename);
+                text += ". The previous network was already discarded -- use .new to start over";
             }
-
-            ::capnp::ReaderOptions options;
-            options.traversalLimitInWords = 1ULL << 32;
-            options.nestingLimit          = 128;
-
-            kj::FdInputStream              rawInput(fileno(file));
-            kj::BufferedInputStreamWrapper bufferedInput(rawInput);
-
-            ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-            auto                         impl = mainMessage.getRoot<ZelphImpl>();
-
-            loadSmallData(impl);
-
-            uint32_t leftChunkCount       = impl.getLeftChunkCount();
-            uint32_t rightChunkCount      = impl.getRightChunkCount();
-            uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
-            uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
-            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                                                                           << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
-
-            loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
-            loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
-            loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
-
-            io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
-
-            fclose(file);
-
-            // Enable predicate-index sidecar I/O for this file and take the
-            // validation snapshot of the freshly loaded, unmodified graph.
-            _pidx_base       = filename;
-            _pidx_node_count = _left.size();
-            _pidx_last       = _last;
-            _pidx_last_var   = _last_var;
-            _pidx_io_enabled.store(true, std::memory_order_release);
+            return text;
         }
 
-        void loadFromFile(const std::string&              filename,
-                          const Zelph::BinChunkSelection& selection,
-                          const bool                      skip_payload)
+        void loadFromFile(const std::string& filename)
         {
     #ifdef _WIN32
         #define fileno _fileno
@@ -1260,8 +1259,72 @@ namespace zelph::network
                 ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
                 auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
-                clear_loaded_state();
                 loadSmallData(impl);
+
+                uint32_t leftChunkCount       = impl.getLeftChunkCount();
+                uint32_t rightChunkCount      = impl.getRightChunkCount();
+                uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
+                uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                                                                               << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
+
+                loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
+                loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
+                loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
+
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
+
+                fclose(file);
+
+                // Enable predicate-index sidecar I/O for this file and take the
+                // validation snapshot of the freshly loaded, unmodified graph.
+                _pidx_base       = filename;
+                _pidx_node_count = _left.size();
+                _pidx_last       = _last;
+                _pidx_last_var   = _last_var;
+                _pidx_io_enabled.store(true, std::memory_order_release);
+            }
+            catch (const kj::Exception& e)
+            {
+                // A load merges into whatever is already there, so a failure
+                // partway leaves a graph that is neither the old one nor the
+                // file. Say so; the handle was leaked on every throw before.
+                fclose(file);
+                throw std::runtime_error(read_error_text(filename, e, true));
+            }
+            catch (...)
+            {
+                fclose(file);
+                throw;
+            }
+        }
+
+        void loadFromFile(const std::string&              filename,
+                          const Zelph::BinChunkSelection& selection,
+                          const bool                      skip_payload)
+        {
+    #ifdef _WIN32
+        #define fileno _fileno
+    #endif
+            FILE* file = fopen(filename.c_str(), "rb");
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open file for reading: " + filename);
+            }
+
+            bool state_cleared = false;
+
+            try
+            {
+                ::capnp::ReaderOptions options;
+                options.traversalLimitInWords = 1ULL << 32;
+                options.nestingLimit          = 128;
+
+                kj::FdInputStream              rawInput(fileno(file));
+                kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+
+                ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
+                auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
                 uint32_t leftChunkCount       = impl.getLeftChunkCount();
                 uint32_t rightChunkCount      = impl.getRightChunkCount();
@@ -1282,6 +1345,18 @@ namespace zelph::network
                 const size_t requestedNameOfNodeChunks = selection.name_of_node_explicit ? nameOfNodeSelector.size() : nameOfNodeChunkCount;
                 const size_t requestedNodeOfNameChunks = selection.node_of_name_explicit ? nodeOfNameSelector.size() : nodeOfNameChunkCount;
 
+                // BEFORE the graph is touched. A selector naming a chunk the
+                // file does not have is the most ordinary way to get this
+                // command wrong -- a typo -- and it used to arrive after
+                // clear_loaded_state(), which leaves a network without even
+                // its core nodes: every following statement then failed with
+                // "requested left node 1 does not exist" and only .new got
+                // the session back.
+                validate_chunk_selector(leftSelector, leftChunkCount, "left");
+                validate_chunk_selector(rightSelector, rightChunkCount, "right");
+                validate_chunk_selector(nameOfNodeSelector, nameOfNodeChunkCount, "nameOfNode");
+                validate_chunk_selector(nodeOfNameSelector, nodeOfNameChunkCount, "nodeOfName");
+
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
                     << "Partial loading: left chunks=" << requestedLeftChunks << "/" << leftChunkCount
                     << ", right chunks=" << requestedRightChunks << "/" << rightChunkCount
@@ -1291,10 +1366,9 @@ namespace zelph::network
                     << nodeOfNameChunkCount
                     << ", skip_payload=" << (skip_payload ? "true" : "false");
 
-                validate_chunk_selector(leftSelector, leftChunkCount, "left");
-                validate_chunk_selector(rightSelector, rightChunkCount, "right");
-                validate_chunk_selector(nameOfNodeSelector, nameOfNodeChunkCount, "nameOfNode");
-                validate_chunk_selector(nodeOfNameSelector, nodeOfNameChunkCount, "nodeOfName");
+                clear_loaded_state();
+                state_cleared = true;
+                loadSmallData(impl);
 
                 if (skip_payload)
                 {
@@ -1303,7 +1377,27 @@ namespace zelph::network
                     return;
                 }
 
-                if (leftSelectorPtr == nullptr || !leftSelector.empty() || rightSelectorPtr == nullptr || !rightSelector.empty())
+                // What each section is asked for. A selector that is present
+                // but empty is `=none`: the section is wanted for nothing.
+                const bool want_left_right   = leftSelectorPtr == nullptr || !leftSelector.empty()
+                                            || rightSelectorPtr == nullptr || !rightSelector.empty();
+                const bool want_name_of_node = nameOfNodeSelectorPtr == nullptr || !nameOfNodeSelector.empty();
+                const bool want_node_of_name = nodeOfNameSelectorPtr == nullptr || !nodeOfNameSelector.empty();
+
+                // THIS STREAM IS SEQUENTIAL. A section that is not read is not
+                // consumed either, so everything after it would be parsed from
+                // the wrong offset -- and capnp does not necessarily complain:
+                // `left=none right=none` made the name section read adjacency
+                // chunks, which surfaced as "Error converting UTF-8 to string
+                // for name_of_node key 1" for every core node and left the
+                // network without names. A section may therefore be skipped
+                // only when nothing AFTER it is wanted; the loaders themselves
+                // already consume a chunk they do not keep, which is what makes
+                // a partial selection inside a section work.
+                //
+                // The manifest path is unaffected: it seeks to each chunk's
+                // offset instead of streaming past the others.
+                if (want_left_right || want_name_of_node || want_node_of_name)
                 {
                     loadLeftRightChunks(bufferedInput,
                                         options,
@@ -1312,11 +1406,11 @@ namespace zelph::network
                                         leftSelectorPtr,
                                         rightSelectorPtr);
                 }
-                if (nameOfNodeSelectorPtr == nullptr || !nameOfNodeSelector.empty())
+                if (want_name_of_node || want_node_of_name)
                 {
                     loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount, nameOfNodeSelectorPtr);
                 }
-                if (nodeOfNameSelectorPtr == nullptr || !nodeOfNameSelector.empty())
+                if (want_node_of_name)
                 {
                     loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount, nodeOfNameSelectorPtr);
                 }
@@ -1324,6 +1418,11 @@ namespace zelph::network
                 io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after partial load: " << _string_pool.size();
 
                 fclose(file);
+            }
+            catch (const kj::Exception& e)
+            {
+                fclose(file);
+                throw std::runtime_error(read_error_text(filename, e, state_cleared));
             }
             catch (...)
             {
@@ -1461,23 +1560,29 @@ namespace zelph::network
             // 2. Intern new name
             std::string_view sv = _string_pool.intern(name);
 
-            // 3. If another node currently owns that name, detach its forward mapping
-            // 3. If another node currently owns that name, detach its forward mapping
+            // 3. If another node currently owns that name, decide who keeps
+            //    what. A VARIABLE's name is purely cosmetic and
+            //    statement-scoped -- parsing resolves variables through the
+            //    scoped variable table, never through this map -- and every
+            //    statement makes fresh ones, so many nodes legitimately
+            //    carry the same variable name.
+            //
+            //    Both directions matter:
+            //      - a new owner must not strip an EARLIER VARIABLE's
+            //        display name, or every rule that used the same letter
+            //        would start rendering as «??»;
+            //      - a new VARIABLE must not take anything from a real node.
+            //        A graph with a node named "A" -- a Wikidata label can
+            //        be a single letter -- lost that name to the first query
+            //        mentioning A, and the node afterwards rendered as
+            //        "(?? ?? ??)": asking a question deleted data.
             auto rev_it = rev.find(sv);
             if (rev_it != rev.end() && rev_it->second != node)
             {
                 const Node previous_owner = rev_it->second;
+                const bool takes_over     = !(is_var(node) && !is_var(previous_owner));
 
-                // Variable nodes intentionally share display names: every
-                // statement creates fresh variable nodes, and their names are
-                // purely cosmetic and statement-scoped (parsing resolves
-                // variables through the scoped variable table, not through
-                // this map). Stealing the forward mapping here would strip
-                // the display name from the variables of every earlier rule
-                // that used the same variable name (they would render as
-                // «??»). Keep the previous owner's forward entry when it is
-                // a variable; the reverse entry stays last-wins.
-                if (!is_var(previous_owner))
+                if (takes_over && !is_var(previous_owner))
                 {
                     auto prev_fwd_it = fwd.find(previous_owner);
                     if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
@@ -1486,7 +1591,7 @@ namespace zelph::network
                     }
                 }
 
-                rev_it->second = node;
+                if (takes_over) rev_it->second = node;
             }
             else if (rev_it == rev.end())
             {
@@ -2040,6 +2145,22 @@ namespace zelph::network
         mutable std::shared_mutex                                                           _template_vars_mtx;
         ankerl::unordered_dense::map<Node, std::shared_ptr<const std::unordered_set<Node>>> _template_vars;
         std::atomic<bool>                                                                   _template_vars_authoritative{true};
+
+        // Ground rule patterns, i.e. fact nodes that exist only because a
+        // rule was written and that nobody ever claimed. See the block
+        // around Zelph::is_rule_pattern. This is an INDEX, not the record:
+        // the record is a fact in the graph, so a load can rebuild it and a
+        // save carries it. One entry per marked pattern, which is bounded by
+        // the number of rules with ground patterns -- it does not grow with
+        // the graph, so the memory budget does not apply and there is
+        // nothing to switch off.
+        mutable std::shared_mutex                                                           _rule_patterns_mtx;
+        std::unordered_set<Node>                                                            _rule_patterns;
+        // Read before the mutex on both hot paths -- the per-candidate test in
+        // unification and the per-known-fact revocation in deduce. A graph
+        // whose rules all carry variables, which includes every bulk import,
+        // never marks anything and therefore never takes a lock at all.
+        std::atomic<bool>                                                                   _has_rule_patterns{false};
 
         // Genuine-structure store: the exact (subject, predicate, objects)
         // triple of every node materialized through triple-level

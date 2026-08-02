@@ -512,7 +512,10 @@ static bool climb_partial_anchor(
                 if (filter != 0)
                 {
                     if (scope.right(f).count(filter) == 0) continue; // wrong predicate
-                    if (scope.left(f).count(filter) != 0) continue;  // filter node is f's subject, not its predicate
+                    // Subject, not predicate -- unless the two are the same
+                    // node, which collapses f's outgoing adjacency to one
+                    // entry. Same test as Zelph::collect_anchored_facts.
+                    if (scope.left(f).count(filter) != 0 && scope.right(f).size() > 1) continue;
                 }
                 next.insert(f);
             }
@@ -618,6 +621,46 @@ Unification::Unification(
                 _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
             }
             _relation_variable = relation;
+        }
+        else if (_n->var_in_closure(relation))
+        {
+            // A COMPOSITE predicate carrying a variable -- `(X (Y r s) Z)` --
+            // is a pattern, exactly as a structured subject is, and the two
+            // other positions have unified structurally all along. Only the
+            // predicate was compared by identity, so the rule matched nothing
+            // whatsoever: the graph holds `(b r s)`, never `(Y r s)`.
+            //
+            // The candidate set is the one a relation VARIABLE gets; what
+            // separates the two is that extract_bindings unifies the pattern
+            // against each candidate instead of binding one variable to it.
+            if (_seed_fact != 0)
+            {
+                _relation_list.insert(_seed_predicate);
+            }
+            else
+            {
+                // Narrowed by the pattern's OWN predicate wherever it has a
+                // ground one: a candidate has to unify with `(Y r s)`, and
+                // unify_nodes matches predicates before anything else, so no
+                // fact whose predicate is not `r` can survive. Without this
+                // the condition scans every declared relation type, which is
+                // right but is the cost a predicate VARIABLE pays -- and this
+                // pattern says far more than a variable does.
+                const FactStructure pfs = get_preferred_structure(_n, relation, _log_depth);
+
+                if (pfs.predicate != 0
+                    && !Zelph::Impl::is_var(pfs.predicate)
+                    && !_n->var_in_closure(pfs.predicate))
+                {
+                    _relation_list = _n->get_facts_of_predicate(pfs.predicate);
+                }
+                else
+                {
+                    _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+                }
+            }
+
+            _relation_pattern = relation;
         }
         else
         {
@@ -775,8 +818,12 @@ Unification::Unification(
         // Gated on use_anchors() alone, NOT use_parallel(): the climbed
         // candidate set is consumed by the sequential iterator and is
         // exactly as valid in single-core mode.
+        // _relation_pattern excluded for the same reason as _relation_variable:
+        // both leave _relation_list holding EVERY relation type, and the two
+        // paths below take *begin() as though it were the only one.
         if (_n->use_anchors()
-            && !subject_is_bound && !object_is_bound && _relation_variable == 0 && !_relation_list.empty())
+            && !subject_is_bound && !object_is_bound && _relation_variable == 0 && _relation_pattern == 0
+            && !_relation_list.empty())
         {
             const Node fixed_rel = *_relation_list.begin();
 
@@ -832,7 +879,8 @@ Unification::Unification(
             }
         }
 
-        if (_pool && _n->use_parallel() && _relation_variable == 0 && !subject_is_bound && !object_is_bound
+        if (_pool && _n->use_parallel() && _relation_variable == 0 && _relation_pattern == 0
+            && !subject_is_bound && !object_is_bound
             && !_partial_snapshot_valid && !concurrency::tl_is_pool_worker)
         {
             Node fixed_rel = *_relation_list.begin();
@@ -859,6 +907,11 @@ Unification::Unification(
             {
                 _use_parallel = true;
                 _snapshot_vec.assign(snapshot.begin(), snapshot.end());
+
+                // Ungated, unlike the counters below: the run summary reports
+                // this one whether or not logging is on. One guarded insert
+                // next to a full adjacency copy costs nothing.
+                PROF(note_parallel_relation(fixed_rel));
 
                 if (_n->logging_active())
                 {
@@ -893,6 +946,7 @@ Unification::Unification(
                                    for (size_t i = start; i < end; ++i)
                                    {
                                        Node fact = _snapshot_vec[i];
+                                       if (_n->is_rule_pattern(fact)) continue; // not data, see Next()
                                        auto structs = get_fact_structures(_n, fact, _log_depth);
                                        ++local_scanned;
 
@@ -1105,7 +1159,17 @@ bool Unification::increment_fact_index()
         {
             return false;
         }
-    } while (!_snapshot_prefiltered && _n->has_left_edge(*_fact_index, *_relation_index)); // skip nodes that represent not relations of type *_relation_index, but relations having *_relation_index as subject (using bidirectional connection to the subject)
+        // Skip nodes that are not relations of type *_relation_index but
+        // relations having *_relation_index as their subject (recognised by
+        // the bidirectional connection to the subject). The second probe is
+        // the subject == predicate exemption: there both roles share one
+        // outgoing edge, so the relation IS the predicate. Order matters --
+        // has_left_edge answers no for every ordinary candidate, so the
+        // outgoing-degree lookup is paid only for the rare fact that really
+        // does have the relation as its subject.
+    } while (!_snapshot_prefiltered
+             && _n->has_left_edge(*_fact_index, *_relation_index)
+             && _n->_pImpl->right_count_of(*_fact_index) > 1);
 
     return true;
 }
@@ -1145,6 +1209,12 @@ std::shared_ptr<Variables> Unification::Next()
             while (increment_fact_index()) // iterate over all matching facts
             {
                 Node fact = *_fact_index;
+
+                // A ground rule pattern is not data: it exists because a rule
+                // was written, and nobody claimed it. See
+                // Zelph::is_rule_pattern -- one hash probe, and a single
+                // empty() test wherever no rule has a ground pattern.
+                if (_n->is_rule_pattern(fact)) continue;
 
                 if (_n->logging_active())
                     PROF(facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed));
@@ -1234,6 +1304,27 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
             PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
         }
         return results;
+    }
+
+    // --- Predicate unification ---
+    // Only for a composite predicate carrying a variable; a fixed one is
+    // already the relation this candidate was reached through, and a
+    // predicate VARIABLE is bound at the end of the enumeration below.
+    if (_relation_pattern != 0)
+    {
+        if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation))
+            return results; // the candidate's predicate is itself a template
+
+        history.clear();
+        if (!unify_nodes(_n, _relation_pattern, relation, base_result, *_variables, history, _log_depth, _prof))
+        {
+            if (_n->logging_active())
+            {
+                U_LOG(depth, "  -> Predicate pattern failed");
+                PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
+            }
+            return results;
+        }
     }
 
     // --- Reject rule-template fact nodes ---

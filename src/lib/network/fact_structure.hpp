@@ -64,19 +64,14 @@ namespace zelph::network
         if (fact == 0) return shared_empty;
 
         // ---- Structureless node classes: answer without any lock ----
-        // Atoms (sequential IDs) and variables can never decompose: a
-        // structure requires a declared relation type among the node's
-        // right neighbors; every edge out of a non-fact node leads to a
-        // fact (hash) node by construction of connect(), and hash nodes
-        // enter the relation-type set only through an explicit
-        // (hashnode ~ ->) declaration, which neither the parser, the
-        // stdlib, nor any import produces (the same accepted-exotic
-        // configuration as the genuine store's predicate-user divergence;
-        // `.semi-naive check` backstops). These probes were the atom share
-        // of ~17M fs_cache hits per Jacobian phase, each paying a rwlock
-        // pair plus a map find; the classification is two bit tests.
-        // Holds independently of the authoritative bits, i.e. also after
-        // binary loads and trusted imports.
+        // Atoms (sequential IDs) and variables can never decompose: they
+        // were never created by fact(), so there is no triple to find --
+        // the node ID of a fact IS the hash of its triple, and an atom's
+        // ID is a counter. These probes were the atom share of ~17M
+        // fs_cache hits per Jacobian phase, each paying a rwlock pair plus
+        // a map find; the classification is two bit tests. Holds
+        // independently of the authoritative bits, i.e. also after binary
+        // loads and trusted imports.
         if (!Zelph::is_hash(fact) || Zelph::is_var(fact)) return shared_empty;
 
         // ---- Cache lookup FIRST (ignores depth; depth is only for logging) ----
@@ -154,6 +149,10 @@ namespace zelph::network
                 }
             }
 
+            // See the object loop below: only a node that serves as a predicate
+            // somewhere can have users mixed into its object candidates.
+            const bool fact_is_predicate = rel_types->count(fact) != 0;
+
             if (predicates.empty())
             {
                 no_predicates = true; // cache store happens OUTSIDE the scope
@@ -164,7 +163,23 @@ namespace zelph::network
                 {
                     for (Node s : right)
                     {
-                        if (s == p) continue;
+                        // s == p is the fact whose SUBJECT IS its predicate.
+                        // insert_fact writes _left[fact] = {subject,
+                        // predicate}, so the two roles share a single entry
+                        // and skipping the candidate left such a fact with no
+                        // reading at all. Since unification reads every
+                        // candidate through this decomposition, those facts
+                        // matched nothing -- `~ ~ ->` included, which zelph
+                        // creates in every network and which is what licenses
+                        // reading `~` as a predicate in the first place.
+                        //
+                        // The reading is offered but must hash back to the
+                        // node (checked at the push below). That is exact
+                        // rather than heuristic -- a fact node's ID IS
+                        // create_hash(predicate, subject, objects) -- and it
+                        // is what separates this case from a parent fact that
+                        // happens to be a relation type as well.
+                        const bool subject_is_predicate = (s == p);
                         if (left.count(s) == 0) continue; // Subject must be bidirectional
 
                         // Filter out "child fact" nodes: nodes that use `fact` as THEIR
@@ -311,6 +326,27 @@ namespace zelph::network
                             {
                                 if (right.count(o) == 0)
                                 {
+                                    // A node that is itself used as a predicate collects
+                                    // its USERS exactly where its objects sit: fact() draws
+                                    // "F -> P" for the predicate and "O -> F" for an object,
+                                    // so both land in the predicate's left set and the two
+                                    // edges are indistinguishable from here. Reading a user
+                                    // as another object made (a p b) come back as
+                                    // "a p b (x ? y)" once the genuine store no longer
+                                    // answered -- the typed and the reloaded network then
+                                    // disagreed. What separates them is the candidate's OWN
+                                    // reading: a user is a fact whose predicate is this very
+                                    // node. Objects that are not fact nodes are never asked,
+                                    // which matters: an atom object points at `fact` and
+                                    // nothing else, so parse_relation would answer `fact`
+                                    // for it too. Paid only when `fact` is a relation type
+                                    // at all, which no ordinary data node is.
+                                    if (fact_is_predicate
+                                        && Zelph::is_hash(o) && !Zelph::is_var(o)
+                                        && n->parse_relation_scoped(scope, *rel_types, o) == fact)
+                                    {
+                                        continue;
+                                    }
                                     fs.objects.insert(o);
                                 }
                             }
@@ -319,6 +355,11 @@ namespace zelph::network
                         if (fs.objects.empty())
                         {
                             fs.objects.insert(s);
+                        }
+                        if (subject_is_predicate
+                            && Zelph::create_hash(fs.predicate, fs.subject, fs.objects) != fact)
+                        {
+                            continue; // see the s == p note at the top of the loop
                         }
                         structures.push_back(fs);
                     }
@@ -337,7 +378,12 @@ namespace zelph::network
         }
 
         // --- Hash verification ---
-        // [Kommentarblock unverändert aus der aktuellen Datei übernehmen]
+        // A fact node's ID IS create_hash(predicate, subject, objects), so a
+        // candidate reading that does not hash back to the node cannot be the
+        // one fact() was called with. Only used to prune an ambiguous candidate
+        // set: a single candidate is kept even if it fails, because a partial
+        // reading is still more useful than none (a network that lost edges to
+        // a removal has no verifying reading at all).
         if (structures.size() > 1)
         {
             std::vector<FactStructure> verified;

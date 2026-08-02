@@ -239,7 +239,7 @@ In zelph syntax, the [focus operator `*`](index.md#the-focus-operator) controls 
 # Janet equivalent:
 %
 (let [condition
-      (zelph/set
+      (zelph/collection
         (zelph/fact 'X "is capital of" 'Y)
         (zelph/fact 'Y "is located in" 'Z))]
   (zelph/fact condition "~" "conjunction")
@@ -279,9 +279,14 @@ Equivalent to:
 
 This is the foundation of zelph's [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting) system, where numbers are topological structures within the graph.
 
-#### Sets: `zelph/set`
+#### Sets and collections: `zelph/set`, `zelph/collection`
 
-`zelph/set` creates an unordered set of nodes, returning the set's super-node:
+Both create an unordered grouping and return its super-node. They differ in
+identity, exactly as the two literals do (see
+[Set Constants and Collections](index.md#braces-set-constants-and-collections)):
+`zelph/set` hashes its members, so the same elements always yield the same node
+and membership cannot be extended; `zelph/collection` returns a fresh container
+that `(member in container)` adds to.
 
 ```
 %(zelph/set "red" "green" "blue")
@@ -292,6 +297,19 @@ Equivalent to:
 ```
 { red green blue }
 ```
+
+```
+%(zelph/collection "red" "green" "blue")
+```
+
+Equivalent to:
+
+```
+@{ red green blue }
+```
+
+A rule's conjunction of conditions is a collection, not a set constant: its
+members are condition patterns, and the rule needs a container of its own.
 
 #### Janet API Reference (zelph/\*)
 
@@ -306,7 +324,16 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Create a fact node for `s p o...` and return the statement node.
 
 - **`(zelph/set nodes...)`**  
-  Create a set super-node from the given elements and return it.
+  Create a SET CONSTANT from the given elements and return its super-node.
+  Identified by its members, so the same elements always yield the same node
+  and membership cannot be extended. An element that is a variable makes the
+  members unknown, and the call then behaves as `zelph/collection`.
+
+- **`(zelph/collection nodes...)`**  
+  Create a COLLECTION from the given elements and return its super-node. A
+  container with its own identity: two calls with the same elements yield two
+  different nodes, and `(member in container)` adds to it. This is what a
+  rule's conjunction of conditions is.
 
 - **`(zelph/list nodes...)`**  
   Create a cons list from existing nodes; the **first argument becomes the outermost cons cell**.
@@ -320,7 +347,8 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/rule conditions & consequences)`**  
   Convenience constructor for rules.  
   `conditions` must be a non-empty array/tuple of fact (pattern) nodes; `consequences` are one or more fact nodes.  
-  Returns the conjunction set node.
+  Returns the conjunction set node.  
+  Unlike a parsed `... => ...` statement, this does **not** check whether the graph already holds the same rule up to a renaming of its variables (see [Rules Say Themselves Only Once](index.md#rules-say-themselves-only-once)): the condition nodes are created by the caller, before `zelph/rule` sees them, so there is nothing zelph could roll back without touching facts the caller asked for. A program that builds the same rule repeatedly should either build it once or go through `zelph/import`.
 
 ##### Querying (read-only)
 
@@ -396,8 +424,8 @@ the session reads:
 
 ```
 zelph> Auto-run is now disabled.
-zelph-> <zelph/node «socrates» «~» «human»>
-zelph-> <zelph/node {(X «~» «human»)}>
+zelph-> <zelph/node socrates ~ human>
+zelph-> <zelph/node {(X ~ human)}>
 zelph-> derived before run: false
 zelph-> Starting reasoning with 24 worker threads.
 (socrates ~ mortal) ⇐ {(socrates ~ human)}
@@ -425,10 +453,13 @@ The rule is in the graph from the moment it is created, but its consequence only
 ```
 
 ```
-zelph-> <zelph/node «plato» «~» «human»>
+zelph-> <zelph/node plato ~ human>
 zelph-> Starting reasoning with 24 worker threads.
 (plato ~ mortal) ⇐ {(plato ~ human)}
 Reasoning complete. Total unification matches processed: 0. Total contradictions found: 0.
+Reasoning summary: 0 matches processed, 0 contradictions found.
+Parallel unifications activated for 0 distinct fixed relations.
+Reasoning complete in 0h0m0.000s – 0 matches processed, 0 contradictions found.
 Ready.
 zelph-> plato is mortal: true
 ```
@@ -685,7 +716,7 @@ Janet functions can encapsulate common rule patterns:
 %
 (defn transitive-rule [rel]
   (let [condition
-        (zelph/set
+        (zelph/collection
           (zelph/fact 'X rel 'Y)
           (zelph/fact 'Y rel 'Z))]
     (zelph/fact condition "~" "conjunction")
@@ -724,7 +755,7 @@ Janet functions can provide a higher-level query interface for Wikidata:
 (defn wikidata-query [& clauses]
   "Generate and execute a conjunction query from S-P-O triples."
   (let [facts (map (fn [[s p o]] (zelph/fact s p o)) clauses)
-        condition-set (zelph/set ;facts)]
+        condition-set (zelph/collection ;facts)]
     (zelph/fact condition-set "~" "conjunction")
     (zelph/query condition-set)))
 
@@ -843,7 +874,7 @@ Combining `zelph/car` and `zelph/cdr` to walk a cons-list:
 
 ```
 zelph> <42>
-< 4   2 >
+<2 4>
 %
 (def list-42 (zelph/list-chars "42"))
 (def nil-node (zelph/resolve "nil"))
@@ -908,7 +939,7 @@ The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Si
 
 #### Rule Construction: `zelph/rule` and `zelph/negate`
 
-These functions simplify the creation of inference rules from Janet. While rules can always be built manually using `zelph/set`, `zelph/fact`, and `let` bindings (see [Rules in Janet: The `let` Pattern](#rules-in-janet-the-let-pattern)), `zelph/rule` encapsulates the entire pattern in a single call.
+These functions simplify the creation of inference rules from Janet. While rules can always be built manually using `zelph/collection`, `zelph/fact`, and `let` bindings (see [Rules in Janet: The `let` Pattern](#rules-in-janet-the-let-pattern)), `zelph/rule` encapsulates the entire pattern in a single call.
 
 ##### `zelph/negate`
 
@@ -1059,7 +1090,8 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `X`, `_Var`                     | `'X`, `'_Var`                                       | Variable (single uppercase letter or `_`-prefixed)                          |
 | `sun is yellow`                 | `(zelph/fact "sun" "is" "yellow")`                  | Create a fact (triple)                                                      |
 | `(sun is yellow)`               | `(zelph/fact "sun" "is" "yellow")`                  | Nested fact (returns relation node)                                         |
-| `{ red green blue }`            | `(zelph/set "red" "green" "blue")`                  | Unordered set                                                               |
+| `{ red green blue }`            | `(zelph/set "red" "green" "blue")`                  | Set constant — identified by its members, cannot be extended                |
+| `@{ red green blue }`           | `(zelph/collection "red" "green" "blue")`           | Collection — own identity, membership can grow                              |
 | `< Berlin Paris >`              | `(zelph/list "Berlin" "Paris")`                     | Ordered cons-list (first element is the head/outermost cons cell)           |
 | `<abc>`                         | `(zelph/list-chars "abc")`                          | Compact char cons-list (LSB-first: rightmost char = outermost)              |
 | `*expr`                         | `let` binding to capture and reuse a sub-expression | Focus operator                                                              |

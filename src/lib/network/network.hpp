@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -293,7 +294,14 @@ namespace zelph::network
             remove(from);
         }
 
-        void remove_isolated_nodes(size_t& removed_count)
+        // `is_protected` marks nodes that stay even when nothing points at
+        // them. The engine's own core nodes are such nodes: several of them
+        // (the contradiction marker, nil, the conjunction and negation tags)
+        // carry no edges in a fresh network, so a cleanup deleted them and
+        // the next rule using "!" failed with "requested node does not
+        // exist". Network itself does not know which nodes those are -- that
+        // is a Zelph concept, hence the predicate.
+        void remove_isolated_nodes(size_t& removed_count, const std::function<bool(Node)>& is_protected = {})
         {
             removed_count = 0;
 
@@ -315,7 +323,8 @@ namespace zelph::network
                 adjacency_set outgoing = get_right(n);
                 adjacency_set incoming = get_left(n);
 
-                if (outgoing.empty() && incoming.empty())
+                if (outgoing.empty() && incoming.empty()
+                    && !(is_protected && is_protected(n)))
                 {
                     isolated.push_back(n);
                 }
@@ -398,6 +407,7 @@ namespace zelph::network
 
             _left[_last_var]  = adjacency_set{};
             _right[_last_var] = adjacency_set{};
+            note_created(_last_var);
 
             return _last_var;
         }
@@ -539,35 +549,6 @@ namespace zelph::network
                 if (t != subject && from.count(t) != 0) return false; // and must not be pointed AT (that marks subjects/predicates)
             }
             return true;
-        }
-
-        // Anchored-candidate filter for Unification::increment_fact_index:
-        // from the outgoing edges of `anchor`, collect the facts that use
-        // `relation` as their PREDICATE (fact -> relation edge present,
-        // relation -> fact edge absent -- the latter would make the
-        // relation the fact's SUBJECT). All checks under ONE shared lock
-        // pair on references; the former implementation copied the
-        // anchor's full adjacency and paid two locked edge probes per
-        // candidate.
-        void collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
-        {
-            // Same lock order as writers (connect): left before right.
-            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
-            std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
-
-            out.clear();
-
-            const auto anchor_it = _left.find(anchor);
-            if (anchor_it == _left.end()) return;
-
-            for (const Node fact : anchor_it->second)
-            {
-                const auto fl = _left.find(fact);
-                if (fl == _left.end() || fl->second.count(relation) == 0) continue; // not this predicate
-                const auto fr = _right.find(fact);
-                if (fr != _right.end() && fr->second.count(relation) != 0) continue; // relation is the fact's subject
-                out.insert(fact);
-            }
         }
 
         bool has_left_edge(Node b, Node a) const
@@ -798,12 +779,18 @@ namespace zelph::network
         //
         // A cluster records the IDs of nodes created while it is active:
         // sequential nodes (create), relation/hash nodes materialized by
-        // fact() (create(Node)), and trusted-import relations. Facts that
-        // already existed are NOT recorded, so dropping a cluster can never
-        // destroy pre-existing knowledge. Node IDs are never altered;
-        // membership is a side table, so nodes outside any cluster cost
-        // nothing. Variables are never tracked. Clusters are not yet
-        // persisted by save_to_file.
+        // fact() (create(Node)), trusted-import relations, and variables
+        // (var). Facts that already existed are NOT recorded, so dropping a
+        // cluster can never destroy pre-existing knowledge. Node IDs are
+        // never altered; membership is a side table, so nodes outside any
+        // cluster cost nothing. Clusters are not yet persisted by
+        // save_to_file.
+        //
+        // Variables are tracked because a rule built inside a cluster is
+        // otherwise only PARTLY rolled back: its patterns disappear while
+        // the variables they were made of stay behind as isolated,
+        // still-named nodes. They are exactly as "created while active" as
+        // any other node.
 
         void set_active_cluster(const std::string& name)
         {
@@ -833,6 +820,18 @@ namespace zelph::network
             for (const auto& [name, nodes] : _clusters)
                 out.emplace_back(name, nodes.size());
             return out;
+        }
+
+        // The nodes a cluster has recorded so far, WITHOUT touching the
+        // bookkeeping -- take_cluster's read-only sibling. What it answers is
+        // "which of these nodes are new", because a cluster records exactly
+        // what was created while it was active.
+        std::vector<Node> cluster_nodes(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _clusters.find(name);
+            if (it == _clusters.end()) return {};
+            return {it->second.begin(), it->second.end()};
         }
 
         // Removes the bookkeeping and hands the node list to the caller

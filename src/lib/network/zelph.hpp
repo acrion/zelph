@@ -171,6 +171,7 @@ namespace zelph::network
         static adjacency_set filter(const adjacency_set& source, const std::function<bool(const Node nd)>& f);
         adjacency_set        get_left(const Node b) const;
         adjacency_set        get_right(const Node b) const;
+        adjacency_set        get_facts_of_predicate(Node relation) const;
         bool                 has_left_edge(Node b, Node a) const;
         bool                 has_right_edge(Node a, Node b) const;
         static Node          create_hash(const adjacency_set& vec);
@@ -197,7 +198,13 @@ namespace zelph::network
         Node fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
         Node list(const std::vector<Node>& elements);
         Node list(const std::vector<std::string>& elements);
+        // `{...}`: identified by its members (extensionality), so two
+        // occurrences are ONE node and it cannot be extended.
         Node set(const std::unordered_set<Node>& elements);
+        // `@{...}`: a container with its own identity, whose membership is
+        // asserted and can grow. Also what a rule's conjunction set is.
+        Node collection(const std::unordered_set<Node>& elements);
+        bool is_set_constant(Node node) const;
         Node parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
         Node parse_relation(const Node rule) const;
         // Locked-scope read access (see Network::ReadScope). Constructed
@@ -359,7 +366,7 @@ namespace zelph::network
         // decimal &-literals -- the exact inverse of the &-input syntax
         // (zelph/number). An empty vector disables the feature. Any other
         // list keeps the generic <...> display, so cons lists stay
-        // general-purpose. See stdlib/arithmetic.zph.
+        // general-purpose. See stdlib/decimal-arithmetic.zph.
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
 
@@ -420,6 +427,10 @@ namespace zelph::network
         Node                     get_core_node(const std::string& name) const;
         std::string              get_core_name(Node n) const;
         std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
+        // A node rendered for a HUMAN -- diagnostics, log lines, error
+        // messages. The identifier markers node_to_string works with are
+        // resolved here, so they stay an internal of the renderer instead
+        // of leaking into whichever caller forgot to strip them.
         std::string              format(Node node) const;
         std::vector<std::string> get_languages() const;
         bool                     has_language(const std::string& language) const;
@@ -433,11 +444,72 @@ namespace zelph::network
 
         void          cleanup_isolated(size_t& removed_count) const;
         size_t        cleanup_names() const;
-        void          remove_node(Node node) const;
+        /// Removes the node and everything it is a PART of, cascading
+        /// upwards. Returns HOW MANY nodes went, which is more than one
+        /// whenever the node took part in a fact -- the callers report it.
+        size_t        remove_node(Node node) const;
         adjacency_set get_rules() const;
+
+        /// Is this node a PART of some other fact -- its subject, its
+        /// predicate or one of its objects? For a rule that is the
+        /// difference between stating it and stating something ABOUT it.
+        bool          is_mentioned(Node node) const;
+
+        // --- Rule patterns that are not data -------------------------------
+        //
+        // Writing a rule materializes its condition and consequence patterns
+        // as real fact nodes, because the engine has nothing else to match
+        // against. A pattern carrying a variable is recognisable as a
+        // template and rejected as data everywhere. A GROUND one is not:
+        // "(a p b) => (c q d)" made both `a p b` and `c q d` answer queries
+        // and drive other rules, although nobody had claimed either.
+        //
+        // The node itself cannot say which happened -- asserting a statement
+        // and building it as a pattern produce the same node with the same
+        // edges. What CAN say it is the moment of construction: a rule is
+        // built inside a scratch cluster (see zelph/dedup-rule), and a
+        // cluster records exactly the nodes that did not exist before. Those
+        // are pattern-only, and mark_rule_patterns records that as ordinary
+        // graph structure -- a fact, so a .save/.load round trip keeps it and
+        // nothing has to be remembered across sessions.
+        //
+        // Asserting the same statement later, or DERIVING it, revokes the
+        // mark: it is then a claim like any other.
+
+        /// The predicate that marks a pattern, or 0 when no graph has ever
+        /// needed it (`create` false).
+        Node          rule_pattern_predicate(bool create) const;
+
+        /// Mark the ground condition and consequence patterns of `rule` that
+        /// appear in `created`. Everything else -- patterns with variables,
+        /// nodes that already existed, the predicate declarations the
+        /// construction emitted -- is left alone.
+        void          mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
+
+        /// Was this fact node built as a rule pattern and never claimed?
+        /// One hash probe, and a single empty() test in the graphs -- the
+        /// overwhelming majority -- whose rules all carry variables.
+        bool          is_rule_pattern(Node node) const;
+
+        /// Revoke the mark: the statement has been asserted or derived.
+        /// Returns whether there was one.
+        bool          unmark_rule_pattern(Node node) const;
+
+        /// Rebuild the in-memory index from the graph. A binary load restores
+        /// the marking facts without going through fact(), so the index has
+        /// to be read back off the marker's extent afterwards.
+        void          rebuild_rule_pattern_index() const;
         void          remove_rules() const;
         size_t        rule_count() const;
         void          save_to_file(const std::string& filename) const;
+
+        /// Write a network containing only the facts of the given predicates,
+        /// the nodes they connect and the names of those nodes. Returns the
+        /// number of facts written. See the definition for what else has to
+        /// travel with them for the result to be a usable network.
+        // rules_kept, if given, receives how many rules the slice happens to
+        // contain -- see the definition for why that is not a fixed answer.
+        size_t        save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept = nullptr) const;
         void          load_from_file(const std::string& filename) const;
         void          load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
         void          load_from_manifest(const std::string&       manifest_path,
@@ -450,6 +522,8 @@ namespace zelph::network
         void                                        deactivate_cluster() const;
         std::string                                 active_cluster_name() const;
         std::vector<std::pair<std::string, size_t>> list_clusters() const;
+        /// The nodes a cluster has recorded, i.e. which of them are NEW.
+        std::vector<Node>                           cluster_nodes(const std::string& name) const;
         size_t                                      drop_cluster(const std::string& name) const;
         bool                                        merge_cluster(const std::string& from, const std::string& to) const;
 

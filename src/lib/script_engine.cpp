@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script_engine.hpp"
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
+#include "network/rule_identity.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
@@ -38,10 +39,51 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <random>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 using namespace zelph;
+
+// True if a PEG-AST node is the literal atom `text`. Used to recognise `=>`
+// in predicate position, i.e. that a statement defines a rule.
+static bool is_atom(Janet node, const char* text)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+    if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+    if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) != "atom") return false;
+
+    if (janet_checktype(data[1], JANET_STRING))
+        return std::string(reinterpret_cast<const char*>(janet_unwrap_string(data[1]))) == text;
+    if (janet_checktype(data[1], JANET_BUFFER))
+    {
+        const JanetBuffer* b = janet_unwrap_buffer(data[1]);
+        return std::string(reinterpret_cast<const char*>(b->data), b->count) == text;
+    }
+    return false;
+}
+
+// True if a PEG-AST node is a `¬` pattern, through any number of plain
+// groupings -- "¬(F)" and "(¬(F))" are the same statement.
+//
+// The question has to be asked of the SYNTAX, not of the resulting node: the
+// negation tag is a fact about the pattern node, and a ground pattern is
+// hash-consed, so a node negated in one rule carries the tag everywhere. Only
+// the AST knows which statement wrote the "¬".
+static bool is_negation_ast(Janet node)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+    if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+    const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+    if (type == "negation") return true;
+    if (type == "nested" && len == 2) return is_negation_ast(data[1]);
+    return false;
+}
 
 // --- Implementation Class ---
 
@@ -283,6 +325,11 @@ public:
     // Track variables used in the current scope/statement
     std::map<std::string, network::Node> _scoped_variables;
 
+    // Memoized rule fingerprints, see find_duplicate_rule. Keyed by node,
+    // which is a structural hash, so an entry can never go stale. 0 means
+    // "not a rule".
+    std::unordered_map<network::Node, std::size_t> _rule_shapes;
+
     // Guards the script engine's own bookkeeping (_scoped_variables,
     // _neural_nets) against concurrent access from Janet threads
     // (ev/spawn-thread). Calls INTO the reasoning engine are synchronized
@@ -368,7 +415,9 @@ public:
         janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)janet_cfun_zelph_list), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell).");
 
         janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)janet_cfun_zelph_list_chars), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.");
-        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
+        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate a SET CONSTANT from elements, the `{...}` literal. Identified by its members, so the same elements always yield the same node, and membership cannot be extended.");
+
+        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)janet_cfun_zelph_collection), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it.");
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                "lang defaults to the current language (as set by .lang).");
@@ -422,6 +471,12 @@ public:
                                                                                          "conditions: array of fact nodes (the conjunction).\n"
                                                                                          "consequences: one or more fact nodes to deduce.\n"
                                                                                          "Returns the condition set node.");
+
+        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)janet_cfun_zelph_dedup_rule),
+                  "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
+                  "If the graph already holds a rule that is the same up to renaming of its variables, "
+                  "the newly built one is rolled back and the existing node returned instead. "
+                  "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
@@ -607,7 +662,13 @@ public:
                 :var-token (choice :var-underscore :var-uppercase)
 
                 # Atoms
-                :quoted (capture (* "\"" (any (if-not "\"" 1)) "\""))
+                # A quoted atom knows exactly two escapes, \" and \\, so that
+                # every name is writable: without them a Wikidata label
+                # carrying a quote could not be entered at all, and the line
+                # zelph printed for it read back as several atoms. A
+                # backslash in front of anything else stays an ordinary
+                # character (Windows paths, LaTeX).
+                :quoted (capture (* "\"" (any (choice (* "\\" 1) (if-not "\"" 1))) "\""))
 
                 # Normal atoms (sequences of non-reserved chars)
                 :raw-atom (capture (some :symchars))
@@ -680,6 +741,14 @@ public:
                 :set-content (any (sequence :s* :val-any))
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
+                # Collection literal: @{...}. A container with its own
+                # identity whose membership can grow, as opposed to the set
+                # constant {...} which IS its members. The marker follows
+                # Janet, where {...} is the immutable struct and @{...} the
+                # mutable table -- and it costs no reserved character: "@"
+                # stays an ordinary symchar, only "@{" is special.
+                :tag-collection (group (* (constant :collection) "@{" :set-content :s* "}"))
+
                 # 2. Node List: < a b > — space-separated, stored as cons list (last element outermost).
                 #    The user writes elements in the order they should be displayed; node_to_string reverses
                 #    the internal order back for output. For numbers, write digits in reverse: <3 2 1>
@@ -690,7 +759,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-selffact :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-selffact :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-collection :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -720,11 +789,11 @@ public:
     {
         const char* code = R"janet(
             (defn zelph/number
-              "Fallback for $-literals: no number representation is loaded."
+              "Fallback for &-literals: no number representation is loaded."
               [s]
               (error (string "number literal &" s " has no representation - "
                              "load a script that defines zelph/number "
-                             "(e.g. arithmetic.zph or binary-arithmetic.zph)")))
+                             "(e.g. decimal-arithmetic.zph or binary-arithmetic.zph)")))
         )janet";
 
         Janet out;
@@ -1769,6 +1838,110 @@ public:
     //
     // Janet usage:
     //   (zelph/rule [cond1 cond2] consequence1 consequence2)
+    // The rule already in the graph that `rule` duplicates, or 0.
+    //
+    // Linear in the number of rules, but a candidate is dismissed by one
+    // hash lookup and one integer compare, because each rule's fingerprint
+    // is memoized as a 64-bit hash of its shape. A hash collision costs an
+    // alpha-equivalence test that then says no -- it can never make the
+    // answer wrong, since rules_alpha_equivalent is the decision.
+    //
+    // The memo needs no invalidation: a node IS its structure, so a rule's
+    // shape is fixed for the lifetime of the process, and an entry for a
+    // rule that was removed is simply never consulted again -- the scan
+    // iterates the LIVE rule set. That set holds nothing but Causes
+    // relations, and a non-rule would map to shape 0 and be skipped anyway.
+    //
+    // All of this runs while a script is being read, never during
+    // reasoning.
+    network::Node find_duplicate_rule(const network::Node rule)
+    {
+        const auto fingerprint = [this](const network::Node n) -> std::size_t
+        {
+            const auto it = _rule_shapes.find(n);
+            if (it != _rule_shapes.end()) return it->second;
+
+            const std::string shape = network::rule_shape(_n, n);
+            const std::size_t h     = shape.empty() ? 0 : std::hash<std::string>{}(shape);
+            _rule_shapes.emplace(n, h);
+            return h;
+        };
+
+        const std::size_t shape = fingerprint(rule);
+        if (shape == 0) return 0; // not a rule
+
+        for (const network::Node candidate : _n->get_left(_n->core.Causes))
+        {
+            if (candidate == rule) continue;
+            if (fingerprint(candidate) != shape) continue;
+            if (network::rules_alpha_equivalent(_n, rule, candidate)) return candidate;
+        }
+        return 0;
+    }
+
+    // Build a rule statement, and keep it only if it says something new.
+    //
+    // The thunk performs the whole construction -- condition patterns, the
+    // conjunction set, the => fact. Running it inside a scratch cluster
+    // makes that construction undoable: a cluster records exactly the nodes
+    // CREATED while it is active, and every part of an alpha-equivalent
+    // rule that is not a variable is hash-consed, hence already present and
+    // therefore never recorded. Dropping the scratch removes the second
+    // copy and nothing else.
+    static Janet janet_cfun_zelph_dedup_rule(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        JanetFunction* const thunk = janet_getfunction(argv, 0);
+
+        static const std::string scratch  = "__rule";
+        const std::string        previous = s_instance->_n->active_cluster_name();
+
+        // A scratch cluster of our own must not swallow the user's: whatever
+        // survives is handed back to the cluster that was active, so
+        // .cluster-drop still rolls a rule back with the rest of an experiment.
+        const auto restore = [&previous]
+        {
+            if (previous.empty())
+                s_instance->_n->deactivate_cluster();
+            else
+                s_instance->_n->set_active_cluster(previous);
+        };
+
+        s_instance->_n->set_active_cluster(scratch);
+
+        Janet       out = janet_wrap_nil();
+        JanetFiber* fiber{};
+        const int   signal = janet_pcall(thunk, 0, nullptr, &out, &fiber);
+
+        restore();
+
+        if (signal != JANET_SIGNAL_OK)
+        {
+            s_instance->_n->merge_cluster(scratch, previous); // keep whatever was built
+            janet_signalv(static_cast<JanetSignal>(signal), out);
+        }
+
+        const network::Node rule = zelph_unwrap_node(out);
+        const network::Node twin = rule ? s_instance->find_duplicate_rule(rule) : 0;
+
+        if (twin == 0)
+        {
+            // What the scratch cluster recorded is exactly what this statement
+            // brought into being -- which is how a GROUND pattern can be told
+            // from the same statement asserted earlier. Read it before the
+            // merge, which drops the bookkeeping.
+            const std::vector<network::Node> created = s_instance->_n->cluster_nodes(scratch);
+            s_instance->_n->merge_cluster(scratch, previous);
+            if (rule) s_instance->_n->mark_rule_patterns(rule, created);
+            return out;
+        }
+
+        s_instance->_n->drop_cluster(scratch);
+        return zelph_wrap_node(twin);
+    }
+
     static Janet janet_cfun_zelph_rule(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 2, -1); // At least conditions + 1 consequence
@@ -1803,7 +1976,7 @@ public:
         }
 
         // Create condition set and mark as conjunction
-        network::Node condition_set = s_instance->_n->set(condition_nodes);
+        network::Node condition_set = s_instance->_n->collection(condition_nodes);
         s_instance->_n->fact(condition_set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
 
         // Link each consequence via =>
@@ -1876,9 +2049,13 @@ public:
             if (n) elements.push_back(n);
         }
 
+        // The empty cons list IS nil -- the same node zelph/set returns for
+        // the empty set, and the terminator every non-empty list ends at.
+        // Returning Janet's nil instead made `<>` evaluate to nothing at
+        // all, so a statement containing it was silently dropped.
         if (elements.empty())
         {
-            Janet res = janet_wrap_nil();
+            Janet res = zelph_wrap_node(s_instance->_n->core.Nil);
             if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/list", argc, argv, false, res);
             return res;
         }
@@ -1904,6 +2081,24 @@ public:
         network::Node set_node = s_instance->_n->set(elements);
         Janet         res      = zelph_wrap_node(set_node);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set", argc, argv, false, res);
+        return res;
+    }
+
+    static Janet janet_cfun_zelph_collection(int32_t argc, Janet* argv)
+    {
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/collection", argc, argv, true);
+
+        std::unordered_set<network::Node> elements;
+        for (int i = 0; i < argc; ++i)
+        {
+            network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (n) elements.insert(n);
+        }
+
+        network::Node node = s_instance->_n->collection(elements);
+        Janet         res  = zelph_wrap_node(node);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/collection", argc, argv, false, res);
         return res;
     }
 
@@ -2387,6 +2582,20 @@ public:
         const Janet* data;
         int32_t      len;
         janet_indexed_view(arg_tuple, &data, &len);
+
+        if (len == 1 && janet_checktype(data[0], JANET_KEYWORD))
+        {
+            // An EMPTY container still denotes something: both `<>` and `{}`
+            // are nil -- the empty cons list is the terminator every list
+            // ends at, and Zelph::set() has always answered nil for the
+            // empty set. Falling through to "nil" (Janet's, not the node)
+            // made the whole statement evaluate to nothing, silently.
+            const std::string tag = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+            if (tag == "set") return "(zelph/set)";
+            if (tag == "collection") return "(zelph/collection)";
+            if (tag == "list-nodes") return "(zelph/list)";
+        }
+
         if (len < 2) return "nil"; // Minimum [:type value...]
 
         std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
@@ -2417,6 +2626,14 @@ public:
             for (int32_t i = 1; i < len; ++i)
                 args.push_back(data[i]);
             return build_smart_call("zelph/set", args);
+        }
+        else if (type == "collection")
+        {
+            // [:collection val1 val2 ...]
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/collection", args);
         }
         else if (type == "conjunction")
         {
@@ -2450,13 +2667,13 @@ public:
             if (cond_codes.size() == 1) return cond_codes[0]; // Safety: shouldn't happen with PEG
 
             // (let [$c0 code0 $c1 code1 ...
-            //       $cs (zelph/set $c0 $c1 ...)
+            //       $cs (zelph/collection $c0 $c1 ...)
             //       _ (zelph/fact $cs "~" "conjunction")]
             //   $cs)
             std::string let_block = "(let [";
             for (size_t i = 0; i < cond_codes.size(); ++i)
                 let_block += "$c" + std::to_string(i) + " " + cond_codes[i] + " ";
-            let_block += "$cs (zelph/set";
+            let_block += "$cs (zelph/collection";
             for (size_t i = 0; i < cond_codes.size(); ++i)
                 let_block += " $c" + std::to_string(i);
             let_block += R"() _ (zelph/fact $cs "~" "conjunction")] $cs))";
@@ -2546,28 +2763,29 @@ public:
         }
         else if (type == "atom")
         {
-            // Atoms are strings in Janet.
-            if (val_str.size() >= 2 && val_str.front() == '"' && val_str.back() == '"')
-            {
-                return val_str; // Already quoted
-            }
-            else
-            {
-                // Wrap in quotes and escape
-                return "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
-            }
+            // Atoms are strings in Janet -- but the capture is zelph TEXT,
+            // and handing it to Janet unchanged put zelph names through
+            // Janet's escape set: a node written `a\b` came out named
+            // `a<backspace>`. Decode zelph's own two escapes here, then
+            // re-encode for Janet, which spells those same two the same way.
+            std::string name = val_str;
+            if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
+                name = string::unescape_atom(name.substr(1, name.size() - 2));
+
+            return "\"" + string::escape_atom(name) + "\"";
         }
         else if (type == "list-compact")
         {
             // Convert <123> content to (zelph/list-chars "123").
             // janet_cfun_zelph_list_chars reverses the characters internally
             // so the LSB (rightmost char) becomes the outermost cons cell.
-            std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
+            // The content is not quoted in zelph, so it is a name already.
+            std::string content = "\"" + string::escape_atom(val_str) + "\"";
             return "(zelph/list-chars " + content + ")";
         }
         else if (type == "number")
         {
-            // $-literal: delegate the representation to the (redefinable)
+            // &-literal: delegate the representation to the (redefinable)
             // Janet function zelph/number. Validation happens there too.
             std::string content = "\"" + string::replace_all_copy(val_str, "\"", "\\\"") + "\"";
             return "(zelph/number " + content + ")";
@@ -2736,7 +2954,36 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
             {
                 fact_args.push_back(root_data[i]);
             }
-            return _pImpl->build_smart_call("zelph/fact", fact_args);
+            // `¬` is a CONDITION operator. As a consequence it used to be
+            // ignored outright: "(A p B) => ¬(A q B)" derived (x q y) -- the
+            // exact opposite of what the rule says, without a word. What a
+            // derived negation should mean is a separate question (zelph can
+            // hold a fact as known-wrong, via the probability argument of
+            // fact()); until it is answered, saying so beats guessing.
+            if (is_atom(fact_args[1], "=>"))
+            {
+                for (std::size_t i = 2; i < fact_args.size(); ++i)
+                {
+                    if (is_negation_ast(fact_args[i]))
+                        throw std::runtime_error(
+                            "\"¬\" is a condition operator and has no meaning as a consequence: "
+                            "a rule derives what holds, not what does not. To say that the two "
+                            "may not hold together, write a contradiction rule -- "
+                            "\"(A p B, A q B) => !\".");
+                }
+            }
+
+            const std::string call = _pImpl->build_smart_call("zelph/fact", fact_args);
+
+            // A rule statement is wrapped so that the WHOLE construction --
+            // condition patterns, conjunction set, => fact -- happens where
+            // it can be undone if the rule turns out to be one the graph
+            // already has. See janet_cfun_zelph_dedup_rule. Recognising the
+            // statement here, at the one place that knows it is a top-level
+            // `S => O`, keeps the check off every other input line.
+            if (is_atom(fact_args[1], "=>")) return "(zelph/dedup-rule (fn [] " + call + "))";
+
+            return call;
         }
     }
     else if (type == "conjunction")
@@ -2779,6 +3026,13 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             network::Node n = zelph_unwrap_node(out);
             if (n)
             {
+                // A statement typed at the top level is a CLAIM, and a claim
+                // revokes the pattern-only status the same statement may have
+                // acquired by appearing in a rule. Nothing else can revoke it:
+                // the rule construction itself runs through the same fact()
+                // calls, so only the top level knows that this one was meant.
+                if (!_pImpl->has_scoped_variables()) _pImpl->_n->unmark_rule_pattern(n);
+
                 if (_pImpl->echo_enabled())
                 {
                     std::string output;
@@ -2893,12 +3147,33 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
 }
 
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
-network::Node ScriptEngine::evaluate_expression(const std::string& janet_code)
+network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, const bool quiet)
 {
     if (_pImpl->_scoped_vars_preloaded)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
         _pImpl->_scoped_variables.clear();
+
+    // janet_dostring prints the stack trace itself, through janet_eprintf,
+    // BEFORE it hands the error status back. Redirecting the :err dyn to a
+    // buffer is the only way to keep a speculative evaluation silent; the
+    // buffer is discarded, the error still travels via the exception below.
+    struct ErrRedirect
+    {
+        explicit ErrRedirect(const bool on)
+            : _on(on)
+        {
+            if (!_on) return;
+            _saved = janet_dyn("err");
+            janet_setdyn("err", janet_wrap_buffer(janet_buffer(256)));
+        }
+        ~ErrRedirect()
+        {
+            if (_on) janet_setdyn("err", _saved);
+        }
+        const bool _on;
+        Janet      _saved{};
+    } err_redirect(quiet);
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);

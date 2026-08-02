@@ -37,7 +37,7 @@
   [s]
   (when (or (= s "")
             (some (fn [c] (or (< c (chr "0")) (> c (chr "9")))) s))
-    (error (string "invalid decimal literal $" s)))
+    (error (string "invalid decimal literal &" s)))
   (if (= s "0")
     (zelph/list-chars "0")
     (do

@@ -103,6 +103,7 @@ zelph ships with a standard library of scripts. When a script given to `.import`
 ```
 .import math                 # the whole mathematics stack in one import
 .import sparql               # SPARQL query interface
+.import wikidata-classes     # Wikidata class hierarchy: culprits, chains, reports
 .import decimal-arithmetic   # rule-based arithmetic, base 10 (+ - * / mod cmp ^)
 .import binary-arithmetic    # the same, base 2 (full-adder/subtractor axioms)
 .import binary-nand-arithmetic  # the same, derived from a single NAND axiom
@@ -147,13 +148,13 @@ The `.load` command is general-purpose:
 zelph provides powerful commands for targeted data removal:
 
 - `.prune-facts <pattern>` – Removes only the matching facts (statement nodes).  
-  Useful for deleting specific properties without affecting the entities themselves.
+  Useful for deleting specific properties without affecting the entities themselves. A pattern without variables removes exactly the one fact it names; a pattern that matches nothing changes nothing.
 
-- `.prune-nodes <pattern>` – Removes matching facts **and** all nodes bound to the single variable.  
-  Requirements: exactly one variable (subject or single object), fixed relation.  
-  **Warning**: This completely deletes the nodes and **all** their connections – use with caution!
+- `.prune-nodes <pattern>` – Removes matching facts **and** the nodes bound to the pattern's variable.  
+  Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
+  **Warning**: a deleted node takes everything it is a **part** of with it — every fact naming it, every fact naming one of those, and every rule one of them is a condition or a conclusion of — including facts and rules unrelated to the pattern, plus its names. Use with caution!
 
-- `.cleanup` – Removes all isolated nodes and cleans name mappings.
+- `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
 
 Example:
 
@@ -182,6 +183,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.load <file>` – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)
 - `.load-partial <file|manifest> [...]` – Load selected chunks as a read-only partial view (see `.help .load-partial`)
 - `.save <file.bin>` – Save the current network to a binary file
+- `.save-predicates <file.bin> <predicate> [...]` – Save only the facts of the given predicates (a slice; see [Publishing a Predicate Slice](publishing-slices.md))
 - `.stat-file <file.bin>` – Show serialized-file chunk statistics without loading the network
 - `.index-file <file.bin> <json>` – Emit a JSON byte-offset index for a serialized .bin file
 
@@ -195,35 +197,33 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 #### Exploring the Network
 
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
-- `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth)
+- `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: `.why`
 - `.list <count>` – List first N existing nodes (internal map order, with details)
 - `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
-- `.node [<name|id>]` – Show detailed node information; defaults to last output node
-- `.out <name|id> [count]` – List details of outgoing connected nodes (default 20)
-- `.in <name|id> [count]` – List details of incoming connected nodes (default 20)
+- `.node [<name|id|fact>]` – Show detailed node information; defaults to last output node
+- `.out <name|id|fact> [count]` – List details of outgoing connected nodes (default 20)
+- `.in <name|id|fact> [count]` – List details of incoming connected nodes (default 20)
 - `.mermaid <node_name> [max_depth]` – Generate Mermaid HTML file for a node (default depth 3)
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent predicates)
-- `.list-predicate-value-usage <pred> [max]` – Show object/value usage statistics for a specific predicate (top N most frequent values)
+- `.list-predicate-value-usage <name|id|fact> [max]` – Show object/value usage statistics for a specific predicate (top N most frequent values)
 
 #### Inference & Rules
 
 - `.run` – Run full inference (from Janet: [`(zelph/run)`](janet.md#running-the-engine))
 - `.run-once` – Run a single inference pass (from Janet: `(zelph/run-once)`)
 - `.run-delta` – Run inference seeded only by the facts added since the last run; costs time in the size of the addition rather than of the graph (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
-- `.run-md <subdir>` – Run inference and export results as Markdown
-- `.run-file <file>` – Run inference, write deduced facts in reversed order to a file (encoded if lang=wikidata)
-- `.decode <file>` – Decode an encoded/plain file and print readable facts
-- `.auto-run` – Toggle automatic execution of .run after each input (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
+- `.run-export <file>` – Run inference and write all derivations to a JSON Lines file (see [Exporting Derivations](index.md#exporting-derivations))
+- `.auto-run` – Toggle automatic execution of .run after each input; takes no argument (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
 - `.deductions [all|focus|off]` – Set the deduction printing mode (default: focus)
 - `.list-rules` – List all defined inference rules
 - `.remove-rules` – Remove all inference rules
 
 #### Editing & Removing
 
-- `.remove <name|id>` – Remove a node (destructive: disconnects all edges and cleans names)
+- `.remove <name|id>` – Remove a node and everything it is a part of (destructive)
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
-- `.cleanup` – Remove isolated nodes and clean name mappings
+- `.cleanup` – Remove isolated nodes and clean name mappings (core nodes exempt)
 - `.new` – Clear the complete network and re-initialize the core nodes
 
 #### Clusters
@@ -243,7 +243,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.parallel` – Toggle parallel processing (default: on)
 - `.anchors [on|off]` – Show or set anchor-based candidate lookups in unification (default: on)
 - `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
-- `.fact-stores [off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
+- `.fact-stores [on|off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
 
 #### Logging & Profiling
 

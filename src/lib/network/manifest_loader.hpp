@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -869,7 +870,21 @@ namespace zelph::network
                 }
             }
 
-            manifest.node_route_supported = json_text.find("\"node-route\"") != std::string::npos;
+            // "node-route" has to be read where it is claimed, not anywhere
+            // in the file: every published manifest lists it under
+            // selectorModel.unsupportedOperations, which a plain substring
+            // search reads as support for exactly the feature the manifest
+            // says it lacks.
+            if (const auto selector_model = find_json_object(json_view, "selectorModel"); !selector_model.empty())
+            {
+                std::vector<std::string> supported_operations;
+                if (parse_json_string_array_field(selector_model, "supportedOperations", supported_operations))
+                {
+                    manifest.node_route_supported =
+                        std::find(supported_operations.begin(), supported_operations.end(), "node-route")
+                        != supported_operations.end();
+                }
+            }
             if (!manifest.node_route_supported)
             {
                 const auto capabilities_obj = find_json_object(json_view, "capabilities");
@@ -922,23 +937,44 @@ namespace zelph::network
             const fs::path        local_obj_path = fs::path(normalized);
             std::vector<fs::path> candidates     = {local_obj_path, manifest_dir / local_obj_path};
 
+            static constexpr std::string_view shards_marker = "/shards/";
+            static constexpr std::string_view chunks_marker = "/chunks/";
+
+            // An artifact tree keeps the manifest and the shards side by side
+            // (`<artifact>.hf-v2.json` next to `shards/left/chunk-...`), which
+            // is what the emitter writes and what a download of the published
+            // tree looks like. Resolving the object relative to the manifest
+            // therefore finds it without `shard-root=` -- and downloading a
+            // file that lies next to the manifest just read is the most
+            // expensive possible way to obtain it.
+            for (const std::string_view marker : {shards_marker, chunks_marker})
+            {
+                if (auto pos = normalized.find(marker); pos != std::string::npos)
+                {
+                    candidates.emplace_back(manifest_dir / normalized.substr(pos + 1));                // shards/left/chunk-...
+                    candidates.emplace_back(manifest_dir / normalized.substr(pos + marker.size()));    // left/chunk-...
+                }
+            }
+
+            // Not everything an artifact advertises lives under shards/: the
+            // offset index and the node route index sit next to the manifest
+            // itself, so their advertised path has no marker to cut at.
+            if (const std::string filename = fs::path(normalized).filename().string(); !filename.empty())
+            {
+                candidates.emplace_back(manifest_dir / filename);
+            }
+
             if (!shard_root.empty())
             {
                 fs::path shard_base{shard_root};
                 candidates.emplace_back(shard_base / local_obj_path);
 
-                const std::string shards_marker = "/shards/";
-                if (auto pos = normalized.find(shards_marker); pos != std::string::npos)
+                for (const std::string_view marker : {shards_marker, chunks_marker})
                 {
-                    const std::string tail = normalized.substr(pos + shards_marker.size());
-                    candidates.emplace_back(shard_base / tail);
-                }
-
-                const std::string chunks_marker = "/chunks/";
-                if (auto pos = normalized.find(chunks_marker); pos != std::string::npos)
-                {
-                    const std::string tail = normalized.substr(pos + chunks_marker.size());
-                    candidates.emplace_back(shard_base / tail);
+                    if (auto pos = normalized.find(marker); pos != std::string::npos)
+                    {
+                        candidates.emplace_back(shard_base / normalized.substr(pos + marker.size()));
+                    }
                 }
 
                 const std::string hf_path_sep = "datasets/";
@@ -970,6 +1006,48 @@ namespace zelph::network
             throw std::runtime_error("Manifest chunk path not found: " + object_path
                                      + " (tried manifest directory and shard root "
                                      + (shard_root.empty() ? "<not set>" : shard_root) + ")");
+        }
+
+        // The .bin a manifest names sits at the repository root, one level
+        // above the artifact directory that holds the manifest and its
+        // shards. If that file is on disk, the header comes from it rather
+        // than from the network -- which is what lets a downloaded artifact
+        // load offline without spelling out `source-bin=`. An empty result
+        // means "not found locally", not an error.
+        inline std::filesystem::path resolve_local_source_bin(const std::string& manifest_path,
+                                                              const std::string& bin_path,
+                                                              const std::string& shard_root)
+        {
+            namespace fs = std::filesystem;
+
+            std::string normalized = bin_path;
+            if (const auto scheme = normalized.find("://"); scheme != std::string::npos)
+            {
+                normalized = normalized.substr(scheme + 3);
+            }
+
+            const fs::path name = fs::path(normalized).filename();
+            if (name.empty()) return {};
+
+            const fs::path        manifest_dir = fs::path(manifest_path).parent_path();
+            std::vector<fs::path> candidates{manifest_dir / name, manifest_dir.parent_path() / name};
+
+            if (!shard_root.empty())
+            {
+                const fs::path shard_base{shard_root};
+                candidates.emplace_back(shard_base / name);
+                candidates.emplace_back(shard_base.parent_path() / name);
+            }
+
+            for (const auto& candidate : candidates)
+            {
+                if (!candidate.empty() && fs::exists(candidate) && fs::is_regular_file(candidate))
+                {
+                    return fs::absolute(candidate);
+                }
+            }
+
+            return {};
         }
 
         inline std::filesystem::path resolve_manifest_local_path(const std::string& manifest_path,
@@ -1304,16 +1382,19 @@ namespace zelph::network
 
             if (is_hf_uri(manifest.node_route_index_path))
             {
-                if (!shard_root.empty())
+                // Local first, as for the shards themselves: the sidecar is
+                // part of the artifact tree, so a downloaded artifact has it
+                // next to its manifest. Only shard-root used to be consulted,
+                // which sent a load that had everything on disk to the
+                // network for one small JSON file.
+                try
                 {
-                    try
-                    {
-                        return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
-                    }
-                    catch (...)
-                    {
-                    }
+                    return resolve_manifest_chunk_path(manifest_path, manifest.node_route_index_path, shard_root);
                 }
+                catch (const std::exception&)
+                {
+                }
+
                 return fetch_chunk_to_cache(manifest.node_route_index_path, 0, 0, "node-route-index");
             }
 
@@ -1545,12 +1626,26 @@ namespace zelph::network
             return file;
         }
 
+        // Chunk offsets are file positions in a .bin that is gigabytes large:
+        // the pruned Wikidata network passes 2 GiB after eight left chunks.
+        // fseek() takes a long, which is 32 bits on Windows, so it cannot
+        // express those offsets at all -- every seek past 2 GiB would land
+        // somewhere else and read a chunk of garbage. The 64-bit variants are
+        // spelled differently per platform.
         inline void seek_offset_or_throw(FILE* file, uint64_t offset)
         {
             if (offset == 0) return;
-            if (fseek(file, static_cast<long>(offset), SEEK_SET) != 0)
+
+#if defined(_WIN32)
+            const int result = _fseeki64(file, static_cast<__int64>(offset), SEEK_SET);
+#else
+            const int result = fseeko(file, static_cast<off_t>(offset), SEEK_SET);
+#endif
+
+            if (result != 0)
             {
-                throw std::runtime_error("Failed to seek to chunk source offset");
+                throw std::runtime_error("Failed to seek to chunk source offset "
+                                         + std::to_string(offset));
             }
         }
 

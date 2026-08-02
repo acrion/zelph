@@ -43,28 +43,37 @@ TEST_CASE(".deductions focus: only input-anchored deductions are printed")
         // interactive.run calls here -- a second run would execute with an
         // already-cleared focus set and blur what is being tested.
         //
-        // Cascade with a CHANGING subject: qq1 derives a qq2 fact about
-        // the fresh term (h of A) -- its subject is materialized during
-        // reasoning, not by input, so focus mode must filter it -- and qq2
-        // derives qq3 back about A itself, which IS the input's subject,
-        // so focus mode must print it. The rule statements run before
-        // collector.clear(), so their echoes cannot contaminate the
-        // negative check.
+        // Cascade with a CHANGING subject. qq1 derives a qq2 fact about the
+        // term (h of A): that subject is materialized during reasoning, but
+        // it is materialized OUT OF the entered node, and a statement about
+        // (h of socrates) is a statement about socrates -- so focus prints
+        // it. qq2 derives qq3 back about A itself, which is the input's own
+        // subject.
+        //
+        // The negative case is a subject that reaches no anchor at all: the
+        // atom `sentinel` occurs in the rule and nowhere else. A rule is
+        // never an anchor -- with session-wide accumulation, rule anchors
+        // would make focus degenerate to "all" for any entered rule set.
+        //
+        // The rule statements run before collector.clear(), so their echoes
+        // cannot contaminate the negative check.
         interactive.process(".deductions focus");
         interactive.process("(A qq1 A) => ((h of A) qq2 (h of A))");
         interactive.process("((h of A) qq2 (h of A)) => (A qq3 A)");
+        interactive.process("(A qq1 A) => (sentinel qq4 A)");
         collector.clear();
         interactive.process(":qq1 socrates");
         CHECK(any_deduction_of(collector, "qq3"));
-        CHECK_FALSE(any_deduction_of(collector, "qq2"));
-        // Both facts exist regardless of printing (probe).
-        interactive.process(R"js(%(let [h (zelph/fact "h" "of" "socrates")] (string "FOCA-" (zelph/exists h "qq2" h))))js");
+        CHECK(any_deduction_of(collector, "qq2"));
+        CHECK_FALSE(any_deduction_of(collector, "qq4"));
+        // Every one of them exists regardless of printing (probe).
+        interactive.process(R"js(%(string "FOCA-" (zelph/exists "sentinel" "qq4" "socrates")))js");
         CHECK(any_output_contains(collector, "FOCA-true"));
-        // Control: in all mode the intermediate deduction prints.
+        // Control: in all mode the filtered deduction prints.
         interactive.process(".deductions all");
         collector.clear();
         interactive.process(":qq1 plato");
-        CHECK(any_deduction_of(collector, "qq2")); });
+        CHECK(any_deduction_of(collector, "qq4")); });
 }
 
 TEST_CASE(".deductions focus: subterms of the input are not focus anchors")
@@ -165,4 +174,380 @@ TEST_CASE("output: concurrent stream flushes are serialized")
     for (auto& w : workers)
         w.join();
     CHECK(collector.events().size() == static_cast<size_t>(threads) * lines);
+}
+
+TEST_CASE("commands: an argument a command does not take is an error")
+{
+    // Most commands already reject surplus arguments; the ones that did not
+    // silently did something else instead. ".auto-run" is the trap that
+    // matters: it is a toggle sitting among .anchors / .semi-naive /
+    // .fact-stores, all of which take [on|off], so ".auto-run off" ENABLED
+    // auto-run whenever it happened to be off.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_AS(interactive.process(".auto-run off"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".list-rules everything"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".remove-rules all"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".lang en de"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".deductions loud"), std::runtime_error);
+
+        // The documented forms keep working.
+        interactive.process(".auto-run");
+        interactive.process(".deductions all");
+        interactive.process(".lang en"); });
+}
+
+TEST_CASE("naming: renaming a node to the name it already has is a no-op")
+{
+    // The uniqueness check did not exclude the node itself, so ".name a a"
+    // failed with "Name 'a' is already in use by node 11" -- where node 11
+    // is 'a'. An idempotent operation should say so, not complain about
+    // the very node it was pointed at.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel x");
+
+        collector.clear();
+        interactive.process(".name a a");
+        CHECK(any_output_contains(collector, "already has this name"));
+
+        // Still there, still reachable under that name.
+        collector.clear();
+        interactive.process("a rel X");
+        CHECK(answers_contain(collector, "a rel x"));
+
+        // A genuine collision is still refused.
+        interactive.process("b rel y");
+        CHECK_THROWS_WITH_AS(interactive.process(".name a b"),
+                             doctest::Contains("already in use"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("commands: predicate usage counts uses AS a predicate, not facts about it")
+{
+    // The nodes pointing at a predicate are the facts using it as their
+    // relation type PLUS the facts in which it is the SUBJECT -- a fact
+    // points at both. Counting them together made every predicate carry its
+    // own `pred ~ ->` declaration as a use of itself, so a freshly declared
+    // predicate reported one use before anything used it, and each fact
+    // ABOUT a predicate inflated the count further. On a Wikidata dump,
+    // where every property is an entity with labels and constraints of its
+    // own, that is not an off-by-one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a hasPart b");
+        interactive.process("hasPart coinedBy alice");
+        interactive.process("hasPart coinedBy bob");
+
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "hasPart 1"));
+        CHECK(any_output_contains(collector, "coinedBy 2"));
+        CHECK_FALSE(any_output_contains(collector, "hasPart 4"));
+
+        // The core vocabulary is declared but unused here, and says so.
+        CHECK(any_output_contains(collector, "cons 0"));
+
+        // Same root cause on the value side: the objects of the facts ABOUT
+        // hasPart appeared as values OF hasPart, led by the `->` of its own
+        // declaration.
+        collector.clear();
+        interactive.process(".list-predicate-value-usage hasPart");
+        CHECK(any_output_contains(collector, "b 1"));
+        CHECK(any_output_contains(collector, "Total unique values: 1"));
+        CHECK_FALSE(any_output_contains(collector, "alice"));
+        CHECK_FALSE(any_output_contains(collector, "bob")); });
+}
+
+TEST_CASE("commands: predicate usage agrees with what a query answers")
+{
+    // The count and the query are two readings of the same question, so a
+    // disagreement between them is a bug in one of the two whichever way it
+    // points. Pinning them against each other is what keeps the counting
+    // path from drifting away from unification's notion of a predicate.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process("c rel d");
+        interactive.process("rel coinedBy alice");
+
+        // The count comes FIRST: entering a query materializes its pattern,
+        // and that pattern is a fact of `rel` like any other.
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        const bool counted_two = any_output_contains(collector, "rel 2");
+
+        collector.clear();
+        interactive.process("S rel O");
+        const size_t answers = collect_answers(collector).size();
+
+        CHECK(answers == 2);
+        CHECK(counted_two); });
+}
+
+TEST_CASE("commands: a negative count is rejected, not wrapped")
+{
+    // std::stoull turns "-1" into 18446744073709551615 rather than failing,
+    // so ".list -1" announced "Listing 18446744073709551615 nodes" and
+    // ".out node -1" quietly meant "all of them". Every count argument goes
+    // through one parser now, and that parser looks at the sign.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        interactive.process("a rel b");
+
+        for (const char* cmd : {".list -1", ".clist -1", ".out a -1", ".in b -1",
+                                ".list-predicate-usage -1", ".list-predicate-value-usage rel -1"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(cmd),
+                                 doctest::Contains("positive number"),
+                                 std::runtime_error);
+        }
+
+        // Zero was already refused and stays refused; a real count works.
+        CHECK_THROWS_AS(interactive.process(".list 0"), std::runtime_error);
+        interactive.process(".list 2"); });
+}
+
+TEST_CASE("commands: the exploration commands address a fact the way it prints")
+{
+    // Printed output is meant to read back as input, and .explain and the
+    // prune commands took a printed FACT all along. .node, .out and .in did
+    // not: ".node a rel b" was refused with "At most one argument required",
+    // and ".out (a rel b)" with "Unknown node". The only way to inspect a
+    // fact node was to hunt down its numeric ID -- although the fact is
+    // exactly what the user had just seen printed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process("x (a rel b) y");
+
+        // Both spellings: bare, and the parenthesised form the renderer uses
+        // for a fact in subject or predicate position.
+        for (const char* form : {".node a rel b", ".node (a rel b)"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(any_output_contains(collector, "Representation: a rel b"));
+        }
+
+        collector.clear();
+        interactive.process(".out (a rel b)");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        collector.clear();
+        interactive.process(".in (a rel b)");
+        CHECK(any_output_contains(collector, "Incoming connected nodes"));
+
+        // The trailing count still separates, and a name or an ID still
+        // resolves the way it did.
+        collector.clear();
+        interactive.process(".out (a rel b) 1");
+        CHECK(any_output_contains(collector, "first 1 of"));
+
+        collector.clear();
+        interactive.process(".out a");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        collector.clear();
+        interactive.process(".node 1");
+        CHECK(any_output_contains(collector, "Node ID: 1"));
+
+        // A pattern that denotes nothing is an error, not a silent empty
+        // listing.
+        CHECK_THROWS_AS(interactive.process(".node q nosuchrel r"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".out (q nosuchrel r)"), std::runtime_error); });
+}
+
+TEST_CASE("commands: a fact whose object is a numeral is not split by the count")
+{
+    // The trailing-number ambiguity .explain already had: ".out a rel 5" is
+    // the fact, not the node `a rel` with a count of 5. The documented count
+    // keeps precedence, so the numeral is only read as part of the pattern
+    // when the shorter reading resolves to nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel 5");
+
+        collector.clear();
+        interactive.process(".node a rel 5");
+        CHECK(any_output_contains(collector, "Representation: a rel 5"));
+
+        collector.clear();
+        interactive.process(".out a rel 5");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        // With a count after it, the fact is still the fact.
+        collector.clear();
+        interactive.process(".out a rel 5 1");
+        CHECK(any_output_contains(collector, "first 1 of")); });
+}
+
+TEST_CASE("commands: a multi-object fact is addressed whole, numeral object and all")
+{
+    // The worst case for splitting a trailing count off: a fact with several
+    // objects, the last of them a numeral. It resolves whole because the
+    // fact one object SHORT does not exist -- entering "a rel b 5" builds one
+    // node with two objects, not two facts -- so the count reading has no
+    // head to attach to and never wins.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b 5");
+
+        collector.clear();
+        interactive.process(".node a rel b 5");
+        CHECK(any_output_contains(collector, "Representation: a rel b 5"));
+
+        collector.clear();
+        interactive.process(".out a rel b 5");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        // The shorter fact is genuinely absent, and saying so is the point:
+        // it is what leaves the count reading no foothold.
+        CHECK_THROWS_AS(interactive.process(".node a rel b"), std::runtime_error); });
+}
+
+TEST_CASE("commands: a composite predicate is named and counted like any other")
+{
+    // A fact in predicate position is a first-class predicate -- `logic.md`
+    // makes a point of it -- and the two usage listings could neither name
+    // nor count it.
+    //
+    // Naming: get_name is empty for a node the parser never named, and the
+    // column was simply blank, so the listing gave a count without saying
+    // what it counted.
+    //
+    // Counting: a COMPOSITE relation is pointed at by its own subject and
+    // objects as well, and both passed the role test that separates a
+    // predicate from a subject -- the subject through the
+    // single-outgoing-edge exemption that `~ ~ ->` needs, the object because
+    // a fact does not point back at it. So one use reported three.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+)");
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "a p b 2"));
+        CHECK_FALSE(any_output_contains(collector, "a p b 4"));
+
+        // The atomic predicate next to it is unaffected: `a p b` is its one
+        // use, and the facts that USE that fact are not uses of `p`.
+        CHECK(any_output_contains(collector, "p 1")); });
+}
+
+TEST_CASE("commands: a fact used as a predicate is not a value of itself")
+{
+    // The value listing read a fact's objects from its incoming set, keeping
+    // whatever the fact does not point back at. Every fact that uses it as a
+    // PREDICATE looks exactly like that -- it points at the fact and is not
+    // pointed back at -- so `x (a p b) y` made itself a value of `a p b`, and
+    // the listing for `p` reported a second, nameless value nobody wrote.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+)");
+        collector.clear();
+        interactive.process(".list-predicate-value-usage p");
+        CHECK(any_output_contains(collector, "b 1"));
+        CHECK(any_output_contains(collector, "Total unique values: 1")); });
+}
+
+TEST_CASE("commands: the value listing takes a predicate the way it prints")
+{
+    // `.list-predicate-value-usage (a p b)` was three arguments and was
+    // refused on arity, although a fact in predicate position is exactly what
+    // one asks this listing about. Same resolution as .node, .out and .in,
+    // trailing count included.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+)");
+        for (const char* form : {".list-predicate-value-usage (a p b)",
+                                 ".list-predicate-value-usage a p b"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(any_output_contains(collector, "Value Usage for predicate a p b"));
+            CHECK(any_output_contains(collector, "y 1"));
+        }
+
+        // The trailing count still separates, and a plain name still resolves.
+        process_lines(interactive, R"(
+a q c
+a q d
+a q e
+)");
+        collector.clear();
+        interactive.process(".list-predicate-value-usage q 2");
+        CHECK(any_output_contains(collector, "Showing top 2 of 3 values"));
+
+        CHECK_THROWS_AS(interactive.process(".list-predicate-value-usage nosuch"), std::runtime_error); });
+}
+
+TEST_CASE("commands: the parallel-unification summary counts what it claims")
+{
+    // "Parallel unifications activated for N distinct fixed relations" read a
+    // static set that nothing ever filled: 457b14b introduced TWO statics of
+    // that name, one in reasoning.cpp and one in unification.cpp, and only the
+    // second was inserted into. The line has therefore said 0 since December
+    // 2025, whatever the run did -- a diagnostic that reports a measurement it
+    // never takes, which is worse than no diagnostic at all.
+    //
+    // Not run_both_modes: the number is a statement ABOUT the parallel path,
+    // so the mode is the subject of the test rather than something it should
+    // be invariant under. All three cases below are the default (parallel)
+    // engine except the last, which turns it off.
+    const std::string unbound_rule = R"(
+a p b
+c p d
+(X p Y) => (X q Y)
+)";
+
+    SUBCASE("both sides unbound: the snapshot path is taken and counted")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, unbound_rule);
+
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 1"));
+    }
+
+    SUBCASE("a bound side keeps the snapshot path out of it")
+    {
+        // The shape `janet.md` shows reporting 0, which is why that page did
+        // not have to be corrected when the counter started measuring.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+socrates ~ human
+(X ~ human) => (X ~ mortal)
+)");
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
+    }
+
+    SUBCASE("single-core evaluation reports none, by construction")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".parallel");
+        process_lines(interactive, unbound_rule);
+
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
+    }
 }

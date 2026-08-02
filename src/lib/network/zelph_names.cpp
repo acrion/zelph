@@ -26,7 +26,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include "string/node_to_string.hpp"
+#include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
+
+#include <algorithm>
 
 namespace
 {
@@ -505,6 +508,19 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
             return std::string(sv);
         }
 
+        // The operator spelling of a core node ranks ABOVE a name from
+        // another language, because it is what the parser accepts in every
+        // language -- the output stays re-enterable. Once "!" carried an
+        // English name, a query answer in the zelph language printed
+        // "contradiction is unsatisfiable", and re-entering that line created
+        // a new node named "contradiction" instead of addressing "!". A name
+        // in the CURRENT language still wins: that mapping was asked for, and
+        // it is re-enterable by construction.
+        if (const auto core_it = _core_names_by_node.find(node); core_it != _core_names_by_node.end())
+        {
+            return core_it->second;
+        }
+
         if (fallback)
         {
             if (lang != "en")
@@ -538,8 +554,7 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
             }
         }
 
-        auto it = _core_names_by_node.find(node);
-        return (it != _core_names_by_node.end()) ? it->second : "";
+        return "";
     };
 
     if (name_of_node_exclusive_depth > 0)
@@ -552,8 +567,8 @@ std::string Zelph::get_name(const Node node, std::string lang, const bool fallba
 }
 
 // If in Wikidata mode (has_language("wikidata") && lang != "wikidata"), get_formatted_name prepends Wikidata IDs to names with " - " separator
-// for nodes that have both a name in the requested language and a Wikidata ID. This allows Markdown::convert_to_md to parse
-// and create appropriate links using the ID for the URL and the name for display text.
+// for nodes that have both a name in the requested language and a Wikidata ID, so that a rendered leaf carries both.
+// DerivationExport::identifier undoes the composition again to recover the node; a reader of the rendered text sees both.
 std::string Zelph::get_formatted_name(const Node node, const std::string& lang) const
 {
     const bool is_wikidata_mode = has_language("wikidata") && lang != "wikidata";
@@ -567,9 +582,9 @@ std::string Zelph::get_formatted_name(const Node node, const std::string& lang) 
     std::string name;
     if (lang == "zelph")
     {
-        // In Wikidata mode, the output of get_formatted_name may be used by the Markdown export (command `.run-md`).
+        // In Wikidata mode, the output of get_formatted_name may end up in the derivation export (command `.run-export`).
         // In this case, we want to use a natural language as the primary language.
-        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for the Markdown export.
+        // The "zelph" language is only intended to offer an agnostic language in addition to natural languages, not for reports.
         // So in case lang is not a natural language, we fall back to English.
         name = get_name(node, "en", false);
     }
@@ -647,15 +662,25 @@ Node Zelph::get_node(const std::string& name, std::string lang) const
 {
     if (lang.empty()) lang = _lang;
 
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
-    auto             lang_it = _pImpl->_node_of_name.find(lang);
-    if (lang_it == _pImpl->_node_of_name.end())
     {
-        return 0;
+        std::shared_lock lock(_pImpl->_mtx_node_of_name);
+        auto             lang_it = _pImpl->_node_of_name.find(lang);
+        if (lang_it != _pImpl->_node_of_name.end())
+        {
+            auto it = lang_it->second.find(name);
+            if (it != lang_it->second.end()) return it->second;
+        }
     }
 
-    auto it = lang_it->second.find(name);
-    return (it == lang_it->second.end()) ? 0 : it->second;
+    // The operator spellings of the core nodes ("~", "=>", "!", "cons", ...)
+    // are not name-map entries; the parser knows them, and so does node(),
+    // which consults the same table after the language map. Without this the
+    // non-creating lookup disagreed with the creating one: every command that
+    // takes a node by name refused the very predicate the line above had just
+    // used -- ".node ~" reported "No node found with name '~'". The order is
+    // node()'s: a name given in the current language wins over a core
+    // spelling.
+    return get_core_node(name);
 }
 
 void Zelph::register_core_node(Node n, const std::string& name)
@@ -705,12 +730,18 @@ std::string Zelph::format(Node node) const
 {
     std::string result;
     string::node_to_string(this, result, _lang, node);
-    return result;
+    return string::unmark_identifiers(result);
 }
 
+// A language counts as present when EITHER direction knows it. The two maps
+// only ever agree in a complete network; a partial load addresses nameOfNode
+// and nodeOfName as separate sections, so "nameOfNode=0 nodeOfName=none" used
+// to leave .stat reporting "Languages: 0" over a million loaded names.
+// Lock order is the one documented for the two maps: node_of_name first.
 std::vector<std::string> Zelph::get_languages() const
 {
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
 
     std::vector<std::string> result;
     result.reserve(_pImpl->_node_of_name.size());
@@ -718,6 +749,14 @@ std::vector<std::string> Zelph::get_languages() const
     for (const auto& [language, _] : _pImpl->_node_of_name)
     {
         result.push_back(language);
+    }
+
+    for (const auto& [language, _] : _pImpl->_name_of_node)
+    {
+        if (std::find(result.begin(), result.end(), language) == result.end())
+        {
+            result.push_back(language);
+        }
     }
 
     return result;
@@ -784,6 +823,7 @@ size_t Zelph::get_node_of_name_size(const std::string& lang) const
 
 size_t Zelph::language_count() const
 {
-    std::shared_lock lock(_pImpl->_mtx_node_of_name);
-    return _pImpl->_node_of_name.size();
+    // Same rule as get_languages(), so that a count and the list below it in
+    // .stat cannot contradict each other.
+    return get_languages().size();
 }

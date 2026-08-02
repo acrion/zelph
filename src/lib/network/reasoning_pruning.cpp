@@ -25,7 +25,66 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "reasoning.hpp"
 
+#include "fact_structure.hpp"
 #include "zelph_impl.hpp"
+
+// Prune mode: what does the matched condition denote?
+//
+// resolve_pattern rather than a lookup in the bindings, because a pattern is
+// not always a bare VARIABLE. `((Y r s) p Z)`, `(X (Y r s) Z)` and
+// `(X p (Y r s))` all match -- unification resolves them structurally, the
+// predicate included since it learned to -- but the reconstruction here
+// substituted only where the pattern WAS a variable and then asked check_fact
+// about the pattern node itself. It found nothing, and `.prune-facts`
+// reported "Pruned 0 matching facts" for facts it had just matched.
+//
+// resolve_pattern is the read-only sibling of instantiate_fact: pure hash
+// lookups, nothing created, which is what a prune pass may do.
+void zelph::network::Reasoning::collect_prune_targets(const Node condition, const Variables& bindings, const Node parent)
+{
+    adjacency_set objects;
+    const Node    subject_pattern  = parse_fact(condition, objects, parent);
+    const Node    relation_pattern = parse_relation(condition);
+
+    std::vector<Node> history;
+    Node              subject  = 0;
+    Node              relation = 0;
+
+    if (resolve_pattern(this, subject_pattern, bindings, subject, history) != Resolve::Ok) return;
+
+    history.clear();
+    if (resolve_pattern(this, relation_pattern, bindings, relation, history) != Resolve::Ok) return;
+
+    adjacency_set targets;
+    for (const Node obj : objects)
+    {
+        history.clear();
+        Node iobj = 0;
+        if (resolve_pattern(this, obj, bindings, iobj, history) == Resolve::Ok && iobj != 0
+            && !Zelph::Impl::is_var(iobj))
+        {
+            targets.insert(iobj);
+        }
+    }
+
+    if (subject == 0 || relation == 0 || targets.empty()) return;
+    if (Zelph::Impl::is_var(subject) || Zelph::Impl::is_var(relation)) return;
+
+    const Answer ans = check_fact(subject, relation, targets);
+    if (!ans.is_known() || ans.relation() == 0) return;
+
+    _facts_to_prune.insert(ans.relation());
+
+    if (_prune_nodes_mode)
+    {
+        // Unchanged from the three copies this replaces, parent-less call
+        // included: which side is the variable decides what gets deleted.
+        if (Zelph::Impl::is_var(parse_fact(condition, objects)))
+            _nodes_to_prune.insert(subject);
+        else if (objects.size() == 1)
+            _nodes_to_prune.insert(*targets.begin());
+    }
+}
 
 using namespace zelph::network;
 
@@ -70,7 +129,7 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
     _pool->wait();
 
     removed_facts = _facts_to_prune.size();
-    removed_nodes = _nodes_to_prune.size();
+    removed_nodes = 0;
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
@@ -79,9 +138,44 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
         _pImpl->remove(fact);
     }
 
+    size_t kept_core_nodes = 0;
+
     for (Node node : _nodes_to_prune)
     {
-        _pImpl->remove(node);
+        // The engine's own vocabulary is not data. A pattern as ordinary as
+        // "A ~ ->" binds A to every declared relation type, the core
+        // predicates among them, and deleting those leaves a network whose
+        // next negation or list fails deep inside the engine. Skipped rather
+        // than refused: a prune is a bulk operation, and aborting it halfway
+        // leaves a graph nobody asked for.
+        if (!get_core_name(node).empty())
+        {
+            ++kept_core_nodes;
+            continue;
+        }
+
+        // A bound node can be gone before its turn: removing an earlier one
+        // takes the facts it is part of with it, and a bound node may BE
+        // such a fact -- "X rel o" binds X to `a` and to `(a p b)` alike.
+        // Which of the two comes first is not fixed (the set is unordered),
+        // so the case cannot be provoked reliably; remove_node REFUSES a
+        // node that does not exist, so asking is not decoration.
+        if (!_pImpl->exists(node)) continue;
+
+        // remove_node, not Impl::remove: the names have to go with the
+        // node, exactly as for the .remove command. Without that the name
+        // still resolved to the deleted node, so ".node <name>" answered
+        // with an empty node that is no longer in the graph. Its return
+        // value is what actually went, which is more than one whenever the
+        // node took part in a fact.
+        removed_nodes += remove_node(node);
+    }
+
+    if (kept_core_nodes > 0)
+    {
+        out_stream() << "Kept " << kept_core_nodes
+                     << " core node(s) that the pattern matched; they are part of the engine, not data."
+                     << std::endl;
     }
 
     _prune_mode       = false;

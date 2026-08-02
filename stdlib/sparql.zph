@@ -24,7 +24,7 @@
 #     using = != < > <= >=
 #   - Subqueries: { SELECT ... { ... } }
 #   - GROUP BY ?v with (COUNT(?v) AS ?alias)
-#   - ORDER BY ASC(?v) / DESC(?v) / ?v
+#   - ORDER BY ASC(?v) / DESC(?v) / ?v, several keys allowed
 #   - LIMIT n, DISTINCT
 #   - PREFIX declarations are parsed; well-known Wikidata prefixes
 #     (wd:, wdt:, p:, pq:, ps:, ...) strip to bare Q/P IDs, since zelph's
@@ -240,12 +240,13 @@
 
     # Solution modifiers
     :group-by (group (* (constant :groupby) :kw-group :s+ :kw-by :s+ :var))
+    :order-key (choice
+                 (group (* (constant :ord)
+                           (capture (choice :kw-asc :kw-desc))
+                           :s* "(" :s* :var :s* ")"))
+                 (group (* (constant :ord) (constant "ASC") :var)))
     :order-by (group (* (constant :orderby) :kw-order :s+ :kw-by :s+
-                        (choice
-                          (group (* (constant :ord)
-                                    (capture (choice :kw-asc :kw-desc))
-                                    :s* "(" :s* :var :s* ")"))
-                          (group (* (constant :ord) (constant "ASC") :var)))))
+                        (some (* :s* :order-key))))
     :limit (group (* (constant :limit) :kw-limit :s+
                      (capture (some (range "09")))))
 
@@ -1046,7 +1047,7 @@
         :proj (set projection part)
         :group (set group-pattern part)
         :groupby (set group-by ((part 1) 1))
-        :orderby (set order-by (part 1))
+        :orderby (set order-by (slice part 1))
         :limit (set limit (scan-number (part 1)))
         nil))
 
@@ -1111,21 +1112,30 @@
           vars)))
 
     # --- ORDER BY ---
-    # Note: order-by already holds the inner [:ord dir var] tuple, because
-    # the dispatch loop above stores (part 1).
+    # order-by holds the [:ord dir var] tuples in the order they were
+    # written; every key after the first breaks the ties of the ones before
+    # it, so a single comparator has to walk them rather than sorting once
+    # per key (which would need a stable sort to mean anything).
     (when order-by
-      (def dir (string/ascii-upper (order-by 1)))
-      (def var-name ((order-by 2) 1))
+      (def keys
+        (map (fn [k] [(string/ascii-upper (k 1)) ((k 2) 1)]) order-by))
       (set sols
         (sorted sols
           (fn [a b]
-            (def av (node-key (get a var-name)))
-            (def bv (node-key (get b var-name)))
-            (def [x y]
-              (if (and (numeric? av) (numeric? bv))
-                [(scan-number av) (scan-number bv)]
-                [(string av) (string bv)]))
-            (if (= dir "DESC") (> x y) (< x y))))))
+            (var result false)
+            (var decided false)
+            (each [dir var-name] keys
+              (unless decided
+                (def av (node-key (get a var-name)))
+                (def bv (node-key (get b var-name)))
+                (def [x y]
+                  (if (and (numeric? av) (numeric? bv))
+                    [(scan-number av) (scan-number bv)]
+                    [(string av) (string bv)]))
+                (unless (= x y)
+                  (set decided true)
+                  (set result (if (= dir "DESC") (> x y) (< x y))))))
+            result))))
 
     # --- DISTINCT ---
     (when distinct?

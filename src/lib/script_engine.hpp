@@ -76,8 +76,14 @@ namespace zelph
         // the script's directory.
         void run_janet_script(const std::string& path, const std::vector<std::string>& args = {});
 
-        // Evaluate an expression and return a single Node (used for patterns/pruning)
-        network::Node evaluate_expression(const std::string& janet_code);
+        // Evaluate an expression and return a single Node (used for patterns/pruning).
+        // With quiet = true, Janet's own stack trace is suppressed and the
+        // failure is reported only through the thrown exception. Needed
+        // wherever a failing evaluation is a normal outcome that the caller
+        // handles (.explain TRIES several readings of its argument);
+        // janet_dostring prints the trace before it returns, so no catch
+        // downstream can take it back.
+        network::Node evaluate_expression(const std::string& janet_code, bool quiet = false);
 
         // Inject arguments into the script environment (for script files with args)
         void set_script_args(const std::vector<std::string>& args);

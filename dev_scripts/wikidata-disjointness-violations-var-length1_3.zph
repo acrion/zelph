@@ -42,4 +42,4 @@
 # Depth 3+3
 (*{(K "P279" A) (A "P279" B) (B "P279" e1) (K "P279" C) (C "P279" D) (D "P279" e2)} ~ conjunction) => !
 
-.run-md disjointness-violations-var-length1-3
+.run-export disjointness-violations-var-length1-3.jsonl

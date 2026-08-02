@@ -64,7 +64,67 @@ This means the graph doesn't just _describe_ knowledge; it _structures the execu
 
 ### Relation Nodes and Self-Reference
 
-Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject or object of further facts, enabling statements about statements without any special mechanism.
+Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject, the object _or the predicate_ of further facts, enabling statements about statements without any special mechanism.
+
+A **rule** is such a fact too, so it can be talked about like any other — and
+talking about one does not claim it. Only the rule that was stated on its own
+fires; the one that is merely quoted is a part of the sentence quoting it:
+
+```
+zelph> (X p Y) => (X q Y)
+zelph> ((X buys Y) => (X owns Y)) "was proposed by" alice
+zelph> a buys car
+zelph> a p b
+(a q b) ⇐ (a p b)
+```
+
+`a buys car` derives nothing: alice's proposal is on record, not in force.
+Nothing has to be remembered for this — an asserted rule is a part of no
+other fact, a quoted one is the subject, the predicate or an object of the
+sentence that quotes it — so it survives `.save` and `.load` unchanged.
+
+Predicate position is the least obvious of the three, and it works like the others:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> X (a p b) Y
+Answer: x (a p b) y
+```
+
+Anything used as a predicate becomes a relation type, so the composite predicate appears among them and the fact is found by a rule quantifying over predicates just like any other:
+
+```
+zelph> X Y Z
+Answer: (a p b) ~ ->
+Answer: p ~ ->
+Answer: a p b
+Answer: x (a p b) y
+```
+
+(abridged — the query also lists the core relation types). This holds independently of how the network came to be: a graph read back from a `.bin` answers exactly as the one that was typed.
+
+A composite predicate may itself carry variables, and then it is a **pattern** like any other — it unifies structurally rather than being looked up by identity, so it reaches inside the predicate. In a query:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> S (a P b) O
+Answer: x (a p b) y
+```
+
+and in a rule, where the variables it binds are available to the consequence:
+
+```
+zelph> a p b
+zelph> x (a p b) y
+zelph> (S (a P b) O) => (P links S)
+(p links x) ⇐ (x (a p b) y)
+zelph> S links O
+Answer: p links x
+```
+
+The same holds in a consequence: `(X p Y) => (X (Y r s) c)` derives `a (b r s) c`, and the instantiated predicate is declared a relation type like every other.
 
 This is in contrast to [RDF](https://en.wikipedia.org/wiki/Resource_Description_Framework), where a triple is an edge with no inherent identity. To make a statement _about_ a triple in classic RDF, you need [reification](<https://en.wikipedia.org/wiki/Reification_(knowledge_representation)#RDF_reification>): four additional triples that decompose and name the original one. The [RDF-star](https://www.w3.org/2021/12/rdf-star.html) extension was introduced specifically to address this limitation.
 
@@ -151,10 +211,30 @@ zelph> (R is transitive, A R B, B R C) => (A R C)
 zelph> > is transitive
 zelph> 6 > 5
 zelph> 5 > 4
- 6  >  4  ⇐ {( 6  >  5 ) (>  is   transitive ) ( 5  >  4 )}
+(6 > 4) ⇐ {(6 > 5) (> is transitive) (5 > 4)}
 ```
 
 After entering `5 > 4`, the engine finds that the three conditions are jointly satisfiable with `R = >`, `A = 6`, `B = 5`, `C = 4`, and derives `6 > 4`.
+
+#### Several Consequences
+
+A rule may conclude more than one thing at once.
+The consequences are written as several **objects** of the same rule.
+The comma is the conjunction of _conditions_; on the right-hand side it is refused with a message naming this form, rather than guessed at:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+zelph> (A is human) => (A has consciousness) (A has mortality)
+zelph> tim is human
+(tim has mortality) ⇐ (tim is human)
+(tim has consciousness) ⇐ (tim is human)
+```
+
+The objects of a fact are an unordered set, so which of the two is announced first is not defined.
+
+This is not the same as writing two rules with the same conditions.
+One rule fires once, so its consequences share their [fresh variables](#fresh-variables-generative-rules): `(X p Y) => (X q N) (N r Y)` links `X` to a generated node and that same node to `Y`, while two separate rules would generate one node each.
 
 ### Meta-Rules: Predicates as First-Class Nodes
 
@@ -189,6 +269,102 @@ zelph> chimpanzee "has part" hand
 
 Declaring that `"has part"` is opposite of `"is part of"` causes every `has part` fact to automatically generate its inverse.
 The rule is generic: it works for any pair of opposite relations without modification.
+
+### Rules That Derive Rules
+
+A consequence does not have to be a fact.
+It can be a **rule** — and then the outer rule is a rule _schema_: firing it writes a new rule into the graph, which the engine picks up and applies within the same run.
+
+The inner rule's variables belong to the inner rule.
+Only what the outer rule's conditions bind is substituted; everything else comes through as a variable, so what arrives is a rule and not one instance of one.
+
+**Example — transitivity as a schema:**
+
+```
+zelph> (R is transitive) => ((X R Y, Y R Z) => (X R Z))
+zelph> before is transitive
+({(Y before Z) (X before Y)} => (X before Z)) ⇐ (before is transitive)
+zelph> a before b
+zelph> b before c
+(a before c) ⇐ {(b before c) (a before b)}
+zelph> c before d
+(a before d) ⇐ {(c before d) (a before c)}
+(b before d) ⇐ {(c before d) (b before c)}
+```
+
+`R` was bound to `before` and is gone; `X`, `Y` and `Z` were bound by nothing and stayed variables.
+What the second line derives is the transitivity rule _for_ `before`, and one such rule appears for every relation declared transitive.
+
+Compare this with the [meta-rule](#meta-rules-predicates-as-first-class-nodes) `(R is transitive, X R Y, Y R Z) => (X R Z)`, which expresses the same closure by quantifying over the predicate at match time.
+The schema instead pays that quantification once, when the relation is declared, and leaves a specialised rule behind.
+Both are available; the schema is the one that can make the _shape_ of a rule depend on data.
+
+**Example — a rule under a switch:**
+
+```
+zelph> (K is on) => ((X p Y) => (X q Y))
+zelph> a p b
+zelph> A q B
+zelph> k is on
+((X p Y) => (X q Y)) ⇐ (k is on)
+(a q b) ⇐ (a p b)
+zelph> A q B
+Answer: a q b
+```
+
+The inner rule is written out from the start and `a p b` is there before the switch, yet the query answers nothing until `k is on` arrives.
+That is not a scheduling accident, it is the next section.
+
+**Example — an ontology's property axioms as data:**
+
+Sub-property, domain and sub-class are the axioms an ontology is normally _described_ with.
+Written once as schemas, every declaration a modeller makes afterwards is ordinary data — and produces its own rule:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+zelph> (P is transitive) => ((X P Y, Y P Z) => (X P Z))
+zelph> (P subpropertyof Q) => ((X P Y) => (X Q Y))
+zelph> (C subclassof D) => ((X isa C) => (X isa D))
+zelph> (P domain C) => ((X P Y) => (X isa C))
+zelph> mother subpropertyof parent
+((X mother Y) => (X parent Y)) ⇐ (mother subpropertyof parent)
+zelph> parent domain person
+((X parent Y) => (X isa person)) ⇐ (parent domain person)
+zelph> person subclassof agent
+((X isa person) => (X isa agent)) ⇐ (person subclassof agent)
+zelph> m mother n
+(m parent n) ⇐ (m mother n)
+(m isa person) ⇐ (m parent n)
+(m isa agent) ⇐ (m isa person)
+```
+
+One statement of data, `m mother n`, walked three rules that nobody wrote — and each step carries its own justification, so `.explain (m isa agent)` reconstructs the chain back to it.
+
+Rules that write rules have a page of their own: [Rules That Write Rules](rule-generators.md) covers where the idea comes from (it is the [axiom schema](https://en.wikipedia.org/wiki/Axiom_schema) of logic, with the instances made real), what happens when a generator matches many times, generators that generate generators, and the edges of the construct.
+
+### Mentioning a Rule Is Not Asserting It
+
+Writing a rule down _inside another statement_ talks about it; it does not claim it.
+
+```
+zelph> ((X p Y) => (X q Y)) is questionable
+zelph> a p b
+zelph> A q B
+zelph>
+```
+
+Nothing fires — which is the only defensible reading, since the alternative is that doubting a rule puts it to work.
+
+The distinction is decidable from the graph alone, and cheaply.
+Building a rule in order to talk about it creates the same nodes and the same edges as asserting it, so the rule node itself cannot say which happened — but its surroundings can: an **asserted** rule is a part of nothing, while a **mentioned** one is the subject, the predicate or an object of the statement that mentions it.
+Nothing is remembered, so a `.save`/`.load` round trip cannot lose the difference, and a graph without rules never pays for the test.
+
+This is what makes the switch above work.
+Until `k is on` fires, `(X p Y) => (X q Y)` is an object of the outer rule and therefore a mention; firing the outer rule asserts a copy of it, which is a part of nothing and consequently live.
+
+The one shape this cannot separate is a fully **ground** rule — no variables anywhere — that is asserted and mentioned at once: hash-consing makes those a single node.
+A rule with variables is two nodes, because every statement names its own variables.
 
 ### Deep Unification
 
@@ -322,7 +498,65 @@ zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
 
 The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->` link — identifying the last element purely declaratively.
 
+**A free variable inside `¬` is quantified inside it.** Whichever position it
+stands in, the condition succeeds exactly when *no* fact matches — the free
+variable produces no binding that leaves the rule. So the same graph answers
+both directions the way their names suggest:
+
+```
+zelph> a ~ interval
+zelph> b ~ interval
+zelph> c ~ interval
+zelph> a before b
+zelph> b before c
+zelph> (A ~ interval, ¬(A before B)) => (A is latest)
+(c is latest) ⇐ {(¬(c before B)) (c ~ interval)}
+zelph> (A ~ interval, ¬(B before A)) => (A is earliest)
+(a is earliest) ⇐ {(a ~ interval) (¬(B before a))}
+```
+
+Datalog would refuse both rules outright: there, a variable under negation
+must be bound by a positive condition (*range restriction*), and `B` is not.
+zelph accepts them and gives them the reading the notation suggests.
+
+**Ranging over a domain is a positive condition, not a negation.** To
+conclude something for each member of a set that *lacks* a property, name the
+set:
+
+```
+(X flagged S, ¬(X flagged bad)) => (X unflagged ok)
+```
+
+`X flagged S` is what makes an entity a candidate, and it says which
+candidates — the negation then only filters. The justification of each
+derived fact names both, so a result can be traced back to why the entity was
+considered at all.
+
 The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
+
+**What `¬` applies to.** A single fact pattern, not a group of them —
+`¬(A is y, A is z)` is rejected rather than guessed at. Use De Morgan:
+`¬(A ∧ B)` is `(¬A) ∨ (¬B)`, and a
+[disjunction](#disjunction) is written as several rules with the same
+consequence:
+
+```
+(A is x, ¬(A is y)) => (A r s)
+(A is x, ¬(A is z)) => (A r s)
+```
+
+Negating a group directly is an open direction, not a decision against it —
+see [Where the logic goes next](index.md#where-the-logic-goes-next).
+
+**Where `¬` may stand.** In a condition, and only there.
+A rule derives what holds, so a negated *consequence* has no reading, and writing one is refused rather than dropped:
+
+```
+zelph> (A p B) => ¬(A q B)
+Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no meaning as a consequence: a rule derives what holds, not what does not. To say that the two may not hold together, write a contradiction rule -- "(A p B, A q B) => !".
+```
+
+The [contradiction rule](#contradiction-detection) the message names is what "these two must not hold together" is written as.
 
 #### Stratified Evaluation
 
@@ -448,12 +682,21 @@ No contradiction — the coloring is valid. But assigning `r2 color red` instead
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.
 
 ```
+zelph> .deductions all
+Deduction printing mode: all
 zelph> (A is human) => (B nameof A)
 zelph> tim is human
- ??   nameof   tim  ⇐  tim   is   human
+(?? nameof tim) ⇐ (tim is human)
+zelph> X nameof tim
+Answer: ?? nameof tim
 ```
 
 The `??` represents a newly created node — an existential witness materialized in the graph.
+It is the same node in both lines; a node the engine generated has no name to print.
+
+`.deductions all` is needed here and is not decoration.
+The default mode is `focus`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
+The fact is derived and stored either way; only the line announcing it is suppressed.
 
 **Termination guarantee:** Before creating a new node, zelph checks whether the deduced facts (with the fresh variable as wildcard) already exist. If they do, no new deduction occurs. This ensures that generative rules converge.
 
@@ -602,7 +845,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 > **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](math/arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
 
 zelph can perform **arbitrary-precision addition** purely via graph rules.
-The reference implementation lives in [stdlib/arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph).
+The reference implementation lives in [stdlib/decimal-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph).
 A second reference implementation, [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
 
 The algorithm consists of three parts:
@@ -627,7 +870,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 #### A Worked Example
 
-> Note: since `arithmetic.zph` registers its digit alphabet, a live session
+> Note: since `decimal-arithmetic.zph` registers its digit alphabet, a live session
 > displays these lists as decimal `&`-literals (e.g. `&12345` instead of
 > `<12345>`).
 
@@ -793,14 +1036,14 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
 
 1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
 
-2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/arithmetic.zph) defines it as the identity mapping to decimal digit lists (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
+2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) maps it to a decimal digit list (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. Every stdlib substrate reads the literal the same way, which is what makes them interchangeable under the shared module ID `arithmetic`: non-digits are rejected (`&abc` is an error, not a cons list of letters), and leading zeros are stripped, so `&007` and `&7` denote the same node. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
 
 3. **Symmetric output.** The display side mirrors the input side: a script can
    register its digit alphabet via `(zelph/set-number-digits ["0" "1" ...])`
    (digit nodes or names, in ascending order of value). From then on,
    `node_to_string` renders every properly `nil`-terminated cons list that
    consists _solely_ of registered digit nodes as a decimal `&`-literal --
-   regardless of the internal base. `stdlib/arithmetic.zph` registers `0`–`9`,
+   regardless of the internal base. `stdlib/decimal-arithmetic.zph` registers `0`–`9`,
    `stdlib/binary-arithmetic.zph` registers `0` and `1`, so both display `&5`
    for their respective internal lists `<5>` and `<101>`. Any other cons list
    -- including lists of single-character nodes that are not registered digits

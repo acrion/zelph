@@ -84,3 +84,41 @@ a relP b
         interactive.process("X relP Y");
         CHECK(answers_contain(collector, "a relP b")); });
 }
+
+TEST_CASE("clusters: dropping an unknown cluster is an error, not a silent no-op")
+{
+    // ".cluster-merge" already rejects an unknown name. ".cluster-drop"
+    // reported "removed 0 node(s)" instead -- indistinguishable from the
+    // honest report for a cluster that exists but is empty, so a typo read
+    // as a successful rollback while the experiment kept accumulating.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH_AS(interactive.process(".cluster-drop never-created"),
+                             doctest::Contains("unknown cluster"),
+                             std::runtime_error);
+
+        // An EMPTY but existing cluster still drops successfully.
+        interactive.process(".cluster empty-but-real");
+        collector.clear();
+        interactive.process(".cluster-drop empty-but-real");
+        CHECK(any_output_contains(collector, "removed 0 node(s)"));
+        CHECK_FALSE(any_output_contains(collector, "unknown cluster")); });
+}
+
+TEST_CASE("clusters: dropping the active cluster reports the fallback to default")
+{
+    // take_cluster deactivates the cluster it removes. Without saying so,
+    // every node created afterwards is untracked while the user still
+    // believes an experiment workspace is active.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".cluster exp");
+        interactive.process("tmp1 relA tmp2");
+        collector.clear();
+        interactive.process(".cluster-drop exp");
+        CHECK(any_output_contains(collector, "Active cluster: default"));
+
+        collector.clear();
+        interactive.process(".cluster");
+        CHECK(any_output_contains(collector, "Active cluster: default")); });
+}

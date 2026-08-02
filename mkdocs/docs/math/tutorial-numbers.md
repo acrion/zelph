@@ -25,9 +25,9 @@ least-significant first. Nothing else. You can verify it directly:
 zelph> %(string "SAME-" (= (zelph/number "42") (zelph/list-chars "42")))
 "SAME-true"
 zelph> %(print (zelph/car (zelph/number "42")))
-«2»
+2
 zelph> %(print (zelph/car (zelph/cdr (zelph/number "42"))))
-«4»
+4
 ```
 
 `&42` is the list `2 cons (4 cons nil)`. The `2` and the `4` are ordinary
@@ -155,7 +155,7 @@ zelph> .explain ((1 d+ 1) tci 0) sum 0
    │  ├─ (1 nand 0) out 1
    │  │  ├─ 0 isdigit true  [axiom]
    │  │  ├─ 1 isdigit true  [axiom]
-   │  │  └─ ¬(¬((A nand B) out 0))  [absent]
+   │  │  └─ ¬((1 nand 0) out 0)  [absent]
    │  ├─ (1 nand 1) out 0  [axiom]
    │  ├─ (1 nand 0) out 1  [see above]
    │  └─ (1 nand 1) out 0  [axiom]
@@ -165,7 +165,7 @@ zelph> .explain ((1 d+ 1) tci 0) sum 0
       ├─ (0 nand 1) out 1
       │  ├─ 1 isdigit true  [axiom]
       │  ├─ 0 isdigit true  [axiom]
-      │  └─ ¬(¬((A nand B) out 0))  [absent]
+      │  └─ ¬((0 nand 1) out 0)  [absent]
       …
 ```
 
@@ -234,7 +234,7 @@ natural layer.
    answers agree. The *display* is identical because every substrate
    registers a digit alphabet — but the structure is not. Compare
    `%(print (zelph/car (zelph/number "5")))` under `decimal-arithmetic`
-   (answers `«5»`) and under `binary-arithmetic` (answers `«1»`, the least
+   (answers `5`) and under `binary-arithmetic` (answers `1`, the least
    significant bit of 101).
 
 ## Next

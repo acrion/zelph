@@ -24,7 +24,8 @@ zelph> Berlin "is capital of" Germany
 zelph> Germany "is located in" Europe
 zelph> Europe "has part" Germany
 zelph> (X "is capital of" Y, Y "is located in" Z) => (X "is located in" Z)
- Berlin   is located in   Europe  ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
+{(Y "is located in" Z) (X "is capital of" Y)} => (X "is located in" Z)
+(Berlin "is located in" Europe) ⇐ {(Germany "is located in" Europe) (Berlin "is capital of" Germany)}
 zelph>
 ```
 
@@ -36,16 +37,16 @@ Basic pattern matching.
   Output:
 
   ```
-  X  is capital of  Y
-  Answer:  Berlin   is capital of   Germany
+  X "is capital of" Y
+  Answer: Berlin "is capital of" Germany
   ```
 
 - Find locations in Europe: `A "is located in" Europe`  
   Output (post-inference):
   ```
-  A  is located in   Europe
-  Answer:  Germany   is located in   Europe
-  Answer:  Berlin   is located in   Europe
+  A "is located in" Europe
+  Answer: Germany "is located in" Europe
+  Answer: Berlin "is located in" Europe
   ```
 
 ### Multi-Condition Queries
@@ -56,7 +57,8 @@ Combine for intersections.
   Output:
 
   ```
-  Answer: {( Berlin   is capital of   Germany ) ( Berlin   is located in   Europe )}
+  {(X "is capital of" Y) (X "is located in" Europe)}
+  Answer: {(Berlin "is capital of" Germany) (Berlin "is located in" Europe)}
   ```
 
   > Note: In this example we use the comma `,` [syntax sugar for conjunctions](index.md#syntax-sugar-for-conditions). The fully explicit form is `(*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction)`.
@@ -83,8 +85,8 @@ Combine for targeted searches.
 - Synonyms with parent taxon: `(*{(X P460 Q14326) (X P171 Q2544161)} ~ conjunction)` (Apatosaurus synonyms in Diplodocidae)  
   Output:
   ```
-  {(X  P171   Q2544161 ) (X  P460   Q14326 )}
-  Answer: {( Q3222766   P171   Q2544161 ) ( Q3222766   P460   Q14326 )}
+  {(X P171 Q2544161) (X P460 Q14326)}
+  Answer: {(Q3222766 P171 Q2544161) (Q3222766 P460 Q14326)}
   ```
   Since `Q3222766` is [Brontosaurus](https://www.wikidata.org/wiki/Q3222766), this answer means "The [parent taxon](https://www.wikidata.org/wiki/Property:P171) (P171) of [Brontosaurus](https://www.wikidata.org/wiki/Q3222766) is [Apatosaurinae](https://www.wikidata.org/wiki/Q2544161) (Q2544161), which is [said to be the same as](https://www.wikidata.org/wiki/Property:P460) [Apatosaurus](https://www.wikidata.org/wiki/Q14326) (Q14326).
 
