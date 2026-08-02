@@ -289,3 +289,65 @@ TEST_CASE("rule identity: a mentioned rule survives a save/load round trip as a 
 
         std::filesystem::remove(out); });
 }
+
+TEST_CASE("rule identity: two rules differing only in their container node are one rule")
+{
+    // A container is not hash-consed, so two spellings of `@{Y}` are two
+    // NODES -- and a node with no fact structure of its own used to be
+    // compared by identity, which made the two rules different. That is not a
+    // cosmetic problem: rebuild_rule alpha-renames an inner rule and rebuilds
+    // its container with the renamed variable, so a rule GENERATOR produced
+    // another copy of its rule on every run and the fixpoint never arrived.
+    //
+    // The container is now read by its members, exactly as a conjunction set
+    // is. Both directions are checked: same shape collapses, different
+    // members stay apart.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X p Y) => (X likes {Y})");
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(listed_rules(collector) == 1);
+
+        // Alpha-equivalent, and its container is a different node.
+        interactive.process("(A p B) => (A likes {B})");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 1);
+
+        // A container with a DIFFERENT member is a different rule.
+        interactive.process("(A p B) => (A likes {A})");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+
+        // Two members are not one member either.
+        interactive.process("(A p B) => (A likes {A B})");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 3); });
+}
+
+TEST_CASE("rule identity: a set constant keeps deciding by identity")
+{
+    // A set constant hash-conses, so `{a b}` written twice IS one node and
+    // identity settles it. The container test must not reach it -- the
+    // is_hash gate in front of the adjacency scan is what keeps that scan off
+    // every hash node the walk passes.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(listed_rules(collector) == 1);
+
+        interactive.process("(A in {a b}) => (A flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 1);
+
+        interactive.process("(A in {a c}) => (A flagged yes)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}

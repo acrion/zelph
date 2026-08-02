@@ -1027,8 +1027,25 @@ namespace
         for (const Node m : members)
         {
             const Node im = instantiate_fact(z, m, variables, depth, history);
+            if (im == 0) return node;
 
-            if (im == 0 || Zelph::Impl::is_var(im) || z->var_in_closure(im)) return node;
+            if (Zelph::Impl::is_var(im) || z->var_in_closure(im))
+            {
+                // Not ground, so extensionality has nothing to work with --
+                // with ONE exception: a variable RENAMED to another variable.
+                // That is rebuild_rule alpha-renaming an inner rule, and the
+                // container has to follow it, or the derived rule keeps the
+                // variables of the rule it was written from and its own
+                // bindings never reach the members. A variable that maps to
+                // itself is the opposite case: nothing to substitute, the
+                // container is the rule's own pattern and stays as it is.
+                //
+                // A COMPOSITE member that is still variable-carrying is
+                // refused either way. Rebuilding it would create a container
+                // per attempt, and the ground guard in deduce may then throw
+                // the deduction away, leaving the node behind.
+                if (!Zelph::Impl::is_var(im) || im == m) return node;
+            }
 
             if (im != m) changed = true;
             instantiated.insert(im);
@@ -1036,6 +1053,9 @@ namespace
 
         if (!changed) return node;
 
+        // A member that is still a variable makes this a collection rather
+        // than a set constant -- Zelph::set falls back on its own, for the
+        // same reason: extensionality needs known members.
         return z->set(instantiated);
     }
 }

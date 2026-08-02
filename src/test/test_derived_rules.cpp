@@ -623,3 +623,112 @@ q necessaryin kd
         interactive.process(".list-rules");
         CHECK(listed_rules(collector) == 4); });
 }
+
+TEST_CASE("derived rules: a container in a generated consequence follows the renaming")
+{
+    // A rule generator that substitutes NOTHING into its inner rule -- the
+    // switch shape -- has to alpha-rename it, because hash-consing otherwise
+    // lands the rebuild on the very node the outer rule only MENTIONS (see
+    // "a switch turns a rule on" above). The renaming reached the variables
+    // but not the container that holds them, so the derived rule named the
+    // container of the rule it was written from:
+    //
+    //     (K is on) => ((X p Y) => (X likes {Y}))
+    //     Answer: a likes @{Y}      <- the generator's own variable, unbound
+    //
+    // The same rule TYPED derives `a likes {b}`, and a generated rule has to
+    // behave like the rule it generates.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+k is on
+a p b
+c p d
+(K is on) => ((X p Y) => (X likes {Y}))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(answers_contain(collector, "a likes {b}"));
+        CHECK(answers_contain(collector, "c likes {d}"));
+        CHECK(collect_answers(collector).size() == 2);
+
+        // Not the generator's template variable, in any spelling.
+        CHECK_FALSE(any_output_contains(collector, "@{Y}"));
+
+        // The fixpoint arrives: rebuilding the container makes a NEW node,
+        // so the generated rule is only recognised as one that already
+        // exists if rule identity reads a container by its members. It does,
+        // and a further run therefore derives nothing and writes no rule.
+        collector.clear();
+        interactive.process(".list-rules");
+        const std::size_t rules_before = listed_rules(collector);
+
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == rules_before);
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("derived rules: a generated rule writing INTO a container keeps that container")
+{
+    // The counterpart, and the reason the renaming may not simply rebuild
+    // every container it passes: `Y in @{X}` says something ABOUT the
+    // container, so its identity has to survive. One bucket, named by the
+    // generator, for every fact the generated rule derives.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+k is on
+alice reported bug1
+bob reported bug2
+(K is on) => ((X reported Y) => (Y in @{X}))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "bug1 in @{bug1 bug2}"));
+        CHECK(answers_contain(collector, "bug2 in @{bug1 bug2}"));
+        CHECK(collect_answers(collector).size() == 2);
+
+        // And it converges: the container is SHARED with the rule the
+        // generator mentions, so rule identity has to accept two rules that
+        // name the same container node whatever their variables are called.
+        collector.clear();
+        interactive.process(".list-rules");
+        const std::size_t rules_before = listed_rules(collector);
+
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == rules_before); });
+}
+
+TEST_CASE("derived rules: a generator that substitutes needs no renaming at all")
+{
+    // The control for both cases above. When the outer rule substitutes into
+    // the inner one, the rebuild lands on a node of its own and the renaming
+    // path is never entered -- this shape worked before and has to keep
+    // working, which is what tells the two mechanisms apart.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+p collects q
+a p b
+c p d
+(P collects Q) => ((X P Y) => (X Q {Y}))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q {b}"));
+        CHECK(answers_contain(collector, "c q {d}"));
+        CHECK(collect_answers(collector).size() == 2); });
+}

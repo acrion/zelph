@@ -88,6 +88,38 @@ namespace zelph::network
             return members;
         }
 
+        // Is this node a CONTAINER -- the object of PartOf facts -- rather
+        // than an atom? Asked only where the answer can still matter, i.e.
+        // for a node that has no fact structure of its own, and rejected per
+        // neighbour by the O(1) predicate_of lookup, because such a node may
+        // just as well be an ordinary constant with a large adjacency.
+        bool is_container(const Zelph* const z, const Node n)
+        {
+            // Two gates before the adjacency is touched at all, because this
+            // node may be a hub -- `nil` and the digits are, throughout the
+            // math stack.
+            //
+            // A HASH node is a set constant (or a fact), and a set constant
+            // hash-conses, so identity already decides it correctly; only a
+            // COLLECTION, whose id is a counter, can be the same container
+            // under two different nodes. And a container has no NAME: nothing
+            // that builds one gives it one, while every constant a rule
+            // mentions has one. Naming a container by hand costs the dedup,
+            // not correctness -- the pair is then compared by identity, which
+            // is what it was before.
+            if (Zelph::is_hash(n)) return false;
+            if (!z->get_name(n).empty()) return false; // current language, no fallback walk
+
+            for (const Node rel : z->get_right(n))
+            {
+                if (z->predicate_of(rel) != z->core.PartOf) continue;
+                adjacency_set objs;
+                const Node    s = z->parse_fact(rel, objs, 0);
+                if (s != 0 && objs.count(n) == 1) return true;
+            }
+            return false;
+        }
+
         // Where a node sits in the rule decides which questions are worth
         // asking about it -- and which ones the ENGINE asks. Only a
         // condition can be a conjunction or be negated (collect_conditions
@@ -120,10 +152,19 @@ namespace zelph::network
             if (Zelph::is_var(n)) return Kind::Var;
             if (role == Role::Condition && z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known())
                 return Kind::Set;
+
+            // A container is checked BEFORE the template-var store is asked.
+            // That store answers about the node itself, and a container holds
+            // its variables in its membership FACTS -- so it reports "no
+            // variables" for `@{Y}` and the node used to leave as Opaque.
+            if (is_container(z, n)) return Kind::Set;
+
             if (variables_in(z, n) == Vars::None) return Kind::Opaque;
 
             const FactStructure fs = get_preferred_structure(z, n, 3);
-            return (fs.predicate != 0 && fs.subject != 0) ? Kind::Fact : Kind::Opaque;
+            if (fs.predicate != 0 && fs.subject != 0) return Kind::Fact;
+
+            return Kind::Opaque;
         }
 
         // Negation is the other tag the engine reads on a CONDITION, and it
@@ -149,9 +190,12 @@ namespace zelph::network
 
             case Kind::Set:
             {
+                // A conjunction set holds conditions, a term container holds
+                // terms -- so the members inherit the role of the node they
+                // hang off rather than being assumed to be conditions.
                 std::vector<std::string> parts;
                 for (const Node m : set_members(z, n))
-                    parts.push_back(canon(z, m, depth + 1, Role::Condition));
+                    parts.push_back(canon(z, m, depth + 1, role));
                 std::sort(parts.begin(), parts.end());
 
                 std::string out = "{";
@@ -216,7 +260,19 @@ namespace zelph::network
                     return a == b;
 
                 case Kind::Set:
-                    return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, Role::Condition);
+                    // The SAME container node is the same term, whatever the
+                    // bijection says about the variables inside it. Two rules
+                    // share one only when the second was alpha-renamed out of
+                    // the first and the container was not rebuilt with it --
+                    // an accumulator, whose whole point is that every rule
+                    // naming it writes into the one container. Comparing its
+                    // members would then ask the bijection to map a variable
+                    // to itself, which it cannot after the rename, and the
+                    // generator would write another copy of its rule on every
+                    // run.
+                    if (a == b) return true;
+
+                    return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, role);
 
                 case Kind::Fact:
                 default:
