@@ -370,7 +370,12 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         // Only a container THIS construction created is walked -- a set the
         // rule merely refers to keeps its members and its own facts -- so the
         // adjacency read stays inside what the rule brought into being.
-        if (fresh.count(nd) != 0)
+        // A SET CONSTANT is excluded: its membership is definitional, not
+        // asserted -- `a in {a b}` holds because that is what the set IS --
+        // so a rule quantifying over it with `(X in {a b})` legitimately
+        // binds a and b. Only a COLLECTION the rule itself built carries
+        // members nobody claimed.
+        if (fresh.count(nd) != 0 && !is_set_constant(nd))
         {
             for (const Node rel : get_right(nd))
             {

@@ -1586,7 +1586,7 @@ private:
             "          %(zelph/fact \"Berlin\" \"is capital of\" \"Germany\")",
             "          Germany \"is located in\" Europe",
             "          %",
-            "          (let [cond (zelph/set",
+            "          (let [cond (zelph/collection",
             "                      (zelph/fact 'X \"is capital of\" 'Y)",
             "                      (zelph/fact 'Y \"is located in\" 'Z))]",
             "            (zelph/fact cond \"~\" \"conjunction\")",

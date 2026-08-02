@@ -659,6 +659,30 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             }
         }
 
+        // A set constant is its members -- that is what identifies it -- so
+        // there is nothing to add to. `x in {a b}` used to extend the very
+        // set it named, leaving a node whose identity said {a b} while it
+        // rendered {a b x}. The extensible container has its own literal and
+        // the message names it. One comparison against core.PartOf for
+        // ordinary data; is_set_constant then rejects every collection on the
+        // id alone, without reading a member.
+        // A pattern is not a claim. `X in {a b}` is how a rule quantifies
+        // over the members, and the fact has to exist for unification to
+        // match it; only a variable-free subject would really be adding an
+        // element. (The already-known case never reaches here: this branch
+        // runs only when the fact is about to be CREATED, so writing
+        // `a in {a b}` -- true by construction -- is a no-op, not an error.)
+        if (predicate == core.PartOf && objects.size() == 1
+            && !Impl::is_var(subject) && !var_in_closure(subject)
+            && is_set_constant(*objects.begin()))
+        {
+            std::string rendered;
+            zelph::string::node_to_string(this, rendered, _lang, *objects.begin(), 3);
+            throw std::runtime_error(
+                "fact(): a set constant cannot be extended -- " + zelph::string::unmark_identifiers(rendered)
+                + " IS its members. Write the collection literal @{...} for a container that membership can grow.");
+        }
+
         // Whatever stands in predicate position IS a relation type, and saying
         // so is what makes the fact readable again later. The declaration used
         // to be skipped for hash nodes, i.e. for a predicate that is itself a
@@ -1095,20 +1119,101 @@ Node Zelph::list(const std::vector<std::string>& elements)
  *
  * Empty input returns core.Nil (consistent with sequence() and the canonical empty list/set in Lisp).
  */
-Node Zelph::set(const std::unordered_set<Node>& elements)
+// A COLLECTION -- the `@{...}` literal, and a rule's conjunction set.
+//
+// A container with an identity of its OWN: two collections written the same
+// way are two different containers, and membership is asserted, so `x in c`
+// extends one. That is the mereological reading zelph's own predicate name
+// (PartOf) already carries.
+Node Zelph::collection(const std::unordered_set<Node>& elements)
 {
     if (elements.empty()) return core.Nil;
 
-    // Create the super-node representing the set itself
-    Node set_node = _pImpl->create();
+    // Create the super-node representing the collection itself
+    Node collection_node = _pImpl->create();
 
     for (const auto& current_node : elements)
     {
-        // Link to the set container
+        // Link to the container
+        fact(current_node, core.PartOf, {collection_node});
+    }
+
+    return collection_node;
+}
+
+// A SET CONSTANT -- the `{...}` literal.
+//
+// Identified by its members, as the axiom of extensionality demands: two
+// occurrences of `{a b}` are ONE node. That identity is the whole point --
+// it is what lets a set literal in a rule condition denote the same thing
+// as the same literal in the data, which a collection never can.
+//
+// Its membership is definitional rather than asserted, so it cannot be
+// extended; the guard in fact() refuses that and names the alternative.
+Node Zelph::set(const std::unordered_set<Node>& elements)
+{
+    if (elements.empty()) return core.Nil; // the empty set IS nil, as for `<>`
+
+    // Extensionality needs KNOWN members. A literal carrying a variable
+    // denotes a different set for every binding, so it is a pattern, not a
+    // constant -- and it becomes the container that a pattern can be. This is
+    // not a fallback but the definition: `{a b}` IS its members and can be
+    // hash-consed; `{Y}` has none yet and cannot.
+    //
+    // It is also what keeps the engine's own conjunction sugar
+    // `*{(A rel B) (B rel C)} ~ conjunction` working: those members are
+    // condition patterns, never ground.
+    for (const Node e : elements)
+    {
+        if (Impl::is_var(e) || var_in_closure(e)) return collection(elements);
+    }
+
+    adjacency_set members;
+    for (const Node e : elements)
+        members.insert(e);
+
+    const Node set_node = Impl::create_hash(members);
+
+    if (!_pImpl->exists(set_node)) _pImpl->create(set_node);
+
+    for (const auto& current_node : elements)
+    {
+        // Written a second time, the literal lands on the very same node and
+        // every membership fact is already there. Skipping those is not an
+        // optimisation: creating one would hit the extension guard, since by
+        // then the node IS a complete set constant. While the FIRST occurrence
+        // is being built the members are still incomplete, so the guard cannot
+        // fire on it either.
+        if (check_fact(current_node, core.PartOf, {set_node}).is_known()) continue;
         fact(current_node, core.PartOf, {set_node});
     }
 
     return set_node;
+}
+
+// Is this node a set constant, i.e. does it hash back to its own members?
+//
+// No marker and no side table: the identity IS the answer. A collection gets
+// a counter id from create(), which cannot equal the hash of anything, so the
+// cheap is_hash test rejects every collection before the members are read.
+bool Zelph::is_set_constant(const Node node) const
+{
+    if (node == 0 || !Impl::is_hash(node) || Impl::is_var(node)) return false;
+
+    adjacency_set members;
+
+    for (const Node rel : _pImpl->get_right(node))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    member = parse_fact(rel, objs, 0);
+        // A VARIABLE member is a rule pattern, not an element: the
+        // condition `X in {a b}` has to exist as a fact for unification to
+        // match against, and it would otherwise change what the set is.
+        if (member != 0 && !Impl::is_var(member) && objs.count(node) == 1) members.insert(member);
+    }
+
+    return !members.empty() && Impl::create_hash(members) == node;
 }
 
 Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const

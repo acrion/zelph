@@ -198,7 +198,13 @@ namespace zelph::network
         Node fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
         Node list(const std::vector<Node>& elements);
         Node list(const std::vector<std::string>& elements);
+        // `{...}`: identified by its members (extensionality), so two
+        // occurrences are ONE node and it cannot be extended.
         Node set(const std::unordered_set<Node>& elements);
+        // `@{...}`: a container with its own identity, whose membership is
+        // asserted and can grow. Also what a rule's conjunction set is.
+        Node collection(const std::unordered_set<Node>& elements);
+        bool is_set_constant(Node node) const;
         Node parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
         Node parse_relation(const Node rule) const;
         // Locked-scope read access (see Network::ReadScope). Constructed

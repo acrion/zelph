@@ -229,22 +229,21 @@ TEST_CASE("rule patterns: .explain does not call a pattern an axiom")
         CHECK_FALSE(any_output_contains(collector, "rule pattern")); });
 }
 
-TEST_CASE("rule patterns: a set literal in a condition is not data either")
+TEST_CASE("rule patterns: a collection literal in a condition is not data")
 {
-    // The leak this file is about, reached through a shape the walk could not
-    // see. A set literal builds a super-node plus one PartOf fact per member,
-    // and Zelph::set gives that super-node a COUNTER id rather than a triple
-    // hash -- so mark_rule_patterns skipped it at the is_hash gate and never
-    // reached the membership facts. They then read as data:
+    // A collection literal builds a container plus one PartOf fact per
+    // member, and Zelph::collection gives that container a COUNTER id rather
+    // than a triple hash -- so mark_rule_patterns dropped it at the is_hash
+    // gate and never reached the membership facts. They then read as data:
+    // the rule fired on the members of its own literal, which nobody had put
+    // there, and .explain called them axioms.
     //
-    //     zelph> (X in {a b}) => (X flagged yes)
-    //     Answer: a flagged yes        <- nobody said this
-    //     Answer: b flagged yes
-    //
-    // and .explain called `a in {a b}` an axiom.
+    // A collection has its own identity, so the container a rule writes is
+    // one nothing else refers to: there is nothing for such a rule to match
+    // and it must derive nothing at all.
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process("(X in {a b}) => (X flagged yes)");
+        interactive.process("(X in @{a b}) => (X flagged yes)");
         interactive.run(true, false, false);
 
         collector.clear();
@@ -255,6 +254,27 @@ TEST_CASE("rule patterns: a set literal in a condition is not data either")
         collector.clear();
         interactive.process(R"(S ~ "rule pattern")");
         CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("rule patterns: a SET constant in a condition is not a pattern")
+{
+    // The counterpart, and the reason the two literals had to be told apart.
+    // A set constant IS its members -- `a in {a b}` holds by construction,
+    // not because anybody claimed it -- so quantifying over them is exactly
+    // what the rule means and marking them would be wrong.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S flagged yes");
+        CHECK(answers_contain(collector, "a flagged yes"));
+        CHECK(answers_contain(collector, "b flagged yes"));
+
+        collector.clear();
+        interactive.process(R"(S ~ "rule pattern")");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 TEST_CASE("rule patterns: a container the rule did not build keeps its facts")

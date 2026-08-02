@@ -512,7 +512,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             && elem_str.find(' ') != std::string::npos
                             && elem_str.front() != '('
                             && elem_str.front() != '<'
-                            && elem_str.front() != '{')
+                            && elem_str.front() != '{'
+                            && !elem_str.starts_with("@{"))
                         {
                             network::Node eff_e = resolve_var(e);
                             // The rendering is marked, so the name it is
@@ -554,6 +555,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // 4. Container Detection (Set)
     // Check if 'resolved' acts as a container (Object in a PartOf relation).
     std::unordered_set<network::Node> elements;
+    std::unordered_set<network::Node> variable_elements;
 
     if (z->exists(resolved))
     {
@@ -568,13 +570,30 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 network::Node          s = z->parse_fact(rel, objs, 0);
                 if (s != 0) s = resolve_var(s);
 
+                // An UNBOUND variable is not an element of the container:
+                // it is there because a rule pattern named it, since
+                // `(X in @{...})` makes X a member by construction. Printing
+                // it made a DERIVED fact read `a in @{a c Y X}`, with the
+                // rule's own template variables among the elements.
+                // resolve_var above has already substituted every variable
+                // that HAS a binding.
+                //
+                // Kept aside rather than dropped: while the RULE itself is
+                // displayed there is nothing else in the container, and
+                // `@{Y}` is exactly what that rule says. Only once real
+                // elements exist do the variables step back.
                 if (s != 0 && objs.count(resolved) > 0)
                 {
-                    elements.insert(s);
+                    if (network::Zelph::is_var(s))
+                        variable_elements.insert(s);
+                    else
+                        elements.insert(s);
                 }
             }
         }
     }
+
+    if (elements.empty()) elements = variable_elements;
 
     if (!elements.empty())
     {
@@ -587,7 +606,15 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         std::vector<network::Node> sorted_elements(elements.begin(), elements.end());
         std::sort(sorted_elements.begin(), sorted_elements.end());
 
-        result     = "{";
+        // A COLLECTION prints with its own marker, because that is what it
+        // is: a container with an identity, which `{...}` re-entered would
+        // not rebuild. A rule's conjunction set keeps the bare brace -- it
+        // is rule structure rather than a value, and the rule renders around
+        // it.
+        const bool bare_brace = z->is_set_constant(resolved)
+                             || z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
+
+        result     = bare_brace ? "{" : "@{";
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
@@ -607,7 +634,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 && elem_str.find(' ') != std::string::npos
                 && elem_str.front() != '('
                 && elem_str.front() != '<'
-                && elem_str.front() != '{')
+                && elem_str.front() != '{'
+                && !elem_str.starts_with("@{"))
             {
                 network::Node eff_e = resolve_var(e);
                 // Compare against the MARKED name, as the S-P-O formatter
@@ -880,7 +908,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             && s_str.find(' ') != std::string::npos
             && s_str.front() != '('
             && s_str.front() != '<'
-            && s_str.front() != '{')
+            && s_str.front() != '{'
+            && !s_str.starts_with("@{")) // the collection literal delimits itself too
         {
             network::Node eff_subj = resolve_var(subject);
             std::string   raw_name = z->get_formatted_name(eff_subj, lang);
@@ -956,7 +985,8 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 && o_str.find(' ') != std::string::npos
                 && o_str.front() != '('
                 && o_str.front() != '<'
-                && o_str.front() != '{')
+                && o_str.front() != '{'
+                && !o_str.starts_with("@{")) // the collection literal delimits itself too
             {
                 network::Node eff_obj  = resolve_var(object);
                 std::string   raw_name = z->get_formatted_name(eff_obj, lang);

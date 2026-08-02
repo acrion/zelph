@@ -415,7 +415,9 @@ public:
         janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)janet_cfun_zelph_list), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell).");
 
         janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)janet_cfun_zelph_list_chars), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.");
-        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate set node from elements.");
+        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)janet_cfun_zelph_set), "(zelph/set nodes...)\nCreate a SET CONSTANT from elements, the `{...}` literal. Identified by its members, so the same elements always yield the same node, and membership cannot be extended.");
+
+        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)janet_cfun_zelph_collection), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it.");
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                "lang defaults to the current language (as set by .lang).");
@@ -721,6 +723,14 @@ public:
                 :set-content (any (sequence :s* :val-any))
                 :tag-set    (group (* (constant :set) "{" :set-content :s* "}"))
 
+                # Collection literal: @{...}. A container with its own
+                # identity whose membership can grow, as opposed to the set
+                # constant {...} which IS its members. The marker follows
+                # Janet, where {...} is the immutable struct and @{...} the
+                # mutable table -- and it costs no reserved character: "@"
+                # stays an ordinary symchar, only "@{" is special.
+                :tag-collection (group (* (constant :collection) "@{" :set-content :s* "}"))
+
                 # 2. Node List: < a b > — space-separated, stored as cons list (last element outermost).
                 #    The user writes elements in the order they should be displayed; node_to_string reverses
                 #    the internal order back for output. For numbers, write digits in reverse: <3 2 1>
@@ -731,7 +741,7 @@ public:
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
-                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-selffact :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-atom :star-atom :tag-nested :tag-set)
+                :val-any (choice :tag-focused :tag-negation :tag-approx :tag-selffact :tag-var :tag-unquote :tag-number :tag-list-compact :tag-list-nodes :tag-collection :tag-atom :star-atom :tag-nested :tag-set)
 
                 # A statement is a sequence of values separated by whitespace
                 # Used inside ( ... ) and at top level for facts
@@ -1890,7 +1900,7 @@ public:
         }
 
         // Create condition set and mark as conjunction
-        network::Node condition_set = s_instance->_n->set(condition_nodes);
+        network::Node condition_set = s_instance->_n->collection(condition_nodes);
         s_instance->_n->fact(condition_set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
 
         // Link each consequence via =>
@@ -1995,6 +2005,24 @@ public:
         network::Node set_node = s_instance->_n->set(elements);
         Janet         res      = zelph_wrap_node(set_node);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set", argc, argv, false, res);
+        return res;
+    }
+
+    static Janet janet_cfun_zelph_collection(int32_t argc, Janet* argv)
+    {
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/collection", argc, argv, true);
+
+        std::unordered_set<network::Node> elements;
+        for (int i = 0; i < argc; ++i)
+        {
+            network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (n) elements.insert(n);
+        }
+
+        network::Node node = s_instance->_n->collection(elements);
+        Janet         res  = zelph_wrap_node(node);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/collection", argc, argv, false, res);
         return res;
     }
 
@@ -2405,6 +2433,7 @@ public:
             // made the whole statement evaluate to nothing, silently.
             const std::string tag = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
             if (tag == "set") return "(zelph/set)";
+            if (tag == "collection") return "(zelph/collection)";
             if (tag == "list-nodes") return "(zelph/list)";
         }
 
@@ -2439,6 +2468,14 @@ public:
                 args.push_back(data[i]);
             return build_smart_call("zelph/set", args);
         }
+        else if (type == "collection")
+        {
+            // [:collection val1 val2 ...]
+            std::vector<Janet> args;
+            for (int32_t i = 1; i < len; ++i)
+                args.push_back(data[i]);
+            return build_smart_call("zelph/collection", args);
+        }
         else if (type == "conjunction")
         {
             // [:conjunction [:condition v1 v2 ...] [:condition v3 v4 ...] ...]
@@ -2471,13 +2508,13 @@ public:
             if (cond_codes.size() == 1) return cond_codes[0]; // Safety: shouldn't happen with PEG
 
             // (let [$c0 code0 $c1 code1 ...
-            //       $cs (zelph/set $c0 $c1 ...)
+            //       $cs (zelph/collection $c0 $c1 ...)
             //       _ (zelph/fact $cs "~" "conjunction")]
             //   $cs)
             std::string let_block = "(let [";
             for (size_t i = 0; i < cond_codes.size(); ++i)
                 let_block += "$c" + std::to_string(i) + " " + cond_codes[i] + " ";
-            let_block += "$cs (zelph/set";
+            let_block += "$cs (zelph/collection";
             for (size_t i = 0; i < cond_codes.size(); ++i)
                 let_block += " $c" + std::to_string(i);
             let_block += R"() _ (zelph/fact $cs "~" "conjunction")] $cs))";

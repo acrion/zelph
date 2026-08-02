@@ -144,46 +144,139 @@ Here, the subject of the outer statement is the node representing the inner fact
 
 > Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid _top-level_ statement in the REPL; nested facts are meant to be used _as parts_ of a larger statement.
 
-#### Braces: Sets
+#### Braces: Set Constants and Collections
 
-Braces `{...}` are used to create **unordered sets** of nodes or facts. This is primarily used for defining conditions in rules (see below).
+zelph distinguishes two kinds of unordered grouping, because mathematics and
+programming mean different things by "a set".
+
+| Literal | What it is | Identity | Can membership grow? |
+| --- | --- | --- | --- |
+| `{a b c}` | **set constant** | its members | no |
+| `@{a b c}` | **collection** | its own | yes |
+
+A mathematical set is determined by its members — that is the axiom of
+extensionality — so `{a b}` written twice denotes one and the same set, and
+there is no operation that adds an element to it; you form a new set. A
+collection is a container: it has an identity of its own, and putting
+something into it is exactly what one does with it.
+
+The `@` marker follows [Janet](https://janet-lang.org/), the language zelph
+embeds, where `{...}` is the immutable struct and `@{...}` the mutable table.
+It costs no reserved character: `@` stays an ordinary character inside names,
+and only `@{` is special.
+
+##### Set constants
 
 ```
-{ (A "is part of" B) (B "is part of" C) }
-```
-
-Example session:
-
-```
-zelph> { elem1 elem2 elem3 }
-{elem1 elem2 elem3}
 zelph> A in { elem1 elem2 elem3 }
 A in {elem1 elem2 elem3}
+Answer: elem2 in {elem1 elem2 elem3}
 Answer: elem1 in {elem1 elem2 elem3}
 Answer: elem3 in {elem1 elem2 elem3}
-Answer: elem2 in {elem1 elem2 elem3}
-zelph> (*{(A "is part of" B) (B "is part of" C) } ~ conjunction) => (A "is part of" C)
-{(A "is part of" B) (B "is part of" C)} => (A "is part of" C)
-zelph> earth "is part of" "solar system"
-earth "is part of" "solar system"
-zelph> "solar system" "is part of" universe
-"solar system" "is part of" universe
-(earth "is part of" universe) ⇐ {(earth "is part of" "solar system") ("solar system" "is part of" universe)}
-zelph>
 ```
 
-##### Set Topology
+Two occurrences of the same literal are the same node, and the order inside
+the braces does not matter:
 
-A set `{A B C}` creates a **Super-Node** (representing the set itself).
-The elements are linked to this super-node via the `in` (PartOf) relation.
+```
+zelph> p q {a b}
+zelph> r s {a b}
+zelph> S q O
+Answer: p q {a b}
+zelph> S s O
+Answer: r s {a b}
+```
 
-- **Syntax:** `{A B}`
-- **Facts created:**
-  - `A in SetNode`
-  - `B in SetNode`
+That identity is what makes a set literal usable in a **rule**: the set in the
+condition is the set in the data, so quantifying over its members works.
 
-The empty set `{}` is the node `nil` — there is nothing for a super-node to
-collect, and `nil` is what an empty collection is throughout zelph.
+```
+zelph> (X in {red green blue}) => (X is-a-colour yes)
+zelph> S is-a-colour yes
+Answer: green is-a-colour yes
+Answer: blue is-a-colour yes
+Answer: red is-a-colour yes
+```
+
+Membership in a constant is definitional rather than asserted, so extending
+one is refused — and the message names the literal that can be extended:
+
+```
+zelph> x in {a b}
+Error in line "x in {a b}": fact(): a set constant cannot be extended -- {a b} IS its members. Write the collection literal @{...} for a container that membership can grow.
+```
+
+Saying what already holds is not an extension: `a in {a b}` is true by
+construction and is simply a no-op.
+
+##### Collections
+
+A collection is built fresh by each literal, so two of them are two containers
+— and each takes its own members:
+
+```
+zelph> x in @{a b}
+zelph> y in @{a b}
+zelph> S in O
+Answer: a in @{a b y}
+Answer: x in @{a b x}
+Answer: y in @{a b y}
+Answer: b in @{a b y}
+Answer: a in @{a b x}
+Answer: b in @{a b x}
+```
+
+`a` and `b` appear twice because each literal built its own container and put
+them into it. A set constant would have collapsed the two into one node.
+
+This is what a rule can put things **into**. The container the rule writes is
+named by every fact it derives, and it grows as the run proceeds:
+
+```
+zelph> alice reported bug1
+zelph> bob reported bug2
+zelph> (X reported Y) => (Y in @{X})
+zelph> S in O
+Answer: bug2 in @{bug1 bug2}
+Answer: bug1 in @{bug1 bug2}
+```
+
+Note the asymmetry, and that it is the point: quantify over a **set constant**
+to read its members, write into a **collection** to gather results.
+
+##### Which one a literal builds
+
+Extensionality needs *known* members. A literal carrying a variable denotes a
+different set for every binding, so it cannot be hash-consed and is a
+collection:
+
+```
+zelph> a p b
+zelph> (X p Y) => (X in {Y})
+zelph> S in O
+Answer: a in @{a}
+```
+
+This is also what keeps the engine's own conjunction form working, whose
+members are condition patterns and therefore never ground — see
+[the rule section](#rules-and-inference) for `*{...} ~ conjunction`.
+
+##### Topology
+
+Both kinds create a **super-node** representing the grouping itself, and link
+the elements to it via the `in` (`PartOf`) relation.
+
+- **Facts created for `{A B}` and for `@{A B}` alike:**
+  - `A in SuperNode`
+  - `B in SuperNode`
+
+They differ only in how the super-node gets its identity: a set constant hashes
+its members, a collection is a fresh node. Nothing else in the graph
+distinguishes them, which is why the printed form does: `{...}` versus `@{...}`.
+
+The empty literal of either kind — `{}` and `@{}` — is the node `nil`. There is
+nothing for a super-node to collect, and `nil` is what an empty collection is
+throughout zelph.
 
 #### Angle Brackets: Lists
 
