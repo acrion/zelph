@@ -1311,3 +1311,63 @@ a p c
         // its object, `p` is not composite at all.
         CHECK(collect_answers(collector).size() == 2); });
 }
+
+TEST_CASE("rules: a pattern predicate is narrowed by its own predicate")
+{
+    // A predicate pattern gets the candidate set a predicate VARIABLE gets --
+    // every declared relation type -- which is correct but is the cost of a
+    // variable, and the pattern says far more than a variable does. A
+    // candidate has to unify with `(Y r s)`, and unify_nodes matches
+    // predicates before anything else, so no fact whose predicate is not `r`
+    // can survive; the candidates are therefore the facts of `r` alone.
+    //
+    // What is checked here is that the narrowing loses NOTHING. `bulk` is the
+    // relation the narrowed scan never looks at, and its facts must be
+    // exactly as absent from the answers as they were before.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e r s) f
+g (h r t) i
+j (k q s) l
+m bulk n
+o bulk p
+(X (Y r s) Z) => (Y links X)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links a"));
+        CHECK(answers_contain(collector, "e links d"));
+
+        // `(h r t)` differs in the object, `(k q s)` in the predicate, and
+        // `bulk` is not composite at all.
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("rules: a pattern predicate whose own predicate is a variable still matches")
+{
+    // The fallback the narrowing needs: with `(Y R s)` there is no ground
+    // predicate to narrow by, so the candidate set stays every declared
+    // relation type -- and the rule has to keep working, or the optimisation
+    // would have silently taken a shape away.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a (b r s) c
+d (e q s) f
+g (h r t) i
+(X (Y R s) Z) => (Y links Z)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S links O");
+        CHECK(answers_contain(collector, "b links c"));
+        CHECK(answers_contain(collector, "e links f"));
+
+        // `(h r t)` still differs in the object.
+        CHECK(collect_answers(collector).size() == 2); });
+}

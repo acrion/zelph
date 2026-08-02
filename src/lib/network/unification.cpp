@@ -634,9 +634,31 @@ Unification::Unification(
             // separates the two is that extract_bindings unifies the pattern
             // against each candidate instead of binding one variable to it.
             if (_seed_fact != 0)
+            {
                 _relation_list.insert(_seed_predicate);
+            }
             else
-                _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+            {
+                // Narrowed by the pattern's OWN predicate wherever it has a
+                // ground one: a candidate has to unify with `(Y r s)`, and
+                // unify_nodes matches predicates before anything else, so no
+                // fact whose predicate is not `r` can survive. Without this
+                // the condition scans every declared relation type, which is
+                // right but is the cost a predicate VARIABLE pays -- and this
+                // pattern says far more than a variable does.
+                const FactStructure pfs = get_preferred_structure(_n, relation, _log_depth);
+
+                if (pfs.predicate != 0
+                    && !Zelph::Impl::is_var(pfs.predicate)
+                    && !_n->var_in_closure(pfs.predicate))
+                {
+                    _relation_list = _n->get_facts_of_predicate(pfs.predicate);
+                }
+                else
+                {
+                    _relation_list = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
+                }
+            }
 
             _relation_pattern = relation;
         }
