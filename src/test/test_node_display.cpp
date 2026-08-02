@@ -602,6 +602,7 @@ p17 rel b17
 .name b17 "C:\\Users\\x"
 f maps <"a b" item2>
 g maps < item2 >
+h <item2 "a b"> k
 narcissus friend narcissus
 (alice friend bob) supports (4 + 5)
 )zph";
@@ -611,6 +612,7 @@ S rel O
 S maps O
 S friend O
 S supports O
+S Q O
 )zph";
 }
 
@@ -681,6 +683,30 @@ TEST_CASE("display: a list in predicate position renders as a list")
         interactive.process("(a <=> b) is_type equivalence");
         CHECK(any_output_contains(collector, "<=>"));
         CHECK_FALSE(any_output_contains(collector, "??")); });
+}
+
+TEST_CASE("display: a list of several elements survives predicate position")
+{
+    // One element was not enough to see it. A cons cell in predicate position
+    // is pointed at by the fact it is the predicate of AND by the `~ ->`
+    // declaration that being a predicate creates, and the chain walk read
+    // both as part of the cell -- so it left the chain somewhere other than
+    // nil, called the list improper and printed the explicit cons form
+    // WITHOUT the parentheses that form needs: `x (a cons b cons nil) y`.
+    // Re-entering that line is an error ("facts with same relation type and
+    // object are not supported"), so the printed line was not input.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("x <a b c> y");
+
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "x <a b c> y"));
+
+        // And it reads back as the very same fact.
+        collector.clear();
+        interactive.process("X <a b c> Y");
+        CHECK(answers_contain(collector, "x <a b c> y")); });
 }
 
 TEST_CASE("display: a generated node prints the same way wherever it appears")

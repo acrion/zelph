@@ -321,17 +321,25 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 if (visited_cells.count(current)) break; // cycle protection
                 visited_cells.insert(current);
 
-                if (z->parse_relation(current) != z->core.Cons) break; // not a cons cell
+                // The EXACT decomposition, not the adjacency reading. A cell's
+                // object set as parse_fact returns it is polluted by every
+                // fact that merely USES the cell, and a list in PREDICATE
+                // position collects two of those: the fact it is the predicate
+                // of, and the `~ ->` declaration that being a predicate
+                // creates. The walk then left the chain at one of them instead
+                // of at nil, the list was reported improper, and `x <a b> y`
+                // printed as `x (a cons b cons nil) y` -- which the parser
+                // rejects, so the printed line did not read back as input.
+                const network::FactStructure cell = network::get_preferred_structure(z, current, 3);
+                if (cell.predicate != z->core.Cons || cell.subject == 0) break; // not a cons cell
 
-                network::adjacency_set objs;
-                network::Node          car = z->parse_fact(current, objs, 0);
-                if (car != 0) car = resolve_var(car);
+                network::Node car = resolve_var(cell.subject);
                 if (car != 0)
                     list_elements.push_back(car);
 
                 // Get cdr (rest of list) — the single object of this cons cell
                 network::Node cdr = z->core.Nil;
-                for (network::Node o : objs)
+                for (network::Node o : cell.objects)
                 {
                     cdr = resolve_var(o);
                     break;
