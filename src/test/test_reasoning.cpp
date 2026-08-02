@@ -1078,3 +1078,88 @@ TEST_CASE("naming: a query variable does not take a real node's name")
         CHECK(any_output_contains(collector, "Name in language"));
         CHECK_FALSE(any_output_contains(collector, "No node found")); });
 }
+
+TEST_CASE("rules: a rule whose only condition quantifies over predicates fires")
+{
+    // "For every declared relation type R, ..." is the shape that makes zelph
+    // different from a query engine, and as the SOLE condition of a rule it
+    // derived nothing at all -- silently. Adding any second condition, even a
+    // pure guard like `R != p`, made it work again, which is why it went
+    // unnoticed: every example that quantifies over predicates in the stdlib
+    // and the documentation carries a second condition.
+    //
+    // The cause was in Zelph::filter, the three-argument form that answers
+    // "which node of this fact is its predicate". A fact's outgoing edges
+    // hold its PARENTS as well as its subject and predicate, so the
+    // consequence `R declared yes` has the rule among them -- and the rule
+    // points at its own subject, the condition `R ~ ->`. That condition has
+    // the right predicate and the right object, so the walk reported the RULE
+    // as a second relation type of the consequence, and deduce() refused the
+    // ambiguity. The exact probe `check_fact(nd, ~, ->)` asks the question
+    // that was meant: not "does nd reach such a fact" but "is nd its
+    // subject".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+
+        collector.clear();
+        interactive.process("(R ~ ->) => (R declared yes)");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("S declared yes");
+
+        // Every relation type in the graph: the one the data declared, the
+        // rule's own consequence predicate, and the core vocabulary --
+        // including `~` itself, which is a relation type declared by a fact
+        // whose subject IS its predicate.
+        CHECK(answers_contain(collector, "p declared yes"));
+        CHECK(answers_contain(collector, "declared declared yes"));
+        CHECK(answers_contain(collector, "~ declared yes"));
+        CHECK(answers_contain(collector, "cons declared yes"));
+        CHECK(answers_contain(collector, "in declared yes"));
+
+        // Not a relation type: `a` and `b` are data, `->` is the category.
+        CHECK_FALSE(answers_contain(collector, "a declared yes"));
+        CHECK_FALSE(answers_contain(collector, "b declared yes"));
+        CHECK_FALSE(answers_contain(collector, "-> declared yes"));
+
+        // A COMPOSITE predicate is bound like any other. logic.md claims
+        // exactly this -- "the fact is found by a rule quantifying over
+        // predicates just like any other" -- and the claim was false for the
+        // single-condition form the sentence describes.
+        interactive.process("x (a p b) y");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("S declared yes");
+        CHECK(answers_contain(collector, "(a p b) declared yes")); });
+}
+
+TEST_CASE("rules: a consequence subject that is itself a predicate stays the subject")
+{
+    // The control for the fix above: the exact probe replaced the
+    // neighbourhood walk, but the SUBJECT exclusion in front of it still has
+    // to hold. It only bites when the consequence's subject is a GROUND node
+    // that is itself a declared relation type -- `p` here, used as data by a
+    // rule that has nothing to do with predicates. Drop the exclusion and
+    // `check_fact(p, ~, ->)` succeeds, the consequence has two candidate
+    // predicates, and deduce() refuses it.
+    //
+    // A variable subject would not do: the pattern node carries the variable,
+    // and a variable is not a declared relation type, so the test would pass
+    // either way. That was the first version of this case, and it was
+    // vacuous.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("alarm ranks high");
+
+        collector.clear();
+        interactive.process("(X ranks high) => (p scored X)");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("p scored O");
+        CHECK(answers_contain(collector, "p scored alarm")); });
+}

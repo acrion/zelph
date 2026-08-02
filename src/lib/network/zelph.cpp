@@ -345,14 +345,32 @@ adjacency_set Zelph::filter(const Node fact, const Node relationType, const Node
 
     for (Node nd : source)
     {
-        adjacency_set possible_relations = _pImpl->get_right(nd);
-        for (Node relation : filter(possible_relations, relationType))
+        // Exclude the subject of the fact, since it is connected
+        // bidirectionally. If <subject relationType target> is true, the
+        // subject would be included in the result by mistake.
+        if (left_nodes.count(nd) != 0) continue;
+
+        // The question is whether `nd relationType target` HOLDS, and the
+        // exact probe is the only way to ask it. Walking nd's neighbourhood
+        // for a fact with the right predicate and the right node among its
+        // objects answers a weaker question -- it never checks that nd is
+        // that fact's SUBJECT -- and the two come apart on the one shape
+        // that matters most here.
+        //
+        // A fact's outgoing edges hold its parents as well as its subject
+        // and predicate, so for the consequence of a rule, `source` contains
+        // the RULE. The rule in turn points at its own subject, the
+        // condition; and if that condition happens to be a relation-type
+        // declaration -- `(R ~ ->) => (R declared yes)`, the natural way to
+        // write a rule that quantifies over all predicates -- the walk found
+        // `R ~ ->` from the rule, saw the right predicate and the right
+        // object, and reported the RULE as a second relation type of the
+        // consequence. deduce() then refused the ambiguity and the rule
+        // derived nothing at all, silently. Adding any second condition hid
+        // it again.
+        if (check_fact(nd, relationType, {target}).is_known())
         {
-            if (_pImpl->get_left(relation).count(target) == 1
-                && left_nodes.count(nd) == 0) // exclude the subject of the fact, since it is connected bidirectional. If <subject relationType target> is true, the subject would be included in the result by mistake
-            {
-                result.insert(nd);
-            }
+            result.insert(nd);
         }
     }
 
