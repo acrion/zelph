@@ -255,3 +255,32 @@ TEST_CASE("sets: a membership fact keeps its own member in the printed container
         CHECK_FALSE(any_output_contains(collector, "Representation: a in {a}")); });
 }
 
+TEST_CASE("sets: a rule that would extend a set constant says why, not just `!`")
+{
+    // Extending a set constant is refused wherever it is attempted, and a rule
+    // consequence is the one place where the refusal arrives during reasoning
+    // rather than at parse time -- the pattern `X in {a b}` is legitimate, only
+    // its instances are not. deduce() turned every fact() refusal into a bare
+    // contradiction, so the user was told the knowledge base contradicts itself
+    // and got neither the shape that was refused nor the literal to use instead.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+z rel {a b}
+q p r
+(X p Y) => (X in {a b})
+)");
+        interactive.run(true, false, false);
+
+        CHECK(has_contradiction(collector));
+        CHECK(any_output_contains(collector, "refused: a set constant cannot be extended"));
+        CHECK(any_output_contains(collector, "@{...}"));
+
+        // The set itself came through untouched.
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "a in {a b}"));
+        CHECK(answers_contain(collector, "b in {a b}"));
+        CHECK(collect_answers(collector).size() == 2); });
+}
+

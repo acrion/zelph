@@ -209,6 +209,20 @@ Error in line "x in {a b}": fact(): a set constant cannot be extended -- {a b} I
 Saying what already holds is not an extension: `a in {a b}` is true by
 construction and is simply a no-op.
 
+A **rule consequence** is the one place where the refusal arrives during
+reasoning rather than while the line is read: `X in {a b}` is how a rule
+quantifies over the members, so the pattern is fine and only its instances
+are refused.
+
+```
+zelph> z rel {a b}
+zelph> q p r
+zelph> (X p Y) => (X in {a b})
+! ⇐ (q p r)
+   └─ refused: a set constant cannot be extended -- {a b} IS its members. Write the collection literal @{...} for a container that membership can grow.
+Found one or more contradictions!
+```
+
 ##### Collections
 
 A collection is built fresh by each literal, so two of them are two containers

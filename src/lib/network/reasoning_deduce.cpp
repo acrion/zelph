@@ -32,6 +32,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
+#include <string_view>
+
 using namespace zelph::network;
 
 namespace
@@ -437,6 +439,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         Node          d       = 0;
         bool          wrong   = false;
         bool          created = false;
+        std::string   refusal;
         // A derived RULE is not a statement ABOUT anything, so the focus
         // filter has no subject to match it against -- and suppressing the
         // one deduction that changes what the engine will do next is the
@@ -562,6 +565,18 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                             if (should_log(depth))
                                 log(depth, "deduce", "fact() threw: " + std::string(ex.what()));
 
+                            // fact() refuses a shape it cannot represent -- a
+                            // set constant being extended, a subject that is
+                            // also one of several objects. The rule stops here
+                            // either way, but reporting it as a bare `!` said
+                            // the knowledge base contradicts itself, which is
+                            // not what happened and gives the user nothing to
+                            // act on. Carry the reason to the report.
+                            refusal = ex.what();
+
+                            constexpr std::string_view prefix = "fact(): ";
+                            if (refusal.starts_with(prefix)) refusal.erase(0, prefix.size());
+
                             wrong = true;
                         }
                     }
@@ -576,7 +591,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         } // _mtx_network released
 
         if (wrong)
-            throw contradiction_error(ctx.current_condition, augmented, parent);
+            throw contradiction_error(ctx.current_condition, augmented, parent, refusal);
 
         if (created)
         {

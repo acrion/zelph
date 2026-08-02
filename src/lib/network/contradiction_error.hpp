@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network_types.hpp"
 
 #include <exception>
+#include <string>
 
 namespace zelph::network
 {
@@ -35,11 +36,12 @@ namespace zelph::network
     {
     public:
         // cppcheck-suppress passedByValue
-        contradiction_error(const Node fact, const Variables& variables, const Node parent)
+        contradiction_error(const Node fact, const Variables& variables, const Node parent, std::string reason = {})
             : std::exception()
             , _fact(fact)
             , _variables(variables)
             , _parent(parent)
+            , _reason(std::move(reason))
         {
         }
 
@@ -58,9 +60,19 @@ namespace zelph::network
             return _parent;
         }
 
+        // Empty for a genuine contradiction -- a `!` consequence, or a
+        // deduction the graph already knows to be wrong. Non-empty when the
+        // engine REFUSED to build the deduced fact, in which case the reason
+        // is the only thing that tells the user what to write instead.
+        const std::string& get_reason() const
+        {
+            return _reason;
+        }
+
     private:
-        Node      _fact;
-        Variables _variables;
-        Node      _parent;
+        Node        _fact;
+        Variables   _variables;
+        Node        _parent;
+        std::string _reason;
     };
 }

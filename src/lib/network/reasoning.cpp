@@ -81,7 +81,14 @@ void Reasoning::report_contradiction(const contradiction_error& error)
     string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
 
     if (_print_deductions)
+    {
         out(string::unmark_identifiers(contradiction_symbol() + " ⇐ " + output), true);
+
+        // A refusal is not a contradiction in the data, and the `!` line alone
+        // named neither the shape nor what to write instead.
+        if (!error.get_reason().empty())
+            out("   └─ refused: " + string::unmark_identifiers(error.get_reason()), true);
+    }
 
     if (_export_derivations)
         _export->add("contradiction", contradiction_symbol(),
