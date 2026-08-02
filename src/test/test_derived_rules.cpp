@@ -732,3 +732,286 @@ c p d
         CHECK(answers_contain(collector, "c q {d}"));
         CHECK(collect_answers(collector).size() == 2); });
 }
+
+TEST_CASE("derived rules: the premise may go, and the rule it wrote stays")
+{
+    // A switch invites the expectation that turning it OFF turns the rule off
+    // again. It does not, and that is the general model rather than a gap in
+    // this feature: zelph does no truth maintenance, so a derived FACT
+    // outlives its premise, and a derived RULE is a derived fact. What
+    // removes one is `.remove <id>` -- after which the generator writes it
+    // again on the next run, because the premise is back to standing.
+    //
+    // Pinned here so that a future reader knows the asymmetry is intended:
+    // the switch decides when the rule COMES INTO BEING, not how long it
+    // lives.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+k is on
+a p b
+(K is on) => ((X p Y) => (X q Y))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        REQUIRE(answers_contain(collector, "a q b"));
+
+        interactive.process(".prune-facts (k is on)");
+
+        // The generated rule is still there ...
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X p Y) => (X q Y)"));
+
+        // ... and still fires, on a fact entered after the premise was gone.
+        interactive.process("c p d");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "c q d")); });
+}
+
+TEST_CASE("derived rules: two generators that write the same rule write it once")
+{
+    // Two DIFFERENT generators, each with its own premise and its own variable
+    // names, whose inner rules are alpha-equivalent. The first one asserts the
+    // rule; the second one rebuilds it, lands on the node its own outer rule
+    // only MENTIONS, and has to recognise the already-asserted copy instead of
+    // renaming its way to a second one. That recognition is the same
+    // rules_alpha_equivalent the parser uses -- this is the only path on which
+    // the ENGINE depends on it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+k is on
+j is ready
+a p b
+(K is on) => ((X p Y) => (X q Y))
+(J is ready) => ((A p B) => (A q B))
+)");
+        interactive.run(true, false, false);
+
+        // Three rules, not four: the two generators and ONE derived rule.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 3);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+        CHECK(collect_answers(collector).size() == 1); });
+}
+
+TEST_CASE("derived rules: a generated rule may be a contradiction rule")
+{
+    // `!` as the consequence is rebuilt like any other, so a generator can
+    // install a contradiction CHECK -- which is the shape that matters for an
+    // ontology: the axioms of the check are data, and the check itself is
+    // written by a rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+checks is on
+bright opp dark
+yellow ~ bright
+yellow ~ dark
+(K is on) => ((X opp Y, A ~ X, A ~ Y, X != Y) => !)
+)");
+        interactive.run(true, false, false);
+
+        CHECK(has_contradiction(collector));
+
+        // The generated rule is a rule like any other, and the premises of
+        // the contradiction are the four facts that satisfied it.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}
+
+TEST_CASE("derived rules: the outer variables substitute in every position")
+{
+    // Not just the predicate slot. Here the generator's variables land in the
+    // predicate of the inner rule's condition, in the predicate of its
+    // consequence, and inside a COMPOSITE subject and a composite object of
+    // that consequence -- all four at once, which is what tells a shallow
+    // substitution from a structural one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+p lifts q
+a p b
+(P lifts Q) => ((X P Y) => ((X Q Y) Q (Y P X)))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X p Y) => ((X q Y) q (Y p X))"));
+
+        collector.clear();
+        interactive.process("S q O");
+        // The composed fact, and the two inner facts it is composed of.
+        CHECK(answers_contain(collector, "(a q b) q (b p a)"));
+        CHECK(answers_contain(collector, "a q b"));
+        CHECK(answers_contain(collector, "b q a")); });
+}
+
+TEST_CASE("derived rules: a generator fires on a fact another rule derived")
+{
+    // The generator's own premise is DERIVED, not asserted, so the run has to
+    // reach a rule that writes a rule through a rule -- and then let the
+    // written rule see facts that are older than itself. Both halves of the
+    // fixpoint loop are needed: the one that notices the rule set grew, and
+    // the classic pass that shows an old fact to a new rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+q p r
+r p s
+a marks p
+(X marks R) => (R is transitive)
+(R is transitive) => ((X R Y, Y R Z) => (X R Z))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "q p s"));
+
+        // Three rules: the two generators and the transitivity rule for p.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 3); });
+}
+
+TEST_CASE("derived rules: fifty declarations make fifty rules and the run still settles")
+{
+    // One generator against fifty relations, each with a two-step chain to
+    // close. What this adds over the small cases is the fixpoint loop's
+    // stopping condition at a size where a missing "the set did not grow this
+    // time" would show: a second run must add no rule and no fact.
+    std::string network = "(R is transitive) => ((X R Y, Y R Z) => (X R Z))\n";
+    for (int i = 0; i < 50; ++i)
+    {
+        const std::string n = std::to_string(i);
+        network += "r" + n + " is transitive\n";
+        network += "a" + n + " r" + n + " b" + n + "\n";
+        network += "b" + n + " r" + n + " c" + n + "\n";
+    }
+
+    run_both_modes([&network](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, network);
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(listed_rules(collector) == 51);
+
+        // Every relation closed.
+        collector.clear();
+        interactive.process("S r0 O");
+        CHECK(answers_contain(collector, "a0 r0 c0"));
+
+        collector.clear();
+        interactive.process("S r49 O");
+        CHECK(answers_contain(collector, "a49 r49 c49"));
+
+        // And it is a fixpoint.
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 51);
+
+        collector.clear();
+        interactive.process("S r0 O");
+        CHECK(collect_answers(collector).size() == 3); });
+}
+
+TEST_CASE("derived rules: a generator inside a cluster is dropped with it")
+{
+    // A cluster is the experiment scope, and a generator run inside one
+    // creates nodes the user never typed: the rule node, its condition set,
+    // its consequence patterns and the facts they derive. Rolling the
+    // experiment back has to take all of it, or the next experiment starts
+    // from a graph nobody described.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".cluster exp");
+        process_lines(interactive, R"(
+k is on
+a p b
+(K is on) => ((X p Y) => (X q Y))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        REQUIRE(answers_contain(collector, "a q b"));
+
+        interactive.process(".cluster-drop exp");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("derived rules: a typed rule and a derived one are the same rule, either order")
+{
+    // `HANDOVER.md` carried this as a known gap -- "a user-typed rule that is
+    // alpha-equivalent to a derived one is not recognised as the same rule;
+    // both exist, both fire". It is not so, in either direction, and the note
+    // was corrected when this case was written.
+    //
+    // The two directions fail differently if they ever break, which is why
+    // both are here: typing first makes the GENERATOR find the existing rule
+    // (the mention-collision path, which is the only place the engine itself
+    // asks for alpha-equivalence), typing second makes the PARSER find the
+    // derived one (the ordinary dedup path).
+    SUBCASE("the generator finds the rule the user typed")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(A p B) => (A q B)
+k is on
+a p b
+(K is on) => ((X p Y) => (X q Y))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+        CHECK(collect_answers(collector).size() == 1);
+    }
+
+    SUBCASE("the parser finds the rule the generator wrote")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+k is on
+a p b
+(K is on) => ((X p Y) => (X q Y))
+)");
+        interactive.run(true, false, false);
+
+        // Different variable NAMES, including the underscore spelling.
+        interactive.process("(_foo p _bar) => (_foo q _bar)");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+    }
+}
