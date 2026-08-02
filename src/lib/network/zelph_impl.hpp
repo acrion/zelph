@@ -1377,7 +1377,27 @@ namespace zelph::network
                     return;
                 }
 
-                if (leftSelectorPtr == nullptr || !leftSelector.empty() || rightSelectorPtr == nullptr || !rightSelector.empty())
+                // What each section is asked for. A selector that is present
+                // but empty is `=none`: the section is wanted for nothing.
+                const bool want_left_right   = leftSelectorPtr == nullptr || !leftSelector.empty()
+                                            || rightSelectorPtr == nullptr || !rightSelector.empty();
+                const bool want_name_of_node = nameOfNodeSelectorPtr == nullptr || !nameOfNodeSelector.empty();
+                const bool want_node_of_name = nodeOfNameSelectorPtr == nullptr || !nodeOfNameSelector.empty();
+
+                // THIS STREAM IS SEQUENTIAL. A section that is not read is not
+                // consumed either, so everything after it would be parsed from
+                // the wrong offset -- and capnp does not necessarily complain:
+                // `left=none right=none` made the name section read adjacency
+                // chunks, which surfaced as "Error converting UTF-8 to string
+                // for name_of_node key 1" for every core node and left the
+                // network without names. A section may therefore be skipped
+                // only when nothing AFTER it is wanted; the loaders themselves
+                // already consume a chunk they do not keep, which is what makes
+                // a partial selection inside a section work.
+                //
+                // The manifest path is unaffected: it seeks to each chunk's
+                // offset instead of streaming past the others.
+                if (want_left_right || want_name_of_node || want_node_of_name)
                 {
                     loadLeftRightChunks(bufferedInput,
                                         options,
@@ -1386,11 +1406,11 @@ namespace zelph::network
                                         leftSelectorPtr,
                                         rightSelectorPtr);
                 }
-                if (nameOfNodeSelectorPtr == nullptr || !nameOfNodeSelector.empty())
+                if (want_name_of_node || want_node_of_name)
                 {
                     loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount, nameOfNodeSelectorPtr);
                 }
-                if (nodeOfNameSelectorPtr == nullptr || !nodeOfNameSelector.empty())
+                if (want_node_of_name)
                 {
                     loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount, nodeOfNameSelectorPtr);
                 }

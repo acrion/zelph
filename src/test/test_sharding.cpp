@@ -401,6 +401,43 @@ TEST_CASE("sharding: chunk selection addresses one language's name chunk")
     fs::remove_all(artifact.root);
 }
 
+TEST_CASE("sharding: deselecting a section keeps the sequential stream aligned")
+{
+    // A .bin is read SEQUENTIALLY. A section that is not read is not consumed
+    // either, so everything after it was parsed from the wrong offset:
+    // `left=none right=none` made the name loader read ADJACENCY chunks, which
+    // capnp reported as "Schema mismatch: Message contains list pointer of
+    // non-bytes where text was expected" -- surfacing as "Error converting
+    // UTF-8 to string for name_of_node key 1" for every core node, and leaving
+    // the network without any names at all.
+    //
+    // The manifest path never had this: it seeks to each chunk's offset
+    // instead of streaming past the others, which is why the selector test
+    // above passed with the very same selectors.
+    const auto artifact = build_artifact(artifact_root("align"));
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        collector.clear();
+        interactive.process(".load-partial \"" + artifact.bin.string() + "\" left=none right=none");
+
+        CHECK_FALSE(any_event_contains(collector, "Error converting UTF-8"));
+        CHECK_FALSE(any_event_contains(collector, "Schema mismatch"));
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "de: 2"));
+        CHECK(any_output_contains(collector, "Languages: 2"));
+
+        // The names are usable, not merely counted: a name still resolves to
+        // the node it was given to.
+        collector.clear();
+        interactive.process(".node alpha");
+        CHECK_FALSE(any_output_contains(collector, "No node found")); });
+
+    fs::remove_all(artifact.root);
+}
+
 TEST_CASE("sharding: shard-root serves shards from outside the artifact tree")
 {
     const auto artifact = build_artifact(artifact_root("shardroot"));
