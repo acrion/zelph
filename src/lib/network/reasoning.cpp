@@ -328,15 +328,13 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     if (!silent)
         diagnostic_stream() << "Reasoning summary: " << _total_matches << " matches processed, "
                             << _total_contradictions << " contradictions found." << std::endl;
-    static std::unordered_set<Node> logged_relations;
-
     if (_pool && !silent)
     {
-        diagnostic_stream() << "Parallel unifications activated for " << logged_relations.size()
+        diagnostic_stream() << "Parallel unifications activated for " << _prof.parallel_relation_count()
                             << " distinct fixed relations." << std::endl;
     }
 
-    logged_relations.clear();
+    _prof.clear_parallel_relations();
 
     // Close the export here rather than at the next run: the worker threads
     // are joined, so nothing more will be written, and a caller that keeps

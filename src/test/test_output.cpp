@@ -493,3 +493,61 @@ a q e
 
         CHECK_THROWS_AS(interactive.process(".list-predicate-value-usage nosuch"), std::runtime_error); });
 }
+
+TEST_CASE("commands: the parallel-unification summary counts what it claims")
+{
+    // "Parallel unifications activated for N distinct fixed relations" read a
+    // static set that nothing ever filled: 457b14b introduced TWO statics of
+    // that name, one in reasoning.cpp and one in unification.cpp, and only the
+    // second was inserted into. The line has therefore said 0 since December
+    // 2025, whatever the run did -- a diagnostic that reports a measurement it
+    // never takes, which is worse than no diagnostic at all.
+    //
+    // Not run_both_modes: the number is a statement ABOUT the parallel path,
+    // so the mode is the subject of the test rather than something it should
+    // be invariant under. All three cases below are the default (parallel)
+    // engine except the last, which turns it off.
+    const std::string unbound_rule = R"(
+a p b
+c p d
+(X p Y) => (X q Y)
+)";
+
+    SUBCASE("both sides unbound: the snapshot path is taken and counted")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, unbound_rule);
+
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 1"));
+    }
+
+    SUBCASE("a bound side keeps the snapshot path out of it")
+    {
+        // The shape `janet.md` shows reporting 0, which is why that page did
+        // not have to be corrected when the counter started measuring.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+socrates ~ human
+(X ~ human) => (X ~ mortal)
+)");
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
+    }
+
+    SUBCASE("single-core evaluation reports none, by construction")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".parallel");
+        process_lines(interactive, unbound_rule);
+
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
+    }
+}

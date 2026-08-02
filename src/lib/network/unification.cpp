@@ -908,6 +908,11 @@ Unification::Unification(
                 _use_parallel = true;
                 _snapshot_vec.assign(snapshot.begin(), snapshot.end());
 
+                // Ungated, unlike the counters below: the run summary reports
+                // this one whether or not logging is on. One guarded insert
+                // next to a full adjacency copy costs nothing.
+                PROF(note_parallel_relation(fixed_rel));
+
                 if (_n->logging_active())
                 {
                     // NOTE: must run AFTER _snapshot_vec is assigned; the

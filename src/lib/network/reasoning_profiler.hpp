@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace zelph::network
@@ -118,6 +119,32 @@ namespace zelph::network
 
         std::atomic<uint64_t> max_reasoning_depth{0};
         std::atomic<uint64_t> max_unify_depth{0};
+
+        // The relations a parallel snapshot was launched for. NOT gated on
+        // logging, unlike everything below: the run summary reports it on
+        // every run, and reporting a set nothing ever fills is what this
+        // replaces -- the counter lived in a second static of the same name
+        // in unification.cpp, so the one being read was always empty and the
+        // line has said "0 distinct fixed relations" since 457b14b.
+        std::unordered_set<Node> parallel_relations;
+
+        void note_parallel_relation(const Node rel)
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            parallel_relations.insert(rel);
+        }
+
+        std::size_t parallel_relation_count()
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            return parallel_relations.size();
+        }
+
+        void clear_parallel_relations()
+        {
+            std::lock_guard<std::mutex> lk(_mtx);
+            parallel_relations.clear();
+        }
 
         // Context aggregation (coarse-grained; guarded by mutex)
         std::mutex                         _mtx;
