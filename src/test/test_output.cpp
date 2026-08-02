@@ -309,3 +309,101 @@ TEST_CASE("commands: a negative count is rejected, not wrapped")
         CHECK_THROWS_AS(interactive.process(".list 0"), std::runtime_error);
         interactive.process(".list 2"); });
 }
+
+TEST_CASE("commands: the exploration commands address a fact the way it prints")
+{
+    // Printed output is meant to read back as input, and .explain and the
+    // prune commands took a printed FACT all along. .node, .out and .in did
+    // not: ".node a rel b" was refused with "At most one argument required",
+    // and ".out (a rel b)" with "Unknown node". The only way to inspect a
+    // fact node was to hunt down its numeric ID -- although the fact is
+    // exactly what the user had just seen printed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.process("x (a rel b) y");
+
+        // Both spellings: bare, and the parenthesised form the renderer uses
+        // for a fact in subject or predicate position.
+        for (const char* form : {".node a rel b", ".node (a rel b)"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(any_output_contains(collector, "Representation: a rel b"));
+        }
+
+        collector.clear();
+        interactive.process(".out (a rel b)");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        collector.clear();
+        interactive.process(".in (a rel b)");
+        CHECK(any_output_contains(collector, "Incoming connected nodes"));
+
+        // The trailing count still separates, and a name or an ID still
+        // resolves the way it did.
+        collector.clear();
+        interactive.process(".out (a rel b) 1");
+        CHECK(any_output_contains(collector, "first 1 of"));
+
+        collector.clear();
+        interactive.process(".out a");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        collector.clear();
+        interactive.process(".node 1");
+        CHECK(any_output_contains(collector, "Node ID: 1"));
+
+        // A pattern that denotes nothing is an error, not a silent empty
+        // listing.
+        CHECK_THROWS_AS(interactive.process(".node q nosuchrel r"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".out (q nosuchrel r)"), std::runtime_error); });
+}
+
+TEST_CASE("commands: a fact whose object is a numeral is not split by the count")
+{
+    // The trailing-number ambiguity .explain already had: ".out a rel 5" is
+    // the fact, not the node `a rel` with a count of 5. The documented count
+    // keeps precedence, so the numeral is only read as part of the pattern
+    // when the shorter reading resolves to nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel 5");
+
+        collector.clear();
+        interactive.process(".node a rel 5");
+        CHECK(any_output_contains(collector, "Representation: a rel 5"));
+
+        collector.clear();
+        interactive.process(".out a rel 5");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        // With a count after it, the fact is still the fact.
+        collector.clear();
+        interactive.process(".out a rel 5 1");
+        CHECK(any_output_contains(collector, "first 1 of")); });
+}
+
+TEST_CASE("commands: a multi-object fact is addressed whole, numeral object and all")
+{
+    // The worst case for splitting a trailing count off: a fact with several
+    // objects, the last of them a numeral. It resolves whole because the
+    // fact one object SHORT does not exist -- entering "a rel b 5" builds one
+    // node with two objects, not two facts -- so the count reading has no
+    // head to attach to and never wins.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b 5");
+
+        collector.clear();
+        interactive.process(".node a rel b 5");
+        CHECK(any_output_contains(collector, "Representation: a rel b 5"));
+
+        collector.clear();
+        interactive.process(".out a rel b 5");
+        CHECK(any_output_contains(collector, "Outgoing connected nodes"));
+
+        // The shorter fact is genuinely absent, and saying so is the point:
+        // it is what leaves the count reading no foothold.
+        CHECK_THROWS_AS(interactive.process(".node a rel b"), std::runtime_error); });
+}

@@ -200,9 +200,9 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: `.why`
 - `.list <count>` – List first N existing nodes (internal map order, with details)
 - `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)
-- `.node [<name|id>]` – Show detailed node information; defaults to last output node
-- `.out <name|id> [count]` – List details of outgoing connected nodes (default 20)
-- `.in <name|id> [count]` – List details of incoming connected nodes (default 20)
+- `.node [<name|id|fact>]` – Show detailed node information; defaults to last output node
+- `.out <name|id|fact> [count]` – List details of outgoing connected nodes (default 20)
+- `.in <name|id|fact> [count]` – List details of incoming connected nodes (default 20)
 - `.mermaid <node_name> [max_depth]` – Generate Mermaid HTML file for a node (default depth 3)
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent predicates)
 - `.list-predicate-value-usage <pred> [max]` – Show object/value usage statistics for a specific predicate (top N most frequent values)

@@ -1496,9 +1496,9 @@ private:
             "  .explain [<fact>] [depth]                 – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: .why",
             "  .list <count>                             – List first N existing nodes (internal map order, with details)",
             "  .clist <count>                            – List first N nodes named in current language (sorted by ID if feasible)",
-            "  .node [<name|id>]                         – Show detailed node information; defaults to last output node",
-            "  .out <name|id> [count]                    – List details of outgoing connected nodes (default 20)",
-            "  .in <name|id> [count]                     – List details of incoming connected nodes (default 20)",
+            "  .node [<name|id|fact>]                    – Show detailed node information; defaults to last output node",
+            "  .out <name|id|fact> [count]               – List details of outgoing connected nodes (default 20)",
+            "  .in <name|id|fact> [count]                – List details of incoming connected nodes (default 20)",
             "  .mermaid <node_name> [max_depth]          – Generate Mermaid HTML file for a node (default depth 3)",
             "  .list-predicate-usage [max]               – Show predicate usage statistics (top N most frequent predicates)",
             "  .list-predicate-value-usage <pred> [max]  – Show object/value usage statistics for a specific predicate (top N most frequent values)",
@@ -1634,19 +1634,24 @@ private:
                        "If the language has a reasonable number of entries (≤ ~50k), nodes are sorted by ID.\n"
                        "For very large languages (e.g. 'wikidata'), order follows the internal map (fast, no full sort)."},
 
-            {".out", ".out <name|id> [count]\n"
+            {".out", ".out <name|id|fact> [count]\n"
                      "Lists detailed information for up to <count> nodes reachable via outgoing connections\n"
-                     "from the given node (default 20, sorted by node ID)."},
+                     "from the given node (default 20, sorted by node ID).\n"
+                     "The node can be named, given by numeric ID, or written as the FACT it is --\n"
+                     "'.out a rel b', with or without parentheses, exactly as the fact prints."},
 
-            {".in", ".in <name|id> [count]\n"
+            {".in", ".in <name|id|fact> [count]\n"
                     "Lists detailed information for up to <count> nodes that have outgoing connections\n"
-                    "to the given node (default 20, sorted by node ID)."},
+                    "to the given node (default 20, sorted by node ID).\n"
+                    "The node can be named, given by numeric ID, or written as the FACT it is --\n"
+                    "'.in a rel b', with or without parentheses, exactly as the fact prints."},
 
-            {".node", ".node [<name_or_id>]\n"
+            {".node", ".node [<name|id|fact>]\n"
                       "Displays details for a single node: its ID, non-empty names in all languages,\n"
                       "incoming/outgoing connection counts, and a clickable Wikidata URL if it has a Wikidata ID.\n"
-                      "The argument can be a name (in current language) or a numeric node ID.\n"
-                      "If no argument is given, the node from the last output is used."},
+                      "The argument can be a name (in current language), a numeric node ID, or the\n"
+                      "FACT itself -- '.node a rel b', with or without parentheses, exactly as the\n"
+                      "fact prints. If no argument is given, the node from the last output is used."},
 
             {".mermaid", ".mermaid <node_name> [max_depth]\n"
                          "Generates a Mermaid HTML file visualizing the specified node and its connections\n"
@@ -2253,12 +2258,20 @@ private:
     }
     void cmd_node(const std::vector<std::string>& cmd)
     {
-        if (cmd.size() > 2) throw std::runtime_error("Command .node: At most one argument required");
-
         std::string                arg;
         std::vector<network::Node> nodes;
 
-        if (cmd.size() == 1)
+        if (cmd.size() > 2)
+        {
+            // More than one token is a printed fact, not a name -- see
+            // resolve_node_or_fact. ".node a p b" used to be refused outright
+            // with "At most one argument required".
+            const network::Node fact = resolve_node_or_fact({cmd.begin() + 1, cmd.end()});
+            if (fact == 0)
+                throw std::runtime_error("Command .node: expected a name, an ID, or a fact pattern denoting an existing node");
+            nodes.push_back(fact);
+        }
+        else if (cmd.size() == 1)
         {
             network::Node last = string::last_node_to_string_node();
             if (last == network::Node{}) throw std::runtime_error("Command .node: No argument given and no previous output node available");
@@ -2346,18 +2359,14 @@ private:
     {
         if (cmd.size() < 2) throw std::runtime_error(std::string("Command ") + cmd[0] + ": Missing node argument");
 
-        const std::string& arg     = cmd[1];
-        network::Node      base_nd = resolve_node(arg, _n->lang()); // same resolve logic as .node/.remove
+        // Same resolve logic as .node: a name, an ID, or a printed fact, with
+        // the trailing count separated the way .explain separates its depth.
+        size_t              max_count = 20; // default
+        const network::Node base_nd   = resolve_node_or_fact({cmd.begin() + 1, cmd.end()}, &max_count);
 
         if (base_nd == 0)
         {
             throw std::runtime_error("Unknown node");
-        }
-
-        size_t max_count = 20; // default
-        if (cmd.size() >= 3)
-        {
-            max_count = string::parse_count(cmd[2]);
         }
 
         network::adjacency_set neighbors = outgoing ? _n->get_right(base_nd) : _n->get_left(base_nd);
@@ -3459,6 +3468,73 @@ private:
         {
             return 0;
         }
+    }
+
+    // A node argument that may be a name, a numeric ID, or a printed FACT --
+    // "a p b", or the parenthesised form the renderer uses for a nested one.
+    // .explain and the prune commands have taken that third form all along,
+    // while the exploration commands could not address a fact node at all
+    // unless the user hunted down its numeric ID -- although the fact is
+    // exactly what they had just seen printed, and printed output is meant to
+    // read back as input.
+    //
+    // The fact reading is tried LAST, so a name that happens to parse as a
+    // statement keeps its meaning.
+    //
+    // `count` carries the optional trailing number these commands take, with
+    // the two readings .explain settled on and in its order: the documented
+    // count wins, and a trailing numeral stays part of the pattern only when
+    // the shorter reading resolves to nothing.
+    network::Node resolve_node_or_fact(const std::vector<std::string>& parts, size_t* count = nullptr)
+    {
+        const auto is_number = [](const std::string& s)
+        { return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos; };
+
+        const auto resolve = [this](const std::vector<std::string>& p) -> network::Node
+        {
+            if (p.empty()) return 0;
+            if (p.size() == 1)
+            {
+                if (const network::Node nd = resolve_node(p[0], _n->lang()); nd != 0) return nd;
+            }
+
+            // A pattern denotes a node whether or not the graph holds it --
+            // the ID is the hash of the triple, so evaluating "q nosuchrel r"
+            // yields a perfectly good number for a node that does not exist,
+            // and the commands here would have printed it as "??". .explain
+            // can report that state ("Fact is not asserted"); an exploration
+            // command has nothing to show, so it has to say Unknown node.
+            const network::Node nd = resolve_explain_pattern(p, 1);
+            return nd != 0 && _n->exists(nd) ? nd : network::Node{0};
+        };
+
+        if (count != nullptr && parts.size() >= 2)
+        {
+            const std::vector<std::string> head(parts.begin(), parts.end() - 1);
+            const network::Node            without_last = resolve(head);
+
+            if (without_last != 0)
+            {
+                // The documented reading -- node plus trailing count -- wins
+                // whenever the full argument list does not ALSO denote a
+                // node. That is what keeps ".out a -1" reporting a malformed
+                // count instead of degrading into "Unknown node", and it is
+                // the only reading left for any trailing token that is not a
+                // number at all.
+                //
+                // When both readings resolve -- a multi-object fact whose
+                // last object is a numeral, next to the same fact one object
+                // shorter -- the count keeps precedence, exactly as .explain
+                // resolves the same ambiguity for its depth.
+                if (resolve(parts) == 0 || is_number(parts.back()))
+                {
+                    *count = string::parse_count(parts.back());
+                    return without_last;
+                }
+            }
+        }
+
+        return resolve(parts);
     }
 
     void cmd_explain(const std::vector<std::string>& cmd)
