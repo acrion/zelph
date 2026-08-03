@@ -130,16 +130,59 @@ public:
         Incomplete
     };
 
+    // Call a Janet function on a fiber of its own, with that fiber rooted for
+    // the duration of the call. Use this instead of janet_pcall anywhere the
+    // call can happen while the VM is already running -- which is every call
+    // site here, because zelph/import and zelph/run-script let a Janet script
+    // re-enter statement processing.
+    //
+    // janet_pcall does NOT root the fiber it creates, and janet_collect marks
+    // only janet_vm.root_fiber plus the explicit roots, reaching nested fibers
+    // through the parent's `child` link -- which janet_pcall does not set.
+    // janet_continue_no_check adopts a fiber as root_fiber only while there is
+    // none, so a nested call runs on a fiber that no root can reach: the first
+    // collection inside it frees the fiber that is currently running, and
+    // everything read afterwards is a use-after-free. The crash then surfaces
+    // wherever the callee next touches its own stack, arbitrarily far from
+    // here, and moves or disappears with any change to allocation timing.
+    //
+    // Found as a segfault on `.import decimal-arithmetic` followed by
+    // `.import symbolic-core`: building a rule allocates enough to trigger a
+    // collection inside the thunk. run_janet_script roots its fiber by hand
+    // for exactly this reason.
+    static JanetSignal pcall_rooted(JanetFunction* const fun, const int32_t argc, const Janet* const argv, Janet* const out)
+    {
+        // Nothing is rooted between creating the fiber and rooting it, so no
+        // allocation may happen in between either.
+        const int         gc_handle = janet_gclock();
+        JanetFiber* const fiber     = janet_fiber(fun, 64, argc, argv);
+        if (!fiber)
+        {
+            janet_gcunlock(gc_handle);
+            *out = janet_cstringv("could not create fiber");
+            return JANET_SIGNAL_ERROR;
+        }
+        janet_gcroot(janet_wrap_fiber(fiber));
+        janet_gcunlock(gc_handle);
+
+        const JanetSignal sig = janet_continue(fiber, janet_wrap_nil(), out);
+
+        // `out` is reachable through the fiber (last_value), so the caller
+        // must not allocate before reading it -- the same contract janet_pcall
+        // has, and the reason run_janet_script extracts its error text first.
+        janet_gcunroot(janet_wrap_fiber(fiber));
+        return sig;
+    }
+
     // Shared invocation for both keyword kinds: pcall with error wrapping and
     // the :incomplete veto protocol. Under force a veto is an error (EOF in
     // scripts for block keywords; see expand_inline_keywords for islands).
     HandlerCall call_keyword_handler(const std::string& name, const Janet handler, const std::string& text, const bool force, Janet& result)
     {
-        JanetFunction* f     = janet_unwrap_function(handler);
-        Janet          arg   = janet_cstringv(text.c_str());
-        JanetFiber*    fiber = nullptr;
+        JanetFunction* f   = janet_unwrap_function(handler);
+        Janet          arg = janet_cstringv(text.c_str());
 
-        if (janet_pcall(f, 1, &arg, &result, &fiber) != JANET_SIGNAL_OK)
+        if (pcall_rooted(f, 1, &arg, &result) != JANET_SIGNAL_OK)
         {
             std::string err = "Janet error in handler for keyword '" + name + "'";
             if (janet_checktype(result, JANET_STRING))
@@ -1911,9 +1954,8 @@ public:
 
         s_instance->_n->set_active_cluster(scratch);
 
-        Janet       out = janet_wrap_nil();
-        JanetFiber* fiber{};
-        const int   signal = janet_pcall(thunk, 0, nullptr, &out, &fiber);
+        Janet             out    = janet_wrap_nil();
+        const JanetSignal signal = pcall_rooted(thunk, 0, nullptr, &out);
 
         restore();
 
@@ -2905,7 +2947,7 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
     Janet          args[2]   = {_pImpl->_zelph_peg, janet_cstringv(expanded.c_str())};
     Janet          result;
 
-    if (janet_pcall(match_fun, 2, args, &result, nullptr) != JANET_SIGNAL_OK)
+    if (Impl::pcall_rooted(match_fun, 2, args, &result) != JANET_SIGNAL_OK)
     {
         return "";
     }

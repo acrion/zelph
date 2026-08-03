@@ -119,3 +119,59 @@ TEST_CASE("zelph/run-script: a second run sees an edited dependency")
         CHECK(any_output_contains(collector, "tag=v2"));
         CHECK_FALSE(any_output_contains(collector, "tag=v1")); });
 }
+
+// ---------------------------------------------------------------------------
+// zelph/import from Janet: statement processing re-entered from inside the VM.
+//
+// This is the path that makes every janet_pcall in script_engine.cpp a NESTED
+// call -- the VM is already running when the imported script's statements are
+// parsed, its inline-keyword handlers are invoked and its rules are built. A
+// fiber created for such a call is reachable from no GC root unless it is
+// rooted by hand (see pcall_rooted), and a collection inside the call then
+// frees the fiber that is running it.
+//
+// The symptom is not a failed assertion but a crash somewhere else entirely,
+// so what these cases pin is that the path runs at all, and that both halves
+// of it -- plain facts and RULE construction, which goes through
+// zelph/dedup-rule and its scratch cluster -- survive it.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("zelph/import: a .zph script imported from Janet builds facts and rules")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto dir = make_script_dir("import");
+        write_file(dir / "rules.zph",
+                   "(A ancestorof B) => (B descendantof A)\n"
+                   "abraham ancestorof isaac\n");
+
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "rules.zph").string() + R"js("))js");
+        interactive.run(true, false, false);
+        collector.clear();
+
+        interactive.process(R"js(%(string "IMP-FACT-" (zelph/exists "abraham" "ancestorof" "isaac")))js");
+        interactive.process(R"js(%(string "IMP-DERIVED-" (zelph/exists "isaac" "descendantof" "abraham")))js");
+        CHECK(any_output_contains(collector, "IMP-FACT-true"));
+        CHECK(any_output_contains(collector, "IMP-DERIVED-true")); });
+}
+
+TEST_CASE("zelph/import: the same rule imported twice from Janet stays one rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto dir = make_script_dir("import-twin");
+        // Two files, because the module guard would refuse the same one
+        // twice. The second import therefore reaches the duplicate branch of
+        // zelph/dedup-rule, which drops its scratch cluster again.
+        write_file(dir / "first.zph", "(A ancestorof B) => (B descendantof A)\n");
+        write_file(dir / "second.zph", "(X ancestorof Y) => (Y descendantof X)\n");
+
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "first.zph").string() + R"js("))js");
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "second.zph").string() + R"js("))js");
+        interactive.process("abraham ancestorof isaac");
+        interactive.run(true, false, false);
+        collector.clear();
+
+        interactive.process(R"js(%(string "TWIN-DERIVED-" (zelph/exists "isaac" "descendantof" "abraham")))js");
+        CHECK(any_output_contains(collector, "TWIN-DERIVED-true")); });
+}
