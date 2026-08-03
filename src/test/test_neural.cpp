@@ -243,6 +243,179 @@ o2 in MOut
 }
 
 // ---------------------------------------------------------------------------
+// Sparse input handling: the node-addressed entry points know which inputs
+// are non-zero and evaluate only those. That must be an optimisation and
+// nothing else - the same numbers, the same weights afterwards.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: node-addressed evaluation equals the dense pass")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Four inputs, two hidden units, one output: wide enough that a
+        // single active input leaves most of the layer at zero, and deep
+        // enough to cover the ReLU on the way.
+        process_lines(interactive, R"(
+a1 in SIn
+a2 in SIn
+a3 in SIn
+a4 in SIn
+h1 in SHid
+h2 in SHid
+s1 in SOut
+%(zelph/nn-connect-layers "SIn" "SHid" 0.5)
+%(zelph/nn-connect-layers "SHid" "SOut" 0.5)
+%(def net (zelph/nn-compile [(zelph/resolve "SIn") (zelph/resolve "SHid") (zelph/resolve "SOut")]))
+%(for e 0 40 (zelph/nn-train-nodes net ["a1" "a3"] [["s1" 0.7]] 0.05) (zelph/nn-train-nodes net ["a2"] [["s1" -0.3]] 0.05))
+)");
+
+        // One active input, then two, then a graded one: in each case the
+        // node-addressed result must equal the dense vector's exactly. The
+        // skipped terms are multiplications by zero, so this is equality,
+        // not approximate agreement.
+        collector.clear();
+        interactive.process(R"(%(let [d (get (zelph/nn-eval net [1 0 1 0]) 0)
+                                      s (get (get (zelph/nn-eval-nodes net ["a1" "a3"] 1) 0) 1)]
+                                  (if (= d s) "two-active-equal" (string "two-active-differ " d " " s))))");
+        CHECK(any_output_contains(collector, "two-active-equal"));
+
+        collector.clear();
+        interactive.process(R"(%(let [d (get (zelph/nn-eval net [0 1 0 0]) 0)
+                                      s (get (get (zelph/nn-eval-nodes net ["a2"] 1) 0) 1)]
+                                  (if (= d s) "one-active-equal" (string "one-active-differ " d " " s))))");
+        CHECK(any_output_contains(collector, "one-active-equal"));
+
+        collector.clear();
+        interactive.process(R"(%(let [d (get (zelph/nn-eval net [0 0 0.25 0]) 0)
+                                      s (get (get (zelph/nn-eval-nodes net [["a3" 0.25]] 1) 0) 1)]
+                                  (if (= d s) "graded-equal" (string "graded-differ " d " " s))))");
+        CHECK(any_output_contains(collector, "graded-equal"));
+
+        // An empty input activates nothing at all, which is the degenerate
+        // case of the sparse loop.
+        collector.clear();
+        interactive.process(R"(%(let [d (get (zelph/nn-eval net [0 0 0 0]) 0)
+                                      s (get (get (zelph/nn-eval-nodes net [] 1) 0) 1)]
+                                  (if (= d s) "empty-equal" (string "empty-differ " d " " s))))");
+        CHECK(any_output_contains(collector, "empty-equal")); });
+}
+
+TEST_CASE("neural: node-addressed training leaves the same weights as the dense pass")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Two identical nets over disjoint layers, one trained through the
+        // dense entry point and one through the node-addressed one. Every
+        // weight must match afterwards, including those of the inputs that
+        // were never active - they must not drift.
+        process_lines(interactive, R"(
+d1 in DIn
+d2 in DIn
+d3 in DIn
+e1 in DOut
+n1 in NIn
+n2 in NIn
+n3 in NIn
+f1 in NOut
+%(zelph/nn-connect-layers "DIn" "DOut" 0)
+%(zelph/nn-connect-layers "NIn" "NOut" 0)
+%(def dense (zelph/nn-compile [(zelph/resolve "DIn") (zelph/resolve "DOut")]))
+%(def sparse (zelph/nn-compile [(zelph/resolve "NIn") (zelph/resolve "NOut")]))
+%(for i 0 50 (zelph/nn-train dense [1 0 0.5] [0.8] 0.05) (zelph/nn-train dense [0 1 0] [-0.4] 0.05))
+%(for i 0 50 (zelph/nn-train-nodes sparse [["n1" 1] ["n3" 0.5]] [["f1" 0.8]] 0.05) (zelph/nn-train-nodes sparse ["n2"] [["f1" -0.4]] 0.05))
+%(zelph/nn-write-back dense)
+%(zelph/nn-write-back sparse)
+)");
+        collector.clear();
+        interactive.process(R"(%(if (and (= (zelph/weight "d1" "e1") (zelph/weight "n1" "f1"))
+                                         (= (zelph/weight "d2" "e1") (zelph/weight "n2" "f1"))
+                                         (= (zelph/weight "d3" "e1") (zelph/weight "n3" "f1")))
+                                  "weights-equal"
+                                  (string "weights-differ "
+                                          (zelph/weight "d1" "e1") "/" (zelph/weight "n1" "f1") " "
+                                          (zelph/weight "d2" "e1") "/" (zelph/weight "n2" "f1") " "
+                                          (zelph/weight "d3" "e1") "/" (zelph/weight "n3" "f1"))))");
+        CHECK(any_output_contains(collector, "weights-equal"));
+
+        // The reported loss is the value before the update, so both paths
+        // must also agree on it.
+        collector.clear();
+        interactive.process(R"(%(let [d (zelph/nn-train dense [1 0 0.5] [0.8] 0)
+                                      s (zelph/nn-train-nodes sparse [["n1" 1] ["n3" 0.5]] [["f1" 0.8]] 0)]
+                                  (if (= d s) "loss-equal" (string "loss-differ " d " " s))))");
+        CHECK(any_output_contains(collector, "loss-equal")); });
+}
+
+// ---------------------------------------------------------------------------
+// Weight snapshots: a training run can be put back where it was best
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: a snapshot restores the exact weights it was taken from")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+p1 in PIn
+p2 in PIn
+q1 in POut
+%(zelph/nn-connect-layers "PIn" "POut" 0)
+%(def net (zelph/nn-compile [(zelph/resolve "PIn") (zelph/resolve "POut")]))
+%(for i 0 30 (zelph/nn-train-nodes net ["p1"] [["q1" 1.0]] 0.1))
+%(def good (zelph/nn-snapshot net))
+%(def good-score (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1))
+%(for i 0 30 (zelph/nn-train-nodes net ["p1"] [["q1" -5.0]] 0.1))
+)");
+        // The net has been trained away from where the snapshot was taken.
+        collector.clear();
+        interactive.process(R"(%(if (> (math/abs (- (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1) good-score)) 0.5) "moved-away" "did-not-move"))");
+        CHECK(any_output_contains(collector, "moved-away"));
+
+        // Restoring must reproduce the earlier score exactly, not closely.
+        collector.clear();
+        interactive.process(R"(%(do (zelph/nn-restore net good)
+                                    (if (= (get (get (zelph/nn-eval-nodes net ["p1"] 1) 0) 1) good-score) "restored-exactly" "restored-differently")))");
+        CHECK(any_output_contains(collector, "restored-exactly"));
+
+        // And the restored weights are the ones write-back puts in the graph.
+        collector.clear();
+        interactive.process(R"(%(do (zelph/nn-write-back net)
+                                    (if (= (zelph/weight "p1" "q1") good-score) "written-back" (string "written-back-differs " (zelph/weight "p1" "q1")))))");
+        CHECK(any_output_contains(collector, "written-back"));
+
+        // A snapshot of the wrong shape is rejected rather than truncated.
+        collector.clear();
+        interactive.process(R"(%(try (zelph/nn-restore net [[1 2 3 4 5]]) ([err] "shape-rejected")))");
+        CHECK(any_output_contains(collector, "shape-rejected"));
+
+        collector.clear();
+        interactive.process(R"(%(try (zelph/nn-restore net [[0 0] [0 0]]) ([err] "count-rejected")))");
+        CHECK(any_output_contains(collector, "count-rejected")); });
+}
+
+TEST_CASE("neural: restoring never resurrects a synapse the graph does not have")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Only one of the two possible synapses exists in the graph.
+        process_lines(interactive, R"(
+r1 in RIn
+r2 in RIn
+s1 in ROut
+%(zelph/nn-connect "r1" "s1" 0.25)
+%(def net (zelph/nn-compile [(zelph/resolve "RIn") (zelph/resolve "ROut")]))
+%(def snap (zelph/nn-snapshot net))
+)");
+        // Hand-write a weight into the absent slot and restore it. Training
+        // has always refused to create that synapse; restoring must too.
+        collector.clear();
+        interactive.process(R"(%(do (put (get snap 0) 1 9.0)
+                                    (zelph/nn-restore net snap)
+                                    (zelph/nn-write-back net)
+                                    (if (nil? (zelph/weight "r2" "s1")) "absent-stays-absent" (string "leaked " (zelph/weight "r2" "s1")))))");
+        CHECK(any_output_contains(collector, "absent-stays-absent")); });
+}
+
+// ---------------------------------------------------------------------------
 // Graph-driven training: the reasoning query defines the training data
 // ---------------------------------------------------------------------------
 

@@ -387,7 +387,14 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/import path & args)`**  
   Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
   This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "decimal-arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
-  Two restrictions apply: `.janet` files are rejected (use Janet's own `import`, `use`, or `dofile` for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+  Two restrictions apply: `.janet` files are rejected (use `zelph/run-script` below, or Janet's own `import`, `use`, or `dofile`, for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
+
+- **`(zelph/run-script path & args)`**  
+  Run a Janet source file the way the `janet` CLI would, and the counterpart of `zelph/import` for `.janet` files: the file is evaluated in a fresh environment, and its `main` function — if it defines one — is then called with the script path followed by `args`. Returns `nil`.  
+  This is what the binary itself uses for `zelph <file.janet>`, so a script written for that invocation runs unchanged when called from Janet.  
+  Two properties are worth knowing, because neither follows from the name:
+    - Relative imports such as `(use ./helper)` resolve against the **script's** directory, not the process's working directory, so a script can be started from anywhere.
+    - Every run starts from an empty module cache. Janet's `require` caches modules process-wide, so without this a second run of the same script would keep the first version of every dependency it pulled in — an edit to `helper.janet` would be invisible for the rest of the session.
 
 ##### Running the engine
 
@@ -478,6 +485,36 @@ Note that facts created by an imported script count as ordinary additions here. 
 
 The safe pattern is therefore: define the rules, `zelph/run` once, then assert and `zelph/run-delta` per unit of new data.
 
+##### Scoped work: clusters
+
+The graph is monotonic. A program that asserts a fact base, reasons about it and reads the conclusions has no way to take the fact base out again, so every question it ever asks stays — and the pattern "one fact base per document, per position, per request" accumulates without bound.
+
+A **cluster** is the answer. It records the IDs of the nodes *created* while it is active, and dropping it removes exactly those. Nodes that already existed are never recorded, so a drop cannot reach them: a cluster is safe as scratch space over a graph loaded from disk. This is the same mechanism `.explain` uses internally to evaluate a pattern without asserting it.
+
+- **`(zelph/cluster &opt name)`**  
+  Activate the named cluster, creating it if needed. `nil` or `"default"` deactivates cluster tracking. Without an argument nothing changes. In every case the function returns the name of the cluster that is active afterwards, or `nil` for the default. Main thread only.
+
+- **`(zelph/cluster-drop name)`**  
+  Remove every node recorded in the cluster — with its edges and names — and return how many were removed. Facts *outside* the cluster that referenced cluster nodes lose those connections. The default cluster cannot be dropped; an unknown name removes nothing and returns 0. Main thread only.
+
+- **`(zelph/clusters)`**  
+  An array of `[name node-count]` tuples, one per existing cluster. Main thread only.
+
+The scratch-space pattern, which is what makes assert–reason–read–discard loops possible at all:
+
+```janet
+(zelph/cluster "scratch")
+(zelph/fact "subject-of-this-request" "~" "something")
+(zelph/run-delta)
+(def answer (zelph/query ...))
+(zelph/cluster nil)
+(zelph/cluster-drop "scratch")
+```
+
+Unlike `.cluster` and `.cluster-drop`, these print nothing. That is deliberate: a caller that scopes one question per iteration of its own loop invokes them thousands of times, and the commands' status lines would be noise on the caller's own output channel rather than information. The return values carry what a program actually wants to know.
+
+Clusters are session state and are not persisted by `zelph/save`.
+
 ##### Persistence
 
 - **`(zelph/save file)`**  
@@ -501,9 +538,13 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors.
 - **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step; returns the loss before the update.
 - **`(zelph/nn-write-back handle)`** — write trained weights back into the graph's weight store (required for `.save` and for `≈` conditions).
+- **`(zelph/nn-snapshot handle)`** — copy the weights out as an array of arrays of numbers.
+- **`(zelph/nn-restore handle snapshot)`** — put a snapshot back; shapes must match, absent synapses stay absent.
 - **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — densely wire two layers; idempotent, preserves existing weights.
 - **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
+
+The two node-addressed calls price the input layer by the number of active neurons rather than by its width, because they are told which ones are non-zero; the dense pair cannot be. Same numbers, so prefer them whenever the input is a multi-hot encoding of a large domain — see [Neural networks](neural.md#node-addressed-training).
 - **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
 ##### Output
@@ -1072,6 +1113,9 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `.run`                          | `(zelph/run)`                                       | Run forward chaining to a fixed point                                       |
 | `.run-once`                     | `(zelph/run-once)`                                  | Run a single inference pass                                                 |
 | `.run-delta`                    | `(zelph/run-delta)`                                 | Run inference seeded only by the facts added since the last run             |
+| `.cluster <name>`               | `(zelph/cluster "name")`                            | Activate a cluster; returns the active name, or `nil` for the default       |
+| `.cluster-drop <name>`          | `(zelph/cluster-drop "name")`                       | Roll back everything created in the cluster; returns the node count removed |
+| `.cluster` (listing)            | `(zelph/clusters)`                                  | Array of `[name node-count]` tuples                                         |
 | `&42`                           | `(zelph/number "42")`                               | Number literal; delegates to the redefinable `zelph/number` hook            |
 | `&`-literal display             | `(zelph/set-number-digits ["0" "1" ...])`           | Register digit alphabet; digit lists display as decimal `&`-literals        |
 | `≈net(A P30 X)`                 | `(zelph/approx (zelph/fact 'A "P30" 'X) "net")`     | Neural rule condition (see [Neural Networks in the Graph](neural.md))       |

@@ -88,6 +88,9 @@ The remaining compiled-network API:
 - **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors (in `zelph/nn-nodes` order). Hidden layers use ReLU, the output layer is linear.
 - **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step on one sample; returns the loss (`0.5 · Σ error²`) _before_ the update. Learning rate defaults to 0.01.
 - **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — wiring helper: creates raw synapses between _all_ members of two layers, with uniform random weights in `[-scale, scale]` (`scale` defaults to 0.1; `scale 0` gives exact zeros; `seed` defaults to 42 for reproducibility). Existing edges are left untouched, so the call is idempotent and re-wiring never destroys trained weights.
+- **`(zelph/nn-snapshot handle)`** / **`(zelph/nn-restore handle snapshot)`** — copy the weights out as an array of arrays of numbers, and put them back. Shapes must match; a synapse absent from the graph stays absent, because the mask belongs to the graph rather than to the weights.
+
+Snapshots exist because training passes its best point before anything can notice. A criterion like "the held-out loss has not improved for _n_ epochs" only fires _n_ epochs late, and on a noisy curve it fires at a point that says more about the noise than about the model — so without a way back, what gets saved is never quite what was measured. Take a snapshot whenever the held-out loss improves, restore it before `zelph/nn-write-back`, and the saved network is the one the number described.
 
 ## Node-Addressed Training
 
@@ -96,10 +99,13 @@ Plain vectors are inconvenient when the training data _is_ the graph. The node-a
 - **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — one SGD step. `inputs`/`targets` are arrays whose elements are nodes (activation 1) or `[node activation]` pairs; all other neurons are 0 (multi-hot encoding). A typical call encodes one fact: inputs `[S P]`, target `[O]`.
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — forward pass; returns `[node score]` tuples for the output layer, sorted by descending score, optionally limited to the top k.
 
-Two details worth knowing:
+Three details worth knowing:
 
 - **Implicit negative sampling.** A one-hot target sets the correct object to 1 and _every other output neuron to 0_. Each training step therefore pushes all wrong answers down while pulling the right one up — no explicit negative samples are needed.
 - **Graded activations.** `[node 0.5]` feeds a quantitative value instead of a binary flag, e.g. edge weights of another network, or degrees of confidence.
+- **The input layer costs `O(active)`, not `O(width)`.** These two entry points are told which neurons are non-zero, and they evaluate and update only those. The dense entry points cannot know this and multiply by every zero. The result is the same number — the skipped terms are multiplications by zero — so the choice is purely one of cost.
+
+That last point decides how wide an input layer may be. A multi-hot encoding of a large domain activates a handful of neurons out of thousands, and the node-addressed path prices it by the handful. Measured on a 768 × 32 × 1 network with 32 active inputs: a training epoch over 652 500 samples fell from 23.4 s to 2.05 s, with every reported loss identical to the last digit. Widening the input layer further is then nearly free, because the cost follows the samples rather than the layer.
 
 Nodes that are not members of the addressed layer are rejected with an error rather than silently ignored — a deliberate choice, since silently dropping an input would corrupt training data without any signal.
 

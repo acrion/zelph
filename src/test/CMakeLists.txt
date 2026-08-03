@@ -83,8 +83,10 @@ add_executable(zelph_tests
     test_rule_patterns.cpp
     test_result_query.cpp
     test_save_memory.cpp
+    test_script_cluster.cpp
     test_script_query.cpp
     test_script_run.cpp
+    test_script_runner.cpp
     test_self_predicate.cpp
     test_seminaive.cpp
     test_sets.cpp
