@@ -74,6 +74,7 @@ add_executable(zelph_tests
     test_performance_guard.cpp
     test_polynomial.cpp
     test_pow.cpp
+    test_predicate_index.cpp
     test_predicate_slice.cpp
     test_primes.cpp
     test_profiler.cpp

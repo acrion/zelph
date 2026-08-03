@@ -136,7 +136,7 @@ namespace zelph::network
                 detail::PidxHeader h{};
                 if (fread(&h, sizeof(h), 1, file) == 1
                     && std::memcmp(h.magic, "ZPIX", 4) == 0
-                    && h.version == 1
+                    && h.version == 2
                     && h.predicate == predicate
                     && h.node_count == _pidx_node_count
                     && h.last == _pidx_last
@@ -180,7 +180,7 @@ namespace zelph::network
 
             detail::PidxHeader h{};
             std::memcpy(h.magic, "ZPIX", 4);
-            h.version    = 1;
+            h.version    = 2;
             h.predicate  = predicate;
             h.node_count = _pidx_node_count;
             h.last       = _pidx_last;

@@ -105,10 +105,15 @@ namespace zelph::network
         // interfere. Files store host-endian raw pairs - they are machine-
         // local caches, not an interchange format.
 
+        // Version 2: the extraction reads a relation's subject exactly (the
+        // triple hash) instead of taking every bidirectionally linked node.
+        // A version-1 sidecar therefore holds an edge per fact that has one
+        // of the indexed facts as ITS subject, and none for a self-fact, so
+        // it is rejected rather than trusted -- the next closure rebuilds it.
         struct PidxHeader
         {
             char     magic[4]; // "ZPIX"
-            uint32_t version;  // 1
+            uint32_t version;  // 2
             uint64_t predicate;
             uint64_t node_count;
             uint64_t last;
