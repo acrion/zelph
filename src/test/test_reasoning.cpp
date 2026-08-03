@@ -851,6 +851,62 @@ nodeB P279 nodeD
         CHECK_FALSE(any_output_contains(collector, "nodeD")); });
 }
 
+TEST_CASE("janet: a statement ABOUT a fact is not a subject of that fact's predicate")
+{
+    // zelph/sources is documented to return "exactly those nodes S for which
+    // the fact S predicate target exists". A fact that has the fact as its
+    // SUBJECT -- a reified statement, a rule condition, the rule-pattern
+    // marking -- is linked to it in both directions exactly like its own
+    // subject, and the bidirectionality test could not tell the two apart. So
+    // `(a p b) note ok` reported itself as a subject of `p`, and the SPARQL
+    // layer, which is built on this primitive, returned it as a result row.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x p b
+(a p b) note ok
+)");
+        collector.clear();
+        interactive.process(R"(%(string "SRC-" (length (zelph/sources "p" "b"))))");
+        CHECK(any_output_contains(collector, "SRC-2"));
+
+        // The query is the second reading of the same question and answers
+        // two; the count above must not exceed it.
+        collector.clear();
+        interactive.process("S p b");
+        CHECK(collect_answers(collector).size() == 2);
+
+        // The reifying statement is still reachable as what it is.
+        collector.clear();
+        interactive.process(R"(%(string "NOTE-" (length (zelph/sources "note" "ok"))))");
+        CHECK(any_output_contains(collector, "NOTE-1")); });
+}
+
+TEST_CASE("janet: a self-fact has a subject and an object like any other")
+{
+    // `a p a` stores its object in the subject's bidirectional entry, so the
+    // "object is unidirectional" test found no object at all and the "subject
+    // is not the object" test dropped the subject: both traversals reported
+    // NOTHING for a fact the query answers. Sets and lists are built on these
+    // two functions, so this was not a curiosity of self-referential data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("m p m");
+
+        collector.clear();
+        interactive.process(R"(%(string "S-" (zelph/name (first (zelph/sources "p" "m")))))");
+        CHECK(any_output_contains(collector, "S-m"));
+
+        collector.clear();
+        interactive.process(R"(%(string "T-" (zelph/name (first (zelph/targets "m" "p")))))");
+        CHECK(any_output_contains(collector, "T-m"));
+
+        collector.clear();
+        interactive.process("S p m");
+        CHECK(collect_answers(collector).size() == 1); });
+}
+
 // ---------------------------------------------------------------------------
 // Variable name sharing across rules
 // ---------------------------------------------------------------------------

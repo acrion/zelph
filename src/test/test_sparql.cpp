@@ -156,6 +156,57 @@ TEST_CASE("sparql: single triple pattern")
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
+TEST_CASE("sparql: a statement ABOUT a fact is not a subject of that fact's predicate")
+{
+    // zelph reifies natively: `Q1 P31 Q5` is a node, and a statement about it
+    // is an ordinary fact whose SUBJECT is that node. Such a statement is
+    // linked to the reified fact in BOTH directions -- exactly like the
+    // fact's own subject -- and the traversal primitives this layer is built
+    // on read the roles off the adjacency, so the statement answered as a
+    // subject of P31. No reification is needed to produce the shape: a rule
+    // with a ground condition makes the rule node a fact whose subject is
+    // that condition, and every parsed rule marks its ground patterns with a
+    // second one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    (Q1 P31 Q5) P585 Q2020
+    )");
+        collector.clear();
+
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }");
+
+        CHECK(any_output_contains(collector, "Q1"));
+        CHECK(any_output_contains(collector, "Q2"));
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+TEST_CASE("sparql: a statement ABOUT a fact is not an ancestor on a property path")
+{
+    // The same confusion inside the transitive closure, where it is worse:
+    // the statement inherited the ENTIRE ancestry of the fact it talks
+    // about, so a backward P279 path reported it as a superclass.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    (Q5 P279 Q50) P585 Q2020
+    )");
+        collector.clear();
+
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P279+ wd:Q500 . }");
+
+        CHECK(any_output_contains(collector, "Q5"));
+        CHECK(any_output_contains(collector, "Q6"));
+        CHECK(any_output_contains(collector, "Q50"));
+        CHECK(any_output_contains(collector, "-- 3 result(s) --")); });
+}
+
 TEST_CASE("sparql: join of two triple patterns")
 {
     run_both_modes([](auto& collector, auto& interactive)

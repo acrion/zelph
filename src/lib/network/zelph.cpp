@@ -242,16 +242,21 @@ adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) 
 
     for (const Node rel : get_right(subject))
     {
-        // Validate: predicate in right(rel), subject bidirectional (in left and right).
-        if (has_right_edge(rel, predicate) && has_right_edge(rel, subject) && has_left_edge(rel, subject))
+        if (!has_right_edge(rel, predicate)) continue;
+
+        // The EXACT decomposition, not the role test on the adjacency. The
+        // unidirectionality of an object is not a property of the graph: a
+        // SELF-fact stores its object in the subject's bidirectional entry,
+        // so `a p a` had no object at all and was invisible here while the
+        // query answered it. get_fact_structures is the reading unification
+        // uses, and it is what makes the two agree.
+        for (const auto& fs : *get_fact_structures(this, rel, 3))
         {
-            for (const Node obj : get_left(rel))
+            if (fs.predicate != predicate || fs.subject != subject) continue;
+
+            for (const Node obj : fs.objects)
             {
-                // Objects: in left(rel) but NOT in right(rel) (unidirectional).
-                if (obj != subject && !is_var(obj) && !has_right_edge(rel, obj))
-                {
-                    objects.insert(obj);
-                }
+                if (!is_var(obj)) objects.insert(obj);
             }
         }
     }
@@ -271,20 +276,21 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
 
     for (const Node rel : get_right(object))
     {
-        if (has_right_edge(rel, predicate) && has_left_edge(rel, object) && !has_right_edge(rel, object))
+        if (!has_right_edge(rel, predicate)) continue;
+
+        // The EXACT decomposition, for the same reason as in
+        // get_fact_objects -- and here the adjacency reading was not merely
+        // incomplete but wrong: a fact that has `rel` as ITS subject (a
+        // statement ABOUT the fact, a rule condition, the rule-pattern
+        // marking) is linked to rel in BOTH directions, exactly like rel's
+        // own subject, and was reported as one. `(a p b) note ok` made
+        // itself a subject of `p` with object `b`, which the documented
+        // contract of zelph/sources -- and the query `S p b` -- deny.
+        for (const auto& fs : *get_fact_structures(this, rel, 3))
         {
-            for (const Node subj : get_left(rel))
-            {
-                // Subjects: bidirectional (in both left and right of rel).
-                // Being the predicate as well is no disqualification -- a
-                // fact whose subject IS its predicate (`~ ~ ->`) still has
-                // that subject, and the bidirectionality test already rejects
-                // a node that is merely the predicate.
-                if (subj != object && !is_var(subj) && has_right_edge(rel, subj))
-                {
-                    subjects.insert(subj);
-                }
-            }
+            if (fs.predicate != predicate || fs.objects.count(object) == 0) continue;
+
+            if (!is_var(fs.subject)) subjects.insert(fs.subject);
         }
     }
 

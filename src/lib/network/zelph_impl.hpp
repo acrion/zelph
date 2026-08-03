@@ -1730,6 +1730,55 @@ namespace zelph::network
             }
         }
 
+        // The objects of `rel`, read from adjacency alone: everything the
+        // relation is pointed at by and does not point back at. Computed ONCE
+        // per relation, since the subject test below needs the whole set.
+        //
+        // EMPTY does not mean "no objects": a self-fact stores nothing but its
+        // subject on the right, and that subject is its object as well. The
+        // subject is not known here, so is_fact_subject handles that case.
+        static adjacency_set fact_objects_of(const adjacency_set& rel_left, const adjacency_set& rel_right)
+        {
+            adjacency_set objects;
+
+            for (const Node o : rel_right)
+            {
+                if (rel_left.count(o) == 0) objects.insert(o);
+            }
+
+            return objects;
+        }
+
+        // Is `cand` the SUBJECT of `rel`, whose predicate is `predicate` and
+        // whose objects are `objects` (from fact_objects_of)?
+        //
+        // The bidirectionality of a subject is not a discriminator: a fact
+        // that has `rel` as ITS subject -- a statement about the fact, a rule
+        // condition, the rule-pattern marking -- is linked to rel in both
+        // directions in exactly the same way. A node IS the hash of its
+        // triple, so recomputing that hash answers the question exactly.
+        //
+        // The two traversals below hold the adjacency locks and therefore
+        // cannot call get_fact_structures, which takes them itself; this is
+        // the same reading in pure hash arithmetic. Subject == predicate
+        // (`~ ~ ->`) needs no exemption: it hashes back like anything else.
+        static bool is_fact_subject(const Node           rel,
+                                    const Node           predicate,
+                                    const Node           cand,
+                                    const adjacency_set& rel_left,
+                                    const adjacency_set& rel_right,
+                                    const adjacency_set& objects)
+        {
+            if (is_var(cand)) return false;
+            if (rel_left.count(cand) == 0 || rel_right.count(cand) == 0) return false;
+
+            if (!objects.empty()) return create_hash(predicate, cand, objects) == rel;
+
+            // Self-fact: the candidate is its own object, and only then is
+            // the extra set built -- once per candidate of a rare shape.
+            return create_hash(predicate, cand, adjacency_set{cand}) == rel;
+        }
+
         static unsigned int index_build_threads()
         {
 #ifdef __EMSCRIPTEN__
@@ -1773,7 +1822,6 @@ namespace zelph::network
             {
                 try
                 {
-                    std::vector<Node> subjects;
                     for (size_t i = begin; i < end; ++i)
                     {
                         const Node rel = rels[i];
@@ -1790,22 +1838,60 @@ namespace zelph::network
                         // contribute nothing below.
                         if (rel_left.count(predicate) == 0) continue;
 
-                        subjects.clear();
-                        for (const Node cand : rel_left)
-                        {
-                            if (cand == predicate || is_var(cand)) continue;
-                            if (rel_right.count(cand) == 1) subjects.push_back(cand);
-                        }
-                        if (subjects.empty()) continue;
+                        // One pass, same reading as the direct traversal: the
+                        // objects on one side, the bidirectional nodes on the
+                        // other. A single bidirectional node IS the subject;
+                        // a second one is a fact that has rel as ITS subject
+                        // and only then is the exact triple hash paid for.
+                        adjacency_set objects;
+                        Node          subject       = 0;
+                        size_t        bidirectional = 0;
 
-                        for (const Node obj : rel_right)
+                        for (const Node c : rel_right)
+                        {
+                            if (rel_left.count(c) == 0)
+                            {
+                                objects.insert(c);
+                            }
+                            else
+                            {
+                                ++bidirectional;
+                                subject = c;
+                            }
+                        }
+
+                        if (bidirectional == 0) continue;
+
+                        // subject == predicate is the second case the fast
+                        // path may not decide: rel is a candidate because it
+                        // points AT the predicate, which it also does when
+                        // the predicate is its SUBJECT -- every `P ~ ->`
+                        // declaration is such a relation. The hash separates
+                        // the declaration from a genuine `~ ~ ->`.
+                        if (bidirectional > 1 || subject == predicate)
+                        {
+                            subject = 0;
+                            for (const Node c : rel_right)
+                            {
+                                if (is_fact_subject(rel, predicate, c, rel_left, rel_right, objects))
+                                {
+                                    subject = c;
+                                    break;
+                                }
+                            }
+                            if (subject == 0) continue;
+                        }
+
+                        if (is_var(subject)) continue;
+
+                        // A self-fact keeps its object in that bidirectional
+                        // entry, so the split above leaves it empty.
+                        if (objects.empty()) objects.insert(subject);
+
+                        for (const Node obj : objects)
                         {
                             if (is_var(obj)) continue;
-                            if (rel_left.count(obj) == 1) continue; // not a pure object
-                            for (const Node subj : subjects)
-                            {
-                                out_pairs.emplace_back(subj, obj);
-                            }
+                            out_pairs.emplace_back(subject, obj);
                         }
                     }
                 }
@@ -2050,14 +2136,58 @@ namespace zelph::network
                     if (rr_it == _right.end()) continue;
                     const adjacency_set& rel_right = rr_it->second;
 
+                    // One pass over the incoming side splits it into the
+                    // objects and the bidirectional nodes. The SUBJECT is
+                    // always bidirectional and always present, so a single
+                    // bidirectional node IS the subject -- no hash needed.
+                    // More than one means the fact has a CHILD fact (a
+                    // statement about it, the rule it is a condition of, its
+                    // rule-pattern marking), which is linked in both
+                    // directions in exactly the same way; only then is the
+                    // exact triple hash consulted. That kept the common case
+                    // at the cost it had before.
+                    adjacency_set objects;
+                    Node          subject       = 0;
+                    size_t        bidirectional = 0;
+
+                    for (const Node c : rel_right)
+                    {
+                        if (rel_left.count(c) == 0)
+                        {
+                            objects.insert(c);
+                        }
+                        else
+                        {
+                            ++bidirectional;
+                            subject = c;
+                        }
+                    }
+
+                    if (bidirectional == 0) continue;
+
+                    if (bidirectional > 1)
+                    {
+                        subject = 0;
+                        for (const Node c : rel_right)
+                        {
+                            if (is_fact_subject(rel, predicate, c, rel_left, rel_right, objects))
+                            {
+                                subject = c;
+                                break;
+                            }
+                        }
+                        if (subject == 0) continue;
+                    }
+
+                    if (is_var(subject)) continue;
+
                     if (forward)
                     {
-                        // n must be the subject (bidirectional with rel).
-                        if (rel_left.count(n) == 0 || rel_right.count(n) == 0) continue;
-                        for (const Node obj : rel_right)
+                        if (subject != n) continue;
+
+                        for (const Node obj : objects)
                         {
                             if (obj == n || is_var(obj)) continue;
-                            if (rel_left.count(obj) == 1) continue; // not a pure object
                             if (seen.insert(obj).second)
                             {
                                 result.insert(obj);
@@ -2067,17 +2197,12 @@ namespace zelph::network
                     }
                     else
                     {
-                        // n must be in the pure object role.
-                        if (rel_right.count(n) == 0 || rel_left.count(n) == 1) continue;
-                        for (const Node subj : rel_right)
+                        if (subject == n || objects.count(n) == 0) continue;
+
+                        if (seen.insert(subject).second)
                         {
-                            if (subj == n || subj == predicate || is_var(subj)) continue;
-                            if (rel_left.count(subj) == 0) continue; // subjects are bidirectional
-                            if (seen.insert(subj).second)
-                            {
-                                result.insert(subj);
-                                next.push_back(subj);
-                            }
+                            result.insert(subject);
+                            next.push_back(subject);
                         }
                     }
                 }
