@@ -3515,6 +3515,20 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             || code[first_char_idx + 1] == '\n' || code[first_char_idx + 1] == '('
             || code[first_char_idx + 1] == '$'))
     {
+        // Written WITHOUT the space -- "?(S P O)", "?$( ... ) ≡ $( ... )" --
+        // the bracket opens inside the token the '?' started, so the whole
+        // request counted as ONE token less than the spaced form and none of
+        // the counts below could match: the statement looked unfinished
+        // forever, although the character after '?' is one this very
+        // condition accepts. Split it here and the two spellings are the same
+        // question again. Balanced brackets are guaranteed (depth == 0 above).
+        if (first_char_idx + 1 < code.size()
+            && (code[first_char_idx + 1] == '(' || code[first_char_idx + 1] == '$'))
+        {
+            ++top_tokens;
+            second_token_first = code[first_char_idx + 1];
+        }
+
         if (top_tokens >= 4) return true;
         if (top_tokens == 3 && second_token_first == ':') return true;
         if (top_tokens == 2

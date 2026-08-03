@@ -1588,6 +1588,7 @@ private:
             "          ? (&17 mod &5)              Answer: (&17 mod &5) = &2",
             "          ? :testprime &53            Answer: (:testprime &53) = prime",
             "          ? $( x*x ) diffby x         Answer: ... = (x + x)",
+            "          The space is optional before ( and $: ?(&17 mod &5) is the same.",
             "          No answer means no result was derivable (partiality by absence).",
             "",
             "Rules:    (condition1, condition2, ...) => (deduction)",

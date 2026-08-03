@@ -109,6 +109,37 @@ TEST_CASE("? prefix: symbolic pipeline and math-syntax islands (all arithmetic m
         CHECK(answers_contain(collector, "(:simplify (x + &0)) = x")); });
 }
 
+TEST_CASE("? prefix: the space after '?' is optional, as the trigger says")
+{
+    // The trigger accepts '(' and '$' directly after the '?' -- and then the
+    // statement never completed: written without the space, the bracket opens
+    // inside the token the '?' started, so the whole request counted as ONE
+    // top-level token less than the spaced form and the accumulator waited
+    // for a continuation that never came ("Input ends inside an unfinished
+    // statement"). Both spellings are the same question.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) = r");
+
+        for (const char* form : {"?(a p b)", "? (a p b)", "? a p b"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(answers_contain(collector, "(a p b) = r"));
+        }
+
+        // A bracket group FOLLOWED by more tokens is where the count was off
+        // by one, and it is the shape the math tutorial uses
+        // ("? $( ... ) ≡ $( ... )").
+        interactive.process("((a p b) rel x) = done");
+        for (const char* form : {"?(a p b) rel x", "? (a p b) rel x"})
+        {
+            collector.clear();
+            interactive.process(form);
+            CHECK(answers_contain(collector, "((a p b) rel x) = done"));
+        } });
+}
+
 TEST_CASE("? prefix: error handling and non-trigger cases")
 {
     run_both_modes([](auto& collector, auto& interactive)
