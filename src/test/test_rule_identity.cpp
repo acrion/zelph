@@ -351,3 +351,33 @@ TEST_CASE("rule identity: a set constant keeps deciding by identity")
         interactive.process(".list-rules");
         CHECK(listed_rules(collector) == 2); });
 }
+
+TEST_CASE("rule identity: a rule sharing a set constant survives its duplicate's rollback")
+{
+    // zelph/dedup-rule builds every parsed rule in a scratch cluster and drops
+    // that scratch again once it finds an alpha-equivalent twin. So the twin
+    // branch performs a REMOVAL, on nodes the duplicate has in common with the
+    // rule already in the graph -- and a set constant is shared by
+    // construction, since the literal hash-conses.
+    //
+    // Removing a PartOf fact dooms its container, which is right for an
+    // element and wrong for the variable of a pattern. Getting that wrong
+    // deleted the ORIGINAL rule and left "No rules found" (002dcbc), and this
+    // is the side that made it reachable without any removal command at all:
+    // typing the same rule twice was enough.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        interactive.process("(A in {a b}) => (A flagged yes)");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 1);
+        CHECK_FALSE(any_output_contains(collector, "No rules found"));
+
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S flagged yes");
+        CHECK(answers_contain(collector, "a flagged yes"));
+        CHECK(answers_contain(collector, "b flagged yes")); });
+}
