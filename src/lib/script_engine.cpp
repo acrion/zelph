@@ -97,6 +97,11 @@ public:
     Janet               _zelph_peg{};
     bool                _log_janet_functions = false;
 
+    // Set while zelph/dedup-rule runs its thunk: the facts built there are a
+    // rule's patterns, not claims, so zelph/fact must not revoke a
+    // pattern marking then.
+    bool _building_rule = false;
+
     // A registered syntax keyword. Two kinds share this entry, the
     // registration API (zelph/register-keyword) and the handler protocol
     // (text in, :incomplete veto, result out):
@@ -500,7 +505,12 @@ public:
 
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)janet_cfun_zelph_query), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
 
-        janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether a fact exists without creating it. Returns boolean.");
+        janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)janet_cfun_zelph_exists), "(zelph/exists s p o)\nCheck whether the fact was CLAIMED -- asserted or derived -- without creating it. Returns boolean.\n"
+                                                                                             "A statement that only occurs as a rule's pattern is not claimed; ask zelph/mentioned for that.");
+
+        janet_def(_janet_env, "zelph/mentioned", wrap((JanetCFunction)janet_cfun_zelph_mentioned), "(zelph/mentioned s p o)\nCheck whether the fact NODE is present in the graph, whether or not anybody claimed it.\n"
+                                                                                                   "True for a rule's own conditions and consequences, which zelph/exists reports as absent. Use this to\n"
+                                                                                                   "inspect rule structure; use zelph/exists to ask about the data.");
 
         janet_def(_janet_env, "zelph/name", wrap((JanetCFunction)janet_cfun_zelph_name), "(zelph/name node &opt lang)\nReturn the name of a node as a string, or nil if unnamed.");
 
@@ -924,18 +934,22 @@ public:
 
     // Check whether a fact exists in the graph without creating it.
     // Returns true if the fact (subject predicate object...) is known.
-    static Janet janet_cfun_zelph_exists(int32_t argc, Janet* argv)
+    // Shared by zelph/exists and zelph/mentioned. The two ask different
+    // questions about the same node: whether the statement was CLAIMED --
+    // asserted or derived -- and whether the node is present at all, which a
+    // rule's ground pattern is without anybody having claimed it.
+    static Janet fact_probe(const char* name, const bool asserted_only, int32_t argc, Janet* argv)
     {
         janet_arity(argc, 3, -1);
         if (!s_instance) return janet_wrap_boolean(0);
-        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, true);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
 
         network::Node s = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node p = s_instance->resolve_janet_arg_no_create(argv[1]);
         if (!s || !p)
         {
             Janet res = janet_wrap_boolean(0);
-            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);
             return res;
         }
 
@@ -946,16 +960,33 @@ public:
             if (!o)
             {
                 Janet res = janet_wrap_boolean(0);
-                if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+                if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);
                 return res;
             }
             objs.insert(o);
         }
 
-        network::Answer ans = s_instance->_n->check_fact(s, p, objs);
-        Janet           res = janet_wrap_boolean(ans.is_known() ? 1 : 0);
-        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/exists", argc, argv, false, res);
+        network::Answer ans   = s_instance->_n->check_fact(s, p, objs);
+        bool            known = ans.is_known();
+
+        if (known && asserted_only)
+        {
+            known = s_instance->_n->is_asserted_fact(network::Zelph::create_hash(p, s, objs));
+        }
+
+        Janet res = janet_wrap_boolean(known ? 1 : 0);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);
         return res;
+    }
+
+    static Janet janet_cfun_zelph_exists(int32_t argc, Janet* argv)
+    {
+        return fact_probe("zelph/exists", true, argc, argv);
+    }
+
+    static Janet janet_cfun_zelph_mentioned(int32_t argc, Janet* argv)
+    {
+        return fact_probe("zelph/mentioned", false, argc, argv);
     }
 
     // Return the name of a node as a string, or nil if unnamed.
@@ -1954,8 +1985,16 @@ public:
 
         s_instance->_n->set_active_cluster(scratch);
 
+        // Everything the thunk builds is rule STRUCTURE, not a claim -- see
+        // the revocation in janet_cfun_zelph_fact, which must stay out of a
+        // rule construction or a second rule mentioning the same ground
+        // statement would turn the first one's pattern into data.
+        s_instance->_building_rule = true;
+
         Janet             out    = janet_wrap_nil();
         const JanetSignal signal = pcall_rooted(thunk, 0, nullptr, &out);
+
+        s_instance->_building_rule = false;
 
         restore();
 
@@ -2172,8 +2211,18 @@ public:
             return res;
         }
 
-        network::Node f   = s_instance->_n->fact(s, p, objs);
-        Janet         res = zelph_wrap_node(f);
+        network::Node f = s_instance->_n->fact(s, p, objs);
+
+        // zelph/fact IS the assertion API, so calling it is a CLAIM and
+        // revokes the pattern-only status the same statement may have
+        // acquired by appearing in a rule -- exactly as a typed statement
+        // does. Without this, a ground rule condition asserted from Janet
+        // stayed invisible to unification and the rule never fired, while
+        // zelph/exists still answered true off the rule's own pattern.
+        // Inside a rule construction nothing is claimed; see _building_rule.
+        if (f && !s_instance->_building_rule) s_instance->_n->unmark_rule_pattern(f);
+
+        Janet res = zelph_wrap_node(f);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
         return res;
     }

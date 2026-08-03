@@ -357,13 +357,16 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   The argument is typically the return value of `(zelph/fact 'X ... 'Y)`.
 
 - **`(zelph/exists s p o & more-objects)`**  
-  Check whether a fact exists **without creating** nodes/facts. Returns boolean.
+  Check whether the fact was **claimed** — asserted or derived — **without creating** nodes/facts. Returns boolean. A statement that occurs only as a rule's own condition or consequence is not claimed; see [Claimed or merely written down](#claimed-or-merely-written-down).
+
+- **`(zelph/mentioned s p o & more-objects)`**  
+  Check whether the fact **node** is present at all, whether or not anybody claimed it. True for a rule's own patterns, which `zelph/exists` reports as absent. Use it to inspect rule structure; use `zelph/exists` to ask about the data.
 
 - **`(zelph/name node &opt lang)`**  
   Return the node’s name as a string (or `nil` if unnamed). Optional `lang` selects the naming language.
 
 - **`(zelph/sources predicate target)`**  
-  Return exactly those nodes S for which the fact S predicate target exists — i.e. nodes in the subject role. target must be in the object role of the matching fact: given a R b and b R c, (zelph/sources R b) returns only a (not c), and (zelph/targets b R) returns only c (not a).
+  Return exactly those nodes S for which the claimed fact S predicate target exists — i.e. nodes in the subject role. target must be in the object role of the matching fact: given a R b and b R c, (zelph/sources R b) returns only a (not c), and (zelph/targets b R) returns only c (not a). A statement ABOUT such a fact is not a subject of it, and a rule's own pattern is not an answer.
 
 - **`(zelph/targets subject predicate)`**  
   Return all objects `O` such that `subject predicate O` exists (read-only traversal).
@@ -777,7 +780,7 @@ The following functions inspect the graph without modifying it. Unlike `zelph/fa
 
 ##### Existence Check: `zelph/exists`
 
-`zelph/exists` checks whether a fact is present in the graph:
+`zelph/exists` checks whether a fact was claimed — asserted or derived:
 
 ```
 %(zelph/exists "Berlin" "is located in" "Germany")   # → true
@@ -793,6 +796,45 @@ Like `zelph/fact`, it accepts strings (resolved in the current language), `zelph
 %(def berlin (zelph/resolve "Berlin"))
 %(zelph/exists berlin "~" "city")
 ```
+
+##### Claimed or Merely Written Down
+
+Writing a rule materialises its conditions and consequences as real fact
+nodes — the engine has nothing else to match against. Such a node is a
+statement the rule *writes down*, not one anybody claimed, and the whole
+read surface says so: `zelph/exists`, `zelph/sources`, `zelph/targets` and
+the two closures all answer about **claimed** facts, which is what the
+queries and the reasoning engine have always meant by a fact.
+
+`zelph/mentioned` asks the other question — is this node there at all —
+and is the way to inspect rule structure:
+
+```
+zelph> (Berlin is-capital-of Germany) => (Germany has-capital yes)
+zelph> Paris is-capital-of France
+zelph> %(zelph/out (string "exists Berlin: " (zelph/exists "Berlin" "is-capital-of" "Germany")))
+exists Berlin: false
+zelph> %(zelph/out (string "mentioned Berlin: " (zelph/mentioned "Berlin" "is-capital-of" "Germany")))
+mentioned Berlin: true
+zelph> %(zelph/out (string "exists Paris: " (zelph/exists "Paris" "is-capital-of" "France")))
+exists Paris: true
+zelph> %(zelph/out (string "sources: " (string/join (sorted (map zelph/name (zelph/sources "is-capital-of" "Germany"))) ",")))
+sources: 
+```
+
+Claiming the statement — by typing it, by deriving it, or by calling
+`zelph/fact` — makes it data from that moment on, and the rule fires:
+
+```
+zelph> %(zelph/fact "Berlin" "is-capital-of" "Germany")
+<zelph/node Berlin is-capital-of Germany>
+(Germany has-capital yes) ⇐ (Berlin is-capital-of Germany)
+zelph> %(zelph/out (string "exists Berlin now: " (zelph/exists "Berlin" "is-capital-of" "Germany")))
+exists Berlin now: true
+```
+
+A pattern carrying a variable is never data either, so a rule condition
+such as `(X p Y)` is invisible to all of the above by the same rule.
 
 ##### Node Names: `zelph/name`
 

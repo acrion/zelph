@@ -184,6 +184,38 @@ TEST_CASE("sparql: a statement ABOUT a fact is not a subject of that fact's pred
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
+TEST_CASE("sparql: a rule's own pattern is not a result row")
+{
+    // Writing a rule materializes its conditions and consequences as fact
+    // nodes -- the engine has nothing else to match against -- and a GROUND
+    // one is indistinguishable from data by its edges alone. The queries have
+    // refused them since the marking was introduced; this layer is built on
+    // the Janet traversals, which had kept the structural reading, so it
+    // answered statements nobody had made. The closure form is the one that
+    // matters for the class hierarchy: a pattern edge would make one class a
+    // subclass of another because some rule mentions the pair.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    (Q1 P31 Q5) => (Q2 P31 Q6)
+    Q3 P31 Q5
+    Q5 P279 Q50
+    (Q9 P279 Q5) => (Q2 P31 Q6)
+    )");
+        collector.clear();
+
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }");
+        CHECK(any_output_contains(collector, "Q3"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --"));
+
+        collector.clear();
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P279+ wd:Q50 . }");
+        CHECK(any_output_contains(collector, "Q5"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
 TEST_CASE("sparql: a statement ABOUT a fact is not an ancestor on a property path")
 {
     // The same confusion inside the transitive closure, where it is worse:

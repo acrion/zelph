@@ -269,6 +269,34 @@ namespace zelph::network
         // never worse than the pre-flag behaviour.
         bool var_in_closure(Node nd) const;
 
+        // Did anybody CLAIM this statement? True for an asserted or derived
+        // fact, false for the two kinds of node that exist as graph structure
+        // without being claimed: a rule's ground patterns (marked by
+        // mark_rule_patterns, revoked the moment the statement is asserted or
+        // derived) and any fact carrying a variable, which is a pattern by
+        // construction -- a rule condition, or the query just typed.
+        //
+        // This is the reading of the whole READ surface: the traversals
+        // below, the Janet API they carry, and the usage listings. Unification
+        // answers the same question through its own gates, and `.explain`
+        // prints it as "[rule pattern; not asserted]". The structural
+        // question -- does this node exist at all -- is check_fact/exists.
+        bool is_asserted_fact(Node fact) const;
+
+        // The same question for callers that must ask it while holding the
+        // adjacency locks, which forbids asking it directly: both stores are
+        // guarded by their own mutexes and their writers take those BEFORE
+        // the adjacency locks, so a probe in the opposite order could
+        // deadlock. Snapshot the nodes to skip first, then lock.
+        //
+        // Returns nullptr when there is nothing to skip -- the ordinary case,
+        // and no allocation for it. The variable half is only as complete as
+        // the template-var store: after a binary load or `.fact-stores off`
+        // the store is disarmed, and a traversal then rejects a variable
+        // through the is_var tests on the triple it reads, which covers every
+        // pattern except one whose SUBJECT is itself composite.
+        std::shared_ptr<const adjacency_set> unasserted_snapshot() const;
+
         struct VarClosureStats
         {
             uint64_t flag_queries{0};

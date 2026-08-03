@@ -1792,7 +1792,7 @@ namespace zelph::network
         // Phase 1: extract (subject, object) pairs from the predicate's
         // relation nodes (parallel; see previous comments on locking and
         // swap-bound random access). Returns the unsorted forward pairs.
-        std::vector<IndexPair> extract_predicate_pairs(const Node predicate) const
+        std::vector<IndexPair> extract_predicate_pairs(const Node predicate, const adjacency_set* skip) const
         {
             // Same lock order as writers (connect): left before right.
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -1825,6 +1825,13 @@ namespace zelph::network
                     for (size_t i = begin; i < end; ++i)
                     {
                         const Node rel = rels[i];
+
+                        // A statement nobody claimed carries no edge: a rule's
+                        // ground pattern, or a fact carrying a variable. The
+                        // set is snapshotted by the caller because asking
+                        // directly would take its mutex under the adjacency
+                        // locks -- see Zelph::unasserted_snapshot.
+                        if (skip != nullptr && skip->count(rel) != 0) continue;
 
                         const auto rl_it = _left.find(rel);
                         const auto rr_it = _right.find(rel);
@@ -2002,7 +2009,7 @@ namespace zelph::network
             return idx;
         }
 
-        std::shared_ptr<const PredicateIndex> predicate_index(const Node predicate) const
+        std::shared_ptr<const PredicateIndex> predicate_index(const Node predicate, const adjacency_set* skip) const
         {
             {
                 std::shared_lock lock(_pred_idx_mtx);
@@ -2012,13 +2019,13 @@ namespace zelph::network
 
             std::vector<IndexPair> fw;
 #ifdef __EMSCRIPTEN__
-            fw = extract_predicate_pairs(predicate);
+            fw = extract_predicate_pairs(predicate, skip);
 #else
             bool fresh = false;
 
             if (!try_load_pidx(predicate, fw))
             {
-                fw    = extract_predicate_pairs(predicate);
+                fw    = extract_predicate_pairs(predicate, skip);
                 fresh = true;
             }
 #endif
@@ -2095,12 +2102,13 @@ namespace zelph::network
         // been scanned - hub nodes blow the budget immediately, signalling
         // the caller to switch to the predicate index. On false, `result`
         // is partial and must be discarded.
-        bool try_transitive_direct(Node           start,
-                                   Node           predicate,
-                                   bool           include_start,
-                                   bool           forward,
-                                   size_t         scan_budget,
-                                   adjacency_set& result) const
+        bool try_transitive_direct(Node                 start,
+                                   Node                 predicate,
+                                   bool                 include_start,
+                                   bool                 forward,
+                                   size_t               scan_budget,
+                                   const adjacency_set* skip,
+                                   adjacency_set&       result) const
         {
             // Same lock order as writers (connect): left before right.
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -2127,6 +2135,10 @@ namespace zelph::network
 
                 for (const Node rel : edges_it->second)
                 {
+                    // Not an edge of the closure: nobody claimed it. Same
+                    // snapshot as the index build above.
+                    if (skip != nullptr && skip->count(rel) != 0) continue;
+
                     const auto rl_it = _left.find(rel);
                     if (rl_it == _left.end()) continue;
                     const adjacency_set& rel_left = rl_it->second;

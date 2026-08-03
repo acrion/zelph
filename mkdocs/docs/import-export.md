@@ -278,5 +278,5 @@ For CSV files with quoted fields or embedded commas, consider using the `spork/c
 | Encode JSON                 | `(encode value)` — from `spork/json`                                                       |
 | Create facts from data      | `(zelph/fact subject predicate object)`                                                    |
 | Query the graph             | `(zelph/query (zelph/fact 'X pred 'Y))`                                                    |
-| Check existence (read-only) | `(zelph/exists subj pred obj)`                                                             |
+| Check existence (read-only) | `(zelph/exists subj pred obj)` — claimed facts; `zelph/mentioned` for rule structure       |
 | Get node name as string     | `(zelph/name node)`                                                                        |

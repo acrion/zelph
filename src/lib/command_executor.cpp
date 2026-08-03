@@ -1301,19 +1301,17 @@ public:
     }
 
 private:
-    // A fact carrying a VARIABLE is a pattern -- a rule's condition or
-    // consequence, or the query the user has just typed -- and a ground rule
-    // pattern is one as well. Nobody asserted either, and unification skips
-    // both (see Unification::Next and Zelph::is_rule_pattern), so counting
-    // them made the listings report what no query can reproduce: typing
-    // `S p O` once added a use of `p` and reported `O` as a value of it.
-    bool is_asserted_fact(const network::Node fact) const
-    {
-        return !_n->is_rule_pattern(fact) && !_n->var_in_closure(fact);
-    }
-
     void list_predicate_usage(size_t limit)
     {
+        // A fact carrying a VARIABLE is a pattern -- a rule's condition or
+        // consequence, or the query the user has just typed -- and a ground
+        // rule pattern is one as well. Nobody asserted either, and every
+        // other reader skips both (see Zelph::is_asserted_fact), so counting
+        // them made the listings report what no query can reproduce: typing
+        // `S p O` once added a use of `p` and reported `O` as a value of it.
+        // One snapshot per command, and nullptr when there is nothing to skip.
+        const auto skip = _n->unasserted_snapshot();
+
         // Map to store predicate node and its usage count
         std::map<network::Node, size_t> predicate_usage_counts;
 
@@ -1331,7 +1329,7 @@ private:
             size_t asserted = 0;
             for (const network::Node fact : facts_using_predicate)
             {
-                if (is_asserted_fact(fact)) ++asserted;
+                if (skip == nullptr || skip->count(fact) == 0) ++asserted;
             }
 
             predicate_usage_counts[pred] = asserted;
@@ -1416,9 +1414,12 @@ private:
         // `pred ~ ->` declaration on every predicate there is.
         network::adjacency_set facts = _n->get_facts_of_predicate(pred);
 
+        // Patterns are not values either; see .list-predicate-usage.
+        const auto skip = _n->unasserted_snapshot();
+
         for (network::Node fact : facts)
         {
-            if (!is_asserted_fact(fact)) continue;
+            if (skip != nullptr && skip->count(fact) != 0) continue;
 
             // The EXACT decomposition, not the adjacency reading. A fact's
             // incoming set holds its subject and objects -- and every fact

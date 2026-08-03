@@ -240,9 +240,17 @@ adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) 
     if (_pImpl->try_indexed_fact_lookup(predicate, subject, /*forward*/ true, objects))
         return objects;
 
+    // A rule's pattern is not an answer: nobody claimed it. Taken from the
+    // snapshot rather than from is_asserted_fact, which would cost a store
+    // probe -- or, after a binary load, a reconstruction walk -- per
+    // CANDIDATE; the snapshot is one lookup per call and nullptr whenever the
+    // graph holds no patterns at all. The is_var tests below cover the rest.
+    const auto skip = unasserted_snapshot();
+
     for (const Node rel : get_right(subject))
     {
         if (!has_right_edge(rel, predicate)) continue;
+        if (skip && skip->count(rel) != 0) continue;
 
         // The EXACT decomposition, not the role test on the adjacency. The
         // unidirectionality of an object is not a property of the graph: a
@@ -274,9 +282,12 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
     if (_pImpl->try_indexed_fact_lookup(predicate, object, /*forward*/ false, subjects))
         return subjects;
 
+    const auto skip = unasserted_snapshot(); // see get_fact_objects
+
     for (const Node rel : get_right(object))
     {
         if (!has_right_edge(rel, predicate)) continue;
+        if (skip && skip->count(rel) != 0) continue;
 
         // The EXACT decomposition, for the same reason as in
         // get_fact_objects -- and here the adjacency reading was not merely
@@ -307,24 +318,29 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
 // closure switches to the cached per-predicate index.
 adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, const bool include_start) const
 {
+    // Before the locks, never inside them -- see unasserted_snapshot.
+    const auto skip = unasserted_snapshot();
+
     adjacency_set result;
-    if (_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, kDirectClosureScanBudget, result))
+    if (_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, kDirectClosureScanBudget, skip.get(), result))
         return result;
 
     result.clear();
-    const auto idx = _pImpl->predicate_index(predicate);
+    const auto idx = _pImpl->predicate_index(predicate, skip.get());
     return bfs_over_index(idx->forward, start, include_start);
 }
 
 // Transitive closure following the predicate backward (object -> subject).
 adjacency_set Zelph::transitive_sources(const Node target, const Node predicate, const bool include_target) const
 {
+    const auto skip = unasserted_snapshot();
+
     adjacency_set result;
-    if (_pImpl->try_transitive_direct(target, predicate, include_target, /*forward*/ false, kDirectClosureScanBudget, result))
+    if (_pImpl->try_transitive_direct(target, predicate, include_target, /*forward*/ false, kDirectClosureScanBudget, skip.get(), result))
         return result;
 
     result.clear();
-    const auto idx = _pImpl->predicate_index(predicate);
+    const auto idx = _pImpl->predicate_index(predicate, skip.get());
     return bfs_over_index(idx->backward, target, include_target);
 }
 
@@ -1803,6 +1819,33 @@ bool Zelph::var_in_closure(const Node nd) const
     if (logging_active()) _var_flag_fallbacks.fetch_add(1, std::memory_order_relaxed);
     std::unordered_set<Node> visited;
     return var_in_closure_walk(this, nd, visited);
+}
+
+bool Zelph::is_asserted_fact(const Node fact) const
+{
+    return !is_rule_pattern(fact) && !var_in_closure(fact);
+}
+
+std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
+{
+    auto out = std::make_shared<adjacency_set>();
+
+    if (_pImpl->_has_rule_patterns.load(std::memory_order_acquire))
+    {
+        std::shared_lock lock(_pImpl->_rule_patterns_mtx);
+        for (const Node n : _pImpl->_rule_patterns)
+            out->insert(n);
+    }
+
+    if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
+    {
+        std::shared_lock lock(_pImpl->_template_vars_mtx);
+        for (const auto& entry : _pImpl->_template_vars)
+            out->insert(entry.first);
+    }
+
+    if (out->empty()) return nullptr;
+    return out;
 }
 
 Zelph::VarClosureStats Zelph::var_closure_stats() const

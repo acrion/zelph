@@ -170,6 +170,77 @@ TEST_CASE("rule patterns: asserting it afterwards revokes the mark")
         CHECK(answers_contain(collector, "c q d")); });
 }
 
+TEST_CASE("rule patterns: the Janet read surface answers about claims")
+{
+    // The queries had taken this reading since the marking was introduced;
+    // the Janet API kept the structural one, and SPARQL is built on it -- so
+    // `SELECT ?s WHERE { ?s p b }` answered `a` for a graph in which nobody
+    // had said `a p b`. All of it now asks the same question, and the
+    // structural one keeps its own name.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(a p b) => (c q d)
+x p b
+b p z
+)");
+
+        collector.clear();
+        interactive.process(R"(%(string "SRC-" (string/join (sorted (map zelph/name (zelph/sources "p" "b"))) ",")))");
+        CHECK(any_output_contains(collector, "SRC-x"));
+
+        collector.clear();
+        interactive.process(R"(%(string "TGT-" (string/join (sorted (map zelph/name (zelph/targets "a" "p"))) ",")))");
+        CHECK(any_output_contains(collector, "TGT-"));
+        CHECK_FALSE(any_output_contains(collector, "TGT-b"));
+
+        // The closure must not walk THROUGH the pattern either: a would be an
+        // ancestor of z only via the edge the rule merely writes down.
+        collector.clear();
+        interactive.process(R"(%(string "CLO-" (string/join (sorted (map zelph/name (zelph/closure-sources "z" "p"))) ",")))");
+        CHECK(any_output_contains(collector, "CLO-b,x"));
+
+        collector.clear();
+        interactive.process(R"(%(string "EX-" (zelph/exists "a" "p" "b") "/" (zelph/mentioned "a" "p" "b")))");
+        CHECK(any_output_contains(collector, "EX-false/true"));
+
+        // The control: the asserted neighbour answers both ways.
+        collector.clear();
+        interactive.process(R"(%(string "EX2-" (zelph/exists "x" "p" "b") "/" (zelph/mentioned "x" "p" "b")))");
+        CHECK(any_output_contains(collector, "EX2-true/true")); });
+}
+
+TEST_CASE("rule patterns: a fact asserted from Janet revokes the mark")
+{
+    // zelph/fact is the assertion API, so it claims the statement exactly as
+    // typing it does -- but only the parser's top level used to say so. A
+    // ground rule condition built from Janet therefore stayed a pattern,
+    // unification skipped it, and the rule never fired. It went unnoticed
+    // because zelph/exists answered true off the pattern the rule itself had
+    // written; the polynomial suite asks precisely that question about the
+    // all-ground pneg rule of stdlib/polynomial.zph.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(R"(%(zelph/fact "a" "p" "b"))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(answers_contain(collector, "c q d"));
+
+        collector.clear();
+        interactive.process(R"(%(string "EX-" (zelph/exists "a" "p" "b")))");
+        CHECK(any_output_contains(collector, "EX-true"));
+
+        // Building a RULE from Janet claims nothing: the same statement
+        // written as a second rule's condition stays a pattern.
+        interactive.process("(m r n) => (s t u)");
+        collector.clear();
+        interactive.process(R"(%(string "EX2-" (zelph/exists "m" "r" "n")))");
+        CHECK(any_output_contains(collector, "EX2-false")); });
+}
+
 TEST_CASE("rule patterns: a propositional rule reaches its conclusion")
 {
     // Both halves are needed for this one to be observable at all: the
