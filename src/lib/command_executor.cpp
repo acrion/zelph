@@ -1301,6 +1301,17 @@ public:
     }
 
 private:
+    // A fact carrying a VARIABLE is a pattern -- a rule's condition or
+    // consequence, or the query the user has just typed -- and a ground rule
+    // pattern is one as well. Nobody asserted either, and unification skips
+    // both (see Unification::Next and Zelph::is_rule_pattern), so counting
+    // them made the listings report what no query can reproduce: typing
+    // `S p O` once added a use of `p` and reported `O` as a value of it.
+    bool is_asserted_fact(const network::Node fact) const
+    {
+        return !_n->is_rule_pattern(fact) && !_n->var_in_closure(fact);
+    }
+
     void list_predicate_usage(size_t limit)
     {
         // Map to store predicate node and its usage count
@@ -1316,7 +1327,14 @@ private:
             // predicate, starting with its own `pred ~ ->` declaration, so a
             // declared but unused predicate reported one use.
             const auto& facts_using_predicate = _n->get_facts_of_predicate(pred);
-            predicate_usage_counts[pred]      = facts_using_predicate.size();
+
+            size_t asserted = 0;
+            for (const network::Node fact : facts_using_predicate)
+            {
+                if (is_asserted_fact(fact)) ++asserted;
+            }
+
+            predicate_usage_counts[pred] = asserted;
         }
 
         // Convert map to vector for sorting
@@ -1400,6 +1418,8 @@ private:
 
         for (network::Node fact : facts)
         {
+            if (!is_asserted_fact(fact)) continue;
+
             // The EXACT decomposition, not the adjacency reading. A fact's
             // incoming set holds its subject and objects -- and every fact
             // that uses it as a PREDICATE, which points at it and is not
@@ -1731,6 +1751,9 @@ private:
 
             {".list-predicate-usage", ".list-predicate-usage [max_entries]\n"
                                       "Shows how often each predicate (relation type) is used, sorted by frequency.\n"
+                                      "Counted are ASSERTED and derived facts only: the conditions and consequences\n"
+                                      "of a rule and the pattern of a query are statements nobody claimed, so they\n"
+                                      "are left out and the count agrees with what a query answers.\n"
                                       "If <max_entries> is specified, only the top N most frequent predicates are shown.\n"
                                       "If Wikidata language is active, Wikidata IDs are shown alongside names."},
 
@@ -1738,6 +1761,7 @@ private:
                                             "Shows how often each object (value) is used with the specified predicate, sorted by frequency.\n"
                                             "The predicate can be a name (in the current language), a numeric node ID, or a printed\n"
                                             "FACT such as (a p b) -- a fact in predicate position is addressed the way it prints.\n"
+                                            "Rule patterns and query patterns are not values; see .help .list-predicate-usage.\n"
                                             "If <max_entries> is specified, only the top N most frequent values are shown.\n"
                                             "If the Wikidata language is available and active, Wikidata IDs are shown alongside names."},
 

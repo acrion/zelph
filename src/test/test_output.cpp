@@ -272,18 +272,58 @@ TEST_CASE("commands: predicate usage agrees with what a query answers")
         interactive.process("c rel d");
         interactive.process("rel coinedBy alice");
 
-        // The count comes FIRST: entering a query materializes its pattern,
-        // and that pattern is a fact of `rel` like any other.
-        collector.clear();
-        interactive.process(".list-predicate-usage");
-        const bool counted_two = any_output_contains(collector, "rel 2");
-
+        // The QUERY comes first here on purpose: entering it materializes its
+        // pattern, which is a fact of `rel` in the graph. The count must not
+        // move for that -- see "a pattern is not a use" below.
         collector.clear();
         interactive.process("S rel O");
         const size_t answers = collect_answers(collector).size();
 
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        const bool counted_two = any_output_contains(collector, "rel 2");
+
         CHECK(answers == 2);
         CHECK(counted_two); });
+}
+
+TEST_CASE("commands: a pattern is not a use")
+{
+    // Both listings read every fact that carries the predicate, and a rule's
+    // conditions and consequences are such facts -- so was the pattern of the
+    // query the user had just typed. None of them was asserted by anybody, and
+    // unification refuses to match them, so the listings reported what no
+    // query can reproduce: one rule made `p` carry two uses where one fact
+    // used it, and the rule's own variable `Y` showed up as a VALUE of `p`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(X p Y) => (X q Y)
+(m r n) => (s t u)
+)");
+
+        // The query materializes a third pattern, `S p O`.
+        collector.clear();
+        interactive.process("S p O");
+        const size_t answers = collect_answers(collector).size();
+        CHECK(answers == 1);
+
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "p 1")); // the fact, not the rule and not the query
+        CHECK(any_output_contains(collector, "q 1")); // the DERIVED fact, not the consequence pattern
+        CHECK(any_output_contains(collector, "r 0")); // a ground rule pattern, marked and not data
+        CHECK(any_output_contains(collector, "t 0"));
+
+        collector.clear();
+        interactive.process(".list-predicate-value-usage p");
+        CHECK(any_output_contains(collector, "b 1"));
+        CHECK(any_output_contains(collector, "Total unique values: 1"));
+
+        collector.clear();
+        interactive.process(".list-predicate-value-usage r");
+        CHECK(any_output_contains(collector, "Total unique values: 0")); });
 }
 
 TEST_CASE("commands: a negative count is rejected, not wrapped")
