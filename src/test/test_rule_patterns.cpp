@@ -338,3 +338,54 @@ TEST_CASE("rule patterns: the mark survives .save and .load")
 
     fs::remove(file);
 }
+
+TEST_CASE("rule patterns: a composite predicate in a pattern is not data either")
+{
+    // The descent through a rule's patterns walked the subject and the
+    // objects but not the PREDICATE. For every ordinary rule that costs
+    // nothing -- a named atom has no fact structure to descend into -- but a
+    // COMPOSITE predicate is a ground fact node like any other, and writing
+    // the rule is what brought it into being:
+    //
+    //     (a (b r s) c) => (d q e)
+    //
+    // left `b r s` behind as data, so `(X r Y) => (X leaked Y)` derived
+    // `b leaked s` from a fact nobody had claimed. Exactly the leak afc0f3e
+    // closed for the other two positions.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(a (b r s) c) => (d q2 e)
+(X r Y) => (X leaked Y)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S leaked O");
+        CHECK(collect_answers(collector).empty());
+
+        // It carries the marker, like the condition and the consequence.
+        collector.clear();
+        interactive.process("S Q O");
+        CHECK(answers_contain(collector, "(b r s) ~ \"rule pattern\""));
+        CHECK(answers_contain(collector, "(a (b r s) c) ~ \"rule pattern\"")); });
+}
+
+TEST_CASE("rule patterns: asserting a composite predicate revokes its mark too")
+{
+    // The counterpart: once the statement is CLAIMED it is data, and the rule
+    // that quantifies over it fires -- the mark is revoked exactly as it is
+    // for a subject or an object pattern.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(a (b r s) c) => (d q2 e)
+b r s
+(X r Y) => (X leaked Y)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S leaked O");
+        CHECK(answers_contain(collector, "b leaked s")); });
+}

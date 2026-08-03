@@ -411,6 +411,14 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         if (fresh.count(nd) != 0 && !var_in_closure(nd)) patterns.push_back(nd);
 
         pending.push_back(fs.subject);
+        // The PREDICATE too. It is a named atom for every ordinary rule, so
+        // the is_hash gate above drops it again at no cost -- but a COMPOSITE
+        // predicate is a ground fact node like any other, and writing
+        // `(a (b r s) c) => (d q e)` brought `b r s` into being. Left out of
+        // the descent, it read as data: `(X r Y) => (X leaked Y)` derived
+        // `b leaked s` from a fact nobody had claimed. The same leak afc0f3e
+        // closed for the subject and the objects.
+        pending.push_back(fs.predicate);
         for (const Node o : fs.objects)
             pending.push_back(o);
     }
