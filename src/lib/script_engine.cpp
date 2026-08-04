@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "script_engine.hpp"
+#include "network/fact_structure.hpp"
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
 #include "network/rule_identity.hpp"
@@ -991,13 +992,27 @@ public:
             objs.insert(o);
         }
 
-        network::Answer ans   = s_instance->_n->check_fact(s, p, objs);
-        bool            known = ans.is_known();
+        const network::Answer ans   = s_instance->_n->check_fact(s, p, objs);
+        network::Node         node  = ans.relation();
+        bool                  known = ans.is_known();
 
-        if (known && asserted_only)
+        if (!known)
         {
-            known = s_instance->_n->is_asserted_fact(network::Zelph::create_hash(p, s, objs));
+            // A fact carrying FURTHER objects satisfies this one: `a p b`
+            // holds when the graph says `a p b c`. That is what unification
+            // matches, what a rule with exactly this condition fires on, and
+            // what `¬` refuses to succeed against -- only the exact hash
+            // could not see it. The SPARQL layer asks its ground triples
+            // through here, so it answered "no" to a triple its own
+            // variable patterns answer "yes" to.
+            if (const network::Node wider = network::containing_fact(s_instance->_n, s, p, objs); wider != 0)
+            {
+                node  = wider;
+                known = true;
+            }
         }
+
+        if (known && asserted_only) known = s_instance->_n->is_asserted_fact(node);
 
         Janet res = janet_wrap_boolean(known ? 1 : 0);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);

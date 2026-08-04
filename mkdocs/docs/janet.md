@@ -357,7 +357,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   The argument is typically the return value of `(zelph/fact 'X ... 'Y)`.
 
 - **`(zelph/exists s p o & more-objects)`**  
-  Check whether the fact was **claimed** — asserted or derived — **without creating** nodes/facts. Returns boolean. A statement that occurs only as a rule's own condition or consequence is not claimed; see [Claimed or merely written down](#claimed-or-merely-written-down).
+  Check whether the fact was **claimed** — asserted or derived — **without creating** nodes/facts. Returns boolean. A statement that occurs only as a rule's own condition or consequence is not claimed; see [Claimed or merely written down](#claimed-or-merely-written-down). A fact carrying **further** objects satisfies the question: `(zelph/exists "a" "p" "b")` is true when the graph says `a p b c`, which is what a rule with that condition matches.
 
 - **`(zelph/mentioned s p o & more-objects)`**  
   Check whether the fact **node** is present at all, whether or not anybody claimed it. True for a rule's own patterns, which `zelph/exists` reports as absent. Use it to inspect rule structure; use `zelph/exists` to ask about the data.
