@@ -612,18 +612,32 @@
         (eachp [var-name _] var-syms (put merged var-name value))
         (array/push out merged))
 
+      (defn ground? [[s p o]]
+        (and (not (symbol? s)) (not (symbol? p)) (not (symbol? o))))
+
       (each sol solutions
         (def var-syms @{})
-        (def args-per-triple
+        (def all-args
           (map (fn [[s p o]]
                  [(term->query-arg s sol var-syms)
                   (term->query-arg p sol var-syms)
                   (term->query-arg o sol var-syms)])
                triples))
+
+        # A triple that is fully bound is a QUESTION, and zelph/fact would
+        # answer it by creating it: run-unification builds its pattern with
+        # zelph/fact, which for a ground triple is a real fact and not a
+        # pattern. Asking `{ wd:Q1 wdt:P31 wd:Q7 . ?x wdt:P31 wd:Q6 }` about
+        # a graph that never said Q1 P31 Q7 therefore asserted it and then
+        # reported the row as a result. Ground triples are checked, never
+        # built -- also when only SOME of the group's triples are ground.
+        (def ground-args (filter ground? all-args))
+        (def args-per-triple (filter (fn [t] (not (ground? t))) all-args))
+
+        (if (not (all (fn [[s p o]] (zelph/exists s p o)) ground-args))
+          nil # a ground triple does not hold: this solution is out
         (if (empty? var-syms)
-          # Fully bound: pure existence check, no graph mutation
-          (when (all (fn [[s p o]] (zelph/exists s p o)) args-per-triple)
-            (array/push out sol))
+          (array/push out sol)
           (do
             (def fast
               (and (= 1 (length args-per-triple))
@@ -638,7 +652,7 @@
                     (push-binding sol var-syms tgt))
                   (each src (zelph/sources (as-node p) (as-node o))
                     (push-binding sol var-syms src))))
-              (run-unification sol args-per-triple var-syms)))))
+              (run-unification sol args-per-triple var-syms))))))
       out)))
 
 (defn closure-set

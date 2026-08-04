@@ -184,6 +184,64 @@ TEST_CASE("sparql: a statement ABOUT a fact is not a subject of that fact's pred
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
+TEST_CASE("sparql: a ground triple is a question, not an assertion")
+{
+    // A triple whose three terms are all bound is a QUESTION -- and the
+    // evaluation answered it by CREATING it: the unification path builds its
+    // pattern with zelph/fact, which for a ground triple is an ordinary fact
+    // and not a pattern. So asking about a triple the graph never held
+    // asserted it, the join then found it, and the query reported a row.
+    // Only a group in which some OTHER triple carries a variable took that
+    // path, which is why the all-ground case never showed it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    Q1 P31 Q5
+    Q1 P31 Q6
+    )");
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x WHERE {
+  wd:Q1 wdt:P31 wd:Q7 .
+  ?x wdt:P31 wd:Q6 .
+})");
+        CHECK(any_output_contains(collector, "No results."));
+
+        // ... and the graph must not have learned it.
+        collector.clear();
+        interactive.process("Q1 P31 O");
+        CHECK_FALSE(answers_contain(collector, "Q1 P31 Q7"));
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+TEST_CASE("sparql: a ground triple satisfied by a fact carrying more objects")
+{
+    // The other half of the same question: `Q1 P31 Q5` HOLDS when the graph
+    // says `Q1 P31 Q5 Q6` -- unification matches it, a rule with exactly
+    // that condition fires on it, and the layer's own variable patterns
+    // answer it. Only the ground check went through the exact triple hash,
+    // for which the one-object fact is a different node, so the same query
+    // answered yes or no depending on which of its triples carried the
+    // variable.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    Q1 P31 Q5 Q6
+    )");
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x WHERE {
+  wd:Q1 wdt:P31 wd:Q5 .
+  ?x wdt:P31 wd:Q6 .
+})");
+        CHECK(any_output_contains(collector, "Q1"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
 TEST_CASE("sparql: a rule's own pattern is not a result row")
 {
     // Writing a rule materializes its conditions and consequences as fact
