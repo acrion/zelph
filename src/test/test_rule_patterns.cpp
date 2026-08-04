@@ -241,6 +241,62 @@ TEST_CASE("rule patterns: a fact asserted from Janet revokes the mark")
         CHECK(any_output_contains(collector, "EX2-false")); });
 }
 
+TEST_CASE("rule patterns: naming a rule does not claim what it says")
+{
+    // The counterpart of the case above, and the reason the revocation in
+    // zelph/fact is suppressed for parser-generated code: a typed statement
+    // builds its SUBTERMS through the very same call, and a subterm is not
+    // claimed by the statement that names it. Writing something ABOUT a rule
+    // must leave the rule's patterns exactly where they were -- otherwise
+    // mentioning a rule silently turns its condition and its consequence
+    // into data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process("x documents ((a p b) => (c q d))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK_FALSE(answers_contain(collector, "c q d"));
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK_FALSE(answers_contain(collector, "a p b"));
+
+        // The statement itself is data, of course.
+        collector.clear();
+        interactive.process("X documents Y");
+        CHECK(collect_answers(collector).size() == 1); });
+}
+
+TEST_CASE("rule patterns: a read-only command does not claim the pattern it asks about")
+{
+    // .explain, .node and the prune commands parse their argument into the
+    // same zelph/fact calls a statement does, inside a scratch cluster they
+    // drop again. That is a QUESTION about the graph, not a claim -- but the
+    // revocation keyed on it and the answer changed the answer: asking
+    // ".explain (a p b)" about a rule's pattern turned it into data, so the
+    // command reported "[axiom]" for a statement nobody had made and the
+    // query started answering it afterwards.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "rule pattern"));
+        CHECK_FALSE(any_output_contains(collector, "[axiom]"));
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK_FALSE(answers_contain(collector, "a p b"));
+
+        collector.clear();
+        interactive.process(R"(%(string "EX-" (zelph/exists "a" "p" "b")))");
+        CHECK(any_output_contains(collector, "EX-false")); });
+}
+
 TEST_CASE("rule patterns: a propositional rule reaches its conclusion")
 {
     // Both halves are needed for this one to be observable at all: the

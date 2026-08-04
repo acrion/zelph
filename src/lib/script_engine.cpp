@@ -102,6 +102,31 @@ public:
     // pattern marking then.
     bool _building_rule = false;
 
+    // Set while a user's Janet BLOCK runs -- `%(...)` in the REPL or in a
+    // script. Only there is a zelph/fact call a statement of its own and
+    // therefore a claim. Everywhere else the same call builds part of
+    // something else: the subterms of a parsed statement, the fact pattern a
+    // command like .explain evaluates read-only, the term an inline keyword
+    // island returns. Naming a statement is not claiming it, so the
+    // revocation in zelph/fact asks for this flag rather than for the
+    // absence of one of those contexts.
+    bool _in_janet_block = false;
+
+    // Save/restore around a nested evaluation (an .import inside a block, a
+    // keyword handler): a plain assignment would leak the inner context.
+    struct BlockScope
+    {
+        BlockScope(bool& flag, const bool value)
+            : _flag(flag)
+            , _saved(flag)
+        {
+            _flag = value;
+        }
+        ~BlockScope() { _flag = _saved; }
+        bool&      _flag;
+        const bool _saved;
+    };
+
     // A registered syntax keyword. Two kinds share this entry, the
     // registration API (zelph/register-keyword) and the handler protocol
     // (text in, :incomplete veto, result out):
@@ -2219,8 +2244,10 @@ public:
         // does. Without this, a ground rule condition asserted from Janet
         // stayed invisible to unification and the rule never fired, while
         // zelph/exists still answered true off the rule's own pattern.
-        // Inside a rule construction nothing is claimed; see _building_rule.
-        if (f && !s_instance->_building_rule) s_instance->_n->unmark_rule_pattern(f);
+        // Only in a user's Janet block, and not while a rule is being
+        // built; see _in_janet_block and _building_rule.
+        if (f && s_instance->_in_janet_block && !s_instance->_building_rule)
+            s_instance->_n->unmark_rule_pattern(f);
 
         Janet res = zelph_wrap_node(f);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
@@ -3092,6 +3119,15 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
         _pImpl->_scoped_variables.clear();
+
+    // Parser-generated code builds a statement's SUBTERMS with the same
+    // zelph/fact calls as its top level, and a subterm is not claimed by the
+    // statement that names it: "x documents ((a p b) => (c q d))" says
+    // nothing about `a p b`. So the revocation for a parsed statement stays
+    // with the node the statement EVALUATES to (below), while the one inside
+    // zelph/fact belongs to a user's Janet block -- which this is when
+    // is_zelph_ast is false.
+    Impl::BlockScope block(_pImpl->_in_janet_block, !is_zelph_ast);
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, code.c_str(), "zelph-script", &out);
