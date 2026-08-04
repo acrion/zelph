@@ -151,7 +151,7 @@ namespace zelph::network
             {
                 Node              premise = 0;
                 std::vector<Node> history;
-                const Resolve     r = resolve_pattern(ctx.z, conditions[i], bindings, premise, history);
+                const Resolve     r = resolve_pattern(ctx.z, conditions[i], bindings, premise, history, /*containing*/ true);
                 if (r == Resolve::Unbound) continue;
                 if (r == Resolve::Missing) return false;   // cannot hold under these bindings
                 if (ctx.path.count(premise)) return false; // would support itself
@@ -180,8 +180,14 @@ namespace zelph::network
 
                 Node              premise = 0;
                 std::vector<Node> history;
-                if (resolve_pattern(ctx.z, condition, joined, premise, history) != Resolve::Ok)
-                    continue; // exact-object-set caveat (see resolve_pattern)
+                // `containing`: unification just matched this condition
+                // against the fact, and it matches one carrying MORE objects
+                // -- `(X p Y)` binds Y to each object of `a p b c`. The exact
+                // reading found no premise for those, so the derivation was
+                // not reconstructible and .explain called a DERIVED fact
+                // "asserted; no derivation found".
+                if (resolve_pattern(ctx.z, condition, joined, premise, history, /*containing*/ true) != Resolve::Ok)
+                    continue;
                 if (ctx.path.count(premise)) continue;
 
                 premises.push_back(premise);

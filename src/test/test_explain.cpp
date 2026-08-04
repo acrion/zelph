@@ -65,6 +65,41 @@ TEST_CASE("explain: axioms and single-step derivations")
         } });
 }
 
+TEST_CASE("explain: a premise carrying further objects is found")
+{
+    // Unification matches a one-object condition against a fact that carries
+    // more -- `(X p Y)` binds Y to b and to c of `a p b c`, and the rule
+    // fires twice, exactly as the query answers twice. The proof search
+    // resolved its premises by the exact triple hash, where `a p b` is a
+    // DIFFERENT node that does not exist, so it found no derivation at all
+    // and labelled a derived fact "asserted; no derivation found" -- the one
+    // thing .explain must never say about a fact nobody asserted.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b c");
+        interactive.process("(X p Y) => (X q Y)");
+        interactive.run(true, false, false);
+
+        for (const char* target : {".explain (a q b)", ".explain (a q c)"})
+        {
+            collector.clear();
+            interactive.process(target);
+            CHECK(any_output_contains(collector, "a p b c")); // the fact that MATCHED
+            CHECK(any_output_contains(collector, "[axiom]"));
+            CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        }
+
+        // The exactness the proof search opts out of stays elsewhere: a
+        // prune asked for `a p b` must not take the longer fact with it.
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
 TEST_CASE("explain: depth limit and the ? companion idiom (all arithmetic modules)")
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)

@@ -505,7 +505,7 @@ namespace zelph::network
     //
     // Exact object-set semantics, as in ground_pattern: a graph fact
     // carrying objects beyond the pattern's is a different node and is not
-    // found.
+    // found. `containing` opts out of that -- see the parameter.
     enum class Resolve
     {
         Ok,
@@ -513,7 +513,45 @@ namespace zelph::network
         Missing
     };
 
-    inline Resolve resolve_pattern(const Zelph* n, const Node pattern, const Variables& vars, Node& out, std::vector<Node>& history)
+    // The fact of this subject and predicate whose objects CONTAIN the given
+    // ones, or 0. Unification matches a one-object condition against a fact
+    // that carries more -- `(X p Y)` binds Y to b and to c of `a p b c`, and
+    // the rule fires twice -- so a caller that reconstructs what the engine
+    // did needs the node the engine matched, which the exact hash never
+    // finds. Deliberately NOT the default: a prune asked for `a p b` must
+    // not take `a p b c` with it, and a guard operand that denotes no fact
+    // must stay absent.
+    inline Node containing_fact(const Zelph* n, const Node subject, const Node predicate, const adjacency_set& objects)
+    {
+        for (const Node candidate : n->get_right(subject))
+        {
+            if (!n->has_right_edge(candidate, predicate)) continue;
+
+            for (const auto& fs : *get_fact_structures(n, candidate, 1))
+            {
+                if (fs.predicate != predicate || fs.subject != subject) continue;
+                if (fs.objects.size() <= objects.size()) continue; // equal is the exact case
+
+                bool all = true;
+                for (const Node o : objects)
+                {
+                    if (fs.objects.count(o) == 0)
+                    {
+                        all = false;
+                        break;
+                    }
+                }
+                if (all) return candidate;
+            }
+        }
+
+        return 0;
+    }
+
+    // `containing` true additionally accepts a fact that carries objects
+    // BEYOND the pattern's, which is what unification matched (see
+    // containing_fact). Only the proof reconstruction passes it.
+    inline Resolve resolve_pattern(const Zelph* n, const Node pattern, const Variables& vars, Node& out, std::vector<Node>& history, const bool containing = false)
     {
         if (pattern == 0) return Resolve::Unbound;
 
@@ -553,7 +591,7 @@ namespace zelph::network
         }
 
         Node    gs = 0;
-        Resolve r  = resolve_pattern(n, fs.subject, vars, gs, history);
+        Resolve r  = resolve_pattern(n, fs.subject, vars, gs, history, containing);
         if (r != Resolve::Ok)
         {
             history.pop_back();
@@ -561,7 +599,7 @@ namespace zelph::network
         }
 
         Node gp = 0;
-        r       = resolve_pattern(n, fs.predicate, vars, gp, history);
+        r       = resolve_pattern(n, fs.predicate, vars, gp, history, containing);
         if (r != Resolve::Ok)
         {
             history.pop_back();
@@ -572,7 +610,7 @@ namespace zelph::network
         for (const Node o : fs.objects)
         {
             Node go = 0;
-            r       = resolve_pattern(n, o, vars, go, history);
+            r       = resolve_pattern(n, o, vars, go, history, containing);
             if (r != Resolve::Ok)
             {
                 history.pop_back();
@@ -584,7 +622,18 @@ namespace zelph::network
 
         const Answer ans = n->check_fact(gs, gp, gobjs);
         out              = ans.relation(); // the hash is deterministic even for absent facts
-        return ans.is_known() ? Resolve::Ok : Resolve::Missing;
+        if (ans.is_known()) return Resolve::Ok;
+
+        if (containing)
+        {
+            if (const Node wider = containing_fact(n, gs, gp, gobjs); wider != 0)
+            {
+                out = wider;
+                return Resolve::Ok;
+            }
+        }
+
+        return Resolve::Missing;
     }
 
     // Convenience for display code: the denoted node, or the pattern itself
