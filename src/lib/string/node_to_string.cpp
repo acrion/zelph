@@ -717,6 +717,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // produce a rendering (it falls back on parse_relation too).
         const bool has_own_structure = z->parse_relation(resolved) != 0;
 
+        // The rule-pattern marking is a fact ABOUT the node, not a concept the
+        // node is an instance of, so it must never be substituted FOR the
+        // node: `(a p b) => (c q d)` printed as `(a p b) => ("rule pattern")`
+        // once the consequence lost its own reading -- because the rule was
+        // used as a predicate (two declared relation types among the node's
+        // neighbours, so parse_relation gives up), or because a predicate
+        // slice kept the marking while dropping the triple. Same ruling as
+        // for the negation tag next to it, and the same reason: `.node` and
+        // `.explain` report the marking BESIDE the term, never inside it.
+        // The lookup is paid only for a node that carries the marking, and
+        // is_rule_pattern is one atomic load in a graph that has none.
+        const network::Node rule_pattern_concept = z->is_rule_pattern(resolved) ? z->rule_pattern_predicate(false) : 0;
+
         for (network::Node rel : z->get_right(resolved))
         {
             if (z->parse_relation(rel) == z->core.IsA)
@@ -737,6 +750,9 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                             is_negation = true;
                             continue; // Skip metadata, we will format it structurally below
                         }
+
+                        if (rule_pattern_concept != 0 && concept_node == rule_pattern_concept)
+                            continue; // metadata as well -- see above
 
                         if (has_own_structure) continue; // structure wins over the concept
 

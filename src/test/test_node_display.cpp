@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -879,4 +881,76 @@ TEST_CASE("display: a rule prints its conditions in the surface syntax")
         collector.clear();
         interactive.process("S mypred O");
         CHECK(any_output_contains(collector, "mypred whatever")); });
+}
+
+TEST_CASE("display: the rule-pattern marking is never printed in place of its node")
+{
+    // Same ruling as for the negation tag above, reached from the other side.
+    // The marking is a fact ABOUT a node, and the proxy path of the renderer
+    // -- which shows an anonymous, structureless node as the concept it is an
+    // instance of -- read it as such a concept. A rule then printed as
+    //
+    //     (a p b) => ("rule pattern")
+    //
+    // for a consequence that IS `c q d`: a line that denotes something else
+    // than the node it came from, and one nobody can enter again.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Using the rule as a predicate declares it a relation type, so the
+        // consequence node has TWO declared relation types among its
+        // neighbours and parse_relation gives up -- which is what sent the
+        // node down the proxy path. The recorded triple still answers.
+        interactive.process("(a p b) => (c q d)");
+        collector.clear();
+        interactive.process("x ((a p b) => (c q d)) y");
+        CHECK_FALSE(any_output_contains(collector, "\"rule pattern\""));
+
+        // The marking is still REPORTED, beside the term rather than inside
+        // it -- the property that made removing it from the term acceptable.
+        collector.clear();
+        interactive.process(".node c q d");
+        CHECK(any_output_contains(collector, "Representation: c q d"));
+        CHECK(any_output_contains(collector, "Rule pattern (not asserted): yes"));
+
+        collector.clear();
+        interactive.process(".explain (c q d)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+
+        // ... and it goes when the statement becomes a claim.
+        interactive.process("c q d");
+        collector.clear();
+        interactive.process(".node c q d");
+        CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
+}
+
+TEST_CASE("display: a rule pattern that lost its triple prints as unknown, not as its marking")
+{
+    // A predicate slice keeps the facts of the named predicates and the
+    // marking that travels with a node, but not a consequence built from
+    // another predicate. The rule survived with a consequence node whose own
+    // reading was gone, and the renderer then substituted the marking:
+    // ".list-rules" answered `(a p b) => ("rule pattern")`. "??" is what the
+    // network can honestly say about that node.
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "zelph_rule_pattern_slice.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(a p b) => (c q d)
+z p w
+)");
+        interactive.process(".save-predicates \"" + file.string() + "\" p");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK_FALSE(any_output_contains(collector, "\"rule pattern\""));
+    CHECK(any_output_contains(collector, "(a p b) => ??"));
+
+    std::filesystem::remove(file);
 }

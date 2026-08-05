@@ -564,3 +564,91 @@ x (a p b) y
         CHECK(any_output_contains(collector, "Pruned 1"));
     }
 }
+
+TEST_CASE("pruning: a rule's own ground pattern is not data to prune")
+{
+    // Two notions of matching inside ONE command. The variable form goes
+    // through unification, which skips a rule's ground patterns, so
+    // ".prune-facts (S p O)" correctly prunes nothing where the only "a p b"
+    // is a rule's condition. The ground form asked check_fact -- the
+    // STRUCTURAL probe -- and deleted the node, and a rule goes with a node
+    // its condition is built from, so the rule was gone as well. Silent data
+    // loss on a command the user aimed at data that was never there.
+    SUBCASE("the ground form prunes nothing and the rule survives")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q d)");
+
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+        CHECK(any_event_contains(collector, "only as a rule's own pattern"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
+
+        // The consequence pattern is no more data than the condition is.
+        collector.clear();
+        interactive.process(".prune-nodes (c q d)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
+    }
+
+    SUBCASE("the variable form agrees, as it always did")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q d)");
+
+        collector.clear();
+        interactive.process(".prune-facts (S p O)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
+    }
+
+    SUBCASE("asserting the statement makes it data again")
+    {
+        // The control: asserting revokes the marking, and from then on the
+        // documented cascade applies -- the fact goes, and the rule built on
+        // it goes with it.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+(a p b) => (c q d)
+)");
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+        CHECK_FALSE(any_event_contains(collector, "only as a rule's own pattern"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+    }
+
+    SUBCASE("a DERIVED ground fact is data")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+x r y
+(X r Y) => (a p b)
+)");
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+    }
+}

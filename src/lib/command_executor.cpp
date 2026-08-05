@@ -957,6 +957,14 @@ private:
             _n->out_stream() << "  Negated by a rule: yes" << std::endl;
         }
 
+        // The same reading for the rule-pattern marking, and for the same
+        // reason: the renderer no longer substitutes it for the node, so the
+        // one place that used to show it is gone. ".explain" says it too.
+        if (_n->is_rule_pattern(nd))
+        {
+            _n->out_stream() << "  Rule pattern (not asserted): yes" << std::endl;
+        }
+
         bool        has_wikidata = false;
         std::string wikidata_name;
         bool        has_any_name = false;
@@ -1685,7 +1693,11 @@ private:
                       "incoming/outgoing connection counts, and a clickable Wikidata URL if it has a Wikidata ID.\n"
                       "The argument can be a name (in current language), a numeric node ID, or the\n"
                       "FACT itself -- '.node a rel b', with or without parentheses, exactly as the\n"
-                      "fact prints. If no argument is given, the node from the last output is used."},
+                      "fact prints. If no argument is given, the node from the last output is used.\n"
+                      "Facts ABOUT the node that are engine bookkeeping are reported as properties\n"
+                      "instead of being written into the term: 'Negated by a rule' and 'Rule pattern\n"
+                      "(not asserted)', the latter for a statement that exists only because a rule\n"
+                      "was written with it."},
 
             {".mermaid", ".mermaid <node_name> [max_depth]\n"
                          "Generates a Mermaid HTML file visualizing the specified node and its connections\n"
@@ -1946,6 +1958,9 @@ private:
                              "variables denotes one specific fact and removes exactly that one.\n"
                              "A pattern that matches nothing changes nothing -- in particular it does\n"
                              "not create the fact it describes.\n"
+                             "Both commands remove CLAIMS. A statement that exists only as a rule's own\n"
+                             "condition or consequence is graph structure, not data, and is left alone;\n"
+                             "delete it with .remove <id> if that is really what you mean.\n"
                              "Reports how many facts were removed."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
@@ -1958,6 +1973,7 @@ private:
                              "it is a PART of with it -- see .help .remove -- including facts and\n"
                              "rules that have nothing to do with the pattern, and its names.\n"
                              "Relation nodes left isolated by the deletion are removed by .cleanup.\n"
+                             "Like .prune-facts, it removes CLAIMS only -- see .help .prune-facts.\n"
                              "Reports removed facts and nodes."},
 
             {".cleanup", ".cleanup\n"
@@ -2951,7 +2967,19 @@ private:
         {
             discard_pattern();
 
-            const bool exists = _n->check_fact(pattern_fact).is_known();
+            // Present is not the same as CLAIMED. The variable form below goes
+            // through unification, which skips a rule's own ground patterns
+            // (afc0f3e), so ".prune-facts (S p O)" correctly prunes nothing
+            // where the only "a p b" in the graph is a rule's condition. This
+            // form read the node structurally and deleted it -- taking the
+            // rule with it, since a rule goes with a node its condition is
+            // built from. One statement, two notions of matching, and the
+            // ground one destroyed data the user was not told about.
+            // is_asserted_fact is the reading the whole read surface settled
+            // on (0d0d0a6); .explain keeps the structural probe because it
+            // REPORTS the state instead of acting on it.
+            const bool present = _n->check_fact(pattern_fact).is_known();
+            const bool exists  = present && _n->is_asserted_fact(pattern_fact);
             if (exists) _n->remove_node(pattern_fact);
 
             const std::string what = exists ? "1" : "0";
@@ -2961,6 +2989,11 @@ private:
                 _n->out("Pruned " + what + " matching facts and 0 nodes (a pattern without variables binds nothing to delete).", true);
 
             if (exists) _n->diagnostic("Consider running .cleanup.", true);
+            if (present && !exists)
+                _n->diagnostic("That statement exists only as a rule's own pattern, not as data -- "
+                               "the prune commands remove claims. Use .node to get its ID and .remove "
+                               "to delete graph structure.",
+                               true);
             return;
         }
 

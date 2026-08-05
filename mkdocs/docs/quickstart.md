@@ -154,6 +154,8 @@ zelph provides powerful commands for targeted data removal:
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
   **Warning**: a deleted node takes everything it is a **part** of with it — every fact naming it, every fact naming one of those, and every rule one of them is a condition or a conclusion of — including facts and rules unrelated to the pattern, plus its names. Use with caution!
 
+Both commands remove **claims**. A statement that exists only as a rule's own condition or consequence is graph structure rather than data — queries do not answer it and `.explain` calls it a rule pattern — so the prune commands leave it alone and say so. Use `.node` to get its ID and `.remove` if you really mean to delete that structure.
+
 - `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
 
 Example:
