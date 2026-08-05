@@ -87,12 +87,25 @@ size_t Zelph::remove_node(Node node) const
     // -- a nested fact used elsewhere, a condition two rules share -- and
     // walking down into them would delete knowledge that has nothing to do
     // with the node being removed.
+    // The EXACT decomposition, not parse_fact's adjacency reading. A fact
+    // that uses `whole` as its PREDICATE points at it and is not pointed
+    // back at -- exactly like an object -- so parse_fact reported every such
+    // fact among the objects of `whole`. Removing one fact with a composite
+    // predicate therefore doomed the predicate FACT, and with it every other
+    // fact using that predicate: `.prune-facts (x (a p b) y)` reported one
+    // removal and silently took `z (a p b) w` and `a p b` as well.
+    //
+    // Every reading counts: on removal the conservative answer is the safe
+    // one, and get_fact_structures offers all of them.
     const auto is_part_of = [this](const Node whole, const Node part)
     {
-        adjacency_set objects;
-        if (parse_fact(whole, objects, 0) == part) return true;
-        if (parse_relation(whole) == part) return true;
-        return objects.count(part) != 0;
+        for (const auto& fs : *get_fact_structures(this, whole, 3))
+        {
+            if (fs.subject == part || fs.predicate == part) return true;
+            if (fs.objects.count(part) != 0) return true;
+        }
+
+        return false;
     };
 
     std::vector<Node>                  pending{node};

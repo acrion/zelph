@@ -201,6 +201,38 @@ TEST_CASE("removal: a condition another rule shares is not dragged along")
         CHECK_FALSE(any_output_contains(collector, "(X is q)")); });
 }
 
+TEST_CASE("removal: a fact using a composite predicate is not part of it")
+{
+    // The cascade asked parse_fact what `a p b` consists of, and a fact that
+    // uses it as its PREDICATE points at it without being pointed back at --
+    // exactly like an object. So every such fact counted among its objects,
+    // removing ONE of them doomed the predicate fact, and the predicate fact
+    // took every other user with it: ".prune-facts (x (a p b) y)" reported a
+    // single removal and left a graph without `z (a p b) w` and without
+    // `a p b`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+)");
+        collector.clear();
+        interactive.process(".prune-facts (x (a p b) y)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+
+        collector.clear();
+        interactive.process("S (a p b) O");
+        CHECK(answers_contain(collector, "z (a p b) w"));
+        CHECK_FALSE(answers_contain(collector, "x (a p b) y"));
+
+        // The predicate fact itself is untouched -- it is a part of the
+        // removed fact, and the cascade runs strictly upwards.
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
+}
+
 TEST_CASE("removal: a nested fact goes with the node inside it")
 {
     run_both_modes([](auto& collector, auto& interactive)
