@@ -201,6 +201,31 @@ TEST_CASE("removal: a condition another rule shares is not dragged along")
         CHECK_FALSE(any_output_contains(collector, "(X is q)")); });
 }
 
+TEST_CASE("cleanup: a composite predicate is not a broken fact")
+{
+    // .cleanup's zombie scan walked everything POINTING AT a predicate and
+    // read each as a fact using it. For an atomic predicate the two are the
+    // same set; a COMPOSITE one is a fact as well, so its own subject and
+    // objects point at it too -- and those atoms have no subject of their
+    // own, which is exactly the scan's definition of a zombie. So .cleanup
+    // purged `a` and `b`, and both facts went with them: a maintenance
+    // command deleting the data it was asked to tidy.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+z (a p b) w
+)");
+        collector.clear();
+        interactive.process(".cleanup");
+        CHECK(any_output_contains(collector, "Purged 0 zombie facts"));
+
+        collector.clear();
+        interactive.process("S P O");
+        CHECK(answers_contain(collector, "a p b"));
+        CHECK(answers_contain(collector, "z (a p b) w")); });
+}
+
 TEST_CASE("removal: a fact using a composite predicate is not part of it")
 {
     // The cascade asked parse_fact what `a p b` consists of, and a fact that

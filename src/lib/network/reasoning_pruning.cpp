@@ -229,7 +229,14 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
         if (is_protected(pred)) continue;
 
-        adjacency_set incoming_to_pred = _pImpl->get_left(pred);
+        // The facts that USE pred as their relation type -- not everything
+        // pointing at it. For an atomic predicate the two coincide; a
+        // COMPOSITE one is a fact as well, so its own subject and objects
+        // point at it too, and the scan below then read those atoms as
+        // malformed facts and PURGED them: `.cleanup` on a graph holding
+        // `a p b` and `z (a p b) w` deleted `a` and `b`, taking both facts
+        // with them. get_facts_of_predicate applies the exact role test.
+        adjacency_set incoming_to_pred = get_facts_of_predicate(pred);
 
         if (incoming_to_pred.size() > 200000)
         {
