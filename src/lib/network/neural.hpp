@@ -46,6 +46,13 @@ namespace zelph::network
     // NeuralNet::compile and by the layer-wiring helpers.
     ZELPH_EXPORT std::vector<Node> layer_members(const Zelph& z, Node layer);
 
+    // Fully connect two layers with raw synapses, weights drawn uniformly
+    // from [-scale, scale] (all zero when scale is 0). Existing synapses are
+    // left untouched, so trained weights survive re-wiring and the call is
+    // idempotent. Returns how many synapses were created; throws when either
+    // layer has no members.
+    ZELPH_EXPORT int64_t connect_layers(const Zelph& z, Node from_layer, Node to_layer, double scale, uint64_t seed);
+
     // (class doc comment unchanged)
     // Thread safety: any number of threads may evaluate concurrently
     // (forward, eval_nodes, weights, write_back); a training step

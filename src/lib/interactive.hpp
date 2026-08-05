@@ -32,6 +32,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <string>
 #include <vector>
 
+namespace zelph::network
+{
+    class Reasoning;
+}
+
 namespace zelph::console
 {
     // The command-line interface (REPL). It manages user input, translates commands into operations
@@ -58,6 +63,17 @@ namespace zelph::console
         // how zelph gets verified.
         void               finish_input() const;
         void               process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
+
+        // The graph this REPL drives, for a caller that embeds zelph rather
+        // than typing at it. Non-owning, and NOT stable across .new, which
+        // rebuilds the network.
+        network::Reasoning* graph() const;
+
+        // Execute an already tokenized dot-command, e.g. {".load", "a b.bin"}.
+        // Same path as process(), minus the tokenizer, so a file name
+        // containing spaces stays one argument. This is what zelph/save and
+        // zelph/load use from Janet, and what the C ABI uses.
+        void execute_command(const std::vector<std::string>& cmd) const;
 
         void set_output_handler(io::OutputHandler output) const;
         void out(const std::string& text, bool newline = true) const;

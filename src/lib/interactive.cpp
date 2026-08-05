@@ -159,6 +159,16 @@ void console::Interactive::process_file(const std::string& file, const std::vect
     _pImpl->_command_executor->import_file(file, args);
 }
 
+zelph::network::Reasoning* console::Interactive::graph() const
+{
+    return _pImpl->_n.get();
+}
+
+void console::Interactive::execute_command(const std::vector<std::string>& cmd) const
+{
+    _pImpl->_command_executor->execute(cmd);
+}
+
 std::string console::Interactive::get_version()
 {
     return network::Zelph::get_version();

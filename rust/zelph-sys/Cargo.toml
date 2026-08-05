@@ -1,0 +1,13 @@
+[package]
+name = "zelph-sys"
+description = "Raw FFI declarations for the zelph C ABI, generated from zelph_c.h"
+links = "zelph"
+build = "build.rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[build-dependencies]
+bindgen = "0.72"

@@ -37,7 +37,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janetconf.h>
 #include <map>
 #include <mutex>
-#include <random>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -1419,28 +1418,18 @@ public:
         const double   scale = argc >= 3 ? janet_getnumber(argv, 2) : 0.1;
         const uint64_t seed  = argc >= 4 ? static_cast<uint64_t>(janet_getnumber(argv, 3)) : 42u;
 
-        const std::vector<network::Node> pre  = network::layer_members(*s_instance->_n, from_layer);
-        const std::vector<network::Node> post = network::layer_members(*s_instance->_n, to_layer);
-        if (pre.empty() || post.empty())
-            janet_panicf("zelph/nn-connect-layers: a layer has no members (expected (neuron in layer) facts)");
-
-        std::mt19937_64                        rng(seed);
-        std::uniform_real_distribution<double> dist(-scale, scale);
-
-        int64_t created = 0;
-        for (const network::Node a : pre)
+        std::string err;
+        try
         {
-            for (const network::Node b : post)
-            {
-                if (s_instance->_n->has_synapse(a, b)) continue; // preserve existing synapses and their weights
-
-                const double w = scale == 0.0 ? 0.0 : dist(rng);
-                s_instance->_n->set_synapse(a, b, w);
-                ++created;
-            }
+            const int64_t created = network::connect_layers(*s_instance->_n, from_layer, to_layer, scale, seed);
+            return janet_wrap_number(static_cast<double>(created));
         }
-
-        return janet_wrap_number(static_cast<double>(created));
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-connect-layers: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
     }
 
     // One SGD step with node-addressed input/target.

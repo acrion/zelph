@@ -55,6 +55,7 @@ xcode/*
 latest-all*.json
 mkdocs/docs/missing-superclass/
 mkdocs/site
+rust/target
 /*.svg
 /*.dot
 /*.html

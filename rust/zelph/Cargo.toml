@@ -1,0 +1,12 @@
+[package]
+name = "zelph"
+description = "Safe Rust bindings for zelph: a hash-consed semantic graph with compiled networks over it"
+build = "build.rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+zelph-sys = { path = "../zelph-sys", version = "0.1.0" }

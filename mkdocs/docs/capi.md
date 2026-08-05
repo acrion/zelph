@@ -1,0 +1,180 @@
+## The C ABI
+
+zelph is a C++ library with a Janet host on top. The C ABI is the third way in: a narrow `extern "C"` surface over the graph and its compiled networks, so a program written in Rust, C, Go, Python or anything else with an FFI can drive zelph directly, without the Janet interpreter in between.
+
+It is deliberately small. Everything that is naturally expressed as a script — rules, `.import`, display schemes, SPARQL — stays in Janet and the REPL. What the C ABI covers is the part a *host application* needs: resolve names to nodes, assert facts, read them back, compile a network out of the graph, evaluate it, train it, and persist the result.
+
+The header is `zelph/capi/zelph_c.h`. Link against `libzelph`.
+
+### Conventions
+
+Every function follows the same five rules, so there is nothing per-function to remember:
+
+| | |
+| --- | --- |
+| **Status, not exceptions** | Every function returns an `int32_t` status (`ZELPH_OK`, `ZELPH_INVALID_ARGUMENT`, `ZELPH_BUFFER_TOO_SMALL`, `ZELPH_RUNTIME_ERROR`). Results come back through out-parameters. No C++ exception ever crosses the boundary. |
+| **One message per thread** | On failure, `zelph_last_error()` returns the reason. It is thread-local and borrowed — valid until the next `zelph_*` call on that thread. A successful call clears it. |
+| **Nodes are `uint64_t`** | A node *is* its hash, so it is stable across calls and across a save/load cycle: resolving the same name in a freshly loaded graph yields the same number. `0` is not a node. |
+| **Strings are UTF-8** | Strings passed in are borrowed for the duration of the call. Strings handed out are owned by the caller and released with `zelph_string_free()`. |
+| **Caller owns array memory** | Arrays are written into a caller-supplied buffer. The `count` parameter is in/out: on entry the capacity, on return the number of elements produced. If the buffer is too small, *nothing* is written, `count` holds what is needed and the call returns `ZELPH_BUFFER_TOO_SMALL` — so passing a null buffer with capacity `0` asks for the size. |
+
+### Lifetime and threading
+
+```c
+int32_t zelph_engine_create(zelph_output_fn output, void* user_data, zelph_engine** out_engine);
+void    zelph_engine_destroy(zelph_engine* engine);
+```
+
+One engine per process. The Janet script engine keeps a process-wide instance pointer for its C functions, so a second engine would silently redirect the first one's calls; `zelph_engine_create` refuses with `ZELPH_RUNTIME_ERROR` while another engine is alive. Destroying the engine invalidates every network handle taken from it.
+
+`output` may be null, in which case the engine writes to the process's standard streams as the `zelph` binary does. Otherwise every line the engine emits is handed to the callback with its channel (`ZELPH_CHANNEL_OUT`, `ZELPH_CHANNEL_ERROR`, `ZELPH_CHANNEL_DIAGNOSTIC`, `ZELPH_CHANNEL_PROMPT`) — which is what a host with its own protocol on stdout, such as a game engine speaking to a GUI, needs.
+
+**`zelph_nn_eval_nodes` is safe to call from any number of threads at once, including while another thread is training the same network.** That guarantee comes from `NeuralNet` itself and is the reason a compiled net can serve a parallel search. Everything that mutates the *graph* — `zelph_resolve`, `zelph_fact`, `zelph_list`, `zelph_load`, `zelph_save`, `zelph_nn_compile`, `zelph_nn_connect_layers`, `zelph_nn_write_back` — is main-thread only, exactly as the corresponding Janet functions are.
+
+### The graph
+
+| Function | |
+| --- | --- |
+| `zelph_resolve(engine, name, lang, out_node)` | Name to node, creating it if needed. `lang` may be null for the current language. |
+| `zelph_fact(engine, subject, predicate, objects, object_count, out_fact)` | Create the fact `(subject predicate object...)` and return its node. |
+| `zelph_list(engine, elements, count, out_node)` | Cons list; the first element becomes the outermost cell. An empty list is the `nil` node. |
+| `zelph_name(engine, node, lang, out_name)` | The node's name, or null when it has none — an answer, not an error. Free with `zelph_string_free`. |
+| `zelph_sources(engine, predicate, target, out_nodes, count)` | Every subject of a fact `(X predicate target)`. Directional: `(target predicate X)` does not contribute. |
+| `zelph_load(engine, path)` | As the `.load` command, including format detection. |
+| `zelph_save(engine, path)` | As the `.save` command. The path must end in `.bin`. |
+
+Structural identity is the property to build on: `zelph_list` over the same nodes returns the same node, because the graph interns structurally identical subgraphs. Two callers that describe the same structure arrive at the same identifier without agreeing on one.
+
+### Networks
+
+| Function | |
+| --- | --- |
+| `zelph_nn_compile(engine, layers, layer_count, out_handle)` | Compile a feed-forward view of the sub-graph spanned by the layer nodes, input first, output last. |
+| `zelph_nn_connect_layers(engine, from, to, scale, seed, out_created)` | Fully connect two layers with raw synapses drawn from `[-scale, scale]`. Existing synapses keep their weights, so the call is idempotent and re-wiring never destroys training. |
+| `zelph_nn_eval_nodes(engine, handle, in_nodes, in_activations, in_count, top_k, out_nodes, out_scores, count)` | Forward pass with node-addressed multi-hot input. A null activation array means every listed neuron is `1.0`. Results are sorted by descending score, ties by ascending node; `top_k < 0` returns the whole output layer. |
+| `zelph_nn_train_nodes(engine, handle, in_nodes, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | One SGD step; `out_loss` is the loss *before* the update. |
+| `zelph_nn_write_back(engine, handle)` | Copy the compiled net's weights into the graph's edge-weight store — required before `zelph_save`, or what is persisted is the untrained graph. |
+| `zelph_nn_snapshot_shape(engine, handle, out_sizes, count)` | One element count per weight matrix. |
+| `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. |
+| `zelph_nn_restore(engine, handle, weights, weight_count, sizes, size_count)` | Put a snapshot back. The shapes must match. |
+
+The node-addressed entry points are the ones that matter for a sparse input layer: the input is the *list of active neurons*, so a 768-input encoding with 32 pieces on the board costs 32 terms, not 768.
+
+Snapshot and restore exist because training walks past its best point: the criterion that says "stop" can only fire after the fact, so without a way back the weights that get saved are always some epochs late.
+
+### A complete example
+
+```c
+#include <zelph_c.h>
+
+#include <stdio.h>
+
+static void report(void* user, int32_t channel, const char* text, int32_t newline)
+{
+    (void)user;
+    (void)newline;
+    if (channel == ZELPH_CHANNEL_ERROR) printf("engine: %s\n", text);
+}
+
+#define CHECK(call)                                           \
+    if ((call) != ZELPH_OK)                                   \
+    {                                                         \
+        printf("%s failed: %s\n", #call, zelph_last_error()); \
+        return 1;                                             \
+    }
+
+int main(void)
+{
+    zelph_engine* z = NULL;
+    CHECK(zelph_engine_create(report, NULL, &z))
+
+    /* Two neurons in an input layer, two in an output layer. */
+    zelph_node in = 0, out = 0, part_of = 0;
+    CHECK(zelph_resolve(z, "In", NULL, &in))
+    CHECK(zelph_resolve(z, "Out", NULL, &out))
+    CHECK(zelph_resolve(z, "in", NULL, &part_of))
+
+    const char* neurons[4] = {"i1", "i2", "o1", "o2"};
+    zelph_node  node[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        zelph_node fact  = 0;
+        zelph_node layer = i < 2 ? in : out;
+        CHECK(zelph_resolve(z, neurons[i], NULL, &node[i]))
+        CHECK(zelph_fact(z, node[i], part_of, &layer, 1, &fact))
+    }
+
+    int64_t created = 0;
+    CHECK(zelph_nn_connect_layers(z, in, out, 0.0, 1, &created))
+    printf("synapses created: %lld\n", (long long)created);
+
+    const zelph_node layers[2] = {in, out};
+    zelph_net        net       = -1;
+    CHECK(zelph_nn_compile(z, layers, 2, &net))
+
+    /* i1 -> o1, i2 -> o2 */
+    for (int epoch = 0; epoch < 60; ++epoch)
+    {
+        CHECK(zelph_nn_train_nodes(z, net, &node[0], NULL, 1, &node[2], NULL, 1, 0.5, NULL))
+        CHECK(zelph_nn_train_nodes(z, net, &node[1], NULL, 1, &node[3], NULL, 1, 0.5, NULL))
+    }
+
+    for (int i = 0; i < 2; ++i)
+    {
+        zelph_node top   = 0;
+        double     score = 0;
+        size_t     count = 1;
+        char*      name  = NULL;
+        CHECK(zelph_nn_eval_nodes(z, net, &node[i], NULL, 1, 1, &top, &score, &count))
+        CHECK(zelph_name(z, top, NULL, &name))
+        printf("%s -> %s (%.3f)\n", neurons[i], name, score);
+        zelph_string_free(name);
+    }
+
+    zelph_engine_destroy(z);
+    return 0;
+}
+```
+
+Built against a `build-release` tree:
+
+```bash
+gcc -std=c11 example.c \
+    -I<zelph>/src/lib/capi -I<zelph>/build-release/src/lib \
+    -L<zelph>/build-release/bin -lzelph \
+    -Wl,-rpath,<zelph>/build-release/bin \
+    -o example
+```
+
+```
+synapses created: 4
+i1 -> o1 (1.000)
+i2 -> o2 (1.000)
+```
+
+### Rust
+
+Two crates in `rust/` sit on this ABI and are maintained with it:
+
+| | |
+| --- | --- |
+| `zelph-sys` | The raw declarations, generated from `zelph_c.h` by bindgen **at build time**, so header and bindings cannot drift. Its `build.rs` also rebuilds the C++ library on every `cargo build` — a stale library silently invalidates every measurement taken against it, and nothing in the output says so. `ZELPH_BUILD_DIR` selects the CMake build directory (default `build-release`), `ZELPH_NO_BUILD` skips the CMake step. |
+| `zelph` | The safe wrapper: `Engine` (resolve, fact, list, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
+
+The types state what the C header only documents. `Engine` is neither `Send` nor `Sync`, because graph mutation belongs to the thread that created it. `Net` is both — so a compiled network can be handed to a pool of search threads and evaluated there while another thread trains it, and the compiler checks that rather than a comment.
+
+```rust
+let z = zelph::Engine::new()?;
+let net = z.compile(&[z.resolve("In")?, z.resolve("Out")?])?;
+
+std::thread::scope(|scope| {
+    for _ in 0..3 {
+        scope.spawn(|| { net.best(&inputs).unwrap(); });   // &Net crosses threads
+    }
+    net.train(&inputs, &targets, 0.05).unwrap();           // while this runs
+});
+```
+
+    cd rust && cargo test
+
+Note the layers are declared with ordinary facts — `(i1 in In)` — which is the same statement a `.zph` script writes as `i1 in In`. The network is not a separate kind of object; it is a *view* of the graph, and that is why `zelph_save` persists it without a network format existing at all.

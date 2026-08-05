@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <stdexcept>
 
 using namespace zelph::network;
@@ -99,6 +100,33 @@ std::vector<Node> zelph::network::layer_members(const Zelph& z, const Node layer
     std::vector<Node> sorted(members.begin(), members.end());
     std::sort(sorted.begin(), sorted.end());
     return sorted;
+}
+
+int64_t zelph::network::connect_layers(const Zelph& z, const Node from_layer, const Node to_layer, const double scale, const uint64_t seed)
+{
+    const std::vector<Node> pre  = layer_members(z, from_layer);
+    const std::vector<Node> post = layer_members(z, to_layer);
+    if (pre.empty() || post.empty())
+    {
+        throw std::runtime_error("connect_layers: a layer has no members (expected (neuron in layer) facts)");
+    }
+
+    std::mt19937_64                        rng(seed);
+    std::uniform_real_distribution<double> dist(-scale, scale);
+
+    int64_t created = 0;
+    for (const Node a : pre)
+    {
+        for (const Node b : post)
+        {
+            if (z.has_synapse(a, b)) continue; // preserve existing synapses and their weights
+
+            z.set_synapse(a, b, scale == 0.0 ? 0.0 : dist(rng));
+            ++created;
+        }
+    }
+
+    return created;
 }
 
 std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<Node>& layers)

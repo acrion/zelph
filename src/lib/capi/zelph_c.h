@@ -1,0 +1,251 @@
+/*
+Copyright (c) 2025, 2026 acrion innovations GmbH
+Authors: Stefan Zipproth, s.zipproth@acrion.ch
+
+This file is part of zelph, see https://github.com/acrion/zelph and https://zelph.org
+
+zelph is offered under a commercial and under the AGPL license.
+For commercial licensing, contact us at https://acrion.ch/sales. For AGPL licensing, see below.
+
+AGPL licensing:
+
+zelph is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+zelph is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with zelph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+ * The C ABI of zelph.
+ *
+ * It exists so that a program in another language can drive the graph and its
+ * compiled networks without going through the Janet host. The surface is the
+ * one the Janet bindings expose for the same purposes, in the same order of
+ * arguments, so a caller can be ported between the two without re-reading the
+ * semantics.
+ *
+ * Conventions, uniform across every function here:
+ *
+ *   - Every function returns an int32_t status, one of the zelph_status
+ *     values. Results are written through out-parameters. No exception ever
+ *     crosses this boundary; a failure sets the thread's last error, which
+ *     zelph_last_error() returns.
+ *   - A node is a uint64_t and IS its hash, so it is stable across calls and
+ *     across a save/load cycle. 0 is not a node.
+ *   - Strings are UTF-8. Strings passed IN are borrowed for the duration of
+ *     the call. Strings handed OUT are owned by the caller and released with
+ *     zelph_string_free(); the sole exception is zelph_last_error(), which
+ *     borrows out of thread-local storage.
+ *   - Arrays handed OUT are written into a caller-supplied buffer. The
+ *     accompanying count is in/out: on entry the buffer's capacity in
+ *     elements, on return the number of elements the call produced. When the
+ *     capacity is too small, nothing is written, the count is set to what
+ *     would be needed and the call returns ZELPH_BUFFER_TOO_SMALL - so
+ *     passing a null buffer with capacity 0 is the way to ask for the size.
+ *
+ * Threading. One engine per process: the Janet host binds to a single script
+ * engine, and creating a second one while the first is alive is refused.
+ * Evaluating a compiled net (zelph_nn_eval_nodes) is safe from any number of
+ * threads at once, including while another thread trains the same net -
+ * that guarantee comes from NeuralNet itself. Everything that mutates the
+ * GRAPH (zelph_resolve, zelph_fact, zelph_list, zelph_load, zelph_save,
+ * zelph_nn_compile, zelph_nn_connect_layers, zelph_nn_write_back) is main
+ * thread only, exactly as the corresponding Janet functions are.
+ */
+
+#ifndef ZELPH_C_H
+#define ZELPH_C_H
+
+#include <zelph_export.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    /* Status codes. Every function in this header returns one of these. */
+    enum zelph_status
+    {
+        ZELPH_OK = 0,
+
+        /* A null pointer, a zero node, an out-of-range handle, an empty
+           layer list - anything the caller can see from its own side. */
+        ZELPH_INVALID_ARGUMENT = 1,
+
+        /* The output buffer is smaller than the result; the count
+           out-parameter holds the number of elements required. */
+        ZELPH_BUFFER_TOO_SMALL = 2,
+
+        /* The call reached the engine and the engine refused it. The reason
+           is in zelph_last_error(). */
+        ZELPH_RUNTIME_ERROR = 3
+    };
+
+    /* Mirrors zelph::io::OutputChannel. */
+    enum zelph_channel
+    {
+        ZELPH_CHANNEL_OUT        = 0,
+        ZELPH_CHANNEL_ERROR      = 1,
+        ZELPH_CHANNEL_DIAGNOSTIC = 2,
+        ZELPH_CHANNEL_PROMPT     = 3
+    };
+
+    typedef struct zelph_engine zelph_engine;
+
+    typedef uint64_t zelph_node;
+
+    /* Handle of a compiled network, as returned by zelph_nn_compile. */
+    typedef int32_t zelph_net;
+
+    /* Receives everything the engine prints. `newline` is 1 when the engine
+       ended the line, 0 when it did not (prompts, partial writes). The text
+       is borrowed for the duration of the call. */
+    typedef void (*zelph_output_fn)(void* user_data, int32_t channel, const char* text, int32_t newline);
+
+    /* The message of the last failed call ON THIS THREAD, or "" if the last
+       call succeeded. Borrowed: valid until the next zelph_* call on this
+       thread. */
+    ZELPH_EXPORT const char* zelph_last_error(void);
+
+    /* Release a string handed out by this API (zelph_name). Passing null is
+       allowed and does nothing. */
+    ZELPH_EXPORT void zelph_string_free(char* text);
+
+    /* Create the engine. `output` may be null, in which case output goes to
+       the process's standard streams, as it does for the zelph binary.
+       Refuses with ZELPH_RUNTIME_ERROR while another engine exists. */
+    ZELPH_EXPORT int32_t zelph_engine_create(zelph_output_fn output, void* user_data, zelph_engine** out_engine);
+
+    /* Destroy the engine. Passing null is allowed and does nothing. Every
+       compiled-net handle of this engine dies with it. */
+    ZELPH_EXPORT void zelph_engine_destroy(zelph_engine* engine);
+
+    /* ---------------------------------------------------------------- graph */
+
+    /* Resolve a name to its node, creating the node if it does not exist.
+       `lang` may be null for the engine's current language. */
+    ZELPH_EXPORT int32_t zelph_resolve(zelph_engine* engine, const char* name, const char* lang, zelph_node* out_node);
+
+    /* Create the fact (subject predicate object...) and return its node. At
+       least one object is required. */
+    ZELPH_EXPORT int32_t zelph_fact(zelph_engine*     engine,
+                                    zelph_node        subject,
+                                    zelph_node        predicate,
+                                    const zelph_node* objects,
+                                    size_t            object_count,
+                                    zelph_node*       out_fact);
+
+    /* Build a cons list from nodes. The first element becomes the outermost
+       cons cell. An empty list is the nil node, as it is in Janet. */
+    ZELPH_EXPORT int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
+
+    /* The name of a node, or null in *out_name when it has none. `lang` may
+       be null for the current language; the lookup falls back to another
+       language, as zelph/name does. Free the result with zelph_string_free. */
+    ZELPH_EXPORT int32_t zelph_name(zelph_engine* engine, zelph_node node, const char* lang, char** out_name);
+
+    /* Every subject connected to `target` through `predicate`, i.e. the
+       subjects of the facts (X predicate target). Directional: a fact
+       (target predicate X) does not contribute. */
+    ZELPH_EXPORT int32_t zelph_sources(zelph_engine* engine,
+                                       zelph_node    predicate,
+                                       zelph_node    target,
+                                       zelph_node*   out_nodes,
+                                       size_t*       count);
+
+    /* Load a saved network (.bin) or import a data dump, exactly as the
+       .load command does - including format detection and the checks that
+       come with it. */
+    ZELPH_EXPORT int32_t zelph_load(zelph_engine* engine, const char* path);
+
+    /* Save the graph, exactly as the .save command does. The path must end
+       in .bin. */
+    ZELPH_EXPORT int32_t zelph_save(zelph_engine* engine, const char* path);
+
+    /* -------------------------------------------------------------- networks */
+
+    /* Compile a feed-forward view of the sub-graph spanned by the given
+       layer nodes, input first, output last. At least two layers. */
+    ZELPH_EXPORT int32_t zelph_nn_compile(zelph_engine*     engine,
+                                          const zelph_node* layers,
+                                          size_t            layer_count,
+                                          zelph_net*        out_handle);
+
+    /* Fully connect two layers with raw synapses, weights drawn uniformly
+       from [-scale, scale]. Existing synapses keep their weights, so the
+       call is idempotent and trained weights survive re-wiring.
+       `out_created` may be null. */
+    ZELPH_EXPORT int32_t zelph_nn_connect_layers(zelph_engine* engine,
+                                                 zelph_node    from_layer,
+                                                 zelph_node    to_layer,
+                                                 double        scale,
+                                                 uint64_t      seed,
+                                                 int64_t*      out_created);
+
+    /* Forward pass with node-addressed multi-hot input, i.e. the input is
+       the list of neurons that are active. `activations` may be null, which
+       means every listed input is 1.0. Results are sorted by descending
+       score, ties by ascending node. `top_k` < 0 returns the whole output
+       layer. `out_scores` may be null if only the nodes are wanted.
+
+       Safe to call concurrently with itself and with training. */
+    ZELPH_EXPORT int32_t zelph_nn_eval_nodes(zelph_engine*     engine,
+                                             zelph_net         handle,
+                                             const zelph_node* input_nodes,
+                                             const double*     input_activations,
+                                             size_t            input_count,
+                                             int32_t           top_k,
+                                             zelph_node*       out_nodes,
+                                             double*           out_scores,
+                                             size_t*           count);
+
+    /* One SGD step on a single node-addressed sample. Returns the loss
+       BEFORE the update in `out_loss`, which may be null. */
+    ZELPH_EXPORT int32_t zelph_nn_train_nodes(zelph_engine*     engine,
+                                              zelph_net         handle,
+                                              const zelph_node* input_nodes,
+                                              const double*     input_activations,
+                                              size_t            input_count,
+                                              const zelph_node* target_nodes,
+                                              const double*     target_activations,
+                                              size_t            target_count,
+                                              double            learning_rate,
+                                              double*           out_loss);
+
+    /* Write the compiled net's weights back into the graph's edge-weight
+       store, which is what zelph_save then persists. */
+    ZELPH_EXPORT int32_t zelph_nn_write_back(zelph_engine* engine, zelph_net handle);
+
+    /* The shape of a snapshot: one element count per weight matrix, in the
+       order zelph_nn_snapshot writes them. Their sum is the length
+       zelph_nn_snapshot needs. */
+    ZELPH_EXPORT int32_t zelph_nn_snapshot_shape(zelph_engine* engine, zelph_net handle, size_t* out_sizes, size_t* count);
+
+    /* Copy the weights out, matrices concatenated in layer order. */
+    ZELPH_EXPORT int32_t zelph_nn_snapshot(zelph_engine* engine, zelph_net handle, double* out_weights, size_t* count);
+
+    /* Put a snapshot back. `sizes` describes how `weights` splits into
+       matrices and must match the compiled net's shape. */
+    ZELPH_EXPORT int32_t zelph_nn_restore(zelph_engine* engine,
+                                          zelph_net     handle,
+                                          const double* weights,
+                                          size_t        weight_count,
+                                          const size_t* sizes,
+                                          size_t        size_count);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ZELPH_C_H */
