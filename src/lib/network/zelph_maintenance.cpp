@@ -647,6 +647,29 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
                 if (exists_unlocked(tagged)) retain(tagged);
             }
 
+            // ... and the relation-type declaration of every retained node,
+            // for exactly the reason the named predicates get theirs above:
+            // a fact structure is reconstructed only for a DECLARED
+            // predicate. The rules travel whole (see the top of this
+            // function), so a rule's patterns bring their predicate node
+            // along -- but the predicate of a pattern is rarely one of the
+            // sliced predicates, and its declaration stayed behind. The
+            // effect was a rule that is structurally complete and cannot be
+            // READ: ".save-predicates slice.bin p" over
+            // "(a p b) => (c q d)" produced a slice whose .list-rules
+            // answered "(a p b) => ??", and typing "q ~ ->" into the loaded
+            // slice restored the line in full. The promise above -- that
+            // such a rule "is complete and simply never matches" -- only
+            // holds with this.
+            //
+            // Every retained node is asked, not just the predicates: a node
+            // that IS a declared relation type in the source and is not one
+            // in the slice makes the slice contradict itself about that
+            // node. It costs one hash and one lookup per retained node, next
+            // to the two the tags above already pay.
+            const Node declaration = create_hash(core.IsA, nd, {core.RelationTypeCategory});
+            if (exists_unlocked(declaration)) retain(declaration);
+
             if (!Impl::is_hash(nd)) continue;
 
             const auto left_it = _pImpl->_left.find(nd);

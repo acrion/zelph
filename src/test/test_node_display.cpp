@@ -27,8 +27,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
-#include <filesystem>
-
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -923,34 +921,29 @@ TEST_CASE("display: the rule-pattern marking is never printed in place of its no
         CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
 }
 
-TEST_CASE("display: a rule pattern that lost its triple prints as unknown, not as its marking")
+TEST_CASE("display: a marked pattern whose predicate is undeclared still prints as itself")
 {
-    // A predicate slice keeps the facts of the named predicates and the
-    // marking that travels with a node, but not a consequence built from
-    // another predicate. The rule survived with a consequence node whose own
-    // reading was gone, and the renderer then substituted the marking:
-    // ".list-rules" answered `(a p b) => ("rule pattern")`. "??" is what the
-    // network can honestly say about that node.
-    const std::filesystem::path file = std::filesystem::temp_directory_path() / "zelph_rule_pattern_slice.bin";
+    // The second way into the same defect, and the one that does not depend
+    // on a rule being used as a predicate: parse_relation only recognises a
+    // DECLARED relation type, so removing the declaration leaves the node
+    // without the reading the proxy path tests for -- and the marking was
+    // substituted for it. ".list-rules" answered
+    // `(a p b) => ("rule pattern")`.
+    //
+    // The recorded triple survives the missing declaration, so the honest
+    // rendering is the statement itself; this is what pins that the fix does
+    // not merely replace one wrong reading with "??".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(".prune-facts (q ~ ->)");
 
-    {
-        zelph::io::OutputCollector  collector;
-        zelph::console::Interactive interactive(collector.sink());
-        process_lines(interactive, R"(
-(a p b) => (c q d)
-z p w
-)");
-        interactive.process(".save-predicates \"" + file.string() + "\" p");
-    }
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "\"rule pattern\""));
+        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
 
-    zelph::io::OutputCollector  collector;
-    zelph::console::Interactive interactive(collector.sink());
-    interactive.process(".load \"" + file.string() + "\"");
-
-    collector.clear();
-    interactive.process(".list-rules");
-    CHECK_FALSE(any_output_contains(collector, "\"rule pattern\""));
-    CHECK(any_output_contains(collector, "(a p b) => ??"));
-
-    std::filesystem::remove(file);
+        collector.clear();
+        interactive.process(".node c q d");
+        CHECK(any_output_contains(collector, "Representation: c q d")); });
 }

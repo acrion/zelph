@@ -271,6 +271,56 @@ Q30 P279 Q10
     fs::remove(file);
 }
 
+TEST_CASE("slice: a rule naming a predicate outside the slice stays readable")
+{
+    // Every rule travels (see the case above), and its patterns bring their
+    // nodes along -- but the relation-type DECLARATION of a predicate that is
+    // not one of the sliced ones stayed behind, and a fact structure is only
+    // reconstructed for a declared predicate. So the rule arrived
+    // structurally complete and unreadable:
+    //
+    //     .list-rules  ->  (a p b) => ??
+    //
+    // Typing "q ~ ->" into the loaded slice brought the line back in full,
+    // which is what identified the missing fact. The promise attached to
+    // carrying every rule -- "complete and simply never matches" -- needs it.
+    const auto file = slice_path("foreign_predicate");
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(a p b) => (c q d)
+z p w
+)");
+        interactive.process(".save-predicates \"" + file.string() + "\" p");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
+    CHECK_FALSE(any_output_contains(collector, "??"));
+
+    // The consequence is still a rule PATTERN in the slice, not data: the
+    // marking travels too, and the index is rebuilt on load.
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(collect_answers(collector).empty());
+
+    // And the rule is not merely printable -- it fires.
+    interactive.process(".auto-run");
+    interactive.process("a p b");
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(answers_contain(collector, "c q d"));
+
+    fs::remove(file);
+}
+
 TEST_CASE("slice: rejects a predicate the network does not know")
 {
     const auto file = slice_path("unknown");

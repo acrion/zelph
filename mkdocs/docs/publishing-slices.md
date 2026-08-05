@@ -50,11 +50,11 @@ Which predicates are worth slicing is a content question, not a technical one. `
 
 ### What travels with the facts
 
-A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of each named predicate (without it the loaded slice answers nothing at all), the **structure of nested facts** (a statement about a statement drags in what it is built from), and **every rule the network has**, complete with the conjunction and negation tags that make it readable as a rule.
+A slice is a network in its own right, not an extract, so three things come along without being asked for: the **relation-type declaration** of every retained node that has one (without the declaration of a predicate, no fact of it can be read back — and that is not only about the predicates you named, since a rule's conditions and consequences name predicates of their own), the **structure of nested facts** (a statement about a statement drags in what it is built from), and **every rule the network has**, complete with the conjunction and negation tags that make it readable as a rule.
 
 What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing.
 
-Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones you would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retained used to reach them, and the slice silently stopped reporting contradictions its source reports. A rule whose conditions name a predicate you left out is carried intact and simply never matches. `.save-predicates` says how many went into the file:
+Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones you would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retained used to reach them, and the slice silently stopped reporting contradictions its source reports. A rule whose conditions name a predicate you left out is carried intact, prints in full, and simply never matches. `.save-predicates` says how many went into the file:
 
 ```
 Saved 8 fact(s) of 1 predicate(s) and 1 rule(s) to leaf-slice.bin
