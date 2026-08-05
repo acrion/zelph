@@ -1051,7 +1051,22 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     else
         result = subject_name + " " + relation_name + " " + objects_name;
 
-    if (is_negation)
+    // The "¬" belongs to the RULE that wrote it, not to the node. The tag is
+    // a fact ABOUT the pattern and a ground pattern is hash-consed, so a
+    // pattern negated in ONE rule carries the tag everywhere -- and writing
+    // it into the term rendered an ASSERTED fact as its own negation:
+    // ".explain (a p b)" answered "¬(a p b) [axiom]" for a fact that holds,
+    // which is neither true nor re-enterable (a top-level "¬" is not the
+    // same statement, and what it would mean is undecided).
+    //
+    // So it is written where it is syntactically part of the statement: as a
+    // rule's condition -- the parent is then the rule -- or as a member of a
+    // rule's conjunction set. Everywhere else the tag is reported BESIDE the
+    // term; see the property line of `.node` and the axiom label of
+    // `.explain`.
+    if (is_negation && parent != 0
+        && (z->parse_relation(parent) == z->core.Causes
+            || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known()))
     {
         result = "¬(" + result + ")";
     }

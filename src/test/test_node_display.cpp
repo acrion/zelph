@@ -767,3 +767,61 @@ TEST_CASE("display: a cons cell reads the same whether some list is a predicate 
     CHECK(as_predicate == as_object);
     CHECK(as_object == "a cons <b>");
 }
+
+TEST_CASE("display: the negation of a rule condition stays with the rule")
+{
+    // "¬" tags the pattern NODE, and a ground pattern is hash-consed, so a
+    // pattern negated in one rule carries the tag wherever it occurs. The
+    // renderer wrote the tag into the term unconditionally, which made an
+    // ASSERTED fact print as its own negation:
+    //
+    //     .explain (a p b)  ->  ¬(a p b)  [axiom]
+    //
+    // -- neither true nor re-enterable, since a top-level "¬" is a different
+    // statement whose meaning is undecided. The operator is written where it
+    // is syntactically part of the statement (a rule's condition slot, a
+    // member of its conjunction set) and reported as a PROPERTY elsewhere.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("¬(a p b) => (c q d)");
+
+        // The rule keeps it -- in both shapes.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(¬(a p b)) => (c q d)"));
+
+        interactive.process("(X p Y, ¬(X q Y)) => (X r Y)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "¬(X q Y)"));
+
+        // The asserted fact does not.
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b"));
+
+        collector.clear();
+        interactive.process(".node a p b");
+        CHECK(any_output_contains(collector, "Representation: a p b"));
+        CHECK_FALSE(any_output_contains(collector, "Representation: ¬"));
+        CHECK(any_output_contains(collector, "Negated by a rule: yes"));
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "a p b  [axiom; negated by a rule]"));
+
+        // A fact no rule negates says nothing about negation.
+        interactive.process("m rel n");
+        collector.clear();
+        interactive.process(".node m rel n");
+        CHECK_FALSE(any_output_contains(collector, "Negated by a rule"));
+
+        // The premise a NAF condition failed to find is still printed
+        // negated -- there it IS the statement being made.
+        interactive.process("u p v");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".explain (u r v)");
+        CHECK(any_output_contains(collector, "¬(u q v)")); });
+}

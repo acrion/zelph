@@ -947,6 +947,16 @@ private:
 
         _n->out_stream() << "  Variable: " << (network::Network::is_var(nd) ? "yes" : "no") << std::endl;
 
+        // The negation tag is a fact ABOUT the node, and a ground pattern is
+        // hash-consed, so a pattern negated in ONE rule carries it wherever
+        // it occurs. It is therefore reported as a property here rather than
+        // written into the term -- see node_to_string, where the "¬" is kept
+        // for the rule's own condition slot and nowhere else.
+        if (_n->check_fact(nd, _n->core.IsA, {_n->core.Negation}).is_known())
+        {
+            _n->out_stream() << "  Negated by a rule: yes" << std::endl;
+        }
+
         bool        has_wikidata = false;
         std::string wikidata_name;
         bool        has_any_name = false;
@@ -3656,7 +3666,14 @@ private:
         switch (p->status)
         {
         case network::ProofNode::Status::Axiom:
-            out += branch + line + "  [axiom]\n";
+            // A pattern some rule uses NEGATED is still an axiom when it was
+            // asserted; the tag says how a rule reads it, not whether it
+            // holds. It used to be written into the term above, which made
+            // this line say the opposite of what it reports.
+            out += branch + line
+                 + (_n->check_fact(p->fact, _n->core.IsA, {_n->core.Negation}).is_known()
+                        ? "  [axiom; negated by a rule]\n"
+                        : "  [axiom]\n");
             return;
         case network::ProofNode::Status::RulePattern:
             // Not an axiom: the node exists because a rule was written with
