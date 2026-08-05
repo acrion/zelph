@@ -283,7 +283,7 @@ Only what the outer rule's conditions bind is substituted; everything else comes
 ```
 zelph> (R is transitive) => ((X R Y, Y R Z) => (X R Z))
 zelph> before is transitive
-({(Y before Z) (X before Y)} => (X before Z)) ⇐ (before is transitive)
+(((Y before Z), (X before Y)) => (X before Z)) ⇐ (before is transitive)
 zelph> a before b
 zelph> b before c
 (a before c) ⇐ {(b before c) (a before b)}

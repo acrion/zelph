@@ -70,8 +70,8 @@ Deduction printing mode: all
 zelph> (R is partialorder) => ((X R Y, Y R Z) => (X R Z))
 zelph> (R is partialorder) => ((X R Y, Y R X) => (X sameas Y))
 zelph> divides is partialorder
-({(X divides Y) (Y divides Z)} => (X divides Z)) ⇐ (divides is partialorder)
-({(X divides Y) (Y divides X)} => (X sameas Y)) ⇐ (divides is partialorder)
+(((X divides Y), (Y divides Z)) => (X divides Z)) ⇐ (divides is partialorder)
+(((X divides Y), (Y divides X)) => (X sameas Y)) ⇐ (divides is partialorder)
 zelph> two divides four
 zelph> four divides eight
 (two divides eight) ⇐ {(two divides four) (four divides eight)}

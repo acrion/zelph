@@ -638,10 +638,25 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // not rebuild. A rule's conjunction set keeps the bare brace -- it
         // is rule structure rather than a value, and the rule renders around
         // it.
-        const bool bare_brace = z->is_set_constant(resolved)
-                             || z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
+        const bool is_conjunction = z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
 
-        result     = bare_brace ? "{" : "@{";
+        // A rule's condition set is printed in the SURFACE SYNTAX the parser
+        // accepts -- "(A, B) => C" -- whenever it is rendered as that rule's
+        // subject. The brace form is the topology, and re-entering it built
+        // something else: "{A B}" reads as a set literal, a literal carrying
+        // variables builds a COLLECTION, and a collection is not tagged
+        // `~ conjunction`, so the rule came back inert. That is the round
+        // trip failing for the commonest rule shape there is.
+        //
+        // Only as a rule's subject: elsewhere the node is a container being
+        // dumped (`.node`) or the premise set of a justification, and a comma
+        // list would claim a statement that is not being made.
+        const bool as_rule_conditions = is_conjunction && parent != 0
+                                     && z->parse_relation(parent) == z->core.Causes;
+
+        const bool bare_brace = z->is_set_constant(resolved) || is_conjunction;
+
+        result     = as_rule_conditions ? "(" : (bare_brace ? "{" : "@{");
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
@@ -651,12 +666,17 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
         for (network::Node e : sorted_elements)
         {
-            if (!first) result += " ";
+            if (!first) result += as_rule_conditions ? ", " : " ";
             std::string elem_str;
             elem_ctx.self_delimited = false;
             node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history, &elem_ctx);
 
-            if (!elem_ctx.self_delimited
+            // The comma already separates the conditions, so a member keeps
+            // the bare S-P-O shape the surface syntax is written in. Inside
+            // braces the space is the separator and a member carrying one
+            // has to be bracketed.
+            if (!as_rule_conditions
+                && !elem_ctx.self_delimited
                 && !elem_str.empty()
                 && elem_str.find(' ') != std::string::npos
                 && elem_str.front() != '('
@@ -676,7 +696,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             result += elem_str;
             first = false;
         }
-        result += "}";
+        result += as_rule_conditions ? ")" : "}";
 
         return;
     }

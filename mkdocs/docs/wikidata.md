@@ -298,7 +298,7 @@ kind the exporter writes, for a constraint saying that
 ```
 zelph> .lang wikidata
 wikidata> (I P569 Y, I P571 Z) => !
-{(I P569 Y) (I P571 Z)} => !
+((I P569 Y), (I P571 Z)) => !
 wikidata> Q42 P569 Q1900
 wikidata> Q42 P571 Q1900
 ! ⇐ {(Q42 P569 Q1900) (Q42 P571 Q1900)}

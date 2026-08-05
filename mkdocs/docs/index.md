@@ -599,7 +599,7 @@ Here is a practical example of how a transitive-closure rule works in zelph (whi
 
 ```
 zelph> (R is transitive, A R B, B R C) => (A R C)
-{(A R B) (R is transitive) (B R C)} => (A R C)
+((A R B), (R is transitive), (B R C)) => (A R C)
 ```
 
 After the entered rule, we see zelph's output, which in this case simply confirms the input of the rule.
@@ -628,7 +628,7 @@ Rules can also define contradictions using `!`:
 
 ```
 zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
-{(X "is opposite of" Y) (A ~ X) (X != Y) (A ~ Y)} => !
+((X "is opposite of" Y), (A ~ X), (X != Y), (A ~ Y)) => !
 zelph> bright "is opposite of" dark
 bright "is opposite of" dark
 zelph> yellow ~ bright
@@ -921,7 +921,7 @@ Q1 P279 Q2
 wikidata-> Q2 P279 Q3
 Q2 P279 Q3
 wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
-{(B P279 C) (A P279 B)} => (A P279 C)
+((B P279 C), (A P279 B)) => (A P279 C)
 wikidata-> .run-export /tmp/derivations.jsonl
 Running full inference; derivations are written to /tmp/derivations.jsonl as JSON Lines.
 ```

@@ -24,7 +24,7 @@ zelph> Berlin "is capital of" Germany
 zelph> Germany "is located in" Europe
 zelph> Europe "has part" Germany
 zelph> (X "is capital of" Y, Y "is located in" Z) => (X "is located in" Z)
-{(Y "is located in" Z) (X "is capital of" Y)} => (X "is located in" Z)
+((Y "is located in" Z), (X "is capital of" Y)) => (X "is located in" Z)
 (Berlin "is located in" Europe) ⇐ {(Germany "is located in" Europe) (Berlin "is capital of" Germany)}
 zelph>
 ```

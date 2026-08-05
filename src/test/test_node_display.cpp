@@ -825,3 +825,58 @@ TEST_CASE("display: the negation of a rule condition stays with the rule")
         interactive.process(".explain (u r v)");
         CHECK(any_output_contains(collector, "¬(u q v)")); });
 }
+
+TEST_CASE("display: a rule prints its conditions in the surface syntax")
+{
+    // The brace form is the TOPOLOGY, and re-entering it built something
+    // else: "{A B}" reads as a set literal, a literal carrying variables
+    // builds a COLLECTION, and a collection is not tagged `~ conjunction` --
+    // so the printed form of the commonest rule shape there is came back
+    // inert. It now prints as it is written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("(X p Y, X q Y) => (X r Y)");
+        CHECK(any_output_contains(collector, "((X p Y), (X q Y)) => (X r Y)"));
+        CHECK_FALSE(any_output_contains(collector, "{(X p Y) (X q Y)}"));
+
+        // The justification keeps the brace form: a premise set is not a
+        // statement being made, and nothing re-enters it.
+        collector.clear();
+        interactive.process("m p n");
+        interactive.process("m q n");
+        CHECK(any_output_contains(collector, "⇐ {(m p n) (m q n)}"));
+
+        // The printed rule is a fixpoint of the rendering AND derives.
+        collector.clear();
+        interactive.process("((X s Y), (X t Y)) => (X u Y)");
+        CHECK(any_output_contains(collector, "((X s Y), (X t Y)) => (X u Y)"));
+
+        interactive.process("m s n");
+        interactive.process("m t n");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("M u N");
+        CHECK(answers_contain(collector, "m u n"));
+
+        // The verbose spelling stays valid input -- with the conjunction tag
+        // it is the same rule, and it prints in the surface syntax too.
+        // The member ORDER follows the node ids, so the assertion asks for
+        // the syntax rather than for one of the two spellings.
+        collector.clear();
+        interactive.process("(*{(A v B) (B v C)} ~ conjunction) => (A v C)");
+        CHECK(any_output_contains(collector, "), (A v B)) => (A v C)"));
+        CHECK_FALSE(any_output_contains(collector, "{(A v B)"));
+
+        // ... and with any OTHER predicate it still builds what it says: the
+        // focus operator asserts the inner fact and the set stays the rule's
+        // subject, which no longer reads as a conjunction and prints as the
+        // container it is.
+        collector.clear();
+        interactive.process("(*{(A w B) (B w C)} mypred whatever) => (A w C)");
+        CHECK(any_output_contains(collector, "@{"));
+
+        collector.clear();
+        interactive.process("S mypred O");
+        CHECK(any_output_contains(collector, "mypred whatever")); });
+}
