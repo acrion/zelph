@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "neural.hpp"
 
+#include <shared_mutex>
+
 #include "zelph.hpp"
 
 #include <algorithm>
@@ -170,7 +172,14 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
 std::vector<double> NeuralNet::forward(const std::vector<double>& input,
                                        const std::vector<size_t>* active_input) const
 {
+    std::shared_lock lock(_mtx);
     return run_forward(_nodes, _w, input, active_input).back();
+}
+
+std::vector<std::vector<double>> NeuralNet::weights() const
+{
+    std::shared_lock lock(_mtx);
+    return _w;
 }
 
 double NeuralNet::train_step(const std::vector<double>& input,
@@ -178,6 +187,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
                              const double               learning_rate,
                              const std::vector<size_t>* active_input)
 {
+    std::unique_lock lock(_mtx);
     const auto  act = run_forward(_nodes, _w, input, active_input);
     const auto& out = act.back();
 
@@ -259,6 +269,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
 void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
 {
+    std::unique_lock lock(_mtx);
     if (w.size() != _w.size())
     {
         throw std::runtime_error("NeuralNet::set_weights: expected " + std::to_string(_w.size())
@@ -280,6 +291,7 @@ void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
 
 void NeuralNet::write_back(Zelph& z) const
 {
+    std::shared_lock lock(_mtx);
     for (size_t k = 0; k < _w.size(); ++k)
     {
         const auto& pre  = _nodes[k];

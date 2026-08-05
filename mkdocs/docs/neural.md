@@ -224,6 +224,8 @@ Two dump-related notes, so they are not mistaken for bugs: entities absent from 
 
 ## Limitations and Outlook
 
+A compiled network is safe to share between threads: evaluation is concurrent, training is exclusive against it. See the threading note in the [Janet API reference](janet.md#neural-network-functions).
+
 The current implementation is a deliberate foundation, not a finished ML framework: networks have no bias terms, hidden layers are ReLU-only, the output is linear, features are identity-based, and `≈` supports plain S-P-O patterns only. What the foundation establishes is the _architectural_ claim: neurons as nodes, synapses as edges, training data gathered by reasoning queries, and network confidences flowing back into the graph as fact probabilities — all without leaving the semantic network.
 
 ## Appendix: Complete Session Log

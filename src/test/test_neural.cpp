@@ -665,3 +665,97 @@ s relW o
         interactive.process(R"(%(if (nil? (zelph/weight "n1" "nowhere")) "no-pair" "pair"))");
         CHECK(any_output_contains(collector, "no-pair")); });
 }
+
+// ---------------------------------------------------------------------------
+// Thread safety of a compiled network
+//
+// The engine that drives this feature evaluates a network from a search while
+// a second thread trains it, so the guarantee has to be stated and pinned:
+// any number of threads may evaluate concurrently, and a training step or
+// set_weights excludes them for its duration. Before the lock existed,
+// train_step wrote _w while forward read it -- a data race, i.e. undefined
+// behaviour rather than merely a stale number.
+//
+// A test cannot prove the absence of a race; what it can do is exercise the
+// path hard enough that a sanitizer build has something to find, and pin the
+// two properties that must hold with or without concurrency: evaluation stays
+// finite and in range, and the weights a reader observes are always a whole
+// set, never a half-written one. Run the suite under -fsanitize=thread to
+// turn this into an actual race check.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: a network can be evaluated while another thread trains it")
+{
+    run_parallel_mode([](auto& collector, auto& interactive)
+                      {
+        process_lines(interactive, R"(
+a in TLin
+b in TLin
+h in TLhid
+o in TLout
+%(zelph/nn-connect "a" "h" 0.5)
+%(zelph/nn-connect "b" "h" -0.25)
+%(zelph/nn-connect "h" "o" 0.75)
+%(def tnet (zelph/nn-compile [(zelph/resolve "TLin") (zelph/resolve "TLhid") (zelph/resolve "TLout")]))
+)");
+        collector.clear();
+
+        // Two readers and one trainer on the same compiled net. The readers
+        // report whether every value they saw was finite; the trainer just
+        // hammers the weights.
+        interactive.process(R"js(%(do
+  (def ch (ev/thread-chan 8))
+  (defn reader []
+    (var ok true)
+    (loop [_ :range [0 400]]
+      (def r (zelph/nn-eval-nodes tnet [(zelph/resolve "a")] 1))
+      (def v (get (first r) 1))
+      (unless (and (number? v) (= v v) (< (math/abs v) 1e6)) (set ok false)))
+    ok)
+  (ev/spawn-thread (ev/give ch (string "reader1=" (reader))))
+  (ev/spawn-thread (ev/give ch (string "reader2=" (reader))))
+  (ev/spawn-thread
+    (do
+      (loop [_ :range [0 400]]
+        (zelph/nn-train-nodes tnet [(zelph/resolve "a")] [[(zelph/resolve "o") 1]] 0.01))
+      (ev/give ch "trainer=done")))
+  (zelph/out (string (ev/take ch) " " (ev/take ch) " " (ev/take ch)))))js");
+
+        CHECK(any_output_contains(collector, "reader1=true"));
+        CHECK(any_output_contains(collector, "reader2=true"));
+        CHECK(any_output_contains(collector, "trainer=done")); });
+}
+
+TEST_CASE("neural: a snapshot taken during training is a whole set of weights")
+{
+    run_parallel_mode([](auto& collector, auto& interactive)
+                      {
+        process_lines(interactive, R"(
+p in SLin
+q in SLhid
+r in SLout
+%(zelph/nn-connect "p" "q" 0.5)
+%(zelph/nn-connect "q" "r" 0.5)
+%(def snet (zelph/nn-compile [(zelph/resolve "SLin") (zelph/resolve "SLhid") (zelph/resolve "SLout")]))
+)");
+        collector.clear();
+
+        // zelph/nn-snapshot used to hand out a reference into the live weight
+        // store; it returns a copy taken under the lock now, so its shape is
+        // always the compiled shape even while a trainer runs.
+        interactive.process(R"js(%(do
+  (def ch (ev/thread-chan 4))
+  (ev/spawn-thread
+    (do (loop [_ :range [0 300]]
+          (zelph/nn-train-nodes snet [(zelph/resolve "p")] [[(zelph/resolve "r") 1]] 0.01))
+        (ev/give ch :trained)))
+  (var shapes-ok true)
+  (loop [_ :range [0 300]]
+    (def s (zelph/nn-snapshot snet))
+    (unless (and (= 2 (length s)) (= 1 (length (get s 0))) (= 1 (length (get s 1))))
+      (set shapes-ok false)))
+  (ev/take ch)
+  (zelph/out (string "shapes=" shapes-ok))))js");
+
+        CHECK(any_output_contains(collector, "shapes=true")); });
+}

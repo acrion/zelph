@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <shared_mutex>
 #include <vector>
 
 namespace zelph::network
@@ -46,6 +47,12 @@ namespace zelph::network
     ZELPH_EXPORT std::vector<Node> layer_members(const Zelph& z, Node layer);
 
     // (class doc comment unchanged)
+    // Thread safety: any number of threads may evaluate concurrently
+    // (forward, eval_nodes, weights, write_back); a training step
+    // (train_step, train_nodes) or set_weights excludes them for its
+    // duration. A compiled net may therefore be evaluated from a search
+    // thread while another thread trains it. compile() itself is not
+    // synchronised - build the net before sharing the handle.
     class ZELPH_EXPORT NeuralNet
     {
     public:
@@ -72,7 +79,10 @@ namespace zelph::network
         // that passes its best point and then leaves it: the criterion that
         // says "stop" can only fire after the fact, so without a way back the
         // weights that get saved are always some epochs past the good ones.
-        const std::vector<std::vector<double>>& weights() const { return _w; }
+        // A COPY, not a reference: the caller may read it while another
+        // thread trains, and a reference into _w would be a race the caller
+        // cannot guard against. See the threading note on this class.
+        std::vector<std::vector<double>> weights() const;
         void                                    set_weights(const std::vector<std::vector<double>>& w);
 
         // --- Node-addressed access (graph-driven training) ---
@@ -112,6 +122,16 @@ namespace zelph::network
         // a wide sparse input layer usable at all. Sorted, so a sparse pass
         // sums in the same order a dense one does and returns the same value.
         std::vector<size_t> active_indices(size_t layer, const std::vector<std::pair<Node, double>>& active) const;
+
+        // Guards _w, the only member that changes after compile(). _nodes,
+        // _mask and _index are written once by compile() and read-only
+        // afterwards, so they need no protection.
+        //
+        // Taken shared by the const entry points (forward, write_back,
+        // weights) and exclusively by the mutating ones (train_step,
+        // set_weights). It is NOT taken by train_nodes or eval_nodes, which
+        // delegate to those - locking at both levels would deadlock.
+        mutable std::shared_mutex _mtx;
 
         std::vector<std::vector<Node>>    _nodes;
         std::vector<std::vector<double>>  _w;
