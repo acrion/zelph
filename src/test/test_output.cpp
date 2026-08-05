@@ -534,6 +534,33 @@ a q e
         CHECK_THROWS_AS(interactive.process(".list-predicate-value-usage nosuch"), std::runtime_error); });
 }
 
+TEST_CASE("commands: the value listing names a value that has no name")
+{
+    // The sibling listing and this one's own HEADING learned to render a
+    // nameless node (02d1597); the value COLUMN was missed, so every value
+    // that is not an atom -- a nested fact, a list, a set, a collection --
+    // printed as a bare count with nothing in front of it. A listing that
+    // cannot name what it counts is not usable output.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+x rel (a p b)
+z rel <1 2>
+w rel named
+v rel @{q r}
+u rel {s t}
+)");
+        collector.clear();
+        interactive.process(".list-predicate-value-usage rel");
+        CHECK(any_output_contains(collector, "Total unique values: 5"));
+        CHECK(any_output_contains(collector, "named 1"));
+        CHECK(any_output_contains(collector, "a p b 1"));
+        CHECK(any_output_contains(collector, "<1 2> 1"));
+        CHECK(any_output_contains(collector, "@{q r} 1"));
+        CHECK(any_output_contains(collector, "{s t} 1")); });
+}
+
 TEST_CASE("commands: the parallel-unification summary counts what it claims")
 {
     // "Parallel unifications activated for N distinct fixed relations" read a

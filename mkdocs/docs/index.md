@@ -258,6 +258,29 @@ Answer: bug1 in @{bug1 bug2}
 Note the asymmetry, and that it is the point: quantify over a **set constant**
 to read its members, write into a **collection** to gather results.
 
+One consequence is worth knowing before it surprises you: a printed collection
+literal **cannot be pasted back into a command**. `@{a b x}` in a `.explain` or
+`.prune-facts` pattern builds yet another container, so it never names the one
+the answer came from — and the command says so:
+
+```
+zelph> x in @{a b}
+x in @{a b x}
+zelph> a in O
+Answer: a in @{a b x}
+zelph> .explain (a in @{a b x})
+Fact is not asserted -- nothing to explain.
+A collection literal @{...} builds a NEW container, so it cannot name an existing one. Address the fact by its ID (.node without an argument reports the last answer's node), or use a set constant {...}, whose identity IS its members.
+zelph> .explain
+a in @{a b x}  [axiom]
+```
+
+The route that works is the argument-less form in the last line: it takes the
+node of the last answer, so no literal has to be re-parsed.
+
+A set constant has no such restriction — its identity *is* its members, so
+`.explain (c in {c d})` addresses exactly the fact it names.
+
 ##### Which one a literal builds
 
 Extensionality needs *known* members. A literal carrying a variable denotes a

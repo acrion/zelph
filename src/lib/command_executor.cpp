@@ -1474,6 +1474,18 @@ private:
             const auto& entry      = sorted[i];
             std::string value_name = _n->get_name(entry.second, "", true); // current language with fallback
 
+            // A value without a name -- a nested fact, a list, a set or a
+            // collection -- left the column BLANK, so the listing counted
+            // something it could not name: "x rel (a p b)" and "z rel <1 2>"
+            // both reported a bare "1". The heading and the sibling listing
+            // already render such a node (02d1597); this column was missed.
+            if (value_name.empty())
+            {
+                std::string repr;
+                string::node_to_string(_n, repr, _n->lang(), entry.second, 3);
+                value_name = string::unmark_identifiers(repr);
+            }
+
             std::string line;
             if (has_wikidata_lang && curr_lang != "wikidata")
             {
@@ -1751,7 +1763,11 @@ private:
                          "max-depth defaults to 3; 0 means unlimited. If several\n"
                          "justifications exist, one is shown. Term islands work inside\n"
                          "the pattern: .explain $( x*x ) diffby x = D is invalid, but\n"
-                         ".explain ($( x*x ) diffby x) = (x + x) resolves as usual."},
+                         ".explain ($( x*x ) diffby x) = (x + x) resolves as usual.\n"
+                         "A collection literal @{...} is the one printed form that cannot\n"
+                         "be pasted back: each literal builds a NEW container, so it can\n"
+                         "never name an existing one. The command says so and points at\n"
+                         "the argument-less form, which takes the last answer's node."},
 #ifndef __EMSCRIPTEN__
             {".run-export", ".run-export <file>\n"
                             "Performs full inference and writes every derived fact and contradiction to\n"
@@ -2997,6 +3013,7 @@ private:
                                "the prune commands remove claims. Use .node to get its ID and .remove "
                                "to delete graph structure.",
                                true);
+            if (!present) explain_collection_literal({cmd.begin() + 1, cmd.end()});
             return;
         }
 
@@ -3504,8 +3521,9 @@ private:
     // ".prune-nodes (s4 rel X)" into a fact of the three literal names
     // "(s4", "rel" and "X)" -- no variable left, and the command then said
     // so and did nothing.
-    std::string pattern_code(const std::vector<std::string>& parts, const std::size_t first) const
+    std::string pattern_code(const std::vector<std::string>& parts, const std::size_t first, bool* has_collection = nullptr) const
     {
+        if (has_collection) *has_collection = false;
         if (parts.empty()) return {};
 
         // The quotes are stripped by the time a command sees its tokens, so
@@ -3533,6 +3551,10 @@ private:
             else
                 pattern += p;
         }
+
+        // Reported to the caller because it decides what a failure MEANS, not
+        // whether the pattern parses -- see explain_collection_literal.
+        if (has_collection) *has_collection = pattern.find("@{") != std::string::npos;
 
         // A pattern wrapped in a single pair of parentheses --
         // ".explain ((&6 + &7) = &13)" -- is a TERM, which the statement
@@ -3627,6 +3649,27 @@ private:
         return resolve(parts);
     }
 
+    // A COLLECTION has an identity of its own and is built fresh by every
+    // literal, so "@{a b}" inside a command pattern can only ever denote a
+    // NEW container -- never the one the answer line came from. Pasting a
+    // printed membership fact back into .explain or .prune-facts therefore
+    // says "not asserted" / "Pruned 0" about data that is plainly there,
+    // which reads as the engine contradicting its own output. The pattern is
+    // not wrong and nothing can make the literal resolve; what was missing is
+    // the sentence that says so, and the route that does work.
+    void explain_collection_literal(const std::vector<std::string>& parts, const std::size_t first = 1) const
+    {
+        bool has_collection = false;
+        pattern_code(parts, first, &has_collection);
+        if (!has_collection) return;
+
+        _n->diagnostic("A collection literal @{...} builds a NEW container, so it cannot name an "
+                       "existing one. Address the fact by its ID (.node without an argument reports "
+                       "the last answer's node), or use a set constant {...}, whose identity IS its "
+                       "members.",
+                       true);
+    }
+
     void cmd_explain(const std::vector<std::string>& cmd)
     {
         std::vector<std::string> parts(cmd.begin() + 1, cmd.end());
@@ -3679,6 +3722,7 @@ private:
         if (!_n->check_fact(target).is_known())
         {
             _n->out("Fact is not asserted -- nothing to explain.", true);
+            explain_collection_literal(parts);
             return;
         }
 

@@ -374,3 +374,53 @@ q p r
         CHECK(collect_answers(collector).size() == 2); });
 }
 
+
+TEST_CASE("sets: a printed collection literal says why it cannot be pasted back")
+{
+    // The round trip that CANNOT hold, and the one place it matters most: a
+    // collection is built fresh by every literal, so "@{a b x}" inside a
+    // command pattern denotes a new container, never the one the answer line
+    // came from. .explain then said "Fact is not asserted" and .prune-facts
+    // "Pruned 0" about data the query had just printed -- which reads as the
+    // engine contradicting its own output. Nothing can make the literal
+    // resolve; what was missing is the sentence that says so.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("x in @{a b}");
+        collector.clear();
+        interactive.process("S in O");
+        REQUIRE(answers_contain(collector, "a in @{a b x}"));
+
+        collector.clear();
+        interactive.process(".explain (a in @{a b x})");
+        CHECK(any_output_contains(collector, "Fact is not asserted"));
+        CHECK(any_event_contains(collector, "builds a NEW container"));
+
+        collector.clear();
+        interactive.process(".prune-facts (a in @{a b x})");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+        CHECK(any_event_contains(collector, "builds a NEW container"));
+
+        // The fact is untouched, and the route the message names works.
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "a in @{a b x}"));
+        collector.clear();
+        interactive.process(".explain");
+        CHECK(any_output_contains(collector, "[axiom]"));
+
+        // An ordinary absent fact keeps the plain message: the hint is about
+        // the literal, not about every failure.
+        collector.clear();
+        interactive.process(".explain (q nosuchrel r)");
+        CHECK(any_output_contains(collector, "Fact is not asserted"));
+        CHECK_FALSE(any_event_contains(collector, "builds a NEW container"));
+
+        // A SET CONSTANT is addressable by its literal -- its identity is its
+        // members -- so it neither needs the hint nor gets it.
+        interactive.process("y rel {c d}");
+        collector.clear();
+        interactive.process(".explain (c in {c d})");
+        CHECK(any_output_contains(collector, "[axiom]"));
+        CHECK_FALSE(any_event_contains(collector, "builds a NEW container")); });
+}
