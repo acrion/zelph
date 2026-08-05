@@ -1145,6 +1145,41 @@ TEST_CASE("rules: a negated consequence is refused, not ignored")
         CHECK(answers_contain(collector, "x q y")); });
 }
 
+TEST_CASE("rules: a nested negation is refused, not silently halved")
+{
+    // "¬" tags the pattern node, and tagging it twice is tagging it once, so
+    // "¬(¬(F))" meant "¬(F)" -- the exact opposite of a double negation. The
+    // rule then fired precisely when it should not have, in silence. Reading
+    // it properly needs a second negation stratum, which is the parked
+    // feature "¬(A, B)" is refused for; saying so beats dropping half the
+    // statement.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* rule : {"¬(¬(a p b)) => (c q d)",
+                                 "¬((¬(a p b))) => (c q d)",
+                                 "(X p Y, ¬(¬(X q Y))) => (X r Y)"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("does not nest"),
+                                 std::runtime_error);
+        }
+
+        // One level is untouched, and still means what it says: the rule
+        // fires while the fact is absent and not once it is there.
+        interactive.process("¬(a p b) => (c q d)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(answers_contain(collector, "c q d"));
+
+        interactive.process("m p n");
+        interactive.process("¬(m p n) => (e r f)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("E r F");
+        CHECK_FALSE(answers_contain(collector, "e r f")); });
+}
+
 TEST_CASE("rules: two consequences are two objects, not a conjunction")
 {
     // "A => (B, C)" builds a rule whose consequence is a conjunction SET.

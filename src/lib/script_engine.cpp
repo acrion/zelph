@@ -2817,6 +2817,23 @@ public:
             // [:negation inner]
             // Desugars ¬X to (zelph/negate X)
             // which tags the pattern node with core.Negation and returns it.
+            //
+            // "¬¬(F)" tags the SAME pattern node twice -- the tag is a fact
+            // ABOUT the node -- so the second operator was a no-op and the
+            // statement silently meant "¬(F)". That is the opposite of what
+            // it says: a double negation is the plain condition, and the
+            // rule fired exactly when it should not have. Reading it that
+            // way needs a second negation stratum, which is the parked
+            // feature "¬(A, B)" is refused for; until then the operator says
+            // so rather than dropping one of itself.
+            if (is_negation_ast(data[1]))
+            {
+                throw std::runtime_error(
+                    "\"¬\" does not nest: \"¬¬(F)\" would tag the same pattern twice "
+                    "and mean \"¬(F)\", not \"F\". Write the plain pattern for the "
+                    "positive condition.");
+            }
+
             return "(zelph/negate " + transform_arg(data[1]) + ")";
         }
         else if (type == "approx")
