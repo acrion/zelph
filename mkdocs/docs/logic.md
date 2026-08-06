@@ -204,6 +204,12 @@ The idiomatic syntax uses commas to separate conditions:
 Variables are single uppercase letters (`A`–`Z`) or identifiers starting with `_` (e.g. `_Var`).
 They are scoped to the current rule and universally quantified: the rule fires for **all** bindings that satisfy the conditions.
 
+Everything else is a **name**, and that includes multi-letter uppercase tokens
+such as `DA` or `SUM`. A rule that uses one as if it were a variable asks for
+that one specific node instead of binding anything, so it never fires — and it
+does so silently, which looks exactly like an engine that refuses to match.
+Write `_DA` when a longer variable name reads better.
+
 A classic example — transitive closure:
 
 ```

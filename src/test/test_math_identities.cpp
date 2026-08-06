@@ -221,3 +221,147 @@ TEST_CASE("math: asking a question a rule is already waiting for")
         CHECK(any_output_contains(collector, "= &2"));
     }
 }
+
+TEST_CASE("math: Jacobi's formula assembled from the matrix entries")
+{
+    // The full construction, and the most demanding thing in this suite: the
+    // rules build BOTH sides out of the matrix entries rather than being
+    // handed them.
+    //
+    //   * the determinant is composed as `a*d - b*c` from four entries;
+    //   * five differentiation REQUESTS are derived (the determinant and each
+    //     entry);
+    //   * the trace of adj(A) A' is composed as `d*a' - b*c' - c*b' + a*d'`
+    //     from the entries AND their derivatives;
+    //   * the two composed terms are proved equivalent, and only then is the
+    //     conclusion drawn.
+    //
+    // Seventeen rules across three mechanisms that do not otherwise meet:
+    // composing a symbolic term inside a rule consequence, demand-driven
+    // differentiation, and proof-driven equivalence. Run over two different
+    // matrices so the pipeline is not fitted to one example.
+    const char* pipeline = R"(
+(M ea A, M ed D) => (M ad (A * D))
+(M eb B, M ec C) => (M bc (B * C))
+(M ad P, M bc Q) => (M det (P - Q))
+
+(M det T) => (T diffby x)
+(M ea T) => (T diffby x)
+(M eb T) => (T diffby x)
+(M ec T) => (T diffby x)
+(M ed T) => (T diffby x)
+
+(M ed D, M ea A, (A diffby x) = _DA) => (M t1 (D * _DA))
+(M eb B, M ec C, (C diffby x) = _DC) => (M t2 (B * _DC))
+(M ec C, M eb B, (B diffby x) = _DB) => (M t3 (C * _DB))
+(M ea A, M ed D, (D diffby x) = _DD) => (M t4 (A * _DD))
+(M t1 P, M t2 Q) => (M s1 (P - Q))
+(M s1 P, M t3 Q) => (M s2 (P - Q))
+(M s2 P, M t4 Q) => (M trace (P + Q))
+
+(M det T, (T diffby x) = L, M trace R) => (L ≡ R)
+(M det T, (T diffby x) = L, M trace R, (L ≡ R) = proven) => (M jacobi holds)
+)";
+
+    SUBCASE("A = [[x, 1], [x^2, x^3]]")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        math_with(interactive, "x");
+        process_lines(interactive, pipeline);
+        process_lines(interactive, R"(
+m ea $( x )
+m eb $( 1 )
+m ec $( x^2 )
+m ed $( x^3 )
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S jacobi O");
+        CHECK(answers_contain(collector, "m jacobi holds"));
+    }
+
+    SUBCASE("A = [[x^2, x], [1, x^4]]")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        math_with(interactive, "x");
+        process_lines(interactive, pipeline);
+        process_lines(interactive, R"(
+m ea $( x^2 )
+m eb $( x )
+m ec $( 1 )
+m ed $( x^4 )
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S jacobi O");
+        CHECK(answers_contain(collector, "m jacobi holds"));
+    }
+
+    SUBCASE("the equivalence is what gates the conclusion")
+    {
+        // The same pipeline with the last stage asked about a term that is
+        // NOT the trace: everything up to the equivalence runs, and the
+        // conclusion does not follow. Without this the case would pass on an
+        // engine that concludes regardless of the proof.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        math_with(interactive, "x");
+        process_lines(interactive, pipeline);
+        interactive.process("(M det T, (T diffby x) = L, M ea R, (L ≡ R) = proven) => (M bogus holds)");
+        process_lines(interactive, R"(
+m ea $( x )
+m eb $( 1 )
+m ec $( x^2 )
+m ed $( x^3 )
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S bogus O");
+        CHECK(collect_answers(collector).empty());
+
+        // ... while the real conclusion is there, so the pipeline did run.
+        collector.clear();
+        interactive.process("S jacobi O");
+        CHECK(answers_contain(collector, "m jacobi holds"));
+    }
+}
+
+TEST_CASE("math: a multi-letter variable needs its underscore")
+{
+    // The trap this file was written around, and it cost an hour: variables
+    // are single uppercase letters or identifiers starting with `_`. `DA` is
+    // therefore an ordinary NAME, and a rule using it as if it were a
+    // variable asks for a specific node instead of binding anything -- so it
+    // never fires, silently, and looks exactly like an engine that is not
+    // matching.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    math_with(interactive, "x");
+
+    interactive.process("(M ea A) => (A diffby x)");
+    interactive.process("(M ea A, (A diffby x) = DA) => (M got DA)");
+    interactive.process("m ea $( x^3 )");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("S got O");
+    CHECK(collect_answers(collector).empty());
+
+    // `DA` is a name, which is what makes the rule inert.
+    collector.clear();
+    interactive.process(".node DA");
+    CHECK(any_output_contains(collector, "Variable: no"));
+
+    // The same rule with the underscore fires.
+    interactive.process("(M ea A, (A diffby x) = _DA) => (M ok _DA)");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("S ok O");
+    CHECK_FALSE(collect_answers(collector).empty());
+}
