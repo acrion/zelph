@@ -666,7 +666,18 @@ adjacency_set Zelph::get_rules() const
         {
             adjacency_set deductions;
             Node          condition = parse_fact(rule_candidate, deductions);
-            if (condition && condition != core.Causes && !deductions.empty()
+
+            // A rule's condition is a STATEMENT that has to hold, so a bare
+            // variable in that position is not one -- and `=>` is an ordinary
+            // relation type as well as the rule arrow, which is what makes
+            // this reachable without anybody writing a rule at all: asking
+            // "which implications are there?" builds the query pattern
+            // `S => O`, and that pattern was counted by .stat and listed by
+            // .list-rules as a rule of the network, permanently. It cannot
+            // fire either -- nothing binds a condition that is only a
+            // variable.
+            if (condition && !Impl::is_var(condition) && condition != core.Causes
+                && !deductions.empty()
                 && !is_mentioned(rule_candidate))
             {
                 rules.insert(rule_candidate);

@@ -64,6 +64,55 @@ atom_C <= atom_D
         CHECK(any_output_starts_with(collector, "atom_C <= atom_D")); });
 }
 
+TEST_CASE("rules: asking which implications exist does not create a rule")
+{
+    // `=>` is an ordinary relation type as well as the rule arrow (see the
+    // case above), so asking about implications is an ordinary query -- and
+    // in a system whose point is reasoning ABOUT statements it is a question
+    // one asks. Entering it materializes the pattern `S => O`, which
+    // get_rules then counted as a rule of the network: .stat said "Rules: 1"
+    // and .list-rules showed the query, permanently, on a graph nobody had
+    // written a rule for. A condition that is only a variable binds nothing,
+    // so it could not fire either.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+
+        collector.clear();
+        interactive.process("S => O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 0"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        // ... and the query still answers what it is asked. An arrow fact
+        // between two atoms is a fact AND passes as a rule (its condition is
+        // not a variable), which is why the count is asked before it.
+        interactive.process("atom_A => atom_B");
+        collector.clear();
+        interactive.process("S => O");
+        CHECK(answers_contain(collector, "atom_A => atom_B"));
+
+        // A real rule is unaffected, and still fires.
+        interactive.process("m p n");
+        interactive.process("(X p Y) => (X q Y)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("M q N");
+        CHECK(answers_contain(collector, "m q n"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X p Y) => (X q Y)"));
+        CHECK_FALSE(any_output_contains(collector, "S => O")); });
+}
+
 // NOTE: there is no biconditional arrow in the grammar. `<=>` is read as the
 // list <=>, which then sits in predicate position; that it renders as such is
 // pinned by "display: a list in predicate position renders as a list" in
