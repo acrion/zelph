@@ -727,8 +727,31 @@ adjacency_set Zelph::get_rules() const
                 && !Impl::is_var(condition)
                 && (Impl::is_hash(condition) || is_condition_set(condition));
 
+            // The consequence side asks the same question: a rule has to be
+            // able to ASSERT something. A container cannot be asserted --
+            // `(X p Y) => {(X q Y)}` was counted and listed and derived
+            // nothing -- and neither can a bare name. `!` is the one atom
+            // that can, and a statement is recognised by having a predicate,
+            // which a container has not. ONE assertable consequence is
+            // enough: a rule may carry several, and it is a rule if it can
+            // derive at all.
+            //
+            // The RECORDED structure, not parse_relation: a consequence whose
+            // predicate has lost its `~ ->` declaration is still a statement,
+            // and deduce still builds it -- as does the renderer, from the
+            // same source.
+            const auto assertable = [this](const Node t)
+            {
+                if (t == core.Contradiction) return true;
+                const FactStructure fs = get_preferred_structure(this, t, 3);
+                return fs.subject != 0 && fs.predicate != 0;
+            };
+
+            const bool derives_something =
+                std::any_of(deductions.begin(), deductions.end(), assertable);
+
             if (condition_is_statement && condition != core.Causes
-                && !deductions.empty()
+                && derives_something
                 && !is_mentioned(rule_candidate))
             {
                 rules.insert(rule_candidate);

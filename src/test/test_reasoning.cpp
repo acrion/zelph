@@ -1858,3 +1858,54 @@ TEST_CASE("rules: entering the same untagged container rule twice builds it once
     interactive.process("{(A p B) (A r B)} => (A q B)");
     CHECK(nodes() == after_first);
 }
+
+TEST_CASE("rules: a rule has to be able to assert something")
+{
+    // The consequence side of the same question. A rule that cannot ASSERT
+    // anything is not one: a container cannot be asserted -- it is not a
+    // statement -- and neither can a bare name. Both were counted by .stat,
+    // listed by .list-rules and taken by .remove-rules, and derived nothing
+    // whatsoever.
+    const char* inert[] = {
+        "(X p Y) => {(X q Y)}",  // a set constant as the consequence
+        "(X p Y) => @{(X q Y)}", // a collection
+        "(X p Y) => flag"        // a bare name
+    };
+
+    for (const char* rule : inert)
+    {
+        CAPTURE(rule);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        interactive.process("a p b");
+        interactive.process(rule);
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 0"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+    }
+
+    SUBCASE("what CAN be asserted still counts")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        // A statement, the contradiction marker, and a rule carrying one of
+        // each next to a consequence that cannot be asserted -- one
+        // assertable consequence is enough.
+        process_lines(interactive, R"(
+a p b
+(X p Y) => (X q Y)
+(X p Y) => !
+)");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 2"));
+    }
+}

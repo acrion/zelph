@@ -1812,10 +1812,13 @@ private:
 #endif
             {".list-rules", ".list-rules\n"
                             "Lists all currently defined inference rules in readable format.\n"
-                            "A rule is a \"=>\" fact whose CONDITION is a statement -- a fact pattern or\n"
-                            "a conjunction of them. \"=>\" is an ordinary relation type as well, so\n"
+                            "A rule is a \"=>\" fact whose CONDITION is a statement -- a fact pattern\n"
+                            "or a container of them -- and whose CONSEQUENCE can be asserted: a\n"
+                            "statement, or \"!\". \"=>\" is an ordinary relation type as well, so\n"
                             "\"atom_A => atom_B\" is data and the query pattern \"S => O\" is a question;\n"
-                            "neither can fire, and neither is listed here or removed by .remove-rules."},
+                            "neither can fire, and neither is listed here or removed by .remove-rules.\n"
+                            "Nor is a rule that cannot assert what it concludes -- a container or a\n"
+                            "bare name as its consequence."},
 
             {".list-predicate-usage", ".list-predicate-usage [max_entries]\n"
                                       "Shows how often each predicate (relation type) is used, sorted by frequency.\n"
