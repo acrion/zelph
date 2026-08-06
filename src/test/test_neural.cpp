@@ -665,3 +665,35 @@ s relW o
         interactive.process(R"(%(if (nil? (zelph/weight "n1" "nowhere")) "no-pair" "pair"))");
         CHECK(any_output_contains(collector, "no-pair")); });
 }
+
+TEST_CASE("neural: a rule consulting a net that is not there says so, once")
+{
+    // A misspelled net name -- or a definition that comes after the rule --
+    // makes every rule consulting it permanently inert. That was reported
+    // only under `.log`, so the rule looked fine, .list-rules showed it, and
+    // nothing was ever derived. The engine says what it could not do, as it
+    // does for every other refusal.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("(X p Y, ≈nosuchnet(X p Y)) => (X q Y)");
+        CHECK(any_event_contains(collector, "nosuchnet"));
+        CHECK(any_event_contains(collector, "no nn-layers definition"));
+
+        // Nothing is derived -- the rule is inert, which is what the message
+        // is about.
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+
+        // Once per net, not once per input line: the compiled-net cache is
+        // cleared on every input, so keying the report on it would repeat
+        // the warning for every line of an import.
+        collector.clear();
+        process_lines(interactive, R"(
+b p c
+c p d
+)");
+        CHECK_FALSE(any_event_contains(collector, "nosuchnet")); });
+}

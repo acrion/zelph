@@ -167,6 +167,15 @@ If the deduced fact already exists, its stored probability is _not_ modified —
 - Subject and predicate must be bound when the condition is evaluated (the automatic ordering normally guarantees this).
 - `≈` conditions are not supported inside `.prune-facts` / `.prune-nodes` patterns.
 
+If the named net has no `nn-layers` definition — a misspelled name, or a
+definition that comes after the rule — every rule consulting it stays silent.
+That is reported once per net rather than left to `.log`:
+
+```
+zelph> (X p Y, ≈nosuchnet(X p Y)) => (X q Y)
+Neural condition: net 'nosuchnet' has no nn-layers definition, so every rule consulting it stays silent.
+```
+
 ## The Helper Library: `stdlib/nn.zph`
 
 The raw API is deliberately low-level. `nn.zph` provides idiomatic helpers (import once via `.import nn`):

@@ -42,6 +42,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -313,6 +314,7 @@ namespace zelph::network
 
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
+        void             report_unusable_net(Node net_node, const std::string& why);
         void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
@@ -389,6 +391,12 @@ namespace zelph::network
         Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
         Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
         std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;          // compiled nets, cleared per epoch
+
+        // Which nets have already been reported as unusable. NOT cleared with
+        // the cache: that happens once per input line, and a rule consulting
+        // a misspelled net would then repeat its warning for every line of an
+        // import. Once per session is what makes it readable.
+        std::set<Node> _nn_reported;
 
         bool _seminaive{true};
         bool _seminaive_check{false};

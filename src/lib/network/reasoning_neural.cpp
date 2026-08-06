@@ -52,6 +52,12 @@ namespace
 // on every new REPL input), so weights trained between inputs are
 // picked up. Compile failures are cached as nullptr to avoid retrying
 // per match.
+void Reasoning::report_unusable_net(const Node net_node, const std::string& why)
+{
+    if (!_nn_reported.insert(net_node).second) return;
+    diagnostic("Neural condition: net '" + format(net_node) + "' " + why + ".", true);
+}
+
 const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
 {
     auto it = _nn_cache.find(net_node);
@@ -86,11 +92,20 @@ const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
         catch (const std::exception& ex)
         {
             if (should_log(depth)) log(depth, "neural", std::string("compile failed: ") + ex.what());
+            report_unusable_net(net_node, std::string("cannot be compiled: ") + ex.what());
         }
     }
-    else if (should_log(depth))
+    else
     {
-        log(depth, "neural", "net " + format(net_node) + " has no valid nn-layers definition");
+        if (should_log(depth)) log(depth, "neural", "net " + format(net_node) + " has no valid nn-layers definition");
+
+        // A net that is not there is a configuration error -- a misspelled
+        // name, or a definition that comes after the rule -- and it makes
+        // every rule consulting it permanently inert. Silence was only broken
+        // by `.log`, so the rule looked fine, .list-rules showed it, and
+        // nothing was ever derived. Reported once per net, on the diagnostic
+        // channel, like every other "the engine could not do what was asked".
+        report_unusable_net(net_node, "has no nn-layers definition, so every rule consulting it stays silent");
     }
 
     const NeuralNet* raw = net.get();
