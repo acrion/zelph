@@ -49,7 +49,7 @@ Structural identity is the property to build on: `zelph_list` over the same node
 
 | Function | |
 | --- | --- |
-| `zelph_nn_compile(engine, layers, layer_count, out_handle)` | Compile a feed-forward view of the sub-graph spanned by the layer nodes, input first, output last. |
+| `zelph_nn_compile(engine, layers, layer_count, activation, out_handle)` | Compile a feed-forward view of the sub-graph spanned by the layer nodes, input first, output last. `activation` applies to the hidden layers; the output layer is always linear. |
 | `zelph_nn_connect_layers(engine, from, to, scale, seed, out_created)` | Fully connect two layers with raw synapses drawn from `[-scale, scale]`. Existing synapses keep their weights, so the call is idempotent and re-wiring never destroys training. |
 | `zelph_nn_eval_nodes(engine, handle, in_nodes, in_activations, in_count, top_k, out_nodes, out_scores, count)` | Forward pass with node-addressed multi-hot input. A null activation array means every listed neuron is `1.0`. Results are sorted by descending score, ties by ascending node; `top_k < 0` returns the whole output layer. |
 | `zelph_nn_train_nodes(engine, handle, in_nodes, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | One SGD step; `out_loss` is the loss *before* the update. |
@@ -59,6 +59,25 @@ Structural identity is the property to build on: `zelph_list` over the same node
 | `zelph_nn_restore(engine, handle, weights, weight_count, sizes, size_count)` | Put a snapshot back. The shapes must match. |
 
 The node-addressed entry points are the ones that matter for a sparse input layer: the input is the *list of active neurons*, so a 768-input encoding with 32 pieces on the board costs 32 terms, not 768.
+
+### The hidden-layer activation
+
+`ZELPH_ACTIVATION_RELU` is `max(0, x)` and is what every net compiled before this option
+existed was trained with. `ZELPH_ACTIVATION_LEAKY_RELU` is `max(0.01 x, x)`.
+
+The difference is not a matter of taste. **With a plain ReLU, a hidden layer whose every unit
+is negative for every input has an output of exactly 0 and a gradient of exactly 0.** No
+further training can leave that state — it is absorbing — and a small net trained online can
+walk into it and stay there. A leaky unit passes a hundredth of the gradient instead of none,
+which is the difference between "slow" and "never"; `src/test/test_capi.cpp` pins exactly
+that, with 500 training steps that move a leaky net and leave a ReLU one bit for bit
+unchanged.
+
+The activation is a property of the compiled **view**, not of the graph: a net trained with
+one must be evaluated with the same one, or every output that came from a unit below zero
+changes. Nothing in the file records it, so a caller that uses anything but the default has
+to record the choice itself — as a fact in the graph, next to whatever else describes how the
+net was built.
 
 Snapshot and restore exist because training walks past its best point: the criterion that says "stop" can only fire after the fact, so without a way back the weights that get saved are always some epochs late.
 

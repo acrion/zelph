@@ -38,12 +38,13 @@ using namespace zelph::network;
 
 namespace
 {
-    // Computes the activations of all layers. Hidden layers use ReLU, the
-    // output layer is linear (identity).
+    // Computes the activations of all layers. Hidden layers use the net's
+    // activation, the output layer is linear (identity).
     std::vector<std::vector<double>> run_forward(const std::vector<std::vector<Node>>&   nodes,
                                                  const std::vector<std::vector<double>>& w,
                                                  const std::vector<double>&              input,
-                                                 const std::vector<size_t>*              active_input)
+                                                 const std::vector<size_t>*              active_input,
+                                                 const NeuralNet::Activation             activation)
     {
         if (input.size() != nodes.front().size())
         {
@@ -62,7 +63,7 @@ namespace
             const bool   is_output = (k + 2 == nodes.size());
 
             // Only the input layer is known to be sparse; hidden activations
-            // are dense after a ReLU that most units pass.
+            // are dense after an activation that most units pass.
             const bool sparse = (k == 0 && active_input != nullptr);
 
             std::vector<double> out(n_post, 0.0);
@@ -85,7 +86,12 @@ namespace
                         sum += row[i] * act[k][i];
                     }
                 }
-                out[j] = is_output ? sum : std::max(0.0, sum);
+                if (is_output)
+                    out[j] = sum;
+                else if (activation == NeuralNet::Activation::LeakyRelu)
+                    out[j] = std::max(leaky_relu_slope * sum, sum);
+                else
+                    out[j] = std::max(0.0, sum);
             }
             act.push_back(std::move(out));
         }
@@ -129,7 +135,9 @@ int64_t zelph::network::connect_layers(const Zelph& z, const Node from_layer, co
     return created;
 }
 
-std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<Node>& layers)
+std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph&             z,
+                                              const std::vector<Node>& layers,
+                                              const Activation         activation)
 {
     if (layers.size() < 2)
     {
@@ -137,6 +145,7 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
     }
 
     auto nn = std::unique_ptr<NeuralNet>(new NeuralNet());
+    nn->_activation = activation;
     nn->_nodes.reserve(layers.size());
 
     // in NeuralNet::compile, replacing the previous member-collection loop:
@@ -201,7 +210,7 @@ std::vector<double> NeuralNet::forward(const std::vector<double>& input,
                                        const std::vector<size_t>* active_input) const
 {
     std::shared_lock lock(_mtx);
-    return run_forward(_nodes, _w, input, active_input).back();
+    return run_forward(_nodes, _w, input, active_input, _activation).back();
 }
 
 std::vector<std::vector<double>> NeuralNet::weights() const
@@ -216,7 +225,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
                              const std::vector<size_t>* active_input)
 {
     std::unique_lock lock(_mtx);
-    const auto  act = run_forward(_nodes, _w, input, active_input);
+    const auto  act = run_forward(_nodes, _w, input, active_input, _activation);
     const auto& out = act.back();
 
     if (target.size() != out.size())
@@ -283,10 +292,18 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
         if (k > 0)
         {
-            // ReLU derivative of hidden layer k
+            // Derivative of hidden layer k. A leaky unit that is off still
+            // passes `slope` of the gradient, which is the whole point: with
+            // a hard zero here a layer that has gone negative everywhere can
+            // never come back.
             for (size_t i = 0; i < n_pre; ++i)
             {
-                if (act[k][i] <= 0.0) prev_delta[i] = 0.0;
+                if (act[k][i] <= 0.0)
+                {
+                    prev_delta[i] = _activation == Activation::LeakyRelu
+                                      ? prev_delta[i] * leaky_relu_slope
+                                      : 0.0;
+                }
             }
             delta = std::move(prev_delta);
         }

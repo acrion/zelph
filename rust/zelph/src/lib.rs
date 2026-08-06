@@ -56,7 +56,7 @@ mod engine;
 mod error;
 mod net;
 
-pub use engine::{Channel, Engine};
+pub use engine::{Activation, Channel, Engine};
 pub use error::{Error, ErrorKind, Result};
 pub use net::{Net, Snapshot};
 

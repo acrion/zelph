@@ -255,7 +255,7 @@ TEST_CASE("capi: a network is wired, compiled, trained and read back through the
 
     const zelph_node layers[2] = {in, out};
     zelph_net        net       = -1;
-    REQUIRE(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
 
     const zelph_node i1 = engine.node("i1");
     const zelph_node i2 = engine.node("i2");
@@ -322,7 +322,7 @@ TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")
 
     REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.1, 7, nullptr) == ZELPH_OK);
     zelph_net net = -1;
-    REQUIRE(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
 
     size_t shape_count = 0;
     CHECK(zelph_nn_snapshot_shape(engine, net, nullptr, &shape_count) == ZELPH_BUFFER_TOO_SMALL);
@@ -383,7 +383,7 @@ TEST_CASE("capi: weights written back survive save and load, and nodes keep thei
 
         REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.0, 1, nullptr) == ZELPH_OK);
         zelph_net net = -1;
-        REQUIRE(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_OK);
+        REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
 
         for (int epoch = 0; epoch < 40; ++epoch)
             REQUIRE(zelph_nn_train_nodes(engine, net, &i1, nullptr, 1, &o1, nullptr, 1, 0.5, nullptr) == ZELPH_OK);
@@ -414,7 +414,7 @@ TEST_CASE("capi: weights written back survive save and load, and nodes keep thei
         CHECK(engine.node("o1") == saved_output);
 
         zelph_net net = -1;
-        REQUIRE(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_OK);
+        REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
 
         zelph_node top   = 0;
         double     score = 0;
@@ -447,7 +447,7 @@ TEST_CASE("capi: failures come back as a status and a message, never as an excep
     // would be undefined behaviour in the caller.
     const zelph_node layers[2] = {engine.node("EmptyIn"), engine.node("EmptyOut")};
     zelph_net        net       = -1;
-    CHECK(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_RUNTIME_ERROR);
+    CHECK(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_RUNTIME_ERROR);
     CHECK(std::string(zelph_last_error()).find("no members") != std::string::npos);
 
     // .save validates its extension, and the refusal must reach the caller
@@ -485,7 +485,7 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
 
     REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.1, 3, nullptr) == ZELPH_OK);
     zelph_net net = -1;
-    REQUIRE(zelph_nn_compile(engine, layers, 2, &net) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
 
     std::atomic<bool> training{true};
     std::atomic<int>  failures{0};
@@ -761,4 +761,130 @@ TEST_CASE("capi: a delta run costs the addition rather than the graph")
     REQUIRE(zelph_run_once(engine) == ZELPH_OK);
     REQUIRE(zelph_exists(engine, engine.node("third"), is_a, &mortal, 1, &exists) == ZELPH_OK);
     CHECK(exists == 1);
+}
+
+// ---------------------------------------------------------------------------
+// The hidden-layer activation, and the state it exists to remove.
+//
+// With a plain ReLU a hidden layer whose every unit is negative for every
+// input has an output of exactly 0 and a gradient of exactly 0. No further
+// training can leave that state - it is absorbing - and a small
+// online-trained net can walk into it and stay there. A leaky unit passes a
+// hundredth of the gradient instead of none, which is the difference between
+// "slow" and "never".
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: a leaky hidden layer can recover from being all-negative")
+{
+    Engine engine;
+
+    engine.member_of("i1", "In");
+    engine.member_of("h1", "Hid");
+    engine.member_of("o1", "Out");
+
+    const zelph_node in     = engine.node("In");
+    const zelph_node hidden = engine.node("Hid");
+    const zelph_node out    = engine.node("Out");
+    const zelph_node i1     = engine.node("i1");
+    const zelph_node h1     = engine.node("h1");
+    const zelph_node o1     = engine.node("o1");
+
+    REQUIRE(zelph_nn_connect_layers(engine, in, hidden, 0.0, 1, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, hidden, out, 0.0, 2, nullptr) == ZELPH_OK);
+
+    const zelph_node layers[3] = {in, hidden, out};
+
+    // Drive the single hidden unit firmly negative: with i1 -> h1 negative and
+    // i1 the only active input, the unit is off for every input this net can
+    // see.
+    auto put_the_unit_off = [&]() {
+        zelph_net net = -1;
+        REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+        // A snapshot is the only way in: set the weight directly rather than
+        // hoping training walks there.
+        size_t shape_count = 0;
+        CHECK(zelph_nn_snapshot_shape(engine, net, nullptr, &shape_count) == ZELPH_BUFFER_TOO_SMALL);
+        std::vector<size_t> sizes(shape_count, 0);
+        REQUIRE(zelph_nn_snapshot_shape(engine, net, sizes.data(), &shape_count) == ZELPH_OK);
+
+        size_t              weight_count = sizes[0] + sizes[1];
+        std::vector<double> weights(weight_count, 0.0);
+        weights[0] = -1.0; // i1 -> h1
+        weights[1] = 1.0;  // h1 -> o1
+        REQUIRE(zelph_nn_restore(engine, net, weights.data(), weights.size(), sizes.data(), sizes.size())
+                == ZELPH_OK);
+        REQUIRE(zelph_nn_write_back(engine, net) == ZELPH_OK);
+    };
+
+    // Returns what the net says before and after 500 steps of being asked
+    // for +1.
+    auto train_and_report = [&](int32_t activation) -> std::pair<double, double> {
+        put_the_unit_off();
+
+        zelph_net net = -1;
+        REQUIRE(zelph_nn_compile(engine, layers, 3, activation, &net) == ZELPH_OK);
+
+        zelph_node top    = 0;
+        double     before = 0;
+        size_t     count  = 1;
+        REQUIRE(zelph_nn_eval_nodes(engine, net, &i1, nullptr, 1, 1, &top, &before, &count) == ZELPH_OK);
+
+        const double target = 1.0;
+        for (int step = 0; step < 500; ++step)
+        {
+            REQUIRE(zelph_nn_train_nodes(engine, net, &i1, nullptr, 1, &o1, &target, 1, 0.1, nullptr)
+                    == ZELPH_OK);
+        }
+
+        double after = 0;
+        count        = 1;
+        REQUIRE(zelph_nn_eval_nodes(engine, net, &i1, nullptr, 1, 1, &top, &after, &count) == ZELPH_OK);
+        return {before, after};
+    };
+
+    // ReLU: the unit is off, the output is exactly 0, and five hundred steps
+    // of asking for +1 change nothing whatsoever. That is the absorbing state.
+    const auto relu = train_and_report(ZELPH_ACTIVATION_RELU);
+    CHECK(relu.first == doctest::Approx(0.0));
+    CHECK(relu.second == doctest::Approx(0.0));
+
+    // Leaky: the same unit passes a hundredth of its input, so the output
+    // starts near zero rather than at it - and the same five hundred steps
+    // move it TOWARDS the +1 it was asked for. Slowly: the gradient through
+    // an off unit is a hundredth of the ordinary one, so 500 steps take it
+    // from -0.0100 to -0.0037 rather than to +1. That is the whole claim -
+    // not "leaky is fast", but "leaky can move at all and ReLU cannot".
+    const auto leaky = train_and_report(ZELPH_ACTIVATION_LEAKY_RELU);
+    CHECK(leaky.first == doctest::Approx(-0.01));
+    CHECK(leaky.second > leaky.first);
+    CHECK(std::abs(leaky.second - leaky.first) > 1e-4);
+}
+
+TEST_CASE("capi: the activation is checked and the default is the old behaviour")
+{
+    Engine engine;
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    const zelph_node layers[2] = {engine.node("In"), engine.node("Out")};
+
+    zelph_net net = -1;
+    CHECK(zelph_nn_compile(engine, layers, 2, 7, &net) == ZELPH_INVALID_ARGUMENT);
+
+    // A net without a hidden layer is unaffected either way: the output layer
+    // is linear whatever the activation says.
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.5, 3, nullptr) == ZELPH_OK);
+
+    zelph_net relu = -1;
+    zelph_net leaky = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &relu) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_LEAKY_RELU, &leaky) == ZELPH_OK);
+
+    const zelph_node i1 = engine.node("i1");
+    zelph_node       top = 0;
+    double           a = 0, b = 0;
+    size_t           count = 1;
+    REQUIRE(zelph_nn_eval_nodes(engine, relu, &i1, nullptr, 1, 1, &top, &a, &count) == ZELPH_OK);
+    count = 1;
+    REQUIRE(zelph_nn_eval_nodes(engine, leaky, &i1, nullptr, 1, 1, &top, &b, &count) == ZELPH_OK);
+    CHECK(a == doctest::Approx(b));
 }

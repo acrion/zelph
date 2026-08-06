@@ -51,6 +51,21 @@ impl Channel {
     }
 }
 
+/// How a hidden layer's pre-activation becomes its activation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    /// `max(0, x)`, and what every net compiled before this option existed
+    /// was trained with.
+    Relu = 0,
+
+    /// `max(0.01 x, x)`. The gradient is never exactly zero - which matters
+    /// because with a plain ReLU a hidden layer whose every unit is negative
+    /// for every input has an output of exactly 0 AND a gradient of exactly
+    /// 0. That state is absorbing: no further training can leave it, and a
+    /// small online-trained net can walk into it and stay there.
+    LeakyRelu = 1,
+}
+
 type OutputCallback = Box<dyn FnMut(Channel, &str, bool)>;
 
 /// A zelph instance: the graph, and the networks compiled out of it.
@@ -259,12 +274,22 @@ impl Engine {
     }
 
     /// Compile a feed-forward view of the sub-graph spanned by these layers,
-    /// input first, output last.
+    /// input first, output last, with ReLU hidden layers.
     ///
     /// The net is a *view*: its neurons are graph nodes and its weights are
     /// graph edges, which is why saving the graph saves the network without
     /// a network file format existing at all.
     pub fn compile(&self, layers: &[Node]) -> Result<Net<'_>> {
+        self.compile_with(layers, Activation::Relu)
+    }
+
+    /// As [`compile`](Engine::compile), with the hidden-layer activation
+    /// named.
+    ///
+    /// A net trained with one activation must be evaluated with the same one:
+    /// it is a property of the compiled view, and getting it wrong changes
+    /// every output that came from a unit below zero.
+    pub fn compile_with(&self, layers: &[Node], activation: Activation) -> Result<Net<'_>> {
         let mut handle: zelph_sys::zelph_net = -1;
 
         check(unsafe {
@@ -272,6 +297,7 @@ impl Engine {
                 self.raw,
                 layers.as_ptr().cast(),
                 layers.len(),
+                activation as i32,
                 &mut handle,
             )
         })?;

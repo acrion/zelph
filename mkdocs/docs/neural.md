@@ -440,3 +440,22 @@ Q183 not in the country set of this dump (pruning artifact); skipping Q183 check
 -- 2.497 s --
 wikidata->
 ```
+
+## Hidden-layer activation
+
+`zelph/nn-compile` takes an optional second argument, `:relu` (the default) or
+`:leaky-relu`, which selects what the hidden layers do with a negative pre-activation.
+
+`:relu` is `max(0, x)`. It has a property worth knowing before training anything small
+online: a hidden layer whose every unit is negative for every input produces an output of
+exactly 0 **and** a gradient of exactly 0, so no further training can move it. That state is
+absorbing. `:leaky-relu` is `max(0.01 x, x)`, whose gradient is never exactly zero.
+
+The activation belongs to the compiled view rather than to the graph, so a net trained with
+one has to be evaluated with the same one. Record the choice yourself if it is not the
+default — a fact in the graph next to the net's layer list is the natural place, and it is
+where the layer list itself lives.
+
+```janet
+(def handle (zelph/nn-compile [in hidden out] :leaky-relu))
+```

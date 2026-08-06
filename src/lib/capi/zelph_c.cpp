@@ -329,10 +329,16 @@ int32_t zelph_save(zelph_engine* engine, const char* path)
         return succeed(); });
 }
 
-int32_t zelph_nn_compile(zelph_engine* engine, const zelph_node* layers, const size_t layer_count, zelph_net* out_handle)
+int32_t zelph_nn_compile(zelph_engine*     engine,
+                         const zelph_node* layers,
+                         const size_t      layer_count,
+                         const int32_t     activation,
+                         zelph_net*        out_handle)
 {
     if (!engine || !layers || !out_handle) return fail(ZELPH_INVALID_ARGUMENT, "engine, layers and out_handle are required");
     if (layer_count < 2) return fail(ZELPH_INVALID_ARGUMENT, "a network needs at least 2 layers");
+    if (activation != ZELPH_ACTIVATION_RELU && activation != ZELPH_ACTIVATION_LEAKY_RELU)
+        return fail(ZELPH_INVALID_ARGUMENT, "unknown activation " + std::to_string(activation));
 
     return guarded([&]
                    {
@@ -344,7 +350,12 @@ int32_t zelph_nn_compile(zelph_engine* engine, const zelph_node* layers, const s
             nodes.push_back(layers[i]);
         }
 
-        auto net = zelph::network::NeuralNet::compile(*engine->interactive.graph(), nodes);
+        auto net = zelph::network::NeuralNet::compile(
+            *engine->interactive.graph(),
+            nodes,
+            activation == ZELPH_ACTIVATION_LEAKY_RELU
+                ? zelph::network::Activation::LeakyRelu
+                : zelph::network::Activation::Relu);
 
         std::unique_lock<std::shared_mutex> lock(engine->nets_mutex);
         engine->nets.push_back(std::move(net));

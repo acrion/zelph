@@ -92,6 +92,24 @@ extern "C"
         ZELPH_RUNTIME_ERROR = 3
     };
 
+    /* How a hidden layer's pre-activation becomes its activation.
+     *
+     * A property of the compiled VIEW: a net trained with one must be
+     * evaluated with the same one, or its output changes. RELU is what every
+     * net compiled before this option existed used, and is the value to pass
+     * unless there is a reason not to. */
+    enum zelph_activation
+    {
+        ZELPH_ACTIVATION_RELU = 0,
+
+        /* max(0.01 x, x). The gradient is never exactly zero - which matters
+           because with a plain ReLU a hidden layer whose every unit is
+           negative for every input has an output of exactly 0 AND a gradient
+           of exactly 0. That state is absorbing: no further training can
+           leave it, and a small online-trained net can walk into it. */
+        ZELPH_ACTIVATION_LEAKY_RELU = 1
+    };
+
     /* Mirrors zelph::io::OutputChannel. */
     enum zelph_channel
     {
@@ -281,10 +299,13 @@ extern "C"
     /* -------------------------------------------------------------- networks */
 
     /* Compile a feed-forward view of the sub-graph spanned by the given
-       layer nodes, input first, output last. At least two layers. */
+       layer nodes, input first, output last. At least two layers.
+       `activation` is one of the zelph_activation values and applies to the
+       hidden layers; the output layer is always linear. */
     ZELPH_EXPORT int32_t zelph_nn_compile(zelph_engine*     engine,
                                           const zelph_node* layers,
                                           size_t            layer_count,
+                                          int32_t           activation,
                                           zelph_net*        out_handle);
 
     /* Fully connect two layers with raw synapses, weights drawn uniformly

@@ -549,7 +549,7 @@ public:
 
         janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)janet_cfun_zelph_set_weight), "(zelph/set-weight from to w)\nSet the weight of an existing synapse or edge.");
 
-        janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
+        janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers &opt activation)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
                                                                                                      "input first, output last. Neurons are the subjects of (neuron in layer) facts, ordered by node id. "
                                                                                                      "Returns an integer handle. The compiled net is a discardable cache; the graph stays the source of truth.");
 
@@ -1181,7 +1181,7 @@ public:
     // of layer nodes, input first, output last. Returns an integer handle.
     static Janet janet_cfun_zelph_nn_compile(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 1);
+        janet_arity(argc, 1, 2);
         if (!s_instance) return janet_wrap_nil();
 
         const Janet* data;
@@ -1198,10 +1198,25 @@ public:
             layers.push_back(n);
         }
 
+        // The hidden-layer activation. Optional, and defaulting to the one
+        // every net compiled before this argument existed was trained with -
+        // a net evaluated with a different activation is a different net.
+        network::Activation activation = network::Activation::Relu;
+        if (argc >= 2 && !janet_checktype(argv[1], JANET_NIL))
+        {
+            const std::string name = janet_checktype(argv[1], JANET_KEYWORD)
+                                       ? reinterpret_cast<const char*>(janet_unwrap_keyword(argv[1]))
+                                       : reinterpret_cast<const char*>(janet_getstring(argv, 1));
+            if (name == "leaky-relu")
+                activation = network::Activation::LeakyRelu;
+            else if (name != "relu")
+                janet_panicf("zelph/nn-compile: unknown activation '%s' - use :relu or :leaky-relu", name.c_str());
+        }
+
         std::string err;
         try
         {
-            auto net = network::NeuralNet::compile(*s_instance->_n, layers);
+            auto net = network::NeuralNet::compile(*s_instance->_n, layers, activation);
 
             std::lock_guard<std::mutex> lock(s_instance->_state_mutex);
             s_instance->_neural_nets.push_back(std::move(net));
