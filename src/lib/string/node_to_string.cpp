@@ -620,7 +620,59 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         }
     }
 
-    if (elements.empty()) elements = variable_elements;
+    // Which of the two sets IS the statement depends on what is being
+    // rendered, and the container alone cannot tell -- a rule and the facts
+    // it derives share the very same node, which is the point of a
+    // collection. The parent decides: inside a PATTERN (a rule's condition or
+    // consequence, which carries variables and is therefore never a claim)
+    // the variable members are what the rule says and the accumulated ground
+    // ones are data it has produced; everywhere else it is the other way
+    // round.
+    //
+    // Without this the printed rule DRIFTED as it ran:
+    //
+    //     (X reported Y) => (Y in @{X})
+    //     .list-rules   ->  (X reported Y) => (Y in @{Y X})
+    //     alice reported bug1 ... bob reported bug2
+    //     .list-rules   ->  (X reported Y) => (Y in @{bug1 bug2})
+    //
+    // -- a line that no longer says what the rule does and re-enters as a
+    // DIFFERENT rule, whose container starts out holding two bug reports.
+    // Same ruling as for the negation tag: write it where it is
+    // syntactically part of the statement, report it beside the term
+    // elsewhere.
+    //
+    // "Is the parent a pattern" has to be asked SYNTACTICALLY -- of the
+    // parent's own subject, predicate and objects -- not of its closure. A
+    // derived `bug1 in @{...}` reaches the rule's variables THROUGH the
+    // shared container, so any closure test calls it a pattern too and the
+    // answer line loses its members. The one shape this cannot separate is a
+    // consequence whose every position is ground (`(P q R) => (a in @{R})`):
+    // there the pattern node and the derived fact are literally the same
+    // node, so no rendering can tell them apart.
+    //
+    // Evaluated only when a variable member exists, i.e. never for a
+    // container in ordinary data.
+    const auto parent_is_pattern = [&]
+    {
+        if (parent == 0) return false;
+        const network::FactStructure pfs = network::get_preferred_structure(z, parent, 1);
+
+        const auto unbound_var = [&](const network::Node nd)
+        { return nd != 0 && network::Zelph::is_var(resolve_var(nd)); };
+
+        if (unbound_var(pfs.subject) || unbound_var(pfs.predicate)) return true;
+        return std::any_of(pfs.objects.begin(), pfs.objects.end(), unbound_var);
+    };
+
+    // A SET CONSTANT is exempt: its identity IS its members, so they are the
+    // statement in every context, and `(X in {a b})` is precisely how a rule
+    // quantifies over them -- the X that the condition adds to the container
+    // is the artifact there, not the a and b. Only a COLLECTION accumulates
+    // what a rule derives, and only a collection can drift.
+    if (!variable_elements.empty()
+        && (elements.empty() || (parent_is_pattern() && !z->is_set_constant(resolved))))
+        elements = variable_elements;
 
     if (!elements.empty())
     {

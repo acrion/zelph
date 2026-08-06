@@ -251,9 +251,22 @@ zelph> alice reported bug1
 zelph> bob reported bug2
 zelph> (X reported Y) => (Y in @{X})
 zelph> S in O
-Answer: bug2 in @{bug1 bug2}
 Answer: bug1 in @{bug1 bug2}
+Answer: bug2 in @{bug1 bug2}
 ```
+
+The rule and the facts it derives name **one and the same** container, so what
+counts as its members depends on which of the two you are looking at. Inside
+the rule the variables are the statement; in the data the gathered members
+are. The rule therefore keeps saying what it says, however much it has
+gathered:
+
+```
+zelph> .list-rules
+(X reported Y) => (Y in @{Y X})
+```
+
+(`Y` is a member because `Y in @{X}` puts it there.)
 
 Note the asymmetry, and that it is the point: quantify over a **set constant**
 to read its members, write into a **collection** to gather results.

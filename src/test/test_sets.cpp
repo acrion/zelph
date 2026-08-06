@@ -424,3 +424,54 @@ TEST_CASE("sets: a printed collection literal says why it cannot be pasted back"
         CHECK(any_output_contains(collector, "[axiom]"));
         CHECK_FALSE(any_event_contains(collector, "builds a NEW container")); });
 }
+
+TEST_CASE("sets: a rule's collection does not drift into the data it gathered")
+{
+    // A rule and the facts it derives share ONE container -- that is what a
+    // collection is for -- so the renderer has to decide which of its members
+    // are the STATEMENT. It preferred the ground ones as soon as any existed,
+    // and the printed rule therefore changed as it ran:
+    //
+    //     (X reported Y) => (Y in @{X})
+    //     .list-rules  ->  (X reported Y) => (Y in @{Y X})
+    //     alice reported bug1 ... bob reported bug2
+    //     .list-rules  ->  (X reported Y) => (Y in @{bug1 bug2})
+    //
+    // The last line no longer says what the rule does, and re-enters as a
+    // DIFFERENT rule whose container starts out holding two bug reports.
+    // Inside a pattern the variables are the statement; everywhere else the
+    // ground members are.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("(X reported Y) => (Y in @{X})");
+        CHECK(any_output_contains(collector, "(X reported Y) => (Y in @{Y X})"));
+
+        process_lines(interactive, R"(
+alice reported bug1
+bob reported bug2
+)");
+        interactive.run(true, false, false);
+
+        // The rule is a FIXPOINT of the rendering: it says the same after
+        // firing as before.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X reported Y) => (Y in @{Y X})"));
+        CHECK_FALSE(any_output_contains(collector, "@{bug1 bug2})"));
+
+        // ... and the DATA still names what the container holds, which is the
+        // half that must not be lost to the fix.
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "bug1 in @{bug1 bug2}"));
+        CHECK(answers_contain(collector, "bug2 in @{bug1 bug2}"));
+
+        // A SET CONSTANT is exempt: its identity is its members, and
+        // "(X in {a b})" is how a rule quantifies over them -- the variable
+        // the condition adds is the artifact there.
+        collector.clear();
+        interactive.process("(X in {a b}) => (X flagged yes)");
+        CHECK(any_output_contains(collector, "(X in {a b}) => (X flagged yes)"));
+        CHECK_FALSE(any_output_contains(collector, "{X}")); });
+}
