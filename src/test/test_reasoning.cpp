@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 TEST_CASE("import: missing scripts fail with a standard-library hint, wrong extensions are rejected")
@@ -1908,4 +1910,42 @@ a p b
         interactive.process(".stat");
         CHECK(any_output_contains(collector, "Rules: 2"));
     }
+}
+
+TEST_CASE("rules: an untagged one-member condition survives a save/load round trip")
+{
+    // The reading is computed live from the graph rather than stored, so a
+    // round trip is where it would break if anything about it were cached or
+    // written down. It has to come back as a rule, fire, and explain.
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() / "zelph_single_condition.bin";
+    std::filesystem::remove(file);
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("{(X p Y)} => (X q Y)");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    std::filesystem::remove(file);
+
+    collector.clear();
+    interactive.process(".stat");
+    CHECK(any_output_contains(collector, "Rules: 1"));
+
+    interactive.process(".auto-run");
+    interactive.process("a p b");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(answers_contain(collector, "a q b"));
+
+    collector.clear();
+    interactive.process(".explain (a q b)");
+    CHECK(any_output_contains(collector, "a p b"));
 }
