@@ -527,6 +527,47 @@ namespace zelph::network
         /// the marking facts without going through fact(), so the index has
         /// to be read back off the marker's extent afterwards.
         void          rebuild_rule_pattern_index() const;
+
+        // A node IS the hash of what it is built from, so merging one node
+        // away invalidates the identity of everything built on it: the fact
+        // `a p b` whose subject was merged into `c` still carries the hash of
+        // (p, a, {b}) while its edges now read (p, c, {b}). Re-entering the
+        // line the renderer prints then creates a SECOND node, and a fact
+        // whose subject and predicate became the same node stops being
+        // readable at all -- the subject == predicate reading verifies the
+        // hash by construction.
+        //
+        // Network::merge cannot repair that: it rewires edges, and knowing
+        // what a triple is belongs above network.hpp. These two do it here.
+
+        /// One hash-identified node's recipe, captured while its id is still
+        /// valid. A set constant is identified by its members, everything
+        /// else by its triple.
+        struct HashRecipe
+        {
+            bool          is_set    = false;
+            Node          subject   = 0;
+            Node          predicate = 0;
+            adjacency_set objects;
+            adjacency_set members;
+        };
+
+        /// Every hash-identified node that `node` takes part in, transitively,
+        /// with its recipe -- ordered so that a node comes after everything it
+        /// is built from. Call BEFORE the merge, while the hashes still hold.
+        std::vector<std::pair<Node, HashRecipe>> collect_hash_dependents(Node node) const;
+
+        /// Re-create those nodes under the id their new components give them,
+        /// folding each into an equal node that already exists. Call AFTER the
+        /// merge, with what the call above returned.
+        void rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& recipes, Node from, Node into) const;
+
+        /// Which node keeps a contested name and which one disappears into
+        /// it. Assumes both name locks are HELD; reads only, so set_name can
+        /// derive it twice -- once to plan the repair, once to carry it out.
+        /// False when there is no conflict; throws when the two cannot merge.
+        bool resolve_name_conflict_locked(Node node, const std::string& name, const std::string& lang, Node& from, Node& into, bool& conflict_is_core) const;
+
         void          remove_rules() const;
         size_t        rule_count() const;
         void          save_to_file(const std::string& filename) const;

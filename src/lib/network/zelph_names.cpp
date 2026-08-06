@@ -66,6 +66,88 @@ using namespace zelph::network;
 // If another node already has this name *and* merge_on_conflict is true,
 // the other node's connections are merged into this node, and the other node
 // is subsequently removed.
+// The name-conflict decision, taken with the two name locks HELD: which node
+// keeps the name and which one disappears into it. Reads only, so it can be
+// re-derived cheaply -- which is what set_name does, once to plan the repair
+// and once to carry it out.
+//
+// Returns false when there is no conflict. Throws when the two cannot be
+// merged at all.
+bool Zelph::resolve_name_conflict_locked(const Node         node,
+                                         const std::string& name,
+                                         const std::string& lang,
+                                         Node&              from,
+                                         Node&              into,
+                                         bool&              conflict_is_core) const
+{
+    Node conflict_node = 0;
+    conflict_is_core   = false;
+
+    // Check regular mapping first
+    auto rev_outer_it = _pImpl->_node_of_name.find(lang);
+    if (rev_outer_it != _pImpl->_node_of_name.end())
+    {
+        auto it = rev_outer_it->second.find(name);
+        if (it != rev_outer_it->second.end() && it->second != node)
+        {
+            conflict_node = it->second;
+        }
+    }
+
+    // If not found in regular map, check core names
+    if (conflict_node == 0)
+    {
+        Node core_node = get_core_node(name);
+        if (core_node != 0 && core_node != node)
+        {
+            conflict_node    = core_node;
+            conflict_is_core = true;
+        }
+    }
+
+    if (conflict_node == 0) return false;
+
+    if (conflict_is_core)
+    {
+        // Core nodes must never be merged away
+        from = node;
+        into = conflict_node;
+    }
+    else
+    {
+        // Default behaviour: merge the conflicting node into the requested node
+        from = conflict_node;
+        into = node;
+
+        // Defensive: if "from" is unexpectedly a core node, preserve it
+        if (!get_core_name(from).empty())
+        {
+            std::swap(from, into);
+        }
+    }
+
+    if (Impl::is_var(from) != Impl::is_var(into))
+    {
+        std::stringstream s;
+        if (conflict_is_core)
+        {
+            s << "Requested name '" << name << "' is already used by core node "
+              << into
+              << ". Merging is impossible because one node is a variable, the other not.";
+        }
+        else
+        {
+            s << "Requested name '" << name << "' is already used by node "
+              << conflict_node
+              << " in language '" << lang
+              << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
+        }
+        throw std::runtime_error(s.str());
+    }
+
+    return true;
+}
+
 void Zelph::set_name(const Node         node,
                      const std::string& name,
                      std::string        lang,
@@ -79,83 +161,53 @@ void Zelph::set_name(const Node         node,
                         << std::endl;
 #endif
 
-    std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
-    std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
-
-    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
-    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
-
-    Node target_node = node;
+    // A merge runs in four steps because two of them must NOT hold the name
+    // locks. Reading what a dependent node is built from, and re-creating it
+    // under its new id, both go through the fact readers -- whose logging
+    // renders nodes, and rendering takes exactly the locks the merge needs.
+    // So: decide under the locks, read the recipes without them, merge under
+    // them again, repair without them.
+    Node merge_from       = 0;
+    Node merge_into       = 0;
+    bool conflict_is_core = false;
 
     if (merge_on_conflict)
     {
-        Node conflict_node    = 0;
-        bool conflict_is_core = false;
+        std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
+        std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
-        // Check regular mapping first
-        auto rev_outer_it = _pImpl->_node_of_name.find(lang);
-        if (rev_outer_it != _pImpl->_node_of_name.end())
+        ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+        ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+        resolve_name_conflict_locked(node, name, lang, merge_from, merge_into, conflict_is_core);
+    }
+
+    // Read WHILE THE HASHES STILL HOLD: after the merge the components no
+    // longer hash back to the node, and the verifying reader refuses to
+    // decompose it.
+    std::vector<std::pair<Node, HashRecipe>> dependents;
+    if (merge_from != 0) dependents = collect_hash_dependents(merge_from);
+
+    {
+        std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
+        std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+        ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+        ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+        Node target_node = node;
+
+        if (merge_from != 0)
         {
-            auto it = rev_outer_it->second.find(name);
-            if (it != rev_outer_it->second.end() && it->second != node)
-            {
-                conflict_node = it->second;
-            }
-        }
-
-        // If not found in regular map, check core names
-        if (conflict_node == 0)
-        {
-            Node core_node = get_core_node(name);
-            if (core_node != 0 && core_node != node)
-            {
-                conflict_node    = core_node;
-                conflict_is_core = true;
-            }
-        }
-
-        if (conflict_node != 0)
-        {
-            Node from;
-            Node into;
-
-            if (conflict_is_core)
-            {
-                // Core nodes must never be merged away
-                from = node;
-                into = conflict_node;
-            }
-            else
-            {
-                // Default behaviour: merge the conflicting node into the requested node
-                from = conflict_node;
-                into = node;
-
-                // Defensive: if "from" is unexpectedly a core node, preserve it
-                if (!get_core_name(from).empty())
-                {
-                    std::swap(from, into);
-                }
-            }
-
-            if (Impl::is_var(from) != Impl::is_var(into))
-            {
-                std::stringstream s;
-                if (conflict_is_core)
-                {
-                    s << "Requested name '" << name << "' is already used by core node "
-                      << into
-                      << ". Merging is impossible because one node is a variable, the other not.";
-                }
-                else
-                {
-                    s << "Requested name '" << name << "' is already used by node "
-                      << conflict_node
-                      << " in language '" << lang
-                      << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
-                }
-                throw std::runtime_error(s.str());
-            }
+            // The decision is re-derived rather than assumed. Nothing renames
+            // concurrently in this engine, and this is what keeps that a
+            // checked assumption instead of an unwritten one.
+            Node from    = 0;
+            Node into    = 0;
+            bool is_core = false;
+            if (!resolve_name_conflict_locked(node, name, lang, from, into, is_core)
+                || from != merge_from || into != merge_into)
+                throw std::runtime_error("Zelph::set_name: the name conflict changed while it was being repaired");
 
             if (!Impl::is_var(from))
             {
@@ -184,12 +236,17 @@ void Zelph::set_name(const Node         node,
 
             target_node = into;
         }
+
+        // Also correct in the !merge_on_conflict case:
+        // - old name of target_node is removed
+        // - previous owner of "name" loses that forward mapping
+        _pImpl->assign_name_locked(target_node, name, lang);
     }
 
-    // Also correct in the !merge_on_conflict case:
-    // - old name of target_node is removed
-    // - previous owner of "name" loses that forward mapping
-    _pImpl->assign_name_locked(target_node, name, lang);
+    // A node IS the hash of what it is built from, so everything built on the
+    // node that just disappeared has to be re-created under the id its new
+    // components give it.
+    if (merge_from != 0) rehash_dependents(dependents, merge_from, merge_into);
 }
 
 // Assigns or links a name in a foreign language to a node and ensures the name in the current default language (_lang) is correctly set.

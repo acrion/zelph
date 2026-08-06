@@ -196,6 +196,8 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.name <node|id> <lang> <new_name>` – Set name in specific language
 - `.delname <node|id> [lang]` – Delete name in current language (or specified language)
 
+Giving a node a name that another node already holds in that language **merges the two**, with a warning naming both — that is how one states, after the fact, that a node written by hand and an imported entity are the same thing. A node *is* the hash of what it is built from, so everything built on the node that disappears is re-created under the id its new components give it, and folds into an equal fact where the graph already holds one. Core nodes are never the ones that disappear, and a variable and a non-variable cannot be merged at all.
+
 #### Exploring the Network
 
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)

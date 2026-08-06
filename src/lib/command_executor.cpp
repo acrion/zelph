@@ -1672,7 +1672,16 @@ private:
                       ".name <node|id> <lang> <new_name>\n"
                       "Sets the name in the specified language.\n"
                       "The <node|id> can be a name (in current language) or numeric node ID.\n"
-                      "Empty <new_name> is not allowed – use .delname to remove a name."},
+                      "Empty <new_name> is not allowed – use .delname to remove a name.\n"
+                      "\n"
+                      "Giving a node a name another node already holds in that language MERGES\n"
+                      "the two, with a warning naming both. That is how one says afterwards that\n"
+                      "a node written by hand and an imported entity are the same thing. A node\n"
+                      "IS the hash of what it is built from, so every fact built on the one that\n"
+                      "disappears is re-created under the id its new components give it, folding\n"
+                      "into an equal fact where the graph already holds one. Core nodes are never\n"
+                      "the ones that disappear, and a variable and a non-variable cannot merge at\n"
+                      "all."},
 
             {".delname", ".delname <node|id> [lang]\n"
                          "Removes the name of the node in the current language (or the specified language if provided).\n"
@@ -1773,7 +1782,9 @@ private:
                             "Performs full inference and writes every derived fact and contradiction to\n"
                             "<file> as JSON Lines -- one object per line:\n"
                             "    {\"kind\":\"deduction\",\"conclusion\":[SEG,...],\"premises\":[[SEG,...],...]}\n"
-                            "A SEG is either a JSON string (literal text of the rendering) or an object\n"
+                            "A SEG is either a JSON string (literal text of the rendering), the object\n"
+                            "{\"core\":\"<name>\"} for a node of zelph's own vocabulary (!, ~, =>, in, ...),\n"
+                            "which a converter must not mistake for a domain identifier, or an object\n"
                             "{\"names\":{\"<lang>\":\"<name>\",...}} naming one node in every language it is\n"
                             "known by. A contradiction record carries an extra \"refused\" field when the\n"
                             "engine REFUSED to build the deduced fact rather than finding the knowledge\n"

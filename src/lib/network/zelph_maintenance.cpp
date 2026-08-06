@@ -339,6 +339,192 @@ void Zelph::rebuild_rule_pattern_index() const
     _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
 }
 
+std::vector<std::pair<Node, Zelph::HashRecipe>> Zelph::collect_hash_dependents(const Node node) const
+{
+    // Read the recipe of one hash-identified node. A set constant is asked
+    // for its members, everything else for its triple. Both readings hold
+    // only while the ids do -- afterwards the components no longer hash back
+    // to the node and the verifying reader rejects it.
+    const auto recipe_of = [this](const Node nd, HashRecipe& out) -> bool
+    {
+        if (!Impl::is_hash(nd) || !exists(nd)) return false;
+
+        if (is_set_constant(nd))
+        {
+            out.is_set = true;
+            for (const Node rel : get_right(nd))
+            {
+                if (parse_relation(rel) != core.PartOf) continue;
+                adjacency_set objs;
+                const Node    member = parse_fact(rel, objs, 0);
+                if (member != 0 && objs.count(nd) == 1) out.members.insert(member);
+            }
+            return !out.members.empty();
+        }
+
+        const FactStructure fs = get_preferred_structure(this, nd, 3);
+        if (fs.subject == 0 || fs.predicate == 0) return false;
+
+        out.is_set    = false;
+        out.subject   = fs.subject;
+        out.predicate = fs.predicate;
+        out.objects   = fs.objects;
+        return true;
+    };
+
+    const auto components_of = [](const HashRecipe& r)
+    {
+        adjacency_set out;
+        if (r.is_set)
+        {
+            for (const Node m : r.members)
+                out.insert(m);
+        }
+        else
+        {
+            out.insert(r.subject);
+            out.insert(r.predicate);
+            for (const Node o : r.objects)
+                out.insert(o);
+        }
+        return out;
+    };
+
+    // Reach every node built on `node`, at any depth. A candidate counts when
+    // one of its COMPONENTS is already known to be affected -- not merely
+    // when it is adjacent to the node just popped. A set constant is why: it
+    // is identified by its members, and the walk reaches it through a
+    // membership FACT, which is not one of them.
+    ankerl::unordered_dense::map<Node, HashRecipe> affected;
+    std::unordered_set<Node>                       reached{node};
+    std::vector<Node>                              frontier{node};
+
+    while (!frontier.empty())
+    {
+        std::vector<Node> next;
+
+        for (const Node current : frontier)
+        {
+            // Both directions: a fact points at its subject and predicate, an
+            // object points at its fact, and a container is two hops away
+            // through the membership fact.
+            adjacency_set neighbours = get_right(current);
+            for (const Node n : get_left(current))
+                neighbours.insert(n);
+
+            for (const Node cand : neighbours)
+            {
+                if (reached.count(cand) != 0) continue;
+
+                HashRecipe recipe;
+                if (!recipe_of(cand, recipe)) continue;
+
+                const adjacency_set parts       = components_of(recipe);
+                const auto          is_affected = [&reached](const Node c)
+                { return reached.count(c) != 0; };
+                if (std::none_of(parts.begin(), parts.end(), is_affected)) continue;
+
+                reached.insert(cand);
+                next.push_back(cand);
+                affected.emplace(cand, std::move(recipe));
+            }
+        }
+
+        frontier = std::move(next);
+    }
+
+    // Emit in DEPENDENCY order, which is not the order the walk found them
+    // in: a membership fact is reached one step before its container, and the
+    // container is what the fact is built FROM. Rebuilding the fact first
+    // would compute its id from the container's OLD id and leave it stale a
+    // second time. Hash-consing makes the relation acyclic -- a node's id is
+    // computed from its components' ids -- so this terminates.
+    std::vector<std::pair<Node, HashRecipe>> ordered;
+    ordered.reserve(affected.size());
+    std::unordered_set<Node> emitted;
+
+    while (ordered.size() < affected.size())
+    {
+        const std::size_t before = ordered.size();
+
+        for (const auto& [nd, recipe] : affected)
+        {
+            if (emitted.count(nd) != 0) continue;
+
+            const adjacency_set parts     = components_of(recipe);
+            const auto          waits_for = [&](const Node c)
+            { return c != nd && affected.count(c) != 0 && emitted.count(c) == 0; };
+            if (std::any_of(parts.begin(), parts.end(), waits_for)) continue;
+
+            emitted.insert(nd);
+            ordered.emplace_back(nd, recipe);
+        }
+
+        if (ordered.size() == before) break; // defensive: never loop forever
+    }
+
+    return ordered;
+}
+
+void Zelph::rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& recipes, const Node from, const Node into) const
+{
+    if (recipes.empty()) return;
+
+    std::unordered_map<Node, Node> remap{{from, into}};
+
+    const auto mapped = [&remap](const Node nd)
+    {
+        const auto it = remap.find(nd);
+        return it == remap.end() ? nd : it->second;
+    };
+
+    for (const auto& [old_id, recipe] : recipes)
+    {
+        if (!exists(old_id)) continue; // folded away by an earlier round
+
+        Node new_id = 0;
+        if (recipe.is_set)
+        {
+            adjacency_set members;
+            for (const Node m : recipe.members)
+                members.insert(mapped(m));
+            new_id = Impl::create_hash(members);
+        }
+        else
+        {
+            adjacency_set objects;
+            for (const Node o : recipe.objects)
+                objects.insert(mapped(o));
+            new_id = Impl::create_hash(mapped(recipe.predicate), mapped(recipe.subject), objects);
+        }
+
+        if (new_id == 0 || new_id == old_id) continue;
+
+        // The equal node may already be there -- `a p b` whose subject merges
+        // into `c` lands on a `c p b` the graph already holds, and folding
+        // the two is the right answer: they are the same statement. Where it
+        // is not there, the id is created empty and the merge below gives it
+        // the adjacency the old node already carries, which the component
+        // merges have brought up to date.
+        if (!exists(new_id)) _pImpl->create(new_id);
+
+        _pImpl->merge(old_id, new_id);
+        _pImpl->transfer_names_locked(old_id, new_id);
+
+        remap[old_id] = new_id;
+    }
+
+    // Every index keyed by node id, and the relation-type set: a rebuilt node
+    // is created through the graph primitives rather than through fact(), so
+    // nothing on that path announces that `a ~ ->` now exists under a new id.
+    // Without the last one parse_relation kept answering from the stale set,
+    // and every rebuilt fact rendered as "??" although its id and its edges
+    // were already correct.
+    invalidate_fact_structures_cache();
+    invalidate_relation_type_set();
+    rebuild_rule_pattern_index();
+}
+
 void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created) const
 {
     if (created.empty()) return;
