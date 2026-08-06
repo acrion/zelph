@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -364,4 +366,193 @@ TEST_CASE("math: a multi-letter variable needs its underscore")
     collector.clear();
     interactive.process("S ok O");
     CHECK_FALSE(collect_answers(collector).empty());
+}
+
+// ---------------------------------------------------------------------------
+// Cross-subsystem combinations. Each of these puts two or three mechanisms
+// together that no other test exercises in the same network: negation-as-
+// failure over a demand-driven layer, a rule GENERATOR driving that layer,
+// a cluster rolling back what both of them produced, mathematics reporting a
+// contradiction, and a computation suspended by .save and resumed by .load.
+//
+// They pass. They are here because the ways they could fail are silent ones:
+// a stratification that evaluates the negation too early would refute a true
+// identity, and a rollback that misses derived structure would leave a graph
+// nobody can account for.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("math: negation-as-failure over the equivalence machinery")
+{
+    // The negation has to be evaluated AFTER the equivalence machinery has
+    // had its chance -- it is a multi-stage, demand-driven proof, not a
+    // lookup. Evaluated too early, every identity would come out refuted.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    math_with(interactive, "a b");
+
+    process_lines(interactive, R"(
+(P lhs L, P rhs R) => (L ≡ R)
+(P lhs L, P rhs R, (L ≡ R) = proven) => (P status verified)
+(P lhs L, P rhs R, ¬((L ≡ R) = proven)) => (P status refuted)
+t1 lhs $( (a+b)*(a+b) )
+t1 rhs $( a^2 + 2*a*b + b^2 )
+t2 lhs $( (a+b)*(a+b) )
+t2 rhs $( a^2 + b^2 )
+)");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("S status O");
+    CHECK(answers_contain(collector, "t1 status verified"));
+    CHECK(answers_contain(collector, "t2 status refuted"));
+    CHECK(collect_answers(collector).size() == 2);
+}
+
+TEST_CASE("math: a rule generator drives the differentiation layer")
+{
+    // Three layers that never meet elsewhere: a generator writes one rule per
+    // indeterminate, each generated rule derives a differentiation REQUEST,
+    // and the demand-driven layer answers it.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    math_with(interactive, "x y");
+
+    process_lines(interactive, R"(
+(V ~ indet) => ((T interesting yes) => (T diffby V))
+x ~ indet
+y ~ indet
+$( x*y ) interesting yes
+)");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("(A diffby B) = R");
+    CHECK(answers_contain(collector, "((x * y) diffby x) = y"));
+    CHECK(answers_contain(collector, "((x * y) diffby y) = x"));
+}
+
+TEST_CASE("math: a cluster rolls back generated rules and derived mathematics")
+{
+    // .cluster-drop promises to remove exactly what was created while the
+    // cluster was active. Here that is a generated RULE plus everything the
+    // demand-driven layer computed because of it -- and the math stack's own
+    // 338 rules must survive untouched. The node count is the whole
+    // assertion: it is the only thing that can say "exactly".
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    math_with(interactive, "x y");
+
+    const auto nodes = [&]
+    {
+        collector.clear();
+        interactive.process(".stat");
+        for (const auto& event : collector.events())
+        {
+            const std::string text = normalize(event.text);
+            const auto        pos  = text.find("Nodes: ");
+            if (pos != std::string::npos) return std::stoul(text.substr(pos + 7));
+        }
+        return 0UL;
+    };
+
+    const std::size_t before = nodes();
+
+    interactive.process(".cluster exp");
+    process_lines(interactive, R"(
+(V ~ indet) => ((T interesting yes) => (T diffby V))
+x ~ indet
+$( x*y ) interesting yes
+)");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("(A diffby B) = R");
+    REQUIRE(answers_contain(collector, "((x * y) diffby x) = y"));
+    CHECK(nodes() > before);
+
+    interactive.process(".cluster-drop exp");
+    CHECK(nodes() == before);
+
+    // The derived mathematics is gone with it, and the stack still works.
+    collector.clear();
+    interactive.process("(A diffby B) = R");
+    CHECK(collect_answers(collector).empty());
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK_FALSE(any_output_contains(collector, "No rules found"));
+}
+
+TEST_CASE("math: a refuted identity reported as a contradiction")
+{
+    // Negation-as-failure, the equivalence machinery and the contradiction
+    // marker in one rule set: a claimed identity that cannot be proved makes
+    // the knowledge base contradictory. A true one must not.
+    SUBCASE("a true identity is no contradiction")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        math_with(interactive, "a b");
+        process_lines(interactive, R"(
+(P lhs L, P rhs R) => (L ≡ R)
+(P lhs L, P rhs R, ¬((L ≡ R) = proven)) => !
+t1 lhs $( (a+b)*(a+b) )
+t1 rhs $( a^2 + 2*a*b + b^2 )
+)");
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK_FALSE(has_contradiction(collector));
+    }
+
+    SUBCASE("a false one is")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        math_with(interactive, "a b");
+        process_lines(interactive, R"(
+(P lhs L, P rhs R) => (L ≡ R)
+(P lhs L, P rhs R, ¬((L ≡ R) = proven)) => !
+t2 lhs $( (a+b)*(a+b) )
+t2 rhs $( a^2 + b^2 )
+)");
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(has_contradiction(collector));
+    }
+}
+
+TEST_CASE("math: a demand-driven computation survives being saved half-way")
+{
+    // The request is made, the network is written to disk BEFORE anything
+    // computes it, and the answer is produced after the reload. What has to
+    // survive is the request itself -- a fact like any other -- and the
+    // stack's ability to pick it up on the next run.
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() / "zelph_half_derivative.bin";
+    std::filesystem::remove(file);
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".auto-run"); // off: nothing may compute yet
+        math_with(interactive, "x");
+        interactive.process("$( x^3 ) diffby x");
+
+        collector.clear();
+        interactive.process("(A diffby x) = R");
+        REQUIRE(collect_answers(collector).empty()); // genuinely half-way
+
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    std::filesystem::remove(file);
+    interactive.process(".import math"); // rules are not in the .bin by design
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("(A diffby x) = R");
+    CHECK(answers_contain(collector, "((x ^ &3) diffby x) = $( &3 * x ^ &2 )"));
 }
