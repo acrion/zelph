@@ -61,6 +61,7 @@ add_executable(zelph_tests
     test_integers.cpp
     test_jacobian.cpp
     test_math.cpp
+    test_math_identities.cpp
     test_math_syntax.cpp
     test_mermaid.cpp
     test_name_merge.cpp

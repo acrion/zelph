@@ -450,6 +450,18 @@ void console::Interactive::process(std::string line) const
                     _pImpl->_script_engine->process_janet(transformed, true);
                 };
 
+                // Same, but for input that need not be a statement at all:
+                // "? (&17 mod &5)" asks for the value of a TERM, which the
+                // statement grammar rejects by design. Only the request that
+                // IS a statement is asserted.
+                auto try_process_stmt = [this](const std::string& stmt)
+                {
+                    const std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(stmt);
+                    if (transformed.empty()) return;
+                    _pImpl->_n->profiler_reset_epoch();
+                    _pImpl->_script_engine->process_janet(transformed, true);
+                };
+
                 struct QuietEcho
                 {
                     ReplState& s;
@@ -480,6 +492,23 @@ void console::Interactive::process(std::string line) const
                         ~QuietOutput() { n->set_output_handler(std::move(original)); }
                     } quiet_out{_pImpl->_n.get()};
 
+                    // The REQUEST itself is asserted first, not merely
+                    // materialized as the subject of the rewritten query.
+                    // The demand-driven subsystems of the standard library
+                    // (diff, topoly, the primality test) trigger on the
+                    // CLAIM `T diffby x`, and a node that some rule happens
+                    // to name in a condition is a rule pattern rather than a
+                    // claim -- so writing
+                    //
+                    //     (($( x^3 ) diffby x) = Y) => (marker found Y)
+                    //
+                    // BEFORE asking `? $( x^3 ) diffby x` made the question
+                    // unaskable: .explain answered `[rule pattern; not
+                    // asserted]`, nothing computed the derivative, and the
+                    // rule that was waiting for it never fired. The same two
+                    // lines in the other order worked, which is the tell.
+                    // Asking IS asserting the statement one asks about.
+                    try_process_stmt(request);
                     process_stmt(query);
                     _pImpl->_n->run(false, false, false, true);
                 }
