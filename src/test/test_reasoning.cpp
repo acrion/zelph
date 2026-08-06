@@ -1750,3 +1750,111 @@ a r b
         CHECK(answers_contain(collector, "a q b"));
     }
 }
+
+TEST_CASE("rules: correcting an inert rule is not discarded as a duplicate")
+{
+    // A container of several conditions WITHOUT the conjunction tag is not
+    // read as a set of conditions and cannot fire; the tagged one does. Two
+    // rules that behave differently must not be identified -- but the
+    // canonical form rendered both containers as a set, so the parse-time
+    // deduplication recognised the tagged rule as the untagged one already
+    // present and rolled it back. Nothing was created, and the user could
+    // not repair a rule that does not work by entering it correctly.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+a r b
+{(X p Y) (X r Y)} => (X q Y)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        REQUIRE(collect_answers(collector).empty()); // inert, as it must be
+
+        // The correction arrives, and it is a rule of its own.
+        interactive.process("(*{(X p Y) (X r Y)} ~ conjunction) => (X q Y)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1"));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b")); });
+}
+
+TEST_CASE("rules: an identical rule is still recognised as a duplicate")
+{
+    // The control the fix must not cost: entering the SAME rule twice, in
+    // either spelling, still yields one rule.
+    SUBCASE("the comma sugar")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(X p Y, X r Y) => (X q Y)
+(A p B, A r B) => (A q B)
+)");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1"));
+    }
+
+    SUBCASE("the tagged verbose form")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(*{(X p Y) (X r Y)} ~ conjunction) => (X q Y)
+(*{(A p B) (A r B)} ~ conjunction) => (A q B)
+)");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1"));
+    }
+
+    SUBCASE("an untagged container twice")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+{(X p Y) (X r Y)} => (X q Y)
+{(A p B) (A r B)} => (A q B)
+)");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 0"));
+    }
+}
+
+TEST_CASE("rules: entering the same untagged container rule twice builds it once")
+{
+    // The dedup still has to recognise a repetition of a rule it does NOT
+    // call a rule -- and neither .stat nor a query can say so here (the
+    // container carries variables, so the `=>` fact is a pattern and no
+    // query answers it). The node count is what settles it.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto nodes = [&]
+    {
+        collector.clear();
+        interactive.process(".stat");
+        for (const auto& event : collector.events())
+        {
+            const std::string text = normalize(event.text);
+            const auto        pos  = text.find("Nodes: ");
+            if (pos != std::string::npos) return std::stoul(text.substr(pos + 7));
+        }
+        return 0UL;
+    };
+
+    interactive.process("{(X p Y) (X r Y)} => (X q Y)");
+    const std::size_t after_first = nodes();
+
+    interactive.process("{(A p B) (A r B)} => (A q B)");
+    CHECK(nodes() == after_first);
+}

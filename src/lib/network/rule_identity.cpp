@@ -142,7 +142,8 @@ namespace zelph::network
         enum class Kind
         {
             Var,
-            Set,
+            Set,       // a container the ENGINE reads as a set of conditions
+            Container, // ... and one it does not: several members, no tag
             Fact,
             Opaque
         };
@@ -157,7 +158,16 @@ namespace zelph::network
             // That store answers about the node itself, and a container holds
             // its variables in its membership FACTS -- so it reports "no
             // variables" for `@{Y}` and the node used to leave as Opaque.
-            if (is_container(z, n)) return Kind::Set;
+            //
+            // In CONDITION position the two kinds have to stay apart: a
+            // container of several members WITHOUT the conjunction tag is not
+            // read as a set of conditions and cannot fire, while the tagged
+            // one does. Rendering both as a set made them alpha-equivalent,
+            // so entering the tagged rule after the untagged one was
+            // recognised as a duplicate and silently rolled back -- the
+            // correction of a rule that does not work could not be entered.
+            if (is_container(z, n))
+                return role == Role::Condition ? Kind::Container : Kind::Set;
 
             if (variables_in(z, n) == Vars::None) return Kind::Opaque;
 
@@ -188,6 +198,7 @@ namespace zelph::network
             case Kind::Var:
                 return "v";
 
+            case Kind::Container:
             case Kind::Set:
             {
                 // A conjunction set holds conditions, a term container holds
@@ -198,7 +209,9 @@ namespace zelph::network
                     parts.push_back(canon(z, m, depth + 1, role));
                 std::sort(parts.begin(), parts.end());
 
-                std::string out = "{";
+                // The brace tells the two kinds apart: same members, but one
+                // of them is a rule and the other is not.
+                std::string out = classify(z, n, role) == Kind::Set ? "{" : "@{";
                 for (const auto& p : parts)
                     out += p + " ";
                 return out + "}";
@@ -259,6 +272,7 @@ namespace zelph::network
                     // Variable-free and hash-consed: identity settles it.
                     return a == b;
 
+                case Kind::Container:
                 case Kind::Set:
                     // The SAME container node is the same term, whatever the
                     // bijection says about the variables inside it. Two rules
