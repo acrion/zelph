@@ -173,6 +173,111 @@ extern "C"
        in .bin. */
     ZELPH_EXPORT int32_t zelph_save(zelph_engine* engine, const char* path);
 
+    /* ------------------------------------------------------------ reasoning */
+    /*
+     * The graph is not only a store: rules over it are the reason zelph
+     * exists, and this is the surface a program needs to use them. Everything
+     * here is main thread only.
+     */
+
+    /* A variable, for use inside a rule or a query pattern.
+     *
+     * Variables are remembered by name for as long as the engine lives, so
+     * asking twice for "A" yields the same node - which is what makes a
+     * pattern built in one call queryable in another. zelph_clear_variables
+     * forgets them, so a later pattern can reuse the names for fresh ones. */
+    ZELPH_EXPORT int32_t zelph_variable(zelph_engine* engine, const char* name, zelph_node* out_node);
+    ZELPH_EXPORT int32_t zelph_clear_variables(zelph_engine* engine);
+
+    /* A SET CONSTANT: identified by its members, so the same elements always
+       yield the same node and membership cannot be extended. This is what a
+       conjunction of conditions is built from. */
+    ZELPH_EXPORT int32_t zelph_set(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
+
+    /* A COLLECTION: a container with its own identity, so two calls with the
+       same elements yield two different nodes. */
+    ZELPH_EXPORT int32_t zelph_collection(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
+
+    /* Mark a fact pattern as a negation, i.e. negation as failure. Evaluated
+       against the SATURATED positive fact base, never against in-flight
+       state - that is zelph's stratification rule and it is what makes
+       "no defender remains" expressible. */
+    ZELPH_EXPORT int32_t zelph_negate(zelph_engine* engine, zelph_node pattern, zelph_node* out_node);
+
+    /* Does this fact exist? Creates nothing. */
+    ZELPH_EXPORT int32_t zelph_exists(zelph_engine*     engine,
+                                      zelph_node        subject,
+                                      zelph_node        predicate,
+                                      const zelph_node* objects,
+                                      size_t            object_count,
+                                      int32_t*          out_exists);
+
+    /* Every object connected from `subject` through `predicate`, i.e. the
+       objects of the facts (subject predicate X). The mirror of
+       zelph_sources. */
+    ZELPH_EXPORT int32_t zelph_targets(zelph_engine* engine,
+                                       zelph_node    subject,
+                                       zelph_node    predicate,
+                                       zelph_node*   out_nodes,
+                                       size_t*       count);
+
+    /* An inference rule: when every condition holds, deduce every
+       consequence. Returns the condition set. */
+    ZELPH_EXPORT int32_t zelph_rule(zelph_engine*     engine,
+                                    const zelph_node* conditions,
+                                    size_t            condition_count,
+                                    const zelph_node* consequences,
+                                    size_t            consequence_count,
+                                    zelph_node*       out_condition_set);
+
+    /* Forward chaining. Facts and rules only take effect once the engine has
+       run.
+     *   run       - to a fixed point
+     *   run_once  - a single pass
+     *   run_delta - seeded by what was created since the previous run, so the
+     *               cost follows the addition rather than the graph. That
+     *               difference is what decides whether reasoning can happen
+     *               inside a loop. */
+    ZELPH_EXPORT int32_t zelph_run(zelph_engine* engine);
+    ZELPH_EXPORT int32_t zelph_run_once(zelph_engine* engine);
+    ZELPH_EXPORT int32_t zelph_run_delta(zelph_engine* engine);
+
+    /* Answer a query pattern - a fact containing variables.
+     *
+     * The bindings come back FLAT: `pairs` holds `2 * n` node ids per row,
+     * alternating variable and bound value, and `row_sizes[i]` says how many
+     * PAIRS row i contributed. Both counts are in/out as everywhere else, so
+     * a call with capacity 0 asks for the sizes.
+     *
+     * The variable is reported as the NODE the caller created, not as a name,
+     * so no string crosses the boundary and no lookup is needed to read the
+     * answer. */
+    ZELPH_EXPORT int32_t zelph_query(zelph_engine* engine,
+                                     zelph_node    pattern,
+                                     zelph_node*   pairs,
+                                     size_t*       pair_count,
+                                     size_t*       row_sizes,
+                                     size_t*       row_count);
+
+    /* Activate a named cluster, or deactivate tracking with a null name.
+     *
+     * Nodes CREATED while a cluster is active are recorded in it, which is
+     * what makes dropping it a rollback - and what turns a monotonic graph
+     * into a workspace. */
+    ZELPH_EXPORT int32_t zelph_cluster(zelph_engine* engine, const char* name);
+
+    /* The active cluster's name, or null in *out_name for the default. Free
+       with zelph_string_free. */
+    ZELPH_EXPORT int32_t zelph_cluster_active(zelph_engine* engine, char** out_name);
+
+    /* Remove every node the cluster recorded, with its edges and names, and
+       report how many went. Nodes that already existed when the cluster was
+       activated were never recorded, so a drop cannot reach them. */
+    ZELPH_EXPORT int32_t zelph_cluster_drop(zelph_engine* engine, const char* name, int64_t* out_removed);
+
+    /* How many nodes a cluster holds, or -1 when there is no such cluster. */
+    ZELPH_EXPORT int32_t zelph_cluster_count(zelph_engine* engine, const char* name, int64_t* out_count);
+
     /* -------------------------------------------------------------- networks */
 
     /* Compile a feed-forward view of the sub-graph spanned by the given

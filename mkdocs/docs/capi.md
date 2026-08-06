@@ -152,6 +152,31 @@ i1 -> o1 (1.000)
 i2 -> o2 (1.000)
 ```
 
+### Reasoning
+
+The graph is not only a store, and this is the surface a program needs to use rules over it.
+
+| Function | |
+| --- | --- |
+| `zelph_variable(engine, name, out_node)` | A variable for a rule or a query pattern. Remembered by name, so asking twice gives the same node - which is what makes a pattern built in one call queryable in another. `zelph_clear_variables` forgets them |
+| `zelph_set(engine, elements, count, out_node)` | A set constant: identified by its members, so the same elements always yield the same node |
+| `zelph_collection(engine, elements, count, out_node)` | A container with an identity of its own: two calls with the same elements yield two different nodes |
+| `zelph_negate(engine, pattern, out_node)` | Mark a pattern as negation as failure - evaluated against the saturated positive fact base, never against in-flight state |
+| `zelph_exists(engine, s, p, objects, n, out_exists)` | Does this fact exist? Creates nothing |
+| `zelph_targets(engine, subject, predicate, out_nodes, count)` | The mirror of `zelph_sources` |
+| `zelph_rule(engine, conditions, n, consequences, m, out)` | When every condition holds, deduce every consequence. Returns the condition set |
+| `zelph_run` / `zelph_run_once` / `zelph_run_delta` | Forward chaining: to a fixed point, one pass, or seeded by what was created since the previous run |
+| `zelph_query(engine, pattern, pairs, pair_count, row_sizes, row_count)` | Answer a pattern. The bindings come back flat - `2n` node ids per row, alternating variable and value - with one size per row |
+| `zelph_cluster(engine, name)` | Activate a cluster, or deactivate with a null name. Nodes *created* while one is active are recorded in it |
+| `zelph_cluster_active` / `_drop` / `_count` | The active cluster's name; remove everything a cluster recorded and report how many; how large a cluster is |
+
+A query reports the variable as the **node the caller created**, not as a name, so no string
+crosses the boundary and no lookup is needed to read an answer.
+
+Clusters are what make the monotonic graph usable as a workspace. The loop a caller runs is
+activate, assert, `zelph_run_delta`, query, deactivate, drop - and what a drop removes is
+exactly what was created inside it, so a graph loaded from disk is never at risk.
+
 ### Rust
 
 Two crates in `rust/` sit on this ABI and are maintained with it:

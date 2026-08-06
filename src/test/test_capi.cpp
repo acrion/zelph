@@ -523,3 +523,242 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
 
     CHECK(failures.load() == 0);
 }
+
+// ---------------------------------------------------------------------------
+// The reasoning surface.
+//
+// This is the half of zelph that is the reason it exists, and until now the C
+// ABI could not reach it: a program could store facts and evaluate networks
+// but not state a rule or ask a question. These tests pin the loop a caller
+// actually runs - assert, reason, read, and (because the graph is monotonic)
+// discard.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: a rule derives what forward chaining makes of it")
+{
+    Engine engine;
+
+    // (socrates ~ human) and the rule "every human is mortal".
+    const zelph_node socrates = engine.node("socrates");
+    const zelph_node plato    = engine.node("plato");
+    const zelph_node is_a     = engine.node("~");
+    const zelph_node human    = engine.node("human");
+    const zelph_node mortal   = engine.node("mortal");
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, socrates, is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, plato, is_a, &human, 1, &fact) == ZELPH_OK);
+
+    // A variable is a node like any other; the caller holds it, so the answer
+    // can name it without a string crossing the boundary.
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    CHECK(x != 0);
+
+    // Asking twice for the same name gives the same variable, which is what
+    // makes a pattern built in one call usable in another.
+    zelph_node again = 0;
+    REQUIRE(zelph_variable(engine, "X", &again) == ZELPH_OK);
+    CHECK(again == x);
+
+    zelph_node condition = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
+
+    zelph_node rule = 0;
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+    CHECK(rule != 0);
+
+    // Nothing is derived until the engine runs: facts and rules created
+    // through the API only take effect then.
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, socrates, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    REQUIRE(zelph_exists(engine, socrates, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+    REQUIRE(zelph_exists(engine, plato, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+TEST_CASE("capi: a query reports its bindings as nodes")
+{
+    Engine engine;
+
+    const zelph_node is_a  = engine.node("~");
+    const zelph_node human = engine.node("human");
+    zelph_node       fact  = 0;
+    for (const char* name : {"socrates", "plato", "aristotle"})
+    {
+        REQUIRE(zelph_fact(engine, engine.node(name), is_a, &human, 1, &fact) == ZELPH_OK);
+    }
+
+    zelph_node who = 0;
+    REQUIRE(zelph_variable(engine, "Who", &who) == ZELPH_OK);
+
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, who, is_a, &human, 1, &pattern) == ZELPH_OK);
+
+    // Capacity 0 asks for the size, as everywhere else in this ABI.
+    size_t pairs = 0;
+    size_t rows  = 0;
+    CHECK(zelph_query(engine, pattern, nullptr, &pairs, nullptr, &rows) == ZELPH_BUFFER_TOO_SMALL);
+    CHECK(rows == 3);
+    CHECK(pairs == 3); // one binding per row
+
+    std::vector<zelph_node> flat(pairs * 2, 0);
+    std::vector<size_t>     sizes(rows, 0);
+    REQUIRE(zelph_query(engine, pattern, flat.data(), &pairs, sizes.data(), &rows) == ZELPH_OK);
+    CHECK(rows == 3);
+
+    // Every row binds `who`, and the three bound nodes are the three
+    // philosophers - identified by node, so no name lookup is needed to read
+    // an answer.
+    std::vector<std::string> found;
+    size_t                   index = 0;
+    for (size_t row = 0; row < rows; ++row)
+    {
+        CHECK(sizes[row] == 1);
+        for (size_t pair = 0; pair < sizes[row]; ++pair, ++index)
+        {
+            CHECK(flat[index * 2] == who);
+            found.push_back(name_of(engine, flat[index * 2 + 1]));
+        }
+    }
+
+    std::sort(found.begin(), found.end());
+    CHECK(found == std::vector<std::string>{"aristotle", "plato", "socrates"});
+}
+
+TEST_CASE("capi: a cluster turns the monotonic graph into a workspace")
+{
+    Engine engine;
+
+    const zelph_node is_a  = engine.node("~");
+    const zelph_node thing = engine.node("thing");
+    zelph_node       fact  = 0;
+
+    // Asserted before any cluster exists, so no drop can reach it.
+    REQUIRE(zelph_fact(engine, engine.node("permanent"), is_a, &thing, 1, &fact) == ZELPH_OK);
+
+    REQUIRE(zelph_cluster(engine, "scratch") == ZELPH_OK);
+
+    char* active = nullptr;
+    REQUIRE(zelph_cluster_active(engine, &active) == ZELPH_OK);
+    CHECK(std::string(active ? active : "") == "scratch");
+    zelph_string_free(active);
+
+    const zelph_node ephemeral = engine.node("ephemeral");
+    REQUIRE(zelph_fact(engine, ephemeral, is_a, &thing, 1, &fact) == ZELPH_OK);
+
+    int64_t size = -1;
+    REQUIRE(zelph_cluster_count(engine, "scratch", &size) == ZELPH_OK);
+    CHECK(size > 0);
+    REQUIRE(zelph_cluster_count(engine, "no-such-cluster", &size) == ZELPH_OK);
+    CHECK(size == -1);
+
+    REQUIRE(zelph_cluster(engine, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_cluster_active(engine, &active) == ZELPH_OK);
+    CHECK(active == nullptr);
+
+    int64_t removed = 0;
+    REQUIRE(zelph_cluster_drop(engine, "scratch", &removed) == ZELPH_OK);
+    CHECK(removed > 0);
+
+    // What the cluster recorded is gone; what predates it is not.
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, ephemeral, is_a, &thing, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+    REQUIRE(zelph_exists(engine, engine.node("permanent"), is_a, &thing, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+TEST_CASE("capi: sets, collections and the directional relations")
+{
+    Engine engine;
+
+    const zelph_node a = engine.node("a");
+    const zelph_node b = engine.node("b");
+    const zelph_node elements[2] = {a, b};
+
+    // A set constant is identified by its members, so the same elements
+    // always yield the same node ...
+    zelph_node first = 0;
+    zelph_node second = 0;
+    REQUIRE(zelph_set(engine, elements, 2, &first) == ZELPH_OK);
+    REQUIRE(zelph_set(engine, elements, 2, &second) == ZELPH_OK);
+    CHECK(first == second);
+
+    // ... while a collection has an identity of its own.
+    zelph_node one = 0;
+    zelph_node two = 0;
+    REQUIRE(zelph_collection(engine, elements, 2, &one) == ZELPH_OK);
+    REQUIRE(zelph_collection(engine, elements, 2, &two) == ZELPH_OK);
+    CHECK(one != two);
+
+    // targets is the mirror of sources, and both are directional.
+    const zelph_node predicate = engine.node("hits");
+    zelph_node       fact      = 0;
+    REQUIRE(zelph_fact(engine, a, predicate, &b, 1, &fact) == ZELPH_OK);
+
+    zelph_node buffer[4] = {0, 0, 0, 0};
+    size_t     count     = 4;
+    REQUIRE(zelph_targets(engine, a, predicate, buffer, &count) == ZELPH_OK);
+    CHECK(count == 1);
+    CHECK(buffer[0] == b);
+
+    count = 4;
+    REQUIRE(zelph_sources(engine, predicate, b, buffer, &count) == ZELPH_OK);
+    CHECK(count == 1);
+    CHECK(buffer[0] == a);
+
+    // The other direction has nothing to report, which is an answer rather
+    // than an error.
+    count = 4;
+    REQUIRE(zelph_targets(engine, b, predicate, buffer, &count) == ZELPH_OK);
+    CHECK(count == 0);
+}
+
+TEST_CASE("capi: a delta run costs the addition rather than the graph")
+{
+    Engine engine;
+
+    const zelph_node is_a   = engine.node("~");
+    const zelph_node human  = engine.node("human");
+    const zelph_node mortal = engine.node("mortal");
+    zelph_node       fact   = 0;
+
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node condition = 0;
+    zelph_node consequence = 0;
+    zelph_node rule = 0;
+    REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+
+    REQUIRE(zelph_fact(engine, engine.node("first"), is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    // A delta run is seeded by what was created since the previous run. It
+    // must derive the new consequence and nothing about it may depend on the
+    // size of what came before - which is the property that decides whether
+    // reasoning can happen inside a loop.
+    const zelph_node latecomer = engine.node("latecomer");
+    REQUIRE(zelph_fact(engine, latecomer, is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run_delta(engine) == ZELPH_OK);
+
+    int32_t exists = 0;
+    REQUIRE(zelph_exists(engine, latecomer, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    // A single pass is available too, for a caller that wants one step
+    // rather than a fixed point.
+    REQUIRE(zelph_fact(engine, engine.node("third"), is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run_once(engine) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, engine.node("third"), is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}

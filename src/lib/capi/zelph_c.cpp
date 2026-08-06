@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "interactive.hpp"
 #include "network/adjacency_set.hpp"
 #include "network/neural.hpp"
+#include "network/answer.hpp"
 #include "network/reasoning.hpp"
 
 #include <algorithm>
@@ -35,6 +36,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -54,6 +56,12 @@ struct zelph_engine
     }
 
     zelph::console::Interactive interactive;
+
+    // Variables are remembered by name, as the Janet bindings remember them
+    // for the duration of a statement: a pattern built in one call has to be
+    // queryable in another, and that only works if "A" is the same node both
+    // times.
+    std::map<std::string, zelph::network::Node> variables;
 
     // Guards the handle table only. The nets themselves are internally
     // synchronised (see NeuralNet), so a lookup taken shared is all an
@@ -522,5 +530,322 @@ int32_t zelph_nn_restore(zelph_engine*   engine,
         }
 
         net->set_weights(matrices);
+        return succeed(); });
+}
+
+/* --------------------------------------------------------------- reasoning */
+
+int32_t zelph_variable(zelph_engine* engine, const char* name, zelph_node* out_node)
+{
+    if (!engine || !name || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine, name and out_node are required");
+
+    return guarded([&]
+                   {
+        auto it = engine->variables.find(name);
+        if (it != engine->variables.end())
+        {
+            *out_node = it->second;
+            return succeed();
+        }
+
+        auto* graph = engine->interactive.graph();
+        const zelph::network::Node variable = graph->var();
+        graph->set_name(variable, name, graph->lang(), false);
+        engine->variables[name] = variable;
+
+        *out_node = variable;
+        return succeed(); });
+}
+
+int32_t zelph_clear_variables(zelph_engine* engine)
+{
+    if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+
+    engine->variables.clear();
+    return succeed();
+}
+
+namespace
+{
+    // Shared by zelph_set and zelph_collection: both take a set of nodes and
+    // differ only in whether the result has an identity of its own.
+    template <typename F>
+    int32_t node_set(const zelph_node* elements, size_t count, zelph_node* out_node, F&& build)
+    {
+        std::unordered_set<zelph::network::Node> set;
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (!elements[i]) return fail(ZELPH_INVALID_ARGUMENT, "element " + std::to_string(i) + " is not a node");
+            set.insert(elements[i]);
+        }
+
+        *out_node = build(set);
+        return succeed();
+    }
+}
+
+int32_t zelph_set(zelph_engine* engine, const zelph_node* elements, const size_t count, zelph_node* out_node)
+{
+    if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
+    if (count > 0 && !elements) return fail(ZELPH_INVALID_ARGUMENT, "elements is null");
+
+    return guarded([&]
+                   { return node_set(elements, count, out_node, [&](const auto& set)
+                                     { return engine->interactive.graph()->set(set); }); });
+}
+
+int32_t zelph_collection(zelph_engine* engine, const zelph_node* elements, const size_t count, zelph_node* out_node)
+{
+    if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
+    if (count > 0 && !elements) return fail(ZELPH_INVALID_ARGUMENT, "elements is null");
+
+    return guarded([&]
+                   { return node_set(elements, count, out_node, [&](const auto& set)
+                                     { return engine->interactive.graph()->collection(set); }); });
+}
+
+int32_t zelph_negate(zelph_engine* engine, const zelph_node pattern, zelph_node* out_node)
+{
+    if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
+    if (!pattern) return fail(ZELPH_INVALID_ARGUMENT, "pattern is not a node");
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+        graph->fact(pattern, graph->core.IsA, {graph->core.Negation});
+        *out_node = pattern;
+        return succeed(); });
+}
+
+int32_t zelph_exists(zelph_engine*     engine,
+                     const zelph_node  subject,
+                     const zelph_node  predicate,
+                     const zelph_node* objects,
+                     const size_t      object_count,
+                     int32_t*          out_exists)
+{
+    if (!engine || !objects || !out_exists) return fail(ZELPH_INVALID_ARGUMENT, "engine, objects and out_exists are required");
+    if (!subject || !predicate) return fail(ZELPH_INVALID_ARGUMENT, "subject and predicate must be nodes");
+    if (object_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a fact needs at least one object");
+
+    return guarded([&]
+                   {
+        zelph::network::adjacency_set set;
+        for (size_t i = 0; i < object_count; ++i)
+        {
+            if (!objects[i]) return fail(ZELPH_INVALID_ARGUMENT, "object " + std::to_string(i) + " is not a node");
+            set.insert(objects[i]);
+        }
+
+        *out_exists = engine->interactive.graph()->check_fact(subject, predicate, set).is_correct() ? 1 : 0;
+        return succeed(); });
+}
+
+int32_t zelph_targets(zelph_engine*    engine,
+                      const zelph_node subject,
+                      const zelph_node predicate,
+                      zelph_node*      out_nodes,
+                      size_t*          count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+    if (!subject || !predicate)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "subject and predicate must be nodes");
+    }
+
+    return guarded([&]
+                   {
+        const zelph::network::adjacency_set targets = engine->interactive.graph()->get_fact_objects(subject, predicate);
+
+        std::vector<zelph_node> values;
+        values.reserve(targets.size());
+        for (const zelph::network::Node target : targets)
+            values.push_back(target);
+
+        return write_array(values, out_nodes, count); });
+}
+
+int32_t zelph_rule(zelph_engine*     engine,
+                   const zelph_node* conditions,
+                   const size_t      condition_count,
+                   const zelph_node* consequences,
+                   const size_t      consequence_count,
+                   zelph_node*       out_condition_set)
+{
+    if (!engine || !conditions || !consequences || !out_condition_set)
+        return fail(ZELPH_INVALID_ARGUMENT, "engine, conditions, consequences and out_condition_set are required");
+    if (condition_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a rule needs at least one condition");
+    if (consequence_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a rule needs at least one consequence");
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+
+        std::unordered_set<zelph::network::Node> set;
+        for (size_t i = 0; i < condition_count; ++i)
+        {
+            if (!conditions[i]) return fail(ZELPH_INVALID_ARGUMENT, "condition " + std::to_string(i) + " is not a node");
+            set.insert(conditions[i]);
+        }
+
+        // The conditions become a collection marked as a conjunction, and
+        // each consequence is linked to it by the causation predicate. That
+        // IS the rule - there is no rule object beyond the graph.
+        const zelph::network::Node condition_set = graph->collection(set);
+        graph->fact(condition_set, graph->core.IsA, {graph->core.Conjunction});
+
+        for (size_t i = 0; i < consequence_count; ++i)
+        {
+            if (!consequences[i]) return fail(ZELPH_INVALID_ARGUMENT, "consequence " + std::to_string(i) + " is not a node");
+            graph->fact(condition_set, graph->core.Causes, {consequences[i]});
+        }
+
+        *out_condition_set = condition_set;
+        return succeed(); });
+}
+
+namespace
+{
+    int32_t run_command(zelph_engine* engine, const char* command)
+    {
+        if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+
+        return guarded([&]
+                       {
+            engine->interactive.execute_command({command});
+            return succeed(); });
+    }
+}
+
+int32_t zelph_run(zelph_engine* engine)
+{
+    return run_command(engine, ".run");
+}
+
+int32_t zelph_run_once(zelph_engine* engine)
+{
+    return run_command(engine, ".run-once");
+}
+
+int32_t zelph_run_delta(zelph_engine* engine)
+{
+    return run_command(engine, ".run-delta");
+}
+
+int32_t zelph_query(zelph_engine*    engine,
+                    const zelph_node pattern,
+                    zelph_node*      pairs,
+                    size_t*          pair_count,
+                    size_t*          row_sizes,
+                    size_t*          row_count)
+{
+    if (!engine || !pair_count || !row_count) return fail(ZELPH_INVALID_ARGUMENT, "engine, pair_count and row_count are required");
+    if (!pattern)
+    {
+        *pair_count = 0;
+        *row_count  = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "pattern is not a node");
+    }
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+
+        std::vector<std::shared_ptr<zelph::network::Variables>> results;
+        graph->set_query_collector(&results);
+        graph->apply_rule(0, pattern);
+        graph->set_query_collector(nullptr);
+
+        std::vector<zelph_node> flat;
+        std::vector<size_t>     sizes;
+        sizes.reserve(results.size());
+        for (const auto& row : results)
+        {
+            sizes.push_back(row->size());
+            for (const auto& [variable, bound] : *row)
+            {
+                flat.push_back(variable);
+                flat.push_back(bound);
+            }
+        }
+
+        // Both buffers have to fit before either is written, so a caller that
+        // sized only one of them gets a clean refusal rather than half an
+        // answer.
+        const size_t pair_capacity = *pair_count;
+        const size_t row_capacity  = *row_count;
+        *pair_count                = flat.size() / 2;
+        *row_count                 = sizes.size();
+
+        if (*pair_count > pair_capacity || *row_count > row_capacity
+            || (!pairs && *pair_count > 0) || (!row_sizes && *row_count > 0))
+            return fail(ZELPH_BUFFER_TOO_SMALL,
+                        "need " + std::to_string(*pair_count) + " pairs in "
+                            + std::to_string(*row_count) + " rows");
+
+        std::copy(flat.begin(), flat.end(), pairs);
+        std::copy(sizes.begin(), sizes.end(), row_sizes);
+        return succeed(); });
+}
+
+int32_t zelph_cluster(zelph_engine* engine, const char* name)
+{
+    if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+        if (!name || std::string(name) == "default")
+            graph->deactivate_cluster();
+        else
+            graph->set_active_cluster(name);
+        return succeed(); });
+}
+
+int32_t zelph_cluster_active(zelph_engine* engine, char** out_name)
+{
+    if (!engine || !out_name) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_name are required");
+    *out_name = nullptr;
+
+    return guarded([&]
+                   {
+        const std::string name = engine->interactive.graph()->active_cluster_name();
+        if (name.empty() || name == "default")
+            return succeed(); // the default is "no cluster", not a name
+
+        char* copy = static_cast<char*>(std::malloc(name.size() + 1));
+        if (!copy) return fail(ZELPH_RUNTIME_ERROR, "out of memory");
+        std::memcpy(copy, name.c_str(), name.size() + 1);
+        *out_name = copy;
+        return succeed(); });
+}
+
+int32_t zelph_cluster_drop(zelph_engine* engine, const char* name, int64_t* out_removed)
+{
+    if (!engine || !name) return fail(ZELPH_INVALID_ARGUMENT, "engine and name are required");
+
+    return guarded([&]
+                   {
+        const size_t removed = engine->interactive.graph()->drop_cluster(name);
+        if (out_removed) *out_removed = static_cast<int64_t>(removed);
+        return succeed(); });
+}
+
+int32_t zelph_cluster_count(zelph_engine* engine, const char* name, int64_t* out_count)
+{
+    if (!engine || !name || !out_count) return fail(ZELPH_INVALID_ARGUMENT, "engine, name and out_count are required");
+
+    return guarded([&]
+                   {
+        *out_count = -1;
+        for (const auto& [cluster, count] : engine->interactive.graph()->list_clusters())
+        {
+            if (cluster == name)
+            {
+                *out_count = static_cast<int64_t>(count);
+                break;
+            }
+        }
         return succeed(); });
 }

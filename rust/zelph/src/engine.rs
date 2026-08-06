@@ -335,3 +335,234 @@ fn path_arg(path: &Path) -> Result<CString> {
     })?;
     cstring(text)
 }
+
+/// A row of a query's answer: which variable was bound to what.
+pub type Bindings = Vec<(Node, Node)>;
+
+impl Engine {
+    /// A variable, for use inside a rule or a query pattern.
+    ///
+    /// Remembered by name, so asking twice for `"A"` gives the same node -
+    /// which is what makes a pattern built in one call queryable in another.
+    /// [`clear_variables`](Engine::clear_variables) forgets them.
+    pub fn variable(&self, name: &str) -> Result<Node> {
+        let name = cstring(name)?;
+        let mut node: zelph_sys::zelph_node = 0;
+
+        check(unsafe { zelph_sys::zelph_variable(self.raw, name.as_ptr(), &mut node) })?;
+        Ok(Node(node))
+    }
+
+    pub fn clear_variables(&self) -> Result<()> {
+        check(unsafe { zelph_sys::zelph_clear_variables(self.raw) })
+    }
+
+    /// A set constant: identified by its members, so the same elements always
+    /// yield the same node and membership cannot be extended.
+    pub fn set(&self, elements: &[Node]) -> Result<Node> {
+        let mut node: zelph_sys::zelph_node = 0;
+        check(unsafe {
+            zelph_sys::zelph_set(self.raw, elements.as_ptr().cast(), elements.len(), &mut node)
+        })?;
+        Ok(Node(node))
+    }
+
+    /// A collection: a container with its own identity, so two calls with the
+    /// same elements yield two different nodes.
+    pub fn collection(&self, elements: &[Node]) -> Result<Node> {
+        let mut node: zelph_sys::zelph_node = 0;
+        check(unsafe {
+            zelph_sys::zelph_collection(
+                self.raw,
+                elements.as_ptr().cast(),
+                elements.len(),
+                &mut node,
+            )
+        })?;
+        Ok(Node(node))
+    }
+
+    /// Mark a fact pattern as a negation, i.e. negation as failure.
+    ///
+    /// Evaluated against the SATURATED positive fact base, never against
+    /// in-flight state - zelph's stratification rule, and what makes "no
+    /// defender remains" expressible at all.
+    pub fn negate(&self, pattern: Node) -> Result<Node> {
+        let mut node: zelph_sys::zelph_node = 0;
+        check(unsafe { zelph_sys::zelph_negate(self.raw, pattern.0, &mut node) })?;
+        Ok(Node(node))
+    }
+
+    /// Does this fact exist? Creates nothing.
+    pub fn exists(&self, subject: Node, predicate: Node, objects: &[Node]) -> Result<bool> {
+        let mut exists: i32 = 0;
+        check(unsafe {
+            zelph_sys::zelph_exists(
+                self.raw,
+                subject.0,
+                predicate.0,
+                objects.as_ptr().cast(),
+                objects.len(),
+                &mut exists,
+            )
+        })?;
+        Ok(exists != 0)
+    }
+
+    /// Every object connected from `subject` through `predicate` - the mirror
+    /// of [`sources`](Engine::sources).
+    pub fn targets(&self, subject: Node, predicate: Node) -> Result<Vec<Node>> {
+        let mut count: usize = 0;
+
+        match check(unsafe {
+            zelph_sys::zelph_targets(self.raw, subject.0, predicate.0, ptr::null_mut(), &mut count)
+        }) {
+            Ok(()) => return Ok(Vec::new()),
+            Err(e) if e.kind() != ErrorKind::BufferTooSmall => return Err(e),
+            Err(_) => {}
+        }
+
+        let mut nodes: Vec<Node> = vec![Node(0); count];
+        check(unsafe {
+            zelph_sys::zelph_targets(
+                self.raw,
+                subject.0,
+                predicate.0,
+                nodes.as_mut_ptr().cast(),
+                &mut count,
+            )
+        })?;
+
+        nodes.truncate(count);
+        Ok(nodes)
+    }
+
+    /// An inference rule: when every condition holds, deduce every
+    /// consequence. Returns the condition set.
+    ///
+    /// Nothing is derived until the engine [`run`](Engine::run)s.
+    pub fn rule(&self, conditions: &[Node], consequences: &[Node]) -> Result<Node> {
+        let mut node: zelph_sys::zelph_node = 0;
+        check(unsafe {
+            zelph_sys::zelph_rule(
+                self.raw,
+                conditions.as_ptr().cast(),
+                conditions.len(),
+                consequences.as_ptr().cast(),
+                consequences.len(),
+                &mut node,
+            )
+        })?;
+        Ok(Node(node))
+    }
+
+    /// Forward chaining to a fixed point.
+    pub fn run(&self) -> Result<()> {
+        check(unsafe { zelph_sys::zelph_run(self.raw) })
+    }
+
+    /// A single inference pass.
+    pub fn run_once(&self) -> Result<()> {
+        check(unsafe { zelph_sys::zelph_run_once(self.raw) })
+    }
+
+    /// Inference seeded by what was created since the previous run, so the
+    /// cost follows the addition rather than the graph. That difference is
+    /// what decides whether reasoning can happen inside a loop.
+    pub fn run_delta(&self) -> Result<()> {
+        check(unsafe { zelph_sys::zelph_run_delta(self.raw) })
+    }
+
+    /// Answer a query pattern - a fact containing variables - as one set of
+    /// bindings per match.
+    pub fn query(&self, pattern: Node) -> Result<Vec<Bindings>> {
+        let mut pairs: usize = 0;
+        let mut rows: usize = 0;
+
+        match check(unsafe {
+            zelph_sys::zelph_query(
+                self.raw,
+                pattern.0,
+                ptr::null_mut(),
+                &mut pairs,
+                ptr::null_mut(),
+                &mut rows,
+            )
+        }) {
+            Ok(()) => return Ok(Vec::new()),
+            Err(e) if e.kind() != ErrorKind::BufferTooSmall => return Err(e),
+            Err(_) => {}
+        }
+
+        let mut flat: Vec<Node> = vec![Node(0); pairs * 2];
+        let mut sizes: Vec<usize> = vec![0; rows];
+        check(unsafe {
+            zelph_sys::zelph_query(
+                self.raw,
+                pattern.0,
+                flat.as_mut_ptr().cast(),
+                &mut pairs,
+                sizes.as_mut_ptr(),
+                &mut rows,
+            )
+        })?;
+
+        let mut answer = Vec::with_capacity(rows);
+        let mut index = 0;
+        for &size in sizes.iter().take(rows) {
+            let mut row = Bindings::with_capacity(size);
+            for _ in 0..size {
+                row.push((flat[index * 2], flat[index * 2 + 1]));
+                index += 1;
+            }
+            answer.push(row);
+        }
+
+        Ok(answer)
+    }
+
+    /// Activate a named cluster, or deactivate tracking with `None`.
+    ///
+    /// Nodes CREATED while a cluster is active are recorded in it, which is
+    /// what makes [`drop_cluster`](Engine::drop_cluster) a rollback - and
+    /// what turns a monotonic graph into a workspace.
+    pub fn cluster(&self, name: Option<&str>) -> Result<()> {
+        let name = name.map(cstring).transpose()?;
+        check(unsafe {
+            zelph_sys::zelph_cluster(self.raw, name.as_ref().map_or(ptr::null(), |n| n.as_ptr()))
+        })
+    }
+
+    /// The active cluster, or `None` for the default.
+    pub fn active_cluster(&self) -> Result<Option<String>> {
+        let mut text: *mut c_char = ptr::null_mut();
+        check(unsafe { zelph_sys::zelph_cluster_active(self.raw, &mut text) })?;
+
+        if text.is_null() {
+            return Ok(None);
+        }
+
+        let name = unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+        unsafe { zelph_sys::zelph_string_free(text) };
+        Ok(Some(name))
+    }
+
+    /// Remove every node the cluster recorded and report how many went.
+    /// Nodes that existed before it was activated were never recorded, so a
+    /// drop cannot reach them.
+    pub fn drop_cluster(&self, name: &str) -> Result<i64> {
+        let name = cstring(name)?;
+        let mut removed: i64 = 0;
+        check(unsafe { zelph_sys::zelph_cluster_drop(self.raw, name.as_ptr(), &mut removed) })?;
+        Ok(removed)
+    }
+
+    /// How many nodes a cluster holds, or `None` when there is no such
+    /// cluster.
+    pub fn cluster_size(&self, name: &str) -> Result<Option<u64>> {
+        let name = cstring(name)?;
+        let mut count: i64 = -1;
+        check(unsafe { zelph_sys::zelph_cluster_count(self.raw, name.as_ptr(), &mut count) })?;
+        Ok((count >= 0).then_some(count as u64))
+    }
+}

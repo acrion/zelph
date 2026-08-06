@@ -359,3 +359,97 @@ fn a_net_is_evaluated_from_several_threads_while_another_trains_it() {
     // After training, the trained association is the one that wins.
     assert_eq!(net.best(&inputs[0..1]).unwrap().unwrap().0, outputs[0]);
 }
+
+// ---------------------------------------------------------------------------
+// The reasoning surface: the half of zelph that is the reason it exists.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_rule_derives_what_forward_chaining_makes_of_it() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let is_a = z.resolve("~").unwrap();
+    let human = z.resolve("human").unwrap();
+    let mortal = z.resolve("mortal").unwrap();
+
+    let socrates = z.resolve("socrates").unwrap();
+    z.fact(socrates, is_a, &[human]).unwrap();
+
+    // A variable is a node the caller holds, so an answer can name it without
+    // a string crossing the boundary.
+    let x = z.variable("X").unwrap();
+    assert_eq!(x, z.variable("X").unwrap());
+
+    let condition = z.fact(x, is_a, &[human]).unwrap();
+    let consequence = z.fact(x, is_a, &[mortal]).unwrap();
+    z.rule(&[condition], &[consequence]).unwrap();
+
+    // Nothing is derived until the engine runs.
+    assert!(!z.exists(socrates, is_a, &[mortal]).unwrap());
+    z.run().unwrap();
+    assert!(z.exists(socrates, is_a, &[mortal]).unwrap());
+
+    // A query reports one set of bindings per match, by node.
+    let who = z.variable("Who").unwrap();
+    let pattern = z.fact(who, is_a, &[mortal]).unwrap();
+    let answers = z.query(pattern).unwrap();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers[0], vec![(who, socrates)]);
+
+    // A delta run costs the addition rather than the graph, which is what
+    // decides whether reasoning can happen inside a loop.
+    let plato = z.resolve("plato").unwrap();
+    z.fact(plato, is_a, &[human]).unwrap();
+    z.run_delta().unwrap();
+    assert!(z.exists(plato, is_a, &[mortal]).unwrap());
+}
+
+#[test]
+fn a_cluster_is_a_rollback() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let is_a = z.resolve("~").unwrap();
+    let thing = z.resolve("thing").unwrap();
+
+    // Asserted before any cluster exists, so no drop can reach it.
+    let permanent = z.resolve("permanent").unwrap();
+    z.fact(permanent, is_a, &[thing]).unwrap();
+
+    assert_eq!(z.active_cluster().unwrap(), None);
+    z.cluster(Some("scratch")).unwrap();
+    assert_eq!(z.active_cluster().unwrap().as_deref(), Some("scratch"));
+
+    let ephemeral = z.resolve("ephemeral").unwrap();
+    z.fact(ephemeral, is_a, &[thing]).unwrap();
+    assert!(z.cluster_size("scratch").unwrap().unwrap() > 0);
+    assert_eq!(z.cluster_size("no-such-cluster").unwrap(), None);
+
+    z.cluster(None).unwrap();
+    assert!(z.drop_cluster("scratch").unwrap() > 0);
+
+    assert!(!z.exists(ephemeral, is_a, &[thing]).unwrap());
+    assert!(z.exists(permanent, is_a, &[thing]).unwrap());
+}
+
+#[test]
+fn sets_collections_and_the_two_directions() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let a = z.resolve("a").unwrap();
+    let b = z.resolve("b").unwrap();
+
+    // A set constant is identified by its members; a collection has an
+    // identity of its own.
+    assert_eq!(z.set(&[a, b]).unwrap(), z.set(&[a, b]).unwrap());
+    assert_ne!(z.collection(&[a, b]).unwrap(), z.collection(&[a, b]).unwrap());
+
+    let hits = z.resolve("hits").unwrap();
+    z.fact(a, hits, &[b]).unwrap();
+
+    assert_eq!(z.targets(a, hits).unwrap(), vec![b]);
+    assert_eq!(z.sources(hits, b).unwrap(), vec![a]);
+    assert!(z.targets(b, hits).unwrap().is_empty());
+}
