@@ -76,7 +76,7 @@ namespace zelph::network
         // condition's declared relation type.
         void collect_conditions(Zelph* z, const Node nn_pred, const Node part, std::vector<Node>& positive, std::vector<Node>& negative, std::vector<Node>& guards, bool& neural)
         {
-            if (z->check_fact(part, z->core.IsA, {z->core.Conjunction}).is_known())
+            if (z->is_condition_set(part))
             {
                 for (const Node rel : z->get_right(part))
                 {

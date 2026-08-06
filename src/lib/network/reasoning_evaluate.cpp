@@ -48,27 +48,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     if (should_log(depth))
         log(depth, "evaluate", "Processing condition node: " + format(condition));
 
-    // A Condition can be a Set which is an instance of core.Conjunction.
-    // Check: (condition ~ conjunction) ?
-    bool is_conjunction = false;
-
-    // Check outgoing relations of 'condition' (Subject -> Relations)
-    if (_pImpl->exists(condition))
-    {
-        for (Node rel : _pImpl->get_right(condition))
-        {
-            if (parse_relation(rel) == core.IsA)
-            {
-                adjacency_set targets;
-                parse_fact(rel, targets);
-                if (targets.count(core.Conjunction))
-                {
-                    is_conjunction = true;
-                    break;
-                }
-            }
-        }
-    }
+    // A condition may be a CONTAINER holding the conditions rather than one
+    // statement -- tagged `~ conjunction`, or holding a single member, where
+    // no tag can change what it means. See Zelph::condition_set_members.
+    adjacency_set container_members;
+    const bool    is_conjunction = condition_set_members(condition, container_members);
 
     if (is_conjunction)
     {
@@ -78,30 +62,9 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         if (should_log(depth))
             log(depth, "evaluate", "Node " + format(condition) + " identified as Conjunction Set.");
 
-        // It is a Conjunction Set.
-        // We need to retrieve its elements. In zelph topology, elements are subjects of PartOf relations pointing to the set.
-        // Fact: Element PartOf Set
-        // Topology: Set -> RelationNode (Object connects to Relation)
-        // Therefore, we must look in get_right(condition) to find the relations where 'condition' is the object.
-
-        adjacency_set sub_conditions;
-        for (Node rel : _pImpl->get_right(condition))
-        {
-            Node p = parse_relation(rel);
-            if (p == core.PartOf)
-            {
-                adjacency_set objs;
-                Node          element = parse_fact(rel, objs); // subject of the PartOf relation (the element)
-
-                // Verify that 'condition' is indeed one of the objects (it should be, since we found 'rel' via get_right(condition))
-                if (element && objs.count(condition) == 1)
-                {
-                    if (should_log(depth))
-                        log(depth, "evaluate", "Found element of conjunction: " + format(element) + " (via relation " + format(rel) + ")");
-                    sub_conditions.insert(element);
-                }
-            }
-        }
+        // The members were read by condition_set_members above: elements are
+        // the SUBJECTS of PartOf facts pointing at the container.
+        const adjacency_set& sub_conditions = container_members;
 
         if (!sub_conditions.empty())
         {
@@ -693,7 +656,7 @@ bool Reasoning::condition_contains_negation(Node condition, int depth)
 {
     if (!_pImpl->exists(condition)) return false;
     if (is_negated_condition(condition, depth)) return true;
-    if (!check_fact(condition, core.IsA, {core.Conjunction}).is_known()) return false;
+    if (!is_condition_set(condition)) return false;
 
     for (Node rel : _pImpl->get_right(condition))
     {

@@ -339,6 +339,44 @@ void Zelph::rebuild_rule_pattern_index() const
     _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
 }
 
+bool Zelph::condition_set_members(const Node condition, adjacency_set& out) const
+{
+    if (condition == 0 || !exists(condition)) return false;
+
+    const bool tagged = check_fact(condition, core.IsA, {core.Conjunction}).is_known();
+
+    // A STATEMENT has a predicate; a container has none. Asked first, this
+    // keeps the member walk off every ordinary condition of every rule --
+    // the hot path -- so only a container is ever walked, and only an
+    // UNTAGGED one reaches this test at all.
+    if (!tagged && parse_relation(condition) != 0) return false;
+
+    // The members hang off the container as PartOf facts pointing AT it.
+    adjacency_set members;
+    for (const Node rel : get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    member = parse_fact(rel, objs, 0);
+        if (member != 0 && objs.count(condition) == 1) members.insert(member);
+    }
+
+    if (members.empty()) return false;
+
+    // Several members need the tag to say how they combine; one member does
+    // not, because every combination of one thing is that thing.
+    if (members.size() > 1 && !tagged) return false;
+
+    out = std::move(members);
+    return true;
+}
+
+bool Zelph::is_condition_set(const Node condition) const
+{
+    adjacency_set members;
+    return condition_set_members(condition, members);
+}
+
 std::vector<std::pair<Node, Zelph::HashRecipe>> Zelph::collect_hash_dependents(const Node node) const
 {
     // Read the recipe of one hash-identified node. A set constant is asked
@@ -562,7 +600,7 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
 
     // A conjunction set carries no structure of its own; its members hang off
     // it as PartOf facts.
-    if (check_fact(condition, core.IsA, {core.Conjunction}).is_known())
+    if (is_condition_set(condition))
     {
         for (const Node rel : get_right(condition))
         {
@@ -667,16 +705,29 @@ adjacency_set Zelph::get_rules() const
             adjacency_set deductions;
             Node          condition = parse_fact(rule_candidate, deductions);
 
-            // A rule's condition is a STATEMENT that has to hold, so a bare
-            // variable in that position is not one -- and `=>` is an ordinary
+            // A rule's condition is a STATEMENT that has to hold, and neither
+            // a bare variable nor a bare name is one. `=>` is an ordinary
             // relation type as well as the rule arrow, which is what makes
-            // this reachable without anybody writing a rule at all: asking
-            // "which implications are there?" builds the query pattern
-            // `S => O`, and that pattern was counted by .stat and listed by
-            // .list-rules as a rule of the network, permanently. It cannot
-            // fire either -- nothing binds a condition that is only a
-            // variable.
-            if (condition && !Impl::is_var(condition) && condition != core.Causes
+            // both reachable without anybody writing a rule:
+            //
+            //   * `S => O` -- asking which implications exist -- materializes
+            //     that pattern, and it was counted by .stat and listed by
+            //     .list-rules as a rule of the network, permanently;
+            //   * `atom_A => atom_B` is a FACT (pinned by *parsing: arrow
+            //     predicates*), and .remove-rules deleted it as if it were a
+            //     rule -- a command that says it removes rules destroying
+            //     data.
+            //
+            // Neither can fire: nothing binds a condition that is a variable,
+            // and an atom is not something that holds. A conjunction of
+            // conditions is a container with a counter id rather than a
+            // triple hash, so it is admitted by its tag.
+            const bool condition_is_statement =
+                condition != 0
+                && !Impl::is_var(condition)
+                && (Impl::is_hash(condition) || is_condition_set(condition));
+
+            if (condition_is_statement && condition != core.Causes
                 && !deductions.empty()
                 && !is_mentioned(rule_candidate))
             {

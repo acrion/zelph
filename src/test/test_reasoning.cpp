@@ -110,7 +110,20 @@ TEST_CASE("rules: asking which implications exist does not create a rule")
         collector.clear();
         interactive.process(".list-rules");
         CHECK(any_output_contains(collector, "(X p Y) => (X q Y)"));
-        CHECK_FALSE(any_output_contains(collector, "S => O")); });
+        CHECK_FALSE(any_output_contains(collector, "S => O"));
+        CHECK_FALSE(any_output_contains(collector, "atom_A => atom_B"));
+
+        // ... which is what keeps .remove-rules from deleting DATA. An arrow
+        // fact between two atoms cannot fire -- an atom is not something that
+        // holds -- and a command that says it removes rules must not take it.
+        interactive.process(".remove-rules");
+        collector.clear();
+        interactive.process("S => O");
+        CHECK(answers_contain(collector, "atom_A => atom_B"));
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 0")); });
 }
 
 // NOTE: there is no biconditional arrow in the grammar. `<=>` is read as the
@@ -1581,4 +1594,159 @@ q p2 r
     // and the same number either way.
     CHECK(delta.second > 0);
     CHECK(delta.second == classic.second);
+}
+
+TEST_CASE("rules: an untagged one-member condition container fires (topology level)")
+{
+    // THE case, asked of the reasoner alone. The rule is built through the
+    // Janet API in ONE expression, so no parser decides anything about
+    // conjunctions: a container holding exactly one condition, with NO
+    // `~ conjunction` tag anywhere, and the rule fact on top of it.
+    //
+    // The tag says HOW members combine. For one member no combination can
+    // differ from any other, so it cannot change what the rule means -- but
+    // every reader keyed on it, and this topology was built, counted, listed
+    // and never fired.
+    //
+    // One expression on purpose: each `%(...)` line triggers a run of its
+    // own, and a run between the condition and the rule finds a rule-less
+    // graph, which muddies what is being tested.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(
+            R"js(%(zelph/fact (zelph/collection (zelph/fact (quote X) "p" (quote Y))) "=>" (zelph/fact (quote X) "q" (quote Y))))js");
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
+}
+
+TEST_CASE("rules: a bare fact as the rule's subject fires (topology level)")
+{
+    // The control one level down: no container at all. This has always
+    // worked and must keep working -- it is what the parser builds for a
+    // single condition.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(
+            R"js(%(zelph/fact (zelph/fact (quote X) "p" (quote Y)) "=>" (zelph/fact (quote X) "q" (quote Y))))js");
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b")); });
+}
+
+TEST_CASE("rules: a single condition fires in every SYNTAX too")
+{
+    // The layer above: whatever the parser chooses to build for each
+    // spelling -- with or without a container, with or without the tag --
+    // the rule has to run. zelph is a living ontology, and a rule written
+    // without sugar is the same rule.
+    const char* spellings[] = {
+        "(X p Y) => (X q Y)",                   // one condition, no container
+        "{(X p Y)} => (X q Y)",                 // written out in set notation
+        "*{(X p Y)} => (X q Y)",                // ... with the focus operator
+        "(*{(X p Y)} ~ conjunction) => (X q Y)" // ... and tagged explicitly
+    };
+
+    for (const char* rule : spellings)
+    {
+        CAPTURE(rule);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        interactive.process("a p b");
+        interactive.process(rule);
+        interactive.run(true, false, false);
+
+        // It fires ...
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+
+        // ... it is a rule to every command that reports on rules ...
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "No rules found"));
+
+        // ... and the derivation is reconstructible through it.
+        collector.clear();
+        interactive.process(".explain (a q b)");
+        CHECK(any_output_contains(collector, "a p b"));
+    }
+}
+
+TEST_CASE("rules: a single GROUND condition in set notation fires too")
+{
+    // The same shape with no variable, which builds a set CONSTANT rather
+    // than a collection -- a different node kind on the same question.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("{(a p b)} => (c q d)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "c q d"));
+
+        collector.clear();
+        interactive.process(".explain (c q d)");
+        CHECK(any_output_contains(collector, "a p b")); });
+}
+
+TEST_CASE("rules: several untagged members are still not a conjunction")
+{
+    // The other side of the ruling: with MORE than one member the tag is the
+    // only thing that says how they combine, and other combinations are
+    // conceivable. An untagged container of several conditions therefore
+    // stays what it was -- one opaque condition that matches nothing -- and
+    // is not silently read as a conjunction.
+    //
+    // Separate networks on purpose: writing both spellings into ONE network
+    // makes the second line MENTION the rule the first one built, which is a
+    // corner of its own (see Zelph::is_mentioned).
+    SUBCASE("untagged")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+a r b
+*{(X p Y) (X r Y)} => (X q Y)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+    }
+
+    SUBCASE("tagged")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+a r b
+(*{(X p Y) (X r Y)} ~ conjunction) => (X q Y)
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+    }
 }

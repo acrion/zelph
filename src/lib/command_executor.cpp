@@ -1811,7 +1811,11 @@ private:
                             "the cost, and the file is the point."},
 #endif
             {".list-rules", ".list-rules\n"
-                            "Lists all currently defined inference rules in readable format."},
+                            "Lists all currently defined inference rules in readable format.\n"
+                            "A rule is a \"=>\" fact whose CONDITION is a statement -- a fact pattern or\n"
+                            "a conjunction of them. \"=>\" is an ordinary relation type as well, so\n"
+                            "\"atom_A => atom_B\" is data and the query pattern \"S => O\" is a question;\n"
+                            "neither can fire, and neither is listed here or removed by .remove-rules."},
 
             {".list-predicate-usage", ".list-predicate-usage [max_entries]\n"
                                       "Shows how often each predicate (relation type) is used, sorted by frequency.\n"
@@ -1830,7 +1834,9 @@ private:
                                             "If the Wikidata language is available and active, Wikidata IDs are shown alongside names."},
 
             {".remove-rules", ".remove-rules\n"
-                              "Deletes all inference rules from the network."},
+                              "Deletes all inference rules from the network -- exactly what .list-rules\n"
+                              "shows, so a \"=>\" fact that is data rather than a rule stays. See\n"
+                              ".help .list-rules for where the line runs."},
 
             {".remove", ".remove <name_or_id>\n"
                         "Removes the specified node from the network, cleaning all name mappings.\n"

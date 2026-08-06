@@ -504,6 +504,27 @@ namespace zelph::network
         // Asserting the same statement later, or DERIVING it, revokes the
         // mark: it is then a claim like any other.
 
+        // A rule's subject is either ONE condition or a container holding
+        // them. The `~ conjunction` tag says HOW the members are combined --
+        // it is not what makes the node a container, and other combinations
+        // are conceivable. For a container of exactly ONE member no
+        // combination can differ from any other, so the tag cannot change
+        // its meaning and must not decide whether the rule works: writing a
+        // single condition in set notation, without the comma sugar that
+        // adds the tag, is the same rule.
+        //
+        // Every reader of a rule's conditions goes through this, so the two
+        // spellings cannot drift apart again.
+
+        /// The conditions `condition` stands for, if it is a container the
+        /// engine reads as a set of them: tagged `~ conjunction`, or holding
+        /// exactly one member. False -- and `out` untouched -- for a
+        /// statement in its own right.
+        bool condition_set_members(Node condition, adjacency_set& out) const;
+
+        /// Whether `condition` is such a container at all.
+        bool is_condition_set(Node condition) const;
+
         /// The predicate that marks a pattern, or 0 when no graph has ever
         /// needed it (`create` false).
         Node          rule_pattern_predicate(bool create) const;

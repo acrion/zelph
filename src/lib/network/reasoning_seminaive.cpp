@@ -131,7 +131,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             if (!condition || condition == core.Causes) continue;
             ir.top_condition = condition;
 
-            const bool is_conjunction = check_fact(condition, core.IsA, {core.Conjunction}).is_known();
+            const bool is_conjunction = is_condition_set(condition);
 
             ir.excluded = std::make_shared<std::unordered_set<Node>>();
             if (is_conjunction)
@@ -182,7 +182,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 //  - no positive leaf at all
                 for (Node cond : ir.elements)
                 {
-                    if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
+                    if (is_condition_set(cond))
                     {
                         ir.delta_unsafe = true;
                         continue;

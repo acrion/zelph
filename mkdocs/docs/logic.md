@@ -403,6 +403,25 @@ zelph> 9 followed-by 43
 
 This rule decomposes the nested equation `(A + B) = C`, uses the bound values to look up successor relationships, and assembles a new equation — all in a single inference step.
 
+#### What the conjunction tag decides, and what it does not
+
+The tag says **how** the members of a condition container combine; it is not
+what makes the node a container. With more than one member it is the only
+thing that says so, and other combinations are conceivable — so an untagged
+container of several conditions is left alone rather than read as a
+conjunction.
+
+A container of **exactly one** member is different: no combination of one
+thing can differ from any other, so the tag cannot change what the rule means.
+All four spellings below are therefore the same rule, and all four fire:
+
+```
+(X p Y) => (X q Y)                        # one condition, no container
+{(X p Y)} => (X q Y)                      # written out in set notation
+*{(X p Y)} => (X q Y)                     # ... with the focus operator
+(*{(X p Y)} ~ conjunction) => (X q Y)     # ... and tagged explicitly
+```
+
 ### Facts with Multiple Objects
 
 <a href="#" onclick="jumpTo(56.5); return false;">🎬 Watch this section</a>

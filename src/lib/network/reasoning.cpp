@@ -1013,6 +1013,12 @@ namespace
     // Writing INTO a container is left alone as well -- see instantiate_fact.
     Node instantiate_container(Zelph* z, const Node node, const Variables& variables, const int depth, std::vector<Node>& history)
     {
+        // The TAG, not is_condition_set: this is a rebuild, so what matters
+        // is whether the container was WRITTEN as rule structure. The helper
+        // answers the wider question "does the engine read this as a set of
+        // conditions", which a one-element container in a CONSEQUENCE also
+        // satisfies -- and leaving that one alone stopped `(X p Y) =>
+        // (X likes {Y})` from ever substituting.
         if (z->check_fact(node, z->core.IsA, {z->core.Conjunction}).is_known()) return node;
 
         std::unordered_set<Node> members;

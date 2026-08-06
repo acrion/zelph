@@ -150,7 +150,7 @@ namespace zelph::network
         Kind classify(const Zelph* const z, const Node n, const Role role)
         {
             if (Zelph::is_var(n)) return Kind::Var;
-            if (role == Role::Condition && z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known())
+            if (role == Role::Condition && z->is_condition_set(n))
                 return Kind::Set;
 
             // A container is checked BEFORE the template-var store is asked.

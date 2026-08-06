@@ -159,6 +159,12 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
     return vars;
 }
 
+// NOTE on the tag checks in this file: rebuilding a rule REPRODUCES what was
+// written, so the `~ conjunction` tag is the right discriminator here and
+// Zelph::is_condition_set is not. That helper answers "does the engine read
+// this container as a set of conditions", which is deliberately wider -- a
+// single untagged member counts -- and applying it here turned a one-element
+// container in a generated CONSEQUENCE into a conjunction set.
 Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables, const int depth)
 {
     // A conjunction nested inside a condition is a set of its own, and
