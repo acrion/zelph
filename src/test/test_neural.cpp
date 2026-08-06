@@ -697,3 +697,19 @@ c p d
 )");
         CHECK_FALSE(any_event_contains(collector, "nosuchnet")); });
 }
+
+TEST_CASE("neural: a malformed net definition is named as such, not as a missing one")
+{
+    // Telling a user who wrote `net nn-layers something` that there is no
+    // definition would be false, and would send them looking in the wrong
+    // place. The two cases are told apart.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("badnet nn-layers something");
+
+        collector.clear();
+        interactive.process("(X p Y, ≈badnet(X p Y)) => (X q Y)");
+        CHECK(any_event_contains(collector, "not a list of at least two layers"));
+        CHECK_FALSE(any_event_contains(collector, "has no nn-layers definition")); });
+}

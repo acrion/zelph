@@ -172,8 +172,25 @@ definition that comes after the rule — every rule consulting it stays silent.
 That is reported once per net rather than left to `.log`:
 
 ```
+zelph> a p b
 zelph> (X p Y, ≈nosuchnet(X p Y)) => (X q Y)
+(((X p Y) nn nosuchnet), (X p Y)) => (X q Y)
 Neural condition: net 'nosuchnet' has no nn-layers definition, so every rule consulting it stays silent.
+```
+
+The message appears when the condition is first EVALUATED, so the rule needs
+something to match — with no data, nothing has run yet and there is nothing to
+report.
+
+A definition that is present but unusable is named as such rather than as a
+missing one, so the search starts in the right place:
+
+```
+zelph> a p b
+zelph> badnet nn-layers something
+zelph> (X p Y, ≈badnet(X p Y)) => (X q Y)
+((X p Y), ((X p Y) nn badnet)) => (X q Y)
+Neural condition: net 'badnet' has an nn-layers definition that is not a list of at least two layers -- write `net nn-layers < input hidden output >`.
 ```
 
 ## The Helper Library: `stdlib/nn.zph`

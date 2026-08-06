@@ -65,9 +65,11 @@ const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
 
     // Net definition: (net_node nn-layers <L1 ... Ln>), input layer first.
     std::vector<Node> layers;
+    bool              has_definition = false;
     if (_nn_layers_pred != 0)
     {
         adjacency_set defs = get_fact_objects(net_node, _nn_layers_pred);
+        has_definition     = !defs.empty();
         if (!defs.empty())
         {
             Node cell = *defs.begin();
@@ -105,7 +107,15 @@ const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
         // by `.log`, so the rule looked fine, .list-rules showed it, and
         // nothing was ever derived. Reported once per net, on the diagnostic
         // channel, like every other "the engine could not do what was asked".
-        report_unusable_net(net_node, "has no nn-layers definition, so every rule consulting it stays silent");
+        //
+        // The two cases are told apart: telling a user who wrote
+        // `net nn-layers something` that there is no definition would be
+        // false, and it would send them looking in the wrong place.
+        report_unusable_net(net_node,
+                            has_definition
+                                ? "has an nn-layers definition that is not a list of at least two layers"
+                                  " -- write `net nn-layers < input hidden output >`"
+                                : "has no nn-layers definition, so every rule consulting it stays silent");
     }
 
     const NeuralNet* raw = net.get();
