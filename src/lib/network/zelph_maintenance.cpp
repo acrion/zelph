@@ -472,6 +472,15 @@ void Zelph::rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& re
 
     std::unordered_map<Node, Node> remap{{from, into}};
 
+    // A repair is not new knowledge. Creating a rebuilt node while a cluster
+    // is active would record it there, and dropping that cluster would then
+    // delete a fact that existed long before it -- exactly the promise
+    // .cluster-drop makes and keeps everywhere else. Recording is therefore
+    // suspended, and each rebuilt node inherits the membership of the node it
+    // replaces (see retag_cluster_member).
+    const std::string previous_cluster = active_cluster_name();
+    if (!previous_cluster.empty()) deactivate_cluster();
+
     const auto mapped = [&remap](const Node nd)
     {
         const auto it = remap.find(nd);
@@ -506,13 +515,20 @@ void Zelph::rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& re
         // is not there, the id is created empty and the merge below gives it
         // the adjacency the old node already carries, which the component
         // merges have brought up to date.
-        if (!exists(new_id)) _pImpl->create(new_id);
+        const bool created_here = !exists(new_id);
+        if (created_here) _pImpl->create(new_id);
 
         _pImpl->merge(old_id, new_id);
         _pImpl->transfer_names_locked(old_id, new_id);
 
+        // Only where the node was really re-created: folding into one that
+        // was already there must not drag a pre-existing node into a cluster.
+        _pImpl->retag_cluster_member(old_id, created_here ? new_id : 0);
+
         remap[old_id] = new_id;
     }
+
+    if (!previous_cluster.empty()) set_active_cluster(previous_cluster);
 
     // Every index keyed by node id, and the relation-type set: a rebuilt node
     // is created through the graph primitives rather than through fact(), so

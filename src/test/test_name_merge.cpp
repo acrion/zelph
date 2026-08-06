@@ -362,3 +362,55 @@ lonely1 tag t
         CHECK(answers_contain(collector, "lonely2 tag t"));
         CHECK(collect_answers(collector).size() == 1); });
 }
+
+TEST_CASE("name merge: a repair inside a cluster is not the cluster's to roll back")
+{
+    // A cluster records what was CREATED while it was active, which is what
+    // lets .cluster-drop promise never to destroy pre-existing knowledge. A
+    // rebuilt node is not new knowledge, though -- it is the same fact under
+    // the id its new components give it. Recorded as new, dropping the
+    // cluster deleted a fact that predated it by any amount.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+c q d
+)");
+        interactive.process(".cluster exp");
+        merge_by_name(interactive, "a", "c");
+
+        collector.clear();
+        interactive.process("S p O");
+        REQUIRE(answers_contain(collector, "c p b"));
+
+        interactive.process(".cluster-drop exp");
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "c p b"));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "c q d")); });
+}
+
+TEST_CASE("name merge: a repair of cluster knowledge still rolls back")
+{
+    // The control at the other end, and the reason the membership is
+    // TRANSFERRED rather than merely suppressed: where the node that was
+    // rebuilt did belong to the cluster, its replacement has to belong too,
+    // or the rollback would leave the fact behind.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".cluster exp");
+        process_lines(interactive, R"(
+a p b
+c p d
+)");
+        merge_by_name(interactive, "a", "c");
+        interactive.process(".cluster-drop exp");
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty()); });
+}

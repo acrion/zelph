@@ -834,6 +834,22 @@ namespace zelph::network
             return {it->second.begin(), it->second.end()};
         }
 
+        // Bookkeeping only: wherever `from` was recorded, record `into`
+        // instead -- or nothing at all when `into` is 0. A node that is
+        // RE-CREATED under a different id is the same knowledge under a new
+        // name, so it has to inherit the answer to "was this new?"; recording
+        // it afresh instead would put a repaired PRE-EXISTING fact into the
+        // active cluster, and dropping that cluster would then destroy it.
+        void retag_cluster_member(const Node from, const Node into)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            for (auto& [name, nodes] : _clusters)
+            {
+                if (nodes.erase(from) == 0) continue;
+                if (into != 0) nodes.insert(into);
+            }
+        }
+
         // Removes the bookkeeping and hands the node list to the caller
         // (Zelph::drop_cluster removes the nodes themselves). Deactivates
         // the cluster if it was active. Empty result if the name is unknown.
