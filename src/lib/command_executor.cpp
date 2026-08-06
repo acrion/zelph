@@ -213,10 +213,20 @@ public:
 
         if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
         {
-            const std::string buffered    = _repl_state->zelph_buffer;
-            const std::string transformed = _script_engine->parse_zelph_to_janet(buffered);
+            const std::string buffered = _repl_state->zelph_buffer;
             _repl_state->zelph_buffer.clear();
             _repl_state->accumulating_zelph = false;
+
+            // The accumulator has already decided this is not a statement
+            // yet, and there are no further lines -- so say that, whether or
+            // not the PEG can make something of the fragment. It can, for the
+            // commonest typo there is: "a p" parses into a two-argument
+            // zelph/fact and the user was handed Janet's own complaint,
+            // "arity mismatch, expected at least 3, got 2", naming an
+            // internal call they never made.
+            const std::string transformed = ScriptEngine::is_zelph_complete(buffered)
+                                              ? _script_engine->parse_zelph_to_janet(buffered)
+                                              : std::string{};
 
             if (transformed.empty())
             {
@@ -1607,6 +1617,9 @@ private:
             "          Example: peter \"is father of\" paul",
             "          Inside a quoted name, \\\" is a quote and \\\\ a backslash;",
             "          a backslash before anything else stands for itself.",
+            "          A statement may span lines: a line that is not yet a complete",
+            "          statement -- 'a p', or a bare term such as '(a p b)' -- waits,",
+            "          and the next statement line is appended to it.",
             "",
             "Queries:  Statements containing variables (A-Z or starting with _).",
             "          Example:",

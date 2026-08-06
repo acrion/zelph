@@ -263,6 +263,21 @@ void console::Interactive::process(std::string line) const
 
             if (!parts.empty() && !parts[0].empty() && parts[0][0] == '.')
             {
+                // A statement may span lines, and a command in the middle of
+                // one is almost certainly a user who believes the previous
+                // line was finished. It is not: the buffer waits, and the
+                // NEXT statement is appended to it -- so "(a p b)" followed
+                // by "c q d" asserts "(a p b) c q d" and neither line does
+                // what it says. The command still runs; what was missing is
+                // any sign of the state it runs in.
+                if (state->accumulating_zelph && !state->zelph_buffer.empty())
+                {
+                    _pImpl->_n->diagnostic("Note: still inside an unfinished statement ('"
+                                               + zelph::string::trim(state->zelph_buffer)
+                                               + "'). The next statement line will be appended to it.",
+                                           true);
+                }
+
                 _pImpl->_n->profiler_reset_epoch();
                 _pImpl->process_command(parts, sources);
                 return;

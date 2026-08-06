@@ -52,11 +52,31 @@ Germany "is located in" Europe
 After entering these statements, zelph will automatically infer that Berlin is located in Europe:
 
 ```
-( Berlin   is located in   Europe ) ⇐ {( Germany   is located in   Europe ) ( Berlin   is capital of   Germany )}
+(Berlin "is located in" Europe) ⇐ {(Germany "is located in" Europe) (Berlin "is capital of" Germany)}
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
 In section [Semantic Network Structure](index.md#semantic-network-structure) you'll find details about the core concepts, including syntactic details.
+
+**A statement may span several lines.** zelph reads lines until it has a
+complete statement — a subject, a predicate and at least one object — so a
+line that stops short of that waits for the rest. Two forms are easy to type
+by accident: `a p` (the object forgotten) and `(a p b)` on its own, which is a
+**term**, i.e. a statement *prefix*, and is exactly how the renderer prints a
+nested fact and how `.explain` takes its argument. Both wait, and the next
+statement line is appended to them:
+
+```
+zelph> (a p b)
+zelph> c q d
+zelph> S P O
+Answer: (a p b) c q
+Answer: (a p b) c d
+```
+
+At end of input an unfinished statement is reported (`Input ends inside an
+unfinished statement: (a p b)`), and a `.`-command typed while one is pending
+says which one it is.
 
 ### Two Statement Prefixes
 

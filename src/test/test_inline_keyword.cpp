@@ -221,6 +221,48 @@ TEST_CASE("input end: a half-read block is dispatched, not discarded")
                                  doctest::Contains("unfinished statement"),
                                  std::runtime_error);
         }
+        SUBCASE("a statement missing its object says so, in zelph's own terms")
+        {
+            // "a p" -- the commonest typo there is -- accumulates like any
+            // other unfinished line, but the PEG can still make a
+            // two-argument zelph/fact of it. At end of input that was run
+            // anyway, and the user was handed Janet's complaint about an
+            // internal call: "arity mismatch, expected at least 3, got 2".
+            interactive.process("a rel");
+            CHECK_THROWS_WITH_AS(interactive.finish_input(),
+                                 doctest::Contains("unfinished statement"),
+                                 std::runtime_error);
+        }
+        SUBCASE("a parenthesised statement is a term, and says so at end of input")
+        {
+            // "(a rel b)" is how the renderer prints a nested fact and how
+            // .explain takes its argument, so typing it as a statement is a
+            // plausible slip. It is a TERM, hence a statement PREFIX, and
+            // waits for the rest.
+            interactive.process("(a rel b)");
+            CHECK_THROWS_WITH_AS(interactive.finish_input(),
+                                 doctest::Contains("unfinished statement"),
+                                 std::runtime_error);
+        }
+        SUBCASE("a command inside an unfinished statement says which one")
+        {
+            // The buffer survives a command, and the NEXT statement line is
+            // appended to it -- "(a rel b)" followed by "c q d" asserts
+            // "(a rel b) c q d", and neither line does what it says. The
+            // behaviour is the documented multi-line rule; what was missing
+            // is any sign of the state the command runs in.
+            interactive.process("(a rel b)");
+            collector.clear();
+            interactive.process(".stat");
+            CHECK(any_event_contains(collector, "still inside an unfinished statement"));
+            CHECK(any_event_contains(collector, "(a rel b)"));
+
+            // A command outside one stays quiet.
+            interactive.process("c q d");
+            collector.clear();
+            interactive.process(".stat");
+            CHECK_FALSE(any_event_contains(collector, "still inside an unfinished statement"));
+        }
         SUBCASE("finishing twice is harmless")
         {
             interactive.process("a rel b");
