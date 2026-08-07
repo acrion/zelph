@@ -118,6 +118,15 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 return;
             }
 
+            // --- Transitive path condition (P⁺ / P∗) ---
+            // Same detection scheme: the condition IS the tag fact
+            // (pattern closure mode), so its predicate identifies it.
+            if (_closure_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _closure_pred)
+            {
+                evaluate_closure(condition, rule, ctx, depth);
+                return;
+            }
+
             if (guard_rels.size() == 1 && *guard_rels.begin() == core.Unequal)
             {
                 if (should_log(depth))

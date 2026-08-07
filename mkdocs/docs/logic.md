@@ -1093,6 +1093,30 @@ This enables concise, generic rules that would require meta-interpreters or refl
 
 Since version 0.9.7, rule conditions can also consult a **neural network** living inside the same graph, via the `≈` operator — verifying facts against a learned model (guard mode) or generating candidate bindings above a confidence threshold (generator mode), with the confidence flowing into the deduced fact's probability. This neuro-symbolic capability has its own page: [Neural Networks in the Graph](neural.md).
 
+### Transitive Path Conditions
+
+A condition may follow a predicate any number of steps instead of exactly one. Suffix the predicate with `⁺` (U+207A) for **one or more** steps, or with `∗` (U+2217) for **zero or more**:
+
+```
+zelph> Q1 P279 Q2
+zelph> Q2 P279 Q3
+zelph> Q3 P279 Q4
+zelph> alice member Q1
+zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
+(((C P279 T) closure one-or-more), (X member C)) => (X "belongs to" T)
+(alice "belongs to" Q2) ⇐ {((Q1 P279 Q2) closure one-or-more) (alice member Q1)}
+(alice "belongs to" Q3) ⇐ {((Q1 P279 Q3) closure one-or-more) (alice member Q1)}
+(alice "belongs to" Q4) ⇐ {((Q1 P279 Q4) closure one-or-more) (alice member Q1)}
+```
+
+`C` is bound by the first condition, so the path condition walks forward from `Q1` and produces one binding for `T` per class reached. With the target bound instead, it walks backward; with both ends bound it is a reachability *test* that filters rather than generates. Reachability is answered by the same indexed closure engine that `zelph/closure` and the SPARQL layer's `p+` / `p*` use — built once per predicate and cached next to the `.bin`, not walked per query.
+
+**Both ends free is refused**, with a message asking you to bind one: a path over an unanchored pair would enumerate every path in the graph. The condition is scheduled after the conditions that bind ordinary variables, so the order in which you write it does not matter. The predicate itself must be a concrete predicate — a closure is indexed per predicate, and quantifying over predicates remains the business of an ordinary condition, which can do it.
+
+The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](index.md#the-focus-operator).
+
+Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
+
 ### Contradiction Detection
 
 Rules with `!` as the consequence detect logical inconsistencies:

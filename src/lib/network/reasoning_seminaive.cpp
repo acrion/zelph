@@ -93,8 +93,11 @@ bool Reasoning::seminaive_check() const
 // already contains the earlier one.
 uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::pair<Node, Node>>* seed)
 {
-    _nn_pred        = get_node("nn", "zelph");
-    _nn_layers_pred = get_node("nn-layers", "zelph");
+    _nn_pred           = get_node("nn", "zelph");
+    _nn_layers_pred    = get_node("nn-layers", "zelph");
+    _closure_pred      = get_node("closure", "zelph");
+    _closure_one_plus  = get_node("one-or-more", "zelph");
+    _closure_zero_plus = get_node("zero-or-more", "zelph");
 
     // ------------------------------------------------------------------
     // Phase 0: index all rules (cheap: rule sets are small; rebuilt per run)

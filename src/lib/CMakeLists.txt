@@ -329,6 +329,7 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     network/neural.hpp
     network/reasoning.cpp
     network/reasoning_deduce.cpp
+    network/reasoning_closure.cpp
     network/reasoning_evaluate.cpp
     network/reasoning_explain.cpp
     network/reasoning_neural.cpp

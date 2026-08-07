@@ -316,6 +316,7 @@ namespace zelph::network
         const NeuralNet* compiled_net(Node net_node, int depth);
         void             report_unusable_net(Node net_node, const std::string& why);
         void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
+        void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
         // --- Implemented in reasoning_seminaive.cpp ---
@@ -390,7 +391,17 @@ namespace zelph::network
 
         Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
         Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
-        std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;          // compiled nets, cleared per epoch
+
+        // --- Transitive path conditions (P⁺ / P∗) ---
+        // Named nodes in language "zelph", cached exactly like _nn_pred: a
+        // path condition IS the tag fact (pattern closure mode), so the
+        // predicate identifies it and the object says which closure. None of
+        // them may be a core node -- core ids are positional and frozen by
+        // every .bin ever written; see CLAUDE.md, "What must be a CORE node".
+        Node                                       _closure_pred{0};      // "closure"
+        Node                                       _closure_one_plus{0};  // "one-or-more"  (P⁺)
+        Node                                       _closure_zero_plus{0}; // "zero-or-more" (P∗)
+        std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;             // compiled nets, cleared per epoch
 
         // Which nets have already been reported as unusable. NOT cleared with
         // the cache: that happens once per input line, and a rule consulting

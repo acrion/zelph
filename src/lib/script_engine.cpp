@@ -628,6 +628,10 @@ public:
         janet_def(_janet_env, "zelph/approx", wrap((JanetCFunction)janet_cfun_zelph_approx), "(zelph/approx pattern net-name)\nTag a fact pattern as a neural rule condition: creates (pattern nn net). "
                                                                                              "Desugared form of ≈net(pattern). Returns the pattern node.");
 
+        janet_def(_janet_env, "zelph/path", wrap((JanetCFunction)janet_cfun_zelph_path), "(zelph/path pattern mode)\nTag a one-step fact pattern as a transitive path condition: creates "
+                                                                                         "(pattern closure mode), where mode is \"one-or-more\" (P⁺) or \"zero-or-more\" (P∗). Desugared form of "
+                                                                                         "(X P⁺ Y). Returns the tag node, which is what a rule uses as its condition.");
+
         janet_def(_janet_env, "zelph/set-number-digits", wrap((JanetCFunction)janet_cfun_zelph_set_number_digits), "(zelph/set-number-digits digits)\nRegister the digit alphabet of the loaded number representation, as an "
                                                                                                                    "array of digit nodes or names in ascending order of value (e.g. [\"0\" \"1\"] for binary). "
                                                                                                                    "node_to_string then displays every nil-terminated cons list consisting solely of these digit "
@@ -1605,6 +1609,33 @@ public:
 
         Janet res = zelph_wrap_node(tag);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/approx", argc, argv, false, res);
+        return res;
+    }
+
+    // Tag a one-step pattern as a transitive path condition. The desugared
+    // form of (X P⁺ Y) and (X P∗ Y), and the exact counterpart of
+    // zelph/approx: the graph holds an ordinary fact ABOUT the pattern, so
+    // nothing new had to become a core node.
+    static Janet janet_cfun_zelph_path(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/path", argc, argv, true);
+
+        network::Node pattern = zelph_unwrap_node(argv[0]);
+        if (!pattern) janet_panicf("zelph/path: first argument must be a fact pattern node");
+
+        const std::string mode = reinterpret_cast<const char*>(janet_getstring(argv, 1));
+        if (mode != "one-or-more" && mode != "zero-or-more")
+            janet_panicf("zelph/path: mode must be \"one-or-more\" or \"zero-or-more\", got \"%s\"", mode.c_str());
+
+        network::Node mode_node    = s_instance->_n->node(mode, "zelph");
+        network::Node closure_pred = s_instance->_n->node("closure", "zelph");
+
+        network::Node tag = s_instance->_n->fact(pattern, closure_pred, {mode_node});
+
+        Janet res = zelph_wrap_node(tag);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/path", argc, argv, false, res);
         return res;
     }
 
@@ -2695,9 +2726,68 @@ public:
     // Helper to generate Janet code for a function call with potential focused arguments.
     // func_name: "zelph/fact" or "zelph/set"
     // args: Array of Janet tuples (the AST nodes)
+    // A transitive path condition is written by SUFFIXING the predicate:
+    // (X P⁺ Y) is one or more P steps, (X P∗ Y) zero or more. The marker is
+    // recognised in PREDICATE POSITION ONLY, and only when something is left
+    // of the token once it is removed -- which is what keeps it from being a
+    // reserved character. A name may still contain ⁺ or ∗ anywhere (`Na⁺` is
+    // a Wikidata label), and a predicate that IS the marker stays itself.
+    //
+    // ASCII `+` deliberately has no such reading: `z+` and `d+` are the
+    // addition predicates of the integer and decimal arithmetic modules, and
+    // `*` is the focus operator. ⁺ (U+207A) and ∗ (U+2217) are used nowhere
+    // in the stdlib, are not in :reserved, and are what a mathematical reader
+    // expects for R⁺ and R∗.
+    static bool split_path_marker(const std::string& token, std::string& base, std::string& mode)
+    {
+        static const std::string one_plus  = "\xE2\x81\xBA"; // U+207A SUPERSCRIPT PLUS SIGN
+        static const std::string zero_plus = "\xE2\x88\x97"; // U+2217 ASTERISK OPERATOR
+
+        for (const auto& [marker, name] : {std::pair{one_plus, "one-or-more"}, std::pair{zero_plus, "zero-or-more"}})
+        {
+            if (token.size() > marker.size() && token.compare(token.size() - marker.size(), marker.size(), marker) == 0)
+            {
+                base = token.substr(0, token.size() - marker.size());
+                mode = name;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The predicate of a statement, if it is a plain atom: [:atom "text"].
+    static bool atom_text(Janet arg, std::string& text)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(arg, &data, &len) || len < 2) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+        if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) != "atom") return false;
+        if (!janet_checktype(data[1], JANET_STRING)) return false;
+        text = reinterpret_cast<const char*>(janet_unwrap_string(data[1]));
+        return !(text.size() >= 2 && text.front() == '"'); // a quoted atom is a literal name, never an operator
+    }
+
     std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
     {
         if (args.empty()) return "nil";
+
+        // Path sugar, before anything else looks at the arguments: the
+        // statement becomes the plain one-step fact, tagged.
+        if (func_name == "zelph/fact" && args.size() >= 3)
+        {
+            std::string token;
+            std::string base;
+            std::string mode;
+            if (atom_text(args[1], token) && split_path_marker(token, base, mode))
+            {
+                std::string call = "(zelph/fact " + transform_arg(args[0]) + " \"" + string::escape_atom(base) + "\"";
+                for (size_t i = 2; i < args.size(); ++i)
+                    call += " " + transform_arg(args[i]);
+                call += ")";
+                return "(zelph/path " + call + " \"" + mode + "\")";
+            }
+        }
 
         int                      focused_index = -1;
         std::vector<std::string> arg_codes;

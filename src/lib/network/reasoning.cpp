@@ -379,8 +379,11 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
 {
     _prof.note_rule_applied(rule ? rule : condition);
 
-    _nn_pred        = get_node("nn", "zelph");
-    _nn_layers_pred = get_node("nn-layers", "zelph");
+    _nn_pred           = get_node("nn", "zelph");
+    _nn_layers_pred    = get_node("nn-layers", "zelph");
+    _closure_pred      = get_node("closure", "zelph");
+    _closure_one_plus  = get_node("one-or-more", "zelph");
+    _closure_zero_plus = get_node("zero-or-more", "zelph");
 
     if (should_log(1))
     {
@@ -759,6 +762,13 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // expensive: evaluate after != (-500), before negation (-1000).
             if (_nn_pred != 0 && rels_for_score.size() == 1 && *rels_for_score.begin() == _nn_pred)
                 score -= 800;
+
+            // A path condition REFUSES both ends free, so it must not be
+            // scheduled before the condition that binds one of them. It is
+            // also expensive per evaluation (one closure), but far cheaper
+            // than the neural pass: after != (-500), before ≈ (-800).
+            if (_closure_pred != 0 && rels_for_score.size() == 1 && *rels_for_score.begin() == _closure_pred)
+                score -= 700;
 
             // Prefer conditions whose predicate has fewer matching facts
             if (rels_for_score.size() == 1)

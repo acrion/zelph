@@ -1,0 +1,5 @@
+a P279 b
+b P279 c
+x rel a
+(((S P279 T) closure one-or-more), (X rel S)) => (X above T)
+.list-rules
