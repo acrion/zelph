@@ -1,33 +1,336 @@
+# wikidata-prune.zph - cut a full Wikidata network down to a size an
+# ordinary machine can hold.
+#
+# Run it against a freshly imported dump and save the result:
+#
+#   .load wikidata-20260309-all.json.bz2
+#   .import examples/wikidata/wikidata-prune
+#   .save wikidata-20260309-all-pruned.bin
+#
+# The goal is NOT a smaller copy of Wikidata. It is a network that still
+# answers the questions people ask locally -- the class hierarchy, places,
+# organizations, works, professions -- while leaving behind the bulk imports
+# that make Wikidata large and that nobody queries offline: astronomical
+# catalogues, sequence databases, cell lines, one item per integer, and the
+# Wikimedia project's own bookkeeping pages.
+#
+# ---------------------------------------------------------------------------
+# Two properties of the tools decide how this file has to be written.
+# Both were verified against the engine; neither is obvious.
+#
+# 1. `.prune-nodes A P31 Qx` matches DIRECT instances of Qx only. It does not
+#    descend the class hierarchy. Pruning `Q523` (star) therefore leaves every
+#    instance of `Q2247863` (high proper-motion star, a subclass of Q523)
+#    where it is -- which is why the 2026-03-09 pruned network still carried
+#    2.2 million astronomical objects. A class named here must be a class that
+#    actually CARRIES instances, not the concept above it.
+#
+# 2. `#` starts a comment only at the BEGINNING of a line. A trailing comment
+#    is not stripped: on a dot-command it becomes part of the argument and the
+#    command silently matches nothing, and on a fact line it becomes further
+#    OBJECTS of the fact. Every comment here is therefore a full line.
+#
+# A third one is about the pattern itself: `.prune-nodes` takes exactly ONE
+# variable, because with two it could not say which side to delete. The four
+# lines this file used to carry in the form `.prune-nodes A P131 B` were
+# rejected on every run and never did anything; they are `.prune-facts` now,
+# which drops the statements and keeps the entities.
+#
+# ---------------------------------------------------------------------------
+# How to bring the class list up to date for a new dump, in two commands on
+# the network you are about to prune:
+#
+#   .list-predicate-usage 60
+#   .list-predicate-value-usage P31 300
+#
+# The first shows which predicates carry the mass, the second which classes
+# do. Resolve the IDs to labels with
+# `%(print (zelph/name (zelph/resolve "Q…" "wikidata") "en"))` and add what
+# belongs to a domain below. The top 300 classes covered 80 % of all P31
+# statements on 2026-03-09, so this list is worth re-deriving rather than
+# inheriting.
+# ---------------------------------------------------------------------------
+
 .lang wikidata
 .remove-rules
-.list-rules
+
+# --- Astronomy -------------------------------------------------------------
+# The one lever that does not depend on the class list: 96 % of all P6259
+# ("epoch") statements name J2000, and nothing but an astronomical object has
+# an epoch. This removes ~2.5 million objects in one pattern, whichever of the
+# 60-odd catalogue classes they were filed under.
+.prune-nodes A P6259 Q1264450
+
+# The classes remain as a safety net for objects that carry no epoch. They are
+# ordered by how many instances they had on 2026-03-09.
+.prune-nodes A P31 Q1931185
+.prune-nodes A P31 Q2247863
+.prune-nodes A P31 Q1457376
+.prune-nodes A P31 Q3863
+.prune-nodes A P31 Q67206691
+.prune-nodes A P31 Q2154519
+.prune-nodes A P31 Q83373
+.prune-nodes A P31 Q1153690
+.prune-nodes A P31 Q204107
+.prune-nodes A P31 Q726242
+.prune-nodes A P31 Q65259218
+.prune-nodes A P31 Q67206701
+.prune-nodes A P31 Q1151284
+.prune-nodes A P31 Q66619666
+.prune-nodes A P31 Q523
+.prune-nodes A P31 Q318
+.prune-nodes A P31 Q6243
+.prune-nodes A P31 Q2168098
+.prune-nodes A P31 Q11282
+.prune-nodes A P31 Q1491746
+.prune-nodes A P31 Q72802977
+.prune-nodes A P31 Q12795622
+.prune-nodes A P31 Q1332364
+.prune-nodes A P31 Q72802508
+.prune-nodes A P31 Q6999
+.prune-nodes A P31 Q72802727
+.prune-nodes A P31 Q272447
+.prune-nodes A P31 Q46587
+.prune-nodes A P31 Q497654
+.prune-nodes A P31 Q204194
+.prune-nodes A P31 Q13890
+.prune-nodes A P31 Q71798532
+.prune-nodes A P31 Q67201574
+.prune-nodes A P31 Q744691
+.prune-nodes A P31 Q11276
+.prune-nodes A P31 Q72803622
+.prune-nodes A P31 Q72803708
+.prune-nodes A P31 Q130019
+.prune-nodes A P31 Q67206785
+.prune-nodes A P31 Q3937
+.prune-nodes A P31 Q5871
+.prune-nodes A P31 Q168845
+.prune-nodes A P31 Q72803426
+.prune-nodes A P31 Q71965429
+.prune-nodes A P31 Q28738741
+.prune-nodes A P31 Q13632
+.prune-nodes A P31 Q265392
+.prune-nodes A P31 Q691269
+.prune-nodes A P31 Q22247
+.prune-nodes A P31 Q188593
+.prune-nodes A P31 Q71798788
+.prune-nodes A P31 Q1142192
+.prune-nodes A P31 Q24452
+.prune-nodes A P31 Q10451997
+.prune-nodes A P31 Q18611609
+.prune-nodes A P31 Q217012
+.prune-nodes A P31 Q67201561
+.prune-nodes A P31 Q67201586
+.prune-nodes A P31 Q67201524
+.prune-nodes A P31 Q71965638
+.prune-nodes A P31 Q2488
+.prune-nodes A P31 Q44559
+.prune-nodes A P31 Q115518
+.prune-nodes A P31 Q1993624
+.prune-nodes A P31 Q71962386
+
+# --- Life sciences and chemistry -------------------------------------------
+# Proteins, genes and compounds are the classic bulk import: millions of items
+# that exist because a database was mirrored, not because anyone edits them.
 .prune-nodes A P31 Q8054
 .prune-nodes A P31 Q7187
 .prune-nodes A P31 Q11173
-.prune-nodes A P31 Q13442814
 .prune-nodes A P31 Q16521
-.prune-nodes A P31 Q5
-.prune-nodes A P131 B
-.prune-nodes A P31 Q4167836
-.prune-nodes A P31 Q523
-.prune-nodes A P31 Q318
-.prune-nodes A P31 Q4167410
 .prune-nodes A P31 Q113145171
-.prune-nodes A P31 Q11266439
-.prune-nodes A P31 Q79007
-.prune-nodes A P31 Q13433827
-.prune-nodes A P31 Q101352
-.prune-nodes A P31 Q13100073
 .prune-nodes A P31 Q277338
-.prune-nodes A P1433 B
-.prune-nodes A P31 Q3305213
+.prune-nodes A P31 Q23038290
+.prune-nodes A P31 Q420927
+.prune-nodes A P31 Q3780824
+.prune-nodes A P31 Q37748
+.prune-nodes A P31 Q310890
+# Cell lines. Each of these carries its own instances -- pruning one does not
+# reach the others, since .prune-nodes does not descend the hierarchy.
+.prune-nodes A P31 Q21014462
+.prune-nodes A P31 Q27555384
+.prune-nodes A P31 Q23058136
+.prune-nodes A P31 Q107103143
+.prune-nodes A P31 Q107102664
+.prune-nodes A P31 Q27671617
+.prune-nodes A P31 Q27554370
+.prune-nodes A P31 Q27555319
+# Clinical trials.
+.prune-nodes A P31 Q30612
+
+# --- Academic publishing ---------------------------------------------------
+# One item per paper, with its authors, subjects and journal. Useful to a
+# bibliometrician, dead weight to everyone else.
+.prune-nodes A P31 Q13442814
+.prune-nodes A P31 Q13433827
+.prune-nodes A P31 Q6451276
+.prune-nodes A P31 Q23927052
+.prune-nodes A P31 Q1143604
+.prune-facts A P1433 B
+.prune-facts A P921 B
+
+# --- The Wikimedia project's own pages -------------------------------------
+# Categories, templates, modules, list and disambiguation pages. These are not
+# knowledge at all; they are the encyclopedia's plumbing.
+.prune-nodes A P31 Q4167836
+.prune-nodes A P31 Q4167410
+.prune-nodes A P31 Q11266439
+.prune-nodes A P31 Q13406463
+.prune-nodes A P31 Q115595777
+.prune-nodes A P31 Q22808320
+.prune-nodes A P31 Q15184295
+.prune-nodes A P31 Q11753321
+.prune-nodes A P31 Q23894233
+.prune-nodes A P31 Q14204246
+.prune-nodes A P31 Q15647814
+.prune-nodes A P31 Q24046192
+.prune-nodes A P31 Q56428020
+.prune-nodes A P31 Q59541917
+.prune-nodes A P31 Q30432511
+.prune-nodes A P31 Q26267864
+.prune-nodes A P31 Q4663903
+.prune-nodes A P31 Q20010800
+.prune-nodes A P31 Q21286738
+.prune-nodes A P31 Q17442446
+.prune-nodes A P31 Q59191021
+.prune-nodes A P31 Q106612246
+.prune-nodes A P31 Q104635718
+.prune-nodes A P31 Q98645843
+.prune-nodes A P31 Q13331174
+.prune-nodes A P31 Q17146139
+.prune-nodes A P31 Q15407973
+
+# --- One item per number, per day, per hour --------------------------------
+# Wikidata holds an item for every integer with a property worth naming, and
+# for every calendar day of every year. They answer no question that is not
+# arithmetic.
+.prune-nodes A P31 Q47150325
+.prune-nodes A P31 Q49008
+.prune-nodes A P31 Q28920044
+.prune-nodes A P31 Q50707
+.prune-nodes A P31 Q467511
+.prune-nodes A P31 Q13366129
+.prune-nodes A P31 Q13366104
+.prune-nodes A P31 Q223722
+.prune-nodes A P31 Q765289
+.prune-nodes A P31 Q1260524
+.prune-nodes A P31 Q125390868
+.prune-nodes A P31 Q47018478
+
+# --- Individual people, places and their addresses -------------------------
+# The class hierarchy survives all of this: pruning instances never touches
+# the classes they are instances of.
+.prune-nodes A P31 Q5
+.prune-nodes A P31 Q101352
+.prune-nodes A P31 Q12308941
+.prune-nodes A P31 Q11879590
+.prune-nodes A P31 Q202444
+.prune-nodes A P31 Q66480858
+.prune-nodes A P31 Q18972207
+.prune-nodes A P31 Q79007
+.prune-nodes A P31 Q13100073
 .prune-nodes A P31 Q4022
 .prune-nodes A P31 Q8502
 .prune-nodes A P31 Q486972
+.prune-facts A P131 B
+
+# --- Museum and collection objects -----------------------------------------
+# One item per exhibit, per coin, per piece of porcelain. The classes stay;
+# the individual objects go. Note that `coin type` (Q113813711) is NOT here:
+# a "type" collects classes, see the checked-and-rejected list at the end.
+.prune-nodes A P31 Q2342494
+.prune-nodes A P31 Q98276829
+.prune-nodes A P31 Q18593264
+.prune-nodes A P31 Q22669850
+.prune-nodes A P31 Q11646939
+.prune-nodes A P31 Q17379525
+.prune-nodes A P31 Q41207
+.prune-nodes A P31 Q3305213
+.prune-nodes A P31 Q93184
+.prune-nodes A P31 Q860861
+.prune-nodes A P31 Q11060274
+.prune-nodes A P31 Q18761202
+.prune-nodes A P31 Q18218093
+.prune-nodes A P31 Q75837457
+.prune-nodes A P31 Q595597
+.prune-nodes A P31 Q101687
+.prune-nodes A P31 Q46686
+.prune-nodes A P31 Q3052382
+.prune-nodes A P31 Q106815942
+.prune-nodes A P31 Q220659
+.prune-nodes A P31 Q10855061
+.prune-nodes A P31 Q3850202
+.prune-nodes A P31 Q283127
 .prune-nodes A P31 Q2668072
-.prune-nodes A P31 Q3331189
+.prune-nodes A P31 Q29023906
+.prune-facts A P195 B
+
+# --- Character sets --------------------------------------------------------
+# One item per CJK codepoint, several encodings over.
+.prune-nodes A P31 Q53764732
+.prune-nodes A P31 Q17300291
+.prune-nodes A P31 Q55809450
+.prune-nodes A P31 Q109483621
+.prune-nodes A P31 Q53764782
+.prune-nodes A P31 Q109483637
+.prune-nodes A P31 Q109615233
+
+# --- Works in languages the audience of this file does not read ------------
+# Kept from the original script. These two are pruned by the language of the
+# work, not by class, so they cut across every kind of publication.
 .prune-nodes A P407 Q7850
 .prune-nodes A P407 Q7737
-.prune-nodes A P921 B
-.prune-nodes A P17 B
+
+# --- Editions, versions and other duplicates of a work ---------------------
+.prune-nodes A P31 Q3331189
+
+# ---------------------------------------------------------------------------
+# NOT pruned, deliberately, and the first thing to revisit if the result is
+# still too large. These are the everyday domains -- films, music, books,
+# games -- and whether they belong in a "general purpose" local Wikidata is a
+# judgement, not a fact. Uncomment a line to drop that domain; the counts are
+# instances on 2026-03-09:
+#
+#   .prune-nodes A P31 Q7725634    literary work                     408 k
+#   .prune-nodes A P31 Q11424      film                              324 k
+#   .prune-nodes A P31 Q482994     album                             304 k
+#   .prune-nodes A P31 Q105543609  musical work/composition          191 k
+#   .prune-nodes A P31 Q21191270   television series episode         176 k
+#   .prune-nodes A P31 Q7889       video game                        144 k
+#   .prune-nodes A P31 Q47461344   written work                      139 k
+#   .prune-nodes A P31 Q134556     single                            113 k
+#   .prune-nodes A P31 Q87167      manuscript                        104 k
+#   .prune-nodes A P31 Q125191     photograph                         77 k
+#   .prune-nodes A P31 Q5398426    television series                   79 k
+#   .prune-nodes A P31 Q27020041   sports season                      75 k
+#   .prune-nodes A P31 Q15416      television program                 60 k
+#   .prune-nodes A P31 Q24862      short film                         48 k
+#   .prune-facts A P161 B          cast member                      1.58 M facts
+#   .prune-facts A P136 B          genre                            1.53 M facts
+#   .prune-facts A P50 B           author                           1.21 M facts
+#   .prune-facts A P407 B          language of work                 1.91 M facts
+#
+# Also left alone on purpose: P17 (country), which the original script tried
+# to prune and never did. It answers a question people actually ask locally.
+#
+# Checked and deliberately NOT pruned, because their instances ARE
+# classes -- they take part in P279 and pruning them would tear holes in
+# the hierarchy this file exists to carry. The figures are how many of
+# the class's instances took part in a P279 statement on 2026-03-09:
+#
+#   Q59199015   group of stereoisomers      148 451 of 148 476
+#   Q2996394    biological process           28 323 of  42 508
+#   Q417841     protein family               22 891 of  24 259
+#   Q113813711  coin type                   14 652 of  65 129
+#   Q67015883   group or class of enzymes    10 782 of  10 909
+#   Q189118     cell type                     5 797 of   5 852
+#   Q47154513   structural class of chem.     5 058 of   5 158
+#   Q81505329   protein family w/ domain      4 532 of  12 958
+#   Q898273     protein domain                2 898 of  11 735
+#
+# The rule they illustrate is worth applying to every candidate: a class
+# whose name contains "family", "type", "class" or "group" almost always
+# collects CLASSES, not individuals. Before adding a line, count
+# `(zelph/targets n P279)` and `(zelph/sources P279 n)` over its
+# instances; if that is not near zero, leave it out.
+# ---------------------------------------------------------------------------
+
 .cleanup
