@@ -710,6 +710,25 @@ The same reasoning applies to a negated condition or an `≈` condition inside a
 are evaluated per candidate binding, so anything that shrinks the candidate set first pays for
 itself.
 
+#### "Is this the only one?"
+
+A derived marker also answers the question that looks as if it needed a negation over a
+*conjunction* — `¬(A prop Y, X != Y)`, which is not expressible. Derive the positive case with
+the guard, then negate that single pattern:
+
+```
+zelph> b prop w
+zelph> a prop v1
+zelph> a prop v2
+zelph> (A prop X, A prop Y, X != Y) => (A ~ several)
+zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
+( w ~ sole ) ⇐ ...
+```
+
+Note the order: **the facts come before the rules.** Negation is evaluated per run against the
+facts as they stand, and the graph is monotonic — with `a prop v1` alone in the graph, the
+second rule derives `v1 ~ sole`, and `a prop v2` arriving later cannot take that back.
+
 ### Fresh Variables: Generative Rules
 
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.

@@ -415,6 +415,82 @@ a prop v
         CHECK(any_output_starts_with(collector, "( a has_pair v )")); });
 }
 
+// ---------------------------------------------------------------------------
+// Two patterns that a self-join makes necessary, both documented in logic.md
+// and neither pinned until now.
+//
+// The first is a performance rewrite, and what has to hold is that it is ONLY
+// a performance rewrite: pushing a selection below a self-join must derive
+// exactly the same facts. The advice is worthless if the two forms can differ.
+//
+// The second answers "is this the ONLY one", which looks as if it needs a
+// negation over a conjunction - the non-existent `not (A prop Y, X != Y)`.
+// It does not: derive the positive "there are two" with the guard, then negate
+// THAT single pattern. Stratified negation evaluates it against the saturated
+// positive base, which is exactly when the marker is complete.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("self-join: deriving the selection first changes nothing")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A hits B, A hits C, B != C, B holds K, K ~ valuable, C holds L, L ~ valuable) => (A ~ direct)
+(A hits B, B holds K, K ~ valuable) => (A threatens B)
+(A threatens B, A threatens C, B != C) => (A ~ pushed)
+n hits e5
+n hits c7
+n hits a1
+e5 holds queen
+c7 holds rook
+a1 holds pawn
+queen ~ valuable
+rook ~ valuable
+)");
+        // Both forms fire, on the same subject, and the pawn on a1 - which is
+        // not `valuable` - is what would make a careless rewrite differ.
+        CHECK(any_output_starts_with(collector, "( n ~ direct )"));
+        CHECK(any_output_starts_with(collector, "( n ~ pushed )")); });
+}
+
+TEST_CASE("self-join: the pushed form does not fire where the direct one cannot")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A hits B, A hits C, B != C, B holds K, K ~ valuable, C holds L, L ~ valuable) => (A ~ direct)
+(A hits B, B holds K, K ~ valuable) => (A threatens B)
+(A threatens B, A threatens C, B != C) => (A ~ pushed)
+n hits e5
+n hits a1
+e5 holds queen
+a1 holds pawn
+queen ~ valuable
+)");
+        // One valuable victim only: neither form may fire, and in particular
+        // the `!=` guard must not pair the single threat with itself.
+        CHECK_FALSE(any_output_starts_with(collector, "( n ~ direct )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( n ~ pushed )")); });
+}
+
+TEST_CASE("negation: `the only one` needs a derived marker, not a negated conjunction")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a prop v1
+a prop v2
+b prop w
+(A prop X, A prop Y, X != Y) => (A ~ several)
+(A prop X, ¬(A ~ several)) => (X ~ sole)
+)");
+        // `b` has exactly one, `a` has two. The marker is derived first and
+        // the negation is then a single pattern, which `not` can express.
+        CHECK(any_output_starts_with(collector, "( w ~ sole )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( v1 ~ sole )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( v2 ~ sole )")); });
+}
+
 TEST_CASE("inequality: != prevents same-value binding")
 {
     // Same setup, but X != Y blocks the (v, v) binding.
