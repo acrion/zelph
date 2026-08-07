@@ -46,7 +46,7 @@ using namespace zelph::test;
 namespace
 {
     constexpr const char* kApi =
-        R"js(%(defn api [s] (get (get root-env s) :value)) (def zq (api 'zelph/query)) (def zf (api 'zelph/fact)) (def zo (api 'zelph/out)) (def zn (api 'zelph/name)) (def zs (api 'zelph/set)))js";
+        R"js(%(defn api [s] (get (get root-env s) :value)) (def zq (api 'zelph/query)) (def zf (api 'zelph/fact)) (def zo (api 'zelph/out)) (def zn (api 'zelph/name)) (def zs (api 'zelph/set)) (def zv (api 'zelph/var)))js";
 
     // Report match count and the bindings, so both halves are pinned.
     constexpr const char* kReport =
@@ -103,6 +103,113 @@ TEST_CASE("zelph/query: a stored conjunction matches, repeatedly")
         interactive.process(R"js(%(each r (zq cs) (zo (string "two=" (zn (get r 'A)) "/" (zn (get r 'B)) "/" (zn (get r 'K))))))js");
         CHECK(any_output_contains(collector, "one=e1/e5/BN"));
         CHECK(any_output_contains(collector, "two=e1/e5/BN")); });
+}
+
+// ---------------------------------------------------------------------------
+// The scope of a variable SYMBOL is one evaluation of a Janet block, exactly
+// as a variable in zelph syntax is quantified by one statement. Two blocks
+// writing 'B mean two different variables, so a conjunction assembled from
+// conditions built in separate blocks does not join -- it multiplies.
+//
+// Nothing reports that: the query answers, with the cross product. On a
+// Wikidata-sized graph the same mistake turns a two-row answer into hundreds
+// of thousands of rows (400 facts of each condition already give 160 801) and
+// exhausts memory long before it finishes.
+//
+// The two cases below are the same three lines of Janet, differing only in
+// how they are split into statements. They are pinned together so the
+// difference stays visible; the one-block form is the one to write.
+// ---------------------------------------------------------------------------
+TEST_CASE("zelph/query: conditions built in ONE statement share their variables")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        interactive.process(R"js(%(zf "e2" "hits" "e6"))js");
+        interactive.process(R"js(%(zf "e5" "holds" "BN"))js");
+        collector.clear();
+
+        // 'B is the same variable in both conditions: the second one selects
+        // among the two "hits" facts, and only e1/e5 survives.
+        interactive.process(R"js(%(def cs (let [s (zs (zf 'A "hits" 'B) (zf 'B "holds" 'K))] (zf s "~" "conjunction") s)))js");
+        interactive.process(R"js(%(zo (string "joined=" (length (zq cs)))))js");
+        CHECK(any_output_contains(collector, "joined=1")); });
+}
+
+TEST_CASE("zelph/query: conditions built in SEPARATE statements do not")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        interactive.process(R"js(%(zf "e2" "hits" "e6"))js");
+        interactive.process(R"js(%(zf "e5" "holds" "BN"))js");
+        collector.clear();
+
+        // Same symbols, one statement each: two distinct 'B nodes, so the
+        // conditions are independent and the answer is 2 x 1, not the join.
+        interactive.process(R"js(%(def c1 (zf 'A "hits" 'B)))js");
+        interactive.process(R"js(%(def c2 (zf 'B "holds" 'K)))js");
+        interactive.process(R"js(%(def cs (let [s (zs c1 c2)] (zf s "~" "conjunction") s)))js");
+        interactive.process(R"js(%(zo (string "crossed=" (length (zq cs)))))js");
+        CHECK(any_output_contains(collector, "crossed=2")); });
+}
+
+// zelph/var is the way out of the cross product above: the variable is a
+// VALUE, so the caller's own binding decides its extent instead of the block
+// boundary. Same three statements, joined.
+TEST_CASE("zelph/var: a variable node joins conditions across statements")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        interactive.process(R"js(%(zf "e2" "hits" "e6"))js");
+        interactive.process(R"js(%(zf "e5" "holds" "BN"))js");
+        collector.clear();
+
+        interactive.process(R"js(%(def shared (zv "B")))js");
+        interactive.process(R"js(%(def c1 (zf (zv "A") "hits" shared)))js");
+        interactive.process(R"js(%(def c2 (zf shared "holds" (zv "K"))))js");
+        interactive.process(R"js(%(def cs (let [s (zs c1 c2)] (zf s "~" "conjunction") s)))js");
+        interactive.process(R"js(%(each r (zq cs) (zo (string "row=" (zn (get r 'A)) "/" (zn (get r 'B)) "/" (zn (get r 'K))))))js");
+
+        CHECK(any_output_contains(collector, "row=e1/e5/BN"));
+        CHECK_FALSE(any_output_contains(collector, "row=e2")); });
+}
+
+// Two calls are two variables, whatever they are called. Otherwise a program
+// building many patterns in one loop would join them all by accident.
+TEST_CASE("zelph/var: two calls with the same name are two variables")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        interactive.process(R"js(%(zf "e2" "hits" "e6"))js");
+        interactive.process(R"js(%(zf "e5" "holds" "BN"))js");
+        collector.clear();
+
+        interactive.process(R"js(%(def cs (let [s (zs (zf (zv "A") "hits" (zv "B")) (zf (zv "B") "holds" (zv "K")))] (zf s "~" "conjunction") s)))js");
+        interactive.process(R"js(%(zo (string "crossed=" (length (zq cs)))))js");
+        CHECK(any_output_contains(collector, "crossed=2")); });
+}
+
+// A name is what makes a binding readable -- an unnamed variable still
+// matches, it just contributes no column.
+TEST_CASE("zelph/var: an unnamed variable matches but binds nothing readable")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        collector.clear();
+
+        interactive.process(R"js(%(def q (zf "e1" "hits" (zv))))js");
+        interactive.process(R"js(%(def rs (zq q)))js");
+        interactive.process(R"js(%(zo (string "rows=" (length rs) " keys=" (length (keys (first rs))))))js");
+        CHECK(any_output_contains(collector, "rows=1 keys=0")); });
 }
 
 TEST_CASE("zelph/query: a pattern without variables stays a no-op")

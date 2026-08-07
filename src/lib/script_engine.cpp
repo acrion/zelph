@@ -496,6 +496,11 @@ public:
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                "lang defaults to the current language (as set by .lang).");
 
+        janet_def(_janet_env, "zelph/var", wrap((JanetCFunction)janet_cfun_zelph_var), "(zelph/var &opt name)\nCreate a FRESH variable node and return it. "
+                                                                                       "A variable SYMBOL passed to zelph/fact is scoped to one evaluation of a Janet block; this node is a value, "
+                                                                                       "so the caller's own binding decides how far it reaches -- which is how conditions built in separate blocks "
+                                                                                       "join instead of forming a cross product. The optional name is display only (many variables may carry one name).");
+
         janet_def(_janet_env, "zelph/import", wrap((JanetCFunction)janet_cfun_zelph_import), "(zelph/import path & args)\nLoad and execute a script through the same machinery as the .import "
                                                                                              "command: the path is resolved against the working directory first, then the zelph standard library; "
                                                                                              "the .zph extension is optional. args are passed to the script as strings, available via (dyn :args). "
@@ -2269,6 +2274,49 @@ public:
 
         Janet res = zelph_wrap_node(f);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
+        return res;
+    }
+
+    // A variable node as a VALUE, so a caller can decide its extent.
+    //
+    // A variable symbol passed to zelph/fact is scoped to one evaluation of a
+    // Janet block, exactly as a variable in zelph syntax is quantified by its
+    // statement. That is the right default, but it left a join across blocks
+    // inexpressible: 'B in two blocks means two variables, so a conjunction
+    // assembled from conditions built separately does not join, it multiplies
+    // -- silently, and catastrophically on a large graph.
+    //
+    // The node returned here is an ordinary zelph/node and travels like any
+    // other, so the caller's own binding decides how far it reaches. It is
+    // deliberately NOT entered into the scoped-variable map: the handle is
+    // the identity, and a symbol of the same spelling in some later block
+    // stays the separate variable it has always been.
+    static Janet janet_cfun_zelph_var(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 0, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/var", argc, argv, true);
+
+        const network::Node v = s_instance->_n->var();
+
+        if (argc >= 1 && !janet_checktype(argv[0], JANET_NIL))
+        {
+            std::string name;
+            if (janet_checktype(argv[0], JANET_SYMBOL))
+                name = reinterpret_cast<const char*>(janet_unwrap_symbol(argv[0]));
+            else
+                name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
+
+            if (name.empty()) janet_panicf("zelph/var: the display name must not be empty");
+
+            // Display only, and merge_on_conflict off: many variables may
+            // carry one name, which is why a variable never takes the name
+            // lookup over from an atom.
+            s_instance->_n->set_name(v, name, s_instance->_n->lang(), false);
+        }
+
+        Janet res = zelph_wrap_node(v);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/var", argc, argv, false, res);
         return res;
     }
 

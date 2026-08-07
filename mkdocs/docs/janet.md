@@ -249,6 +249,52 @@ In zelph syntax, the [focus operator `*`](index.md#the-focus-operator) controls 
 
 The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](quickstart.md#full-command-reference)).
 
+#### The Scope of a Variable Symbol: One Block
+
+That `let` is not only a matter of style. **A variable symbol is scoped to one evaluation of a Janet block**, exactly as a variable in zelph syntax is quantified by the statement it appears in. Two blocks that both write `'B` mean two *different* variables, so conditions built in separate blocks are not joined by their shared symbol — they are multiplied:
+
+```
+zelph> %(zelph/fact "Berlin" "is located in" "Germany")
+<zelph/node Berlin "is located in" Germany>
+zelph> %(zelph/fact "Lyon" "is located in" "France")
+<zelph/node Lyon "is located in" France>
+zelph> %(zelph/fact "Germany" "is member of" "EU")
+<zelph/node Germany "is member of" EU>
+zelph> %(def joined (let [s (zelph/set (zelph/fact 'A "is located in" 'B) (zelph/fact 'B "is member of" 'K))] (zelph/fact s "~" "conjunction") s))
+<zelph/node {(B "is member of" K) (A "is located in" B)}>
+zelph> %(length (zelph/query joined))
+1
+zelph> %(def c1 (zelph/fact 'A "is located in" 'B))
+<zelph/node A "is located in" B>
+zelph> %(def c2 (zelph/fact 'B "is member of" 'K))
+<zelph/node B "is member of" K>
+zelph> %(def crossed (let [s (zelph/set c1 c2)] (zelph/fact s "~" "conjunction") s))
+<zelph/node {(B "is member of" K) (A "is located in" B)}>
+zelph> %(length (zelph/query crossed))
+2
+```
+
+Both conjunctions print identically — the variable nodes carry the same display names — and both answer without a warning. Only the counts differ: the first joins on `B` and reports the one match (Berlin / Germany / EU), the second reports every combination of the two conditions.
+
+The cost of getting this wrong grows with the graph, not with the program. Two conditions of 400 facts each already produce 160,801 rows instead of a handful, and at Wikidata scale the cross product exhausts memory before it finishes. **Build all conditions of one pattern inside a single block**, which the `let` form above does naturally. A pattern *node* may of course be stored and queried later — see [Programmatic Query Results](#programmatic-query-results-zelphquery); it is the symbol, not the node, whose meaning ends with the block.
+
+When one block is not where the program wants to build them — a pattern assembled step by step, or by several functions — use `zelph/var`, which returns the variable as an ordinary node. Then the caller's own binding decides how far it reaches:
+
+```
+zelph> %(def B (zelph/var "B"))
+<zelph/node B>
+zelph> %(def c1 (zelph/fact (zelph/var "A") "is located in" B))
+<zelph/node A "is located in" B>
+zelph> %(def c2 (zelph/fact B "is member of" (zelph/var "K")))
+<zelph/node B "is member of" K>
+zelph> %(def joined (let [s (zelph/set c1 c2)] (zelph/fact s "~" "conjunction") s))
+<zelph/node {(A "is located in" B) (B "is member of" K)}>
+zelph> %(length (zelph/query joined))
+1
+```
+
+Every call to `zelph/var` makes a *new* variable, whatever name it is given — otherwise a program building many patterns in one loop would join them all by accident. The name is display only; it is what lets the binding be read back as `(get r 'B)`.
+
 #### Lists: `zelph/list` and `zelph/list-chars`
 
 zelph has two list syntaxes, each with a Janet counterpart:
@@ -319,6 +365,9 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 
 - **`(zelph/resolve name)`**  
   Resolve (and create if needed) the node named `name` in the current language.
+
+- **`(zelph/var &opt name)`**  
+  Create a **fresh** variable node and return it. Every call yields a new variable, whatever it is named — the name is display only, and is what makes the binding readable as `(get r 'name)`; an unnamed variable still matches but contributes no column. Use it when the conditions of one pattern are built in separate blocks, where a variable *symbol* would mean a different variable each time: see [The Scope of a Variable Symbol](#the-scope-of-a-variable-symbol-one-block).
 
 - **`(zelph/fact s p o & more-objects)`**  
   Create a fact node for `s p o...` and return the statement node.
