@@ -260,6 +260,21 @@ extern "C"
     ZELPH_EXPORT int32_t zelph_run_once(zelph_engine* engine);
     ZELPH_EXPORT int32_t zelph_run_delta(zelph_engine* engine);
 
+    /* Whether the unification engine may spread a relation's candidates over
+       worker threads. On by default, and the REPL has toggled it with
+       `.parallel` since long before this header existed - a C caller could
+       not reach it at all.
+
+       It is a throughput/latency trade, not a correctness one: the derived
+       facts are the same either way. Parallelism pays on a large graph and
+       costs on a small one, where dispatch dominates the scan it replaces.
+       A caller reasoning about many small fact bases in a loop - which is
+       what `run_delta` and clusters are for - is exactly the case that wants
+       it off.
+
+       `enabled` is 0 or 1; `out_previous` may be null. */
+    ZELPH_EXPORT int32_t zelph_set_parallel(zelph_engine* engine, int32_t enabled, int32_t* out_previous);
+
     /* Answer a query pattern - a fact containing variables.
      *
      * The bindings come back FLAT: `pairs` holds `2 * n` node ids per row,

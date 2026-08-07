@@ -492,6 +492,22 @@ impl Engine {
         check(unsafe { zelph_sys::zelph_run_once(self.raw) })
     }
 
+    /// Whether the unification engine may spread a relation's candidates over
+    /// worker threads. On by default; returns what it was.
+    ///
+    /// A throughput/latency trade rather than a semantic one - the derived
+    /// facts are the same either way. Parallelism pays on a large graph and
+    /// costs on a small one, where dispatch dominates the scan it replaces.
+    /// A caller reasoning about many small fact bases in a loop is exactly the
+    /// case that wants it off.
+    pub fn set_parallel(&self, enabled: bool) -> Result<bool> {
+        let mut previous: i32 = 0;
+        check(unsafe {
+            zelph_sys::zelph_set_parallel(self.raw, i32::from(enabled), &mut previous)
+        })?;
+        Ok(previous != 0)
+    }
+
     /// Inference seeded by what was created since the previous run, so the
     /// cost follows the addition rather than the graph. That difference is
     /// what decides whether reasoning can happen inside a loop.

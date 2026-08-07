@@ -763,6 +763,53 @@ TEST_CASE("capi: a delta run costs the addition rather than the graph")
     CHECK(exists == 1);
 }
 
+TEST_CASE("capi: parallel evaluation is reachable and changes no derivation")
+{
+    Engine engine;
+
+    const zelph_node is_a   = engine.node("~");
+    const zelph_node human  = engine.node("human");
+    const zelph_node mortal = engine.node("mortal");
+
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node condition = 0, consequence = 0, rule = 0, fact = 0;
+    REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+
+    // On by default, and the previous value is reported so a caller can put
+    // it back.
+    int32_t previous = -1;
+    REQUIRE(zelph_set_parallel(engine, 0, &previous) == ZELPH_OK);
+    CHECK(previous == 1);
+
+    REQUIRE(zelph_fact(engine, engine.node("serial-one"), is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    int32_t exists = 0;
+    REQUIRE(zelph_exists(engine, engine.node("serial-one"), is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    // Setting it to what it already is is not a toggle.
+    REQUIRE(zelph_set_parallel(engine, 0, &previous) == ZELPH_OK);
+    CHECK(previous == 0);
+
+    REQUIRE(zelph_set_parallel(engine, 1, &previous) == ZELPH_OK);
+    CHECK(previous == 0);
+
+    // The setting is a throughput choice, not a semantic one: the same rule
+    // derives the same fact either way.
+    REQUIRE(zelph_fact(engine, engine.node("parallel-one"), is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run_delta(engine) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, engine.node("parallel-one"), is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    // A null out-parameter is allowed.
+    REQUIRE(zelph_set_parallel(engine, 1, nullptr) == ZELPH_OK);
+    CHECK(zelph_set_parallel(nullptr, 1, nullptr) == ZELPH_INVALID_ARGUMENT);
+}
+
 // ---------------------------------------------------------------------------
 // The hidden-layer activation, and the state it exists to remove.
 //

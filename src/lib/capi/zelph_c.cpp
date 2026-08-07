@@ -744,6 +744,19 @@ int32_t zelph_run_delta(zelph_engine* engine)
     return run_command(engine, ".run-delta");
 }
 
+int32_t zelph_set_parallel(zelph_engine* engine, int32_t enabled, int32_t* out_previous)
+{
+    if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+        const bool previous = graph->use_parallel();
+        if (out_previous) *out_previous = previous ? 1 : 0;
+        if (previous != (enabled != 0)) graph->toggle_parallel();
+        return succeed(); });
+}
+
 int32_t zelph_query(zelph_engine*    engine,
                     const zelph_node pattern,
                     zelph_node*      pairs,

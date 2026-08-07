@@ -185,6 +185,7 @@ The graph is not only a store, and this is the surface a program needs to use ru
 | `zelph_targets(engine, subject, predicate, out_nodes, count)` | The mirror of `zelph_sources` |
 | `zelph_rule(engine, conditions, n, consequences, m, out)` | When every condition holds, deduce every consequence. Returns the condition set |
 | `zelph_run` / `zelph_run_once` / `zelph_run_delta` | Forward chaining: to a fixed point, one pass, or seeded by what was created since the previous run |
+| `zelph_set_parallel` | Whether unification may spread a relation's candidates over worker threads. On by default; returns the previous value |
 | `zelph_query(engine, pattern, pairs, pair_count, row_sizes, row_count)` | Answer a pattern. The bindings come back flat - `2n` node ids per row, alternating variable and value - with one size per row |
 | `zelph_cluster(engine, name)` | Activate a cluster, or deactivate with a null name. Nodes *created* while one is active are recorded in it |
 | `zelph_cluster_active` / `_drop` / `_count` | The active cluster's name; remove everything a cluster recorded and report how many; how large a cluster is |
@@ -193,6 +194,12 @@ A query reports the variable as the **node the caller created**, not as a name, 
 crosses the boundary and no lookup is needed to read an answer.
 
 Clusters are what make the monotonic graph usable as a workspace. The loop a caller runs is
+`zelph_set_parallel` is a throughput/latency choice and not a semantic one: the derived facts
+are the same either way. Parallelism pays on a large graph and costs on a small one, where
+dispatch dominates the scan it replaces. A caller reasoning about many small fact bases in a
+loop is the case that wants it off - and it was reachable from the REPL as `.parallel` long
+before a C caller could touch it.
+
 activate, assert, `zelph_run_delta`, query, deactivate, drop - and what a drop removes is
 exactly what was created inside it, so a graph loaded from disk is never at risk.
 
