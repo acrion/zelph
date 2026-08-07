@@ -145,6 +145,18 @@ Node Zelph::node(const std::string& name, std::string lang)
         throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
 
+    // This function answers "the ATOM of this name", and creates it when it
+    // is not there: the parser calls it for every quoted name, the Janet API
+    // for every string argument, the Wikidata importer for every label. A
+    // VARIABLE that happens to carry the name is therefore not an answer.
+    // Its name is display-only -- variables are quantified per statement and
+    // resolved through the parser's scoped table, never through this map --
+    // and returning it built a fact ABOUT a rule's variable: `"A" rel c`
+    // next to a rule using A was accepted, echoed as `A rel c`, and then
+    // invisible to every query, because a statement carrying a variable is a
+    // pattern rather than data. The name lookup that commands use
+    // (get_node) still finds variables; only the creating path refuses them.
+    //
     // 1. Fast path: shared lock for lookup
     {
         std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
@@ -154,7 +166,7 @@ Node Zelph::node(const std::string& name, std::string lang)
         if (lang_it != _pImpl->_node_of_name.end())
         {
             auto it = lang_it->second.find(name);
-            if (it != lang_it->second.end())
+            if (it != lang_it->second.end() && !Impl::is_var(it->second))
             {
                 return it->second;
             }
@@ -177,7 +189,7 @@ Node Zelph::node(const std::string& name, std::string lang)
         if (lang_it != _pImpl->_node_of_name.end())
         {
             auto it = lang_it->second.find(name);
-            if (it != lang_it->second.end())
+            if (it != lang_it->second.end() && !Impl::is_var(it->second))
             {
                 return it->second;
             }
@@ -203,7 +215,13 @@ Node Zelph::node(const std::string& name, std::string lang)
 
     std::string_view sv = _pImpl->_string_pool.intern(name);
 
-    reverse_outer_it->second.emplace(sv, new_node);
+    // The reverse entry exists only when a variable holds the display name,
+    // and then the atom takes it over -- the same order assign_name_locked
+    // applies, and the one the lookup above needs to find the atom next
+    // time. The variable keeps its own forward entry, so rules go on
+    // rendering it.
+    auto [reverse_it, inserted_reverse] = reverse_outer_it->second.emplace(sv, new_node);
+    if (!inserted_reverse) reverse_it->second = new_node;
     forward_outer_it->second.emplace(new_node, sv);
 
     return new_node;

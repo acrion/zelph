@@ -1576,11 +1576,25 @@ namespace zelph::network
             //        be a single letter -- lost that name to the first query
             //        mentioning A, and the node afterwards rendered as
             //        "(?? ?? ??)": asking a question deleted data.
+            //
+            //    So a VARIABLE never takes this mapping over, from a real
+            //    node or from an earlier variable. The variable case is not
+            //    cosmetic either: the TRANSIENT variables a read-only
+            //    command builds -- .explain evaluates its pattern in a
+            //    scratch cluster and drops it again -- would otherwise take
+            //    the name and carry it into the removal, leaving the name
+            //    unresolvable while the surviving variables still display
+            //    it. `.node A` answered before such a command and reported
+            //    "No node found with name 'A'" afterwards, and the two maps
+            //    disagreed from then on, in the session and in a .bin saved
+            //    from it. Whichever node holds the mapping is arbitrary
+            //    among same-named variables anyway; first wins is the
+            //    reading that nothing transient can disturb.
             auto rev_it = rev.find(sv);
             if (rev_it != rev.end() && rev_it->second != node)
             {
                 const Node previous_owner = rev_it->second;
-                const bool takes_over     = !(is_var(node) && !is_var(previous_owner));
+                const bool takes_over     = !is_var(node);
 
                 if (takes_over && !is_var(previous_owner))
                 {

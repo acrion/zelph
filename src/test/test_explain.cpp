@@ -320,6 +320,48 @@ TEST_CASE("explain: a rejected reading of the argument stays silent")
         CHECK_FALSE(any_output_contains(collector, "arity mismatch")); });
 }
 
+TEST_CASE("explain: a transient variable does not take a name lookup with it")
+{
+    // .explain evaluates its pattern inside a scratch cluster and drops it
+    // again, so the variables it builds are removed. They are NAMED while
+    // they live, though, and the name map that answers ".node A" used to be
+    // handed to the newest owner -- which was the transient one. Dropping it
+    // erased the entry, so a read-only command turned a working lookup into
+    // "No node found with name 'A'" while every rule went on displaying A,
+    // and the two name maps disagreed from then on, in the session and in a
+    // .bin saved from it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("(A p B) => (A q B)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Variable: yes"));
+        const std::string before = last_out_text(collector);
+
+        collector.clear();
+        interactive.process(".explain (A p B)");
+
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Variable: yes"));
+        CHECK(last_out_text(collector) == before);
+
+        // The control for the branch next to it: a REAL node keeps its name
+        // against a variable of the same letter, which is what a single-letter
+        // Wikidata label depends on.
+        interactive.process(".name a en \"B\"");
+        interactive.process(".lang en");
+        collector.clear();
+        interactive.process("B p C");
+        collector.clear();
+        interactive.process(".node B");
+        CHECK(any_output_contains(collector, "Variable: no"));
+        interactive.process(".lang zelph"); });
+}
+
 TEST_CASE("help: an alias is documented under its canonical command")
 {
     // One table drives both the dispatch registration and ".help <alias>".

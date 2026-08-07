@@ -170,3 +170,41 @@ contradiction is unsatisfiable
         CHECK(answers_contain(collector, "! is unsatisfiable"));
         CHECK_FALSE(any_output_contains(collector, "contradiction is unsatisfiable")); });
 }
+
+TEST_CASE("names: a quoted atom is not a rule's variable of the same letter")
+{
+    // Zelph::node() answers "the ATOM of this name" -- the parser calls it
+    // for every quoted name, the Janet API for every string, the importer
+    // for every label -- and it used to return whatever the name map held,
+    // including a rule's VARIABLE. A single-letter name is not exotic (a
+    // Wikidata label can be one), and the result was a statement the engine
+    // accepted, echoed and then could not see: a fact carrying a variable is
+    // a pattern, so no query and no rule ever matched it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A p B) => (A q B)");
+        interactive.process(R"("A" rel c)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, R"("A" rel c)"));
+
+        // The atom took the lookup over, which is what the next quoted "A"
+        // has to find -- and the reading commands keep answering.
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Variable: no"));
+
+        collector.clear();
+        interactive.process(R"(.explain "A" rel c)");
+        CHECK(any_output_contains(collector, "[axiom]"));
+
+        // The rule kept its own variable and goes on firing.
+        collector.clear();
+        interactive.process("x p y");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "x q y")); });
+}
