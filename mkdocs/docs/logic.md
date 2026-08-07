@@ -807,6 +807,10 @@ As in Datalog, disjunction is expressed through **multiple rules with the same c
 
 This is equivalent to `(bird(A) ∨ bat(A)) → can_fly(A)`.
 
+When both branches hold, the consequence is derived **once**, not twice: a fact is a node and
+nodes are hash-consed, so the second rule finds the fact the first one made. A query therefore
+answers a doubly-justified conclusion exactly once.
+
 ### Unary Predicates and Self-Facts
 
 zelph facts are subject–predicate–object triples; there is no dedicated

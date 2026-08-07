@@ -251,6 +251,16 @@ namespace zelph::test
                                  && text_starts_with_sugar_aware(e.text, expected); });
     }
 
+    // How many Out-channel events start with the expected pattern. `any` is
+    // enough to show a fact was derived; a COUNT is what shows it was derived
+    // once - which is the question when two rules share a consequence.
+    [[maybe_unused]] inline size_t count_outputs_starting_with(const zelph::io::OutputCollector& collector, const std::string& expected)
+    {
+        return static_cast<size_t>(std::count_if(collector.events().begin(), collector.events().end(), [&](const auto& e)
+                                                 { return e.channel == zelph::io::OutputChannel::Out
+                                                       && text_starts_with_sugar_aware(e.text, expected); }));
+    }
+
     // Check whether ANY Out-channel event contains the substring (normalized).
     inline bool any_output_contains(const zelph::io::OutputCollector& collector, const std::string& sub)
     {

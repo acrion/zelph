@@ -430,6 +430,43 @@ a prop v
 // positive base, which is exactly when the marker is complete.
 // ---------------------------------------------------------------------------
 
+// Disjunction has no syntax in a rule body; logic.md says to express it as
+// several rules sharing one consequence, and that was untested. What has to
+// hold is that either branch alone suffices, that both together derive the
+// same fact rather than two, and that the head does not appear from nothing.
+TEST_CASE("disjunction: several rules, one consequence")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A ~ bird) => (A can fly)
+(A ~ bat) => (A can fly)
+tweety ~ bird
+bruce ~ bat
+rex ~ lizard
+)");
+        CHECK(any_output_starts_with(collector, "( tweety can fly )"));
+        CHECK(any_output_starts_with(collector, "( bruce can fly )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( rex can fly )")); });
+}
+
+TEST_CASE("disjunction: both branches true derive one fact, not two")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A ~ bird) => (A can fly)
+(A ~ bat) => (A can fly)
+oddity ~ bird
+oddity ~ bat
+X can fly
+)");
+        // A fact is a node and nodes are hash-consed, so the second branch
+        // finds the fact the first one made rather than making another. The
+        // query therefore answers exactly once.
+        CHECK(count_outputs_starting_with(collector, "Answer: oddity can fly") == 1); });
+}
+
 TEST_CASE("self-join: deriving the selection first changes nothing")
 {
     run_both_modes([](auto& collector, auto& interactive)
