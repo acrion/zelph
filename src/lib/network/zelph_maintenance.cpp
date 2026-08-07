@@ -1023,6 +1023,83 @@ bool Zelph::merge_cluster(const std::string& from, const std::string& to) const
 // Destructive: removes every node recorded in the cluster, including all
 // of their edges and names. Nodes that no longer exist (e.g. merged away
 // by set_name) are skipped silently.
+size_t Zelph::drop_scratch_cluster(const std::string& name) const
+{
+    // A SCRATCH cluster is one the engine itself opened moments ago and is
+    // about to throw away: zelph/dedup-rule building a rule that turns out to
+    // exist, .explain evaluating its pattern read-only. Everything in it was
+    // created by that construction, and nothing outside it can refer to any
+    // of it yet.
+    //
+    // drop_cluster is the wrong instrument for that, for exactly the reason
+    // unmark_rule_pattern gives: remove_node invalidates through the
+    // WHOLESALE funnel, which DISARMS the genuine-structure store for the
+    // rest of the session. Re-entering a rule that already exists was enough
+    // -- one duplicate line took `genuine walks` from 0 to 12 on a four-fact
+    // graph, and that store is what keeps get_fact_structures off the
+    // adjacency walk (see the 3 August regression, where losing it tripled
+    // the Jacobian workload).
+    //
+    // So: verify that every node is unreferenced from outside, then remove
+    // each with the invalidation a fact() of the same shape performs. Any
+    // node that fails the test sends the WHOLE cluster down the general path
+    // -- this is an optimisation of a removal, never a weakening of one.
+    const std::vector<Node> nodes = _pImpl->cluster_nodes(name);
+    if (nodes.empty())
+    {
+        _pImpl->take_cluster(name); // the bookkeeping goes either way
+        return 0;
+    }
+
+    const std::unordered_set<Node> doomed(nodes.begin(), nodes.end());
+
+    // Decompose WHILE THE EDGES STILL HOLD -- afterwards there is nothing
+    // left to read the triple from.
+    std::vector<std::pair<Node, FactStructure>> structures;
+    structures.reserve(nodes.size());
+
+    for (const Node n : nodes)
+    {
+        if (!_pImpl->exists(n)) continue;
+
+        const FactStructure fs = get_preferred_structure(this, n, 3);
+
+        const auto is_component = [&fs](const Node m)
+        { return m == fs.subject || m == fs.predicate || fs.objects.count(m) != 0; };
+
+        // A neighbour that is neither doomed nor a part of this node is
+        // something that was built ON it, or something that mentions it --
+        // and then the removal has a cascade to run.
+        for (const adjacency_set& side : {_pImpl->get_left(n), _pImpl->get_right(n)})
+        {
+            for (const Node m : side)
+            {
+                if (doomed.count(m) == 0 && !is_component(m))
+                    return drop_cluster(name);
+            }
+        }
+
+        structures.emplace_back(n, fs);
+    }
+
+    _pImpl->take_cluster(name);
+
+    size_t removed = 0;
+    for (const auto& [n, fs] : structures)
+    {
+        if (!_pImpl->exists(n)) continue;
+
+        if (fs.subject != 0 && fs.predicate != 0)
+            invalidate_fact_structures_for(fs.subject, fs.predicate, fs.objects, n);
+
+        _pImpl->remove(n);
+        _pImpl->remove_node_names(n);
+        ++removed;
+    }
+
+    return removed;
+}
+
 size_t Zelph::drop_cluster(const std::string& name) const
 {
     const std::vector<Node> nodes = _pImpl->take_cluster(name);

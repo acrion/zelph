@@ -331,3 +331,71 @@ x (a p b) y
 
     fs::remove(path);
 }
+
+TEST_CASE("genuine store: a scratch cluster the engine discards does not disarm it")
+{
+    // zelph/dedup-rule builds every parsed rule inside a scratch cluster and
+    // drops it again when the rule turns out to exist; .explain does the same
+    // with its pattern. That drop went through remove_node, i.e. through the
+    // WHOLESALE funnel -- so re-entering a rule that was already there cost
+    // the session its genuine-structure store, on a four-fact graph as much
+    // as on a Wikidata network. Same defect as the rule-pattern revocation
+    // above, one call site further out.
+    Zelph      z(null_handler());
+    const Node a = z.node("a");
+    const Node p = z.node("p");
+
+    REQUIRE(z.fact_stores_enabled());
+
+    z.set_active_cluster("__scratch");
+    const Node x       = z.var();
+    const Node y       = z.var();
+    const Node pattern = z.fact(x, p, {y});
+    z.deactivate_cluster();
+    REQUIRE(z.exists(pattern));
+
+    CHECK(z.drop_scratch_cluster("__scratch") > 0);
+
+    // What the drop has to achieve is unchanged: the scratch is gone.
+    CHECK_FALSE(z.exists(pattern));
+    CHECK_FALSE(z.exists(x));
+    CHECK_FALSE(z.exists(y));
+
+    // ...and the stores are still authoritative, which is the point.
+    CHECK(z.fact_stores_enabled());
+
+    z.set_logging(-1); // counter-only mode
+    z.reset_genuine_stats();
+    const Node e     = z.node("e");
+    const Node later = z.fact(a, p, {e});
+    CHECK(has_reading(*get_fact_structures(&z, later, 1), a, e));
+    CHECK(z.genuine_stats().hits == 1);
+    CHECK(z.genuine_stats().walks == 0);
+}
+
+TEST_CASE("genuine store: a scratch node something was built on takes the general path")
+{
+    // The fallback, and it is not optional: the leaf removal skips the
+    // upward cascade, so a member that something OUTSIDE the cluster was
+    // built on has to send the whole drop back to drop_cluster -- disarm
+    // included. An optimisation of a removal, never a weakening of one.
+    Zelph      z(null_handler());
+    const Node p = z.node("p");
+    const Node q = z.node("q");
+
+    z.set_active_cluster("__scratch");
+    const Node x       = z.var();
+    const Node y       = z.var();
+    const Node pattern = z.fact(x, p, {y});
+    z.deactivate_cluster();
+
+    // Built OUTSIDE the cluster, on a node inside it.
+    const Node about = z.fact(pattern, q, {z.node("noted")});
+    REQUIRE(z.exists(about));
+
+    CHECK(z.drop_scratch_cluster("__scratch") > 0);
+
+    // The cascade ran: what stood on the removed pattern is gone with it.
+    CHECK_FALSE(z.exists(pattern));
+    CHECK_FALSE(z.exists(about));
+}

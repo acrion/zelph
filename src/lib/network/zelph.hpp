@@ -615,6 +615,7 @@ namespace zelph::network
         /// The nodes a cluster has recorded, i.e. which of them are NEW.
         std::vector<Node>                           cluster_nodes(const std::string& name) const;
         size_t                                      drop_cluster(const std::string& name) const;
+        size_t                                      drop_scratch_cluster(const std::string& name) const;
         bool                                        merge_cluster(const std::string& from, const std::string& to) const;
 
         // --- Members ---

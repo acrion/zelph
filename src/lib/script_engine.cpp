@@ -2059,7 +2059,10 @@ public:
             return out;
         }
 
-        s_instance->_n->drop_cluster(scratch);
+        // The scratch drop must not disarm the fact stores: re-entering an
+        // existing rule is an ordinary thing to do, and it used to cost the
+        // session its genuine-structure store. See drop_scratch_cluster.
+        s_instance->_n->drop_scratch_cluster(scratch);
         return zelph_wrap_node(twin);
     }
 

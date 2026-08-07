@@ -3560,12 +3560,12 @@ private:
         catch (...)
         {
             restore_cluster(previous);
-            _n->drop_cluster(scratch);
+            _n->drop_scratch_cluster(scratch);
             throw;
         }
 
         restore_cluster(previous);
-        _n->drop_cluster(scratch);
+        _n->drop_scratch_cluster(scratch);
         return target;
     }
 
