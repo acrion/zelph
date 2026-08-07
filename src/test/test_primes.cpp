@@ -101,3 +101,61 @@ TEST_CASE("primes: trial-division primality via rules (all arithmetic modules)")
             CHECK_FALSE(any_output_contains(collector, "(&0 testprime &0) = composite"));
         } });
 }
+
+TEST_CASE("primes: the two implementations agree with each other and with arithmetic")
+{
+    // `primes.zph` and `primes-naf.zph` solve the same problem twice, on
+    // purpose and by different means: a positive fold that exits at the
+    // smallest divisor, and the textbook negation-as-failure formulation that
+    // needs the complete scan and a stratified evaluation. Two independent
+    // answers to one question are the cheapest correctness check there is --
+    // and the one thing neither module's own tests can do, since they check
+    // it against itself.
+    //
+    // Ground truth is in the table, so a shared misconception in both would
+    // not pass either.
+    struct Case
+    {
+        int         n;
+        const char* verdict;
+    };
+    static const Case expected[] = {
+        {2, "prime"}, {3, "prime"}, {4, "composite"}, {5, "prime"}, {6, "composite"}, {7, "prime"}, {8, "composite"}, {9, "composite"}, {10, "composite"}, {11, "prime"}, {12, "composite"}, {13, "prime"}, {14, "composite"}, {15, "composite"}, {16, "composite"}, {17, "prime"}, {18, "composite"}, {19, "prime"}, {20, "composite"}};
+
+    const auto verdicts = [](const char* module)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(std::string(".import ") + module);
+
+        std::vector<std::string> out;
+        for (const Case& c : expected)
+        {
+            collector.clear();
+            interactive.process("? :testprime &" + std::to_string(c.n));
+
+            std::string verdict;
+            for (const auto& answer : collect_answers(collector))
+            {
+                if (answer.find("prime") != std::string::npos
+                    && answer.find("composite") == std::string::npos)
+                    verdict = "prime";
+                else if (answer.find("composite") != std::string::npos)
+                    verdict = "composite";
+            }
+            out.push_back(verdict);
+        }
+        return out;
+    };
+
+    const std::vector<std::string> fold = verdicts("primes");
+    const std::vector<std::string> naf  = verdicts("primes-naf");
+
+    REQUIRE(fold.size() == naf.size());
+    for (std::size_t i = 0; i < fold.size(); ++i)
+    {
+        CAPTURE(expected[i].n);
+        CHECK(fold[i] == expected[i].verdict); // against arithmetic
+        CHECK(naf[i] == fold[i]);              // against each other
+    }
+}
