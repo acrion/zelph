@@ -444,6 +444,54 @@ std::vector<std::string> extract_ids(const std::string& str, const std::string& 
     return ids;
 }
 
+// Both "requires statement" constraints say the same thing about a different
+// end of the statement: an item that uses this property must ALSO carry a
+// given property, optionally with one of a set of values. `bound` names the
+// variable the requirement is about -- the subject for
+// item-requires-statement, the value for value-requires-statement -- and is
+// the only difference between the two.
+//
+// The violation is "none of the allowed values is there", so the values
+// become several negated conditions of ONE rule rather than one rule each:
+// with a rule per value, an item carrying the first allowed value would be
+// reported for not carrying the second.
+//
+// The negation is the engine's negation-as-failure, whose single reading is
+// "no fact matches, whichever variables are free, and it binds nothing"
+// (e13c41c). Both rules bind their subject positively first, so the NAF
+// conditions only ever filter.
+std::string requires_statement_rule(const std::string& json,
+                                    const std::string& id_str,
+                                    const std::string& bound,
+                                    const std::string& constraint_id)
+{
+    std::stringstream result;
+    result << "# Constraint: " << constraint_id << std::endl;
+
+    const auto required_props = extract_ids(json, "\"P2306\"");
+    if (required_props.empty())
+    {
+        return "# No P2306 (required property) found";
+    }
+    const std::string& required_p = required_props[0];
+
+    const auto allowed = extract_ids(json, "\"P2305\"");
+
+    result << "(I " << id_str << " Y";
+    if (allowed.empty())
+    {
+        result << ", \u00ac(" << bound << " " << required_p << " Z)";
+    }
+    else
+    {
+        for (const auto& v : allowed)
+            result << ", \u00ac(" << bound << " " << required_p << " " << v << ")";
+    }
+    result << ") => !" << std::endl;
+
+    return result.str();
+}
+
 std::map<std::string, ConstraintInfo> get_supported_constraints()
 {
     std::map<std::string, ConstraintInfo> constraints;
@@ -489,7 +537,11 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
             return result.str();
         });
 
-    constraints["Q21503247"] = ConstraintInfo("item-requires-statement constraint (item constraint | requires claim constraint | item requires claim constraint | required statement constraint | statement required constraint | requires statement constraint | required claim constraint | subject requires statement constraint | item-has-statement constraint | item has statement constraint | item-has-claim constraint | item has claim constraint | item-requires-claim constraint | requires-claim constraint | has claim constraint | has-claim constraint | has statement constraint | has-statement constraint | claim required constraint | subject-requires-statement constraint | subject has statement constraint | subject requires claim constraint | subject has claim constraint | subject-has-statement constraint | subject-requires-claim constraint | subject-has-claim constraint | required-statement constraint | statement-required constraint)", "type of constraint for Wikidata properties: used to specify that an item with this property should also have another given property", nullptr);
+    constraints["Q21503247"] = ConstraintInfo(
+        "item-requires-statement constraint (item constraint | requires claim constraint | item requires claim constraint | required statement constraint | statement required constraint | requires statement constraint | required claim constraint | subject requires statement constraint | item-has-statement constraint | item has statement constraint | item-has-claim constraint | item has claim constraint | item-requires-claim constraint | requires-claim constraint | has claim constraint | has-claim constraint | has statement constraint | has-statement constraint | claim required constraint | subject-requires-statement constraint | subject has statement constraint | subject requires claim constraint | subject has claim constraint | subject-has-statement constraint | subject-requires-claim constraint | subject-has-claim constraint | required-statement constraint | statement-required constraint)",
+        "type of constraint for Wikidata properties: used to specify that an item with this property should also have another given property",
+        [](const std::string& json, const std::string& id_str) -> std::string
+        { return requires_statement_rule(json, id_str, "I", "Q21503247"); });
     constraints["Q21503250"] = ConstraintInfo("subject type constraint (domain constraint | subject class constraint | type constraint | subject-type constraint | subject-class constraint)", "type of constraint for Wikidata properties: used to specify that the item described by such properties should be a subclass or instance of a given type", nullptr);
     constraints["Q21510851"] = ConstraintInfo("allowed qualifiers constraint (use qualifiers constraint | qualifiers constraint | optional qualifiers constraint)", "type of constraint for Wikidata properties: used to specify that only the listed qualifiers should be used. \" Novalue\" disallows any qualifier", nullptr);
     constraints["Q21510852"] = ConstraintInfo("Commons link constraint (Wikimedia Commons link constraint)", "type of constraint for Wikidata properties: used to specify that the value must link to an existing Wikimedia Commons page", nullptr);
@@ -500,7 +552,11 @@ std::map<std::string, ConstraintInfo> get_supported_constraints()
     constraints["Q21510860"] = ConstraintInfo("range constraint (value range constraint | value-within-range constraint | value-within-bounds constraint | value within range constraint | value within bounds constraint)", "type of constraint for Wikidata properties: used to specify that the value must be between two given values", nullptr);
     constraints["Q21510862"] = ConstraintInfo("symmetric constraint (Wikidata symmetric constraint | symmetry constraint)", "type of constraint for Wikidata properties: used to specify that the referenced entity should also link back to this entity", nullptr);
     constraints["Q21510863"] = ConstraintInfo("used as qualifier constraint (use as qualifier constraint | use as a qualifier)", "type of constraint for Wikidata properties: used to specify that a property must only be used as a qualifier", nullptr);
-    constraints["Q21510864"] = ConstraintInfo("value-requires-statement constraint (value requires statement constraint | target required claim constraint)", "type of constraint for Wikidata properties: used to specify that the referenced item should have a statement with a given property", nullptr);
+    constraints["Q21510864"] = ConstraintInfo(
+        "value-requires-statement constraint (value requires statement constraint | target required claim constraint)",
+        "type of constraint for Wikidata properties: used to specify that the referenced item should have a statement with a given property",
+        [](const std::string& json, const std::string& id_str) -> std::string
+        { return requires_statement_rule(json, id_str, "Y", "Q21510864"); });
     constraints["Q21510865"] = ConstraintInfo("value-type constraint (allowed values | codomain constraint | value class constraint | value type constraint | value-class constraint | object type constraint | range constraint)", "type of constraint for Wikidata properties: used to specify that the value item should be a subclass or instance of a given type", nullptr);
     constraints["Q21514353"] = ConstraintInfo("allowed units constraint", "type of constraint for Wikidata properties: used to specify that only listed units may be used", nullptr);
     constraints["Q21528958"] = ConstraintInfo("used for values only constraint (value-only constraint | used as claims only | used as base properties in statement only)", "type of constraint for Wikidata properties: used to specify that a property can only be used as a property for values, not as a qualifier or reference", nullptr);

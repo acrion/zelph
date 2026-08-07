@@ -55,6 +55,7 @@ namespace
 {
     const char* kDump = R"json([
 {"type":"property","datatype":"wikibase-item","id":"P9999","labels":{"en":{"language":"en","value":"probe property"}},"claims":{"P2302":[{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21502838,"id":"Q21502838"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2306":[{"snaktype":"value","property":"P2306","hash":"a1","datavalue":{"value":{"entity-type":"property","numeric-id":31,"id":"P31"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}],"P2305":[{"snaktype":"value","property":"P2305","hash":"a2","datavalue":{"value":{"entity-type":"item","numeric-id":5,"id":"Q5"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2306","P2305"],"id":"P9999$C1","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21502838,"id":"Q21502838"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2306":[{"snaktype":"value","property":"P2306","hash":"b1","datavalue":{"value":{"entity-type":"property","numeric-id":279,"id":"P279"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}]},"qualifiers-order":["P2306"],"id":"P9999$C2","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21502838,"id":"Q21502838"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2305":[{"snaktype":"value","property":"P2305","hash":"c1","datavalue":{"value":{"entity-type":"item","numeric-id":5,"id":"Q5"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},{"snaktype":"value","property":"P2305","hash":"c2","datavalue":{"value":{"entity-type":"item","numeric-id":8,"id":"Q8"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}],"P2306":[{"snaktype":"value","property":"P2306","hash":"c3","datavalue":{"value":{"entity-type":"property","numeric-id":31,"id":"P31"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}]},"qualifiers-order":["P2305","P2306"],"id":"P9999$C3","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":52558054,"id":"Q52558054"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2305":[{"snaktype":"value","property":"P2305","hash":"d1","datavalue":{"value":{"entity-type":"item","numeric-id":5,"id":"Q5"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},{"snaktype":"value","property":"P2305","hash":"d2","datavalue":{"value":{"entity-type":"item","numeric-id":8,"id":"Q8"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2305"],"id":"P9999$C4","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":53869507,"id":"Q53869507"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P5314":[{"snaktype":"value","property":"P5314","hash":"e1","datavalue":{"value":{"entity-type":"item","numeric-id":54828448,"id":"Q54828448"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P5314"],"id":"P9999$C5","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21510860,"id":"Q21510860"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{},"qualifiers-order":[],"id":"P9999$C6","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":99999999,"id":"Q99999999"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{},"qualifiers-order":[],"id":"P9999$C7","rank":"normal"}]},"sitelinks":{}},
+{"type":"property","datatype":"wikibase-item","id":"P7777","labels":{"en":{"language":"en","value":"requires probe"}},"claims":{"P2302":[{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21503247,"id":"Q21503247"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2306":[{"snaktype":"value","property":"P2306","hash":"f1","datavalue":{"value":{"entity-type":"property","numeric-id":279,"id":"P279"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}]},"qualifiers-order":["P2306"],"id":"P7777$C1","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21503247,"id":"Q21503247"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2306":[{"snaktype":"value","property":"P2306","hash":"f2","datavalue":{"value":{"entity-type":"property","numeric-id":17,"id":"P17"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}],"P2305":[{"snaktype":"value","property":"P2305","hash":"f3","datavalue":{"value":{"entity-type":"item","numeric-id":30,"id":"Q30"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},{"snaktype":"value","property":"P2305","hash":"f4","datavalue":{"value":{"entity-type":"item","numeric-id":183,"id":"Q183"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2306","P2305"],"id":"P7777$C2","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P2302","datavalue":{"value":{"entity-type":"item","numeric-id":21510864,"id":"Q21510864"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2306":[{"snaktype":"value","property":"P2306","hash":"f5","datavalue":{"value":{"entity-type":"property","numeric-id":569,"id":"P569"},"type":"wikibase-entityid"},"datatype":"wikibase-property"}]},"qualifiers-order":["P2306"],"id":"P7777$C3","rank":"normal"}]},"sitelinks":{}},
 {"type":"item","id":"Q42","labels":{"en":{"language":"en","value":"an item"}},"claims":{},"sitelinks":{}},
 {"type":"property","datatype":"string","id":"P8888","labels":{"en":{"language":"en","value":"no constraints"}},"claims":{},"sitelinks":{}}
 ]
@@ -209,5 +210,63 @@ TEST_CASE("wikidata constraints: the output directory is created, or refused wit
 
     fs::remove(blocker);
     fs::remove_all(root);
+    fs::remove(dump);
+}
+
+TEST_CASE("wikidata constraints: a required statement becomes a negated condition")
+{
+    // item-requires-statement (Q21503247) and value-requires-statement
+    // (Q21510864) are the same sentence about the two ends of a statement:
+    // an item using this property must ALSO carry a given one. They are the
+    // second and eighth most frequent constraint types without a generator on
+    // a real dump, and neither needs the class hierarchy -- which is what
+    // makes them the ones to do first.
+    namespace fs = std::filesystem;
+
+    const auto dump = write_dump(kDump, "zelph_requires_test.json");
+    const auto dir  = fs::temp_directory_path() / "zelph_requires_out";
+    fs::remove_all(dir);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".wikidata-constraints \"" + dump.string() + "\" \"" + dir.string() + "\"");
+
+    const auto script = dir / "P7777.zph";
+    REQUIRE(fs::exists(script));
+    const std::string text = read_file(script);
+
+    // No allowed values: the required property alone.
+    CHECK(text.find("(I P7777 Y, ¬(I P279 Z)) => !") != std::string::npos);
+    // Allowed values: ONE rule with a negated condition per value, because
+    // the violation is "none of them" -- a rule per value would report an
+    // item that carries the first for not carrying the second.
+    CHECK(text.find("(I P7777 Y, ¬(I P17 Q30), ¬(I P17 Q183)) => !") != std::string::npos);
+    // The value end of the same sentence binds the VALUE instead.
+    CHECK(text.find("(I P7777 Y, ¬(Y P569 Z)) => !") != std::string::npos);
+
+    // And it decides something. The data goes in first and the rules after:
+    // forward chaining is monotonic, so a NAF condition asked before the
+    // fact that satisfies it exists would report a violation nothing can
+    // retract.
+    interactive.process(".deductions off");
+    interactive.process(".lang wikidata");
+    interactive.process(".auto-run");
+    interactive.process("Q1 P7777 Q9");
+    interactive.process("Q2 P7777 Q9");
+    interactive.process("Q2 P279 Q10");
+    interactive.process("Q2 P17 Q183");
+    interactive.process("Q9 P569 Q11");
+    interactive.process(".import \"" + script.string() + "\"");
+
+    collector.clear();
+    interactive.run(true, false, false);
+
+    // Q1 satisfies none of the three, Q2 satisfies all three.
+    CHECK(has_contradiction(collector));
+    CHECK(any_output_contains(collector, "Q1 P7777 Q9"));
+    CHECK_FALSE(any_output_contains(collector, "Q2 P7777 Q9"));
+
+    fs::remove_all(dir);
     fs::remove(dump);
 }
