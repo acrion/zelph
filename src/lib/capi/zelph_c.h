@@ -110,7 +110,25 @@ extern "C"
         ZELPH_ACTIVATION_LEAKY_RELU = 1
     };
 
-    /* Mirrors zelph::io::OutputChannel. */
+    /* Mirrors zelph::io::OutputChannel.
+
+       The channel is how an EMBEDDED caller stays quiet, and an embedder
+       almost certainly wants to be. zelph's primary front end is a REPL, so it
+       narrates: a line per derived fact on OUT, the progress of a reasoning
+       run on DIAGNOSTIC ("Starting reasoning with 24 worker threads.", a
+       summary, a per-iteration note), decoration on PROMPT. Inside another
+       program that is noise at best - and for a host with its own protocol on
+       stdout, a protocol error.
+
+         OUT         derived facts, query answers: the REPL's results
+         ERROR       something went wrong; keep this one
+         DIAGNOSTIC  progress and summaries: the REPL's narration
+         PROMPT      the REPL's own decoration
+
+       A caller that wants none of the narration ignores everything except
+       ERROR. Passing a null callback to zelph_engine_create is NOT that - it
+       means "write to the process's standard streams", which is the REPL's
+       behaviour and the loudest option. */
     enum zelph_channel
     {
         ZELPH_CHANNEL_OUT        = 0,

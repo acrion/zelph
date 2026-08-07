@@ -194,6 +194,30 @@ A query reports the variable as the **node the caller created**, not as a name, 
 crosses the boundary and no lookup is needed to read an answer.
 
 Clusters are what make the monotonic graph usable as a workspace. The loop a caller runs is
+### Staying quiet
+
+zelph narrates, because its primary front end is a REPL: a line per derived fact on
+`ZELPH_CHANNEL_OUT`, the progress of a reasoning run on `ZELPH_CHANNEL_DIAGNOSTIC`
+("Starting reasoning with 24 worker threads.", a summary, a per-iteration note), decoration on
+`ZELPH_CHANNEL_PROMPT`. **Inside another program that is noise**, and for a host with its own
+protocol on stdout it is a protocol error.
+
+The channel is how you say so. An embedded caller ignores everything except
+`ZELPH_CHANNEL_ERROR`:
+
+```c
+static void quiet(void* user, int32_t channel, const char* text, int32_t newline)
+{
+    if (channel != ZELPH_CHANNEL_ERROR) return;
+    fputs(text, stderr);
+    if (newline) fputc('\n', stderr);
+}
+```
+
+Passing a **null** callback is not the quiet option — it means "write to the process's standard
+streams", which is the REPL's behaviour and the loudest one. Keeping `ERROR` matters: a caller
+that silences that too will debug the next failure blind.
+
 `zelph_set_parallel` is a throughput/latency choice and not a semantic one: the derived facts
 are the same either way. Parallelism pays on a large graph and costs on a small one, where
 dispatch dominates the scan it replaces. A caller reasoning about many small fact bases in a

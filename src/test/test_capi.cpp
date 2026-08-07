@@ -763,6 +763,64 @@ TEST_CASE("capi: a delta run costs the addition rather than the graph")
     CHECK(exists == 1);
 }
 
+TEST_CASE("capi: an embedder can silence the narration by channel")
+{
+    // What every embedded caller has to do, and what nothing documented until
+    // now: keep ERROR, drop the rest. A reasoning run narrates on OUT and
+    // DIAGNOSTIC, and inside a host with its own protocol on stdout that is a
+    // protocol error rather than a diagnostic.
+    struct Counts
+    {
+        int out = 0, error = 0, diagnostic = 0, prompt = 0;
+    } counts;
+
+    auto sink = [](void* user, int32_t channel, const char*, int32_t)
+    {
+        auto* c = static_cast<Counts*>(user);
+        switch (channel)
+        {
+        case ZELPH_CHANNEL_OUT: c->out++; break;
+        case ZELPH_CHANNEL_ERROR: c->error++; break;
+        case ZELPH_CHANNEL_DIAGNOSTIC: c->diagnostic++; break;
+        case ZELPH_CHANNEL_PROMPT: c->prompt++; break;
+        default: break;
+        }
+    };
+
+    zelph_engine* engine = nullptr;
+    REQUIRE(zelph_engine_create(sink, &counts, &engine) == ZELPH_OK);
+
+    auto node = [&](const char* name)
+    {
+        zelph_node n = 0;
+        REQUIRE(zelph_resolve(engine, name, nullptr, &n) == ZELPH_OK);
+        return n;
+    };
+
+    const zelph_node is_a   = node("~");
+    const zelph_node human  = node("human");
+    const zelph_node mortal = node("mortal");
+
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node condition = 0, consequence = 0, rule = 0, fact = 0;
+    REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, node("socrates"), is_a, &human, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    // The run narrates - which is the whole point of the channel existing.
+    CHECK(counts.diagnostic > 0);
+
+    // And the derivation happened regardless of who was listening.
+    int32_t exists = 0;
+    REQUIRE(zelph_exists(engine, node("socrates"), is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    zelph_engine_destroy(engine);
+}
+
 TEST_CASE("capi: parallel evaluation is reachable and changes no derivation")
 {
     Engine engine;
