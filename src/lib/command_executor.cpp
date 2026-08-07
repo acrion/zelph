@@ -3041,6 +3041,24 @@ private:
             network::collect_variables(_n, pattern_fact, pattern_vars, 1, history);
         }
 
+        // A CONJUNCTION reaches here with no variables of its own -- its
+        // conditions carry them, one level down -- and fell into the branch
+        // below, which reported "a pattern without variables binds nothing to
+        // delete" about a pattern full of variables and pruned nothing. The
+        // command genuinely does not take a conjunction: it deletes what its
+        // ONE variable binds, and a conjunction has one per condition with
+        // nothing to say which of them is meant. Saying so is the fix; taking
+        // conjunctions is a feature, not a message.
+        if (_n->check_fact(pattern_fact, _n->core.IsA, {_n->core.Conjunction}).is_known())
+        {
+            discard_pattern();
+            throw std::runtime_error(
+                std::string(facts_mode ? ".prune-facts" : ".prune-nodes")
+                + " takes a single fact pattern, not a conjunction: it acts on what ONE "
+                  "variable binds, and a conjunction offers one per condition with nothing "
+                  "to say which is meant. Write one command per condition.");
+        }
+
         if (pattern_vars.empty())
         {
             discard_pattern();

@@ -182,3 +182,33 @@ TEST_CASE("path condition: the marker stays an ordinary character elsewhere")
         interactive.process("m ⁺ n");
         CHECK(any_output_contains(collector, "m ⁺ n")); });
 }
+
+// .prune-nodes acts on what its ONE variable binds. A conjunction has one per
+// condition, so it is not a pattern the command can take -- and it used to
+// say "a pattern without variables binds nothing to delete" about a pattern
+// full of them, then prune nothing.
+TEST_CASE("prune: a conjunction pattern is refused, and named as such")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        collector.clear();
+
+        std::string message;
+        try
+        {
+            interactive.process(".prune-nodes (S rel T, T P279⁺ U)");
+        }
+        catch (const std::exception& ex)
+        {
+            message = ex.what();
+        }
+
+        CHECK(message.find("takes a single fact pattern, not a conjunction") != std::string::npos);
+        CHECK(message.find("without variables") == std::string::npos);
+
+        // Nothing was deleted on the way to the message.
+        collector.clear();
+        interactive.process(".node a");
+        CHECK(any_output_contains(collector, "Name in language")); });
+}
