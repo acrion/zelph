@@ -677,6 +677,39 @@ zelph> r3 color red
 
 No contradiction — the coloring is valid. But assigning `r2 color red` instead would trigger the contradiction, since adjacent regions `r1` and `r2` would share the same color.
 
+#### Self-joins: derive the selection first
+
+A rule that pairs a relation with itself is quadratic in that relation, and `!=` does not
+make it cheaper — the guard **filters bindings after the join has produced them**. When the
+pairs you actually want are a small subset picked out by other conditions, deriving that
+subset first and joining over *it* is the same statement in a far cheaper order:
+
+```
+# quadratic over every `hits` fact, then filtered
+(A hits B, A hits C, B != C, B holds K, K ~ valuable, C holds L, L ~ valuable)
+    => (A ~ double_attacker)
+
+# the selection pushed below the join
+(A hits B, B holds K, K ~ valuable) => (A threatens B)
+(A threatens B, A threatens C, B != C) => (A ~ double_attacker)
+```
+
+Both derive the same facts. On a base of ~200 facts in which about 60 were `hits` and 8 of
+those were threats, the two-rule form ran **14× faster** — and the whole rule set it belonged
+to went from 4.07 ms to 0.96 ms.
+
+The reason is worth knowing, because it tells you when to expect this. `optimize_order` plans
+the join by **boundness**: a condition whose subject and objects are already bound scores
+higher, because unification can resolve it without scanning. It does not know **how many
+facts** a relation has, and cannot — that is a property of the data, not of the rule. So the
+planner can put a resolvable condition first, but it cannot tell a scan over 60 facts from a
+scan over 8. Where a relation's *size* is what makes one order cheap, the rule author supplies
+that knowledge by naming the smaller relation.
+
+The same reasoning applies to a negated condition or an `≈` condition inside a self-join: both
+are evaluated per candidate binding, so anything that shrinks the candidate set first pays for
+itself.
+
 ### Fresh Variables: Generative Rules
 
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.
