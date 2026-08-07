@@ -208,3 +208,41 @@ TEST_CASE("names: a quoted atom is not a rule's variable of the same letter")
         interactive.process("S q O");
         CHECK(answers_contain(collector, "x q y")); });
 }
+
+TEST_CASE("names: .name takes a display name over from a variable")
+{
+    // Refusing this told the user something the engine does not believe --
+    // "Names are unique per language" is false among variables, every
+    // statement quantifies its own -- and the advice it gave ("remove the
+    // other node") named a rule's variable. The parser's answer to the same
+    // collision is the right one: the atom takes the lookup over, the
+    // variable keeps its own display name, and nothing merges, which a
+    // variable and a non-variable cannot do anyway.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("(A p B) => (A q B)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".name a A");
+        CHECK(any_output_contains(collector, "display name of a variable"));
+
+        collector.clear();
+        interactive.process(".node A");
+        CHECK(any_output_contains(collector, "Variable: no"));
+
+        // The rule kept its variable, and the renamed node prints quoted --
+        // the two readings of the letter stay apart in the output.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(A p B) => (A q B)"));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, R"("A" q b)"));
+
+        // The control, and the direction that must keep refusing: a VARIABLE
+        // does not take a real node's name.
+        CHECK_THROWS_AS(interactive.process(".name B b"), std::runtime_error); });
+}

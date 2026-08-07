@@ -1694,7 +1694,12 @@ private:
                       "disappears is re-created under the id its new components give it, folding\n"
                       "into an equal fact where the graph already holds one. Core nodes are never\n"
                       "the ones that disappear, and a variable and a non-variable cannot merge at\n"
-                      "all."},
+                      "all.\n"
+                      "\n"
+                      "A name a rule's VARIABLE displays is not in the way: the node takes the\n"
+                      "name over, the variable goes on rendering under it, and nothing merges.\n"
+                      "Many nodes may carry one variable name -- every statement quantifies its\n"
+                      "own -- so the name is display-only there."},
 
             {".delname", ".delname <node|id> [lang]\n"
                          "Removes the name of the node in the current language (or the specified language if provided).\n"
@@ -2308,6 +2313,27 @@ private:
                 // it complained about the node itself -- "Name 'a' is
                 // already in use by node 11" where 11 IS 'a'.
                 _n->out("Node '" + name_in_current_lang + "' already has this name in language '" + target_lang + "'.", true);
+            }
+            else if (node_in_target_lang != 0
+                     && network::Zelph::is_var(node_in_target_lang)
+                     && !network::Zelph::is_var(node_in_current_lang))
+            {
+                // A rule's VARIABLE holds the name. Refusing here told the
+                // user something the engine does not believe -- names are
+                // not unique per language among variables, every statement
+                // makes a fresh one -- and the advice ("remove the other
+                // node") named a node whose removal damages the rule.
+                //
+                // What the parser does with the same collision is the
+                // answer: the atom takes the lookup over, the variable keeps
+                // its own display name, and nothing merges (a variable and a
+                // non-variable cannot). merge_on_conflict is therefore off;
+                // with it on, the merge machinery would refuse the merge it
+                // is not being asked for.
+                _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, false);
+                _n->out("Name '" + name_in_target_lang + "' was the display name of a variable. Node '"
+                            + name_in_current_lang + "' carries it now; the variable keeps rendering under it.",
+                        true);
             }
             else if (node_in_target_lang != 0)
             {
