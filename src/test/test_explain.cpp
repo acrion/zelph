@@ -398,3 +398,44 @@ TEST_CASE("help: a topic may be named with or without its dot")
         interactive.process(".help nosuchthing");
         CHECK(any_event_contains(collector, "Unknown command")); });
 }
+
+TEST_CASE("explain: an argument that names a node is not a parse failure")
+{
+    // One message covered four different situations, and the one it named --
+    // a parse failure -- was the only one it usually was NOT. It matters most
+    // where it is most natural to type: the engine reports a contradiction
+    // with its premises on the "⇐" line, and ".explain !" answered that the
+    // argument might not parse. It parses; a contradiction is simply not a
+    // fact, and it materializes nothing, so there is nothing left to
+    // reconstruct afterwards.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto message_of = [&interactive](const char* line)
+        {
+            try
+            {
+                interactive.process(line);
+            }
+            catch (const std::exception& ex)
+            {
+                return std::string(ex.what());
+            }
+            return std::string{};
+        };
+
+        interactive.process("(X p Y) => !");
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        CHECK(message_of(".explain !").find("contradiction marker") != std::string::npos);
+        CHECK(message_of(".explain a").find("is a node, not a fact") != std::string::npos);
+        CHECK(message_of(".explain ~").find("is a node, not a fact") != std::string::npos);
+
+        // A name that denotes nothing keeps the message that fits it.
+        CHECK(message_of(".explain nosuchnode").find("cannot parse fact pattern") != std::string::npos);
+
+        // And the working case is untouched.
+        collector.clear();
+        interactive.process(".explain a p b");
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}

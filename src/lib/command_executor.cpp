@@ -3771,7 +3771,28 @@ private:
         if (target == 0)
         {
             if (!parts.empty())
+            {
+                // One message for four different situations is one message
+                // too few. An argument that NAMES something -- an atom, a
+                // core node, the contradiction the engine had just reported
+                // with its premises -- is not a parse failure, and telling
+                // the user it might be sends them to look at their typing.
+                if (parts.size() == 1)
+                {
+                    if (const network::Node nd = resolve_node(parts[0], _n->lang()); nd != 0)
+                    {
+                        if (nd == _n->core.Contradiction)
+                            throw std::runtime_error(".explain: '" + parts[0] + "' is the contradiction marker, not a fact. A contradiction "
+                                                                                "materializes nothing, so there is no derivation left to reconstruct afterwards -- "
+                                                                                "its premises are printed with the '⇐' line as it is derived, and .run-export records them.");
+
+                        throw std::runtime_error(".explain: '" + parts[0] + "' is a node, not a fact. .explain reconstructs how a FACT was derived; "
+                                                                            "pass the statement it takes part in, or use .node to inspect the node itself.");
+                    }
+                }
+
                 throw std::runtime_error(".explain: cannot parse fact pattern, or it does not denote a fact");
+            }
 
             target = string::last_node_to_string_node();
             if (!target)
