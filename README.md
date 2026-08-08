@@ -8,6 +8,16 @@
 
 By blending the flexibility of semantic webs (like Wikidata) with logic programming concepts (deep unification, constructive rules, negation as failure), zelph effectively transforms a static knowledge base into an **executable graph**.
 
+## 🎉 Funded by the NGI0 Commons Fund
+
+zelph has been selected for a grant from NLnet's
+[NGI0 Commons Fund](https://nlnet.nl/project/Zelph/) for
+**Auditable Reasoning over Linked Open Data**: streaming import adapters for
+RDF/N-Triples and JSON-LD, an open proof-export format that publishes complete
+derivation chains as Linked Data, a reusable library of constraint rules for
+common ontology semantics, and a web-based proof explorer that lets anyone trace
+a derived fact back to its evidence.
+
 ## 📖 Documentation & Installation
 
 The complete documentation, including tutorials, language references, and the architectural concepts behind "Semantic Math", is hosted on our documentation site:
