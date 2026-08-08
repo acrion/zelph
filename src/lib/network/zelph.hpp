@@ -226,6 +226,13 @@ namespace zelph::network
         bool         try_get_fact_structures_cached(Node fact, FactStructurePtr& out) const;
         void         store_fact_structures_cached(Node fact, FactStructurePtr value) const;
         void         invalidate_fact_structures_cache() const noexcept;
+
+        /// Drop exactly these nodes from the fact-structure cache, leaving the
+        /// rest of it alone. The targeted counterpart of the wholesale clear
+        /// above, for a caller that can name what its change made stale --
+        /// see invalidate_fact_structures_for (creation) and remove_node
+        /// (removal), which are the two that can.
+        void         erase_fact_structures(const std::vector<Node>& nodes) const noexcept;
         void         invalidate_fact_structures_for(Node subject, Node predicate, const adjacency_set& objects, Node relation) const;
 
         // Memoized set of declared relation types -- one shared_ptr read

@@ -1769,6 +1769,20 @@ void Zelph::invalidate_fact_structures_for(const Node subject, const Node predic
     if (erased != 0 && logging_active()) _fs_cache_stale_erased.fetch_add(erased, std::memory_order_relaxed);
 }
 
+void Zelph::erase_fact_structures(const std::vector<Node>& nodes) const noexcept
+{
+    if (nodes.empty()) return;
+    if (!_pImpl->_fs_cache_has_entries.load(std::memory_order_acquire)) return;
+
+    size_t erased = 0;
+    {
+        std::unique_lock lock(_pImpl->_fs_cache_mtx);
+        for (const Node n : nodes)
+            erased += _pImpl->_fs_cache.erase(n);
+    }
+    if (erased != 0 && logging_active()) _fs_cache_stale_erased.fetch_add(erased, std::memory_order_relaxed);
+}
+
 std::shared_ptr<const ankerl::unordered_dense::set<Node>> Zelph::relation_type_set() const
 {
     uint64_t gen;

@@ -71,7 +71,12 @@ size_t Zelph::remove_node(Node node) const
         throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));
     }
 
-    invalidate_fact_structures_cache();
+    // The fact-path stores are authoritative PER NODE -- absence of an entry
+    // is meaningful -- so an entry for a node that is about to go must never
+    // resurface. Disarming is one-way and idempotent, which is why it stays
+    // where the wholesale invalidation used to be. The structure CACHE is
+    // handled at the end, targeted; see the comment there.
+    disable_fact_stores();
 
     // A fact minus one of its parts is not a fact -- and the graph cannot
     // say which one it is missing. With the OBJECT gone, the subject is the
@@ -176,10 +181,80 @@ size_t Zelph::remove_node(Node node) const
         }
     }
 
+    // What this removal can make stale in the structure cache, collected
+    // WHILE THE EDGES STILL EXIST. The counterpart of
+    // invalidate_fact_structures_for on the creation side, and it rests on the
+    // same argument read backwards: a cached reading of a node can only change
+    // if the adjacency it was reconstructed from changed, and removal changes
+    // the adjacency of exactly the doomed nodes and their neighbours. Both
+    // directions count, because removal deletes edges both ways -- the
+    // bidirectional restriction of the creation side is about hubs GROWING and
+    // has no analogue here.
+    //
+    // Why this matters: the wholesale clear that used to stand at the top of
+    // this function ran once per removed node, so a bulk prune never let the
+    // cache hold anything. Measured with the counters on a 99 893-node prune:
+    // 99 900 full clears, fs_cache hits 1 009 against 199 797 misses, every
+    // structure reconstruction cold. The creation side made this exact move
+    // already -- see the comment above invalidate_fact_structures_for, which
+    // records 1.28M reconstructions in the Jacobian diffby phase.
+    //
+    // Two cases still need the wholesale clear, and both are cheap to detect:
+    // a neighbourhood beyond the budget (a hub), and the removal of a
+    // relation-type DECLARATION, which changes predicate detection globally --
+    // the same case (3) the creation side falls back on. The budget is larger
+    // than the creation side's 256 because `stale` here is a union over the
+    // whole doomed cascade rather than the neighbourhood of one new fact.
+    constexpr size_t  stale_budget = 1024;
+    std::vector<Node> stale;
+    bool              bounded             = true;
+    bool              declaration_removed = false;
+
+    stale.reserve(doomed.size() * 4);
+
+    for (const Node dead : doomed)
+    {
+        if (!declaration_removed && parse_relation(dead) == core.IsA)
+        {
+            adjacency_set objects;
+            parse_fact(dead, objects, 0);
+            if (objects.count(core.RelationTypeCategory) != 0) declaration_removed = true;
+        }
+
+        stale.push_back(dead);
+
+        if (!bounded) continue;
+
+        for (const Node n : _pImpl->get_right(dead))
+            stale.push_back(n);
+        for (const Node n : _pImpl->get_left(dead))
+            stale.push_back(n);
+
+        if (stale.size() > stale_budget) bounded = false;
+    }
+
     for (const Node dead : doomed)
     {
         _pImpl->remove(dead);            // Disconnects edges and removes from adjacency maps
         _pImpl->remove_node_names(dead); // Separate method for name cleanup
+    }
+
+    // NOT invalidated here: relation_type_set(). Removing a declaration leaves
+    // it saying that the predicate is still declared, and that is a question
+    // of MEANING rather than of caching -- `display: a marked pattern whose
+    // predicate is undeclared still prints as itself` (test_node_display.cpp)
+    // depends on the current answer, and refreshing the set turns that
+    // rendering into the fallback the test was written to rule out. Whether
+    // the set should be refreshed is Stefan's; it is not this change's to
+    // settle, and this change deliberately keeps the behaviour it found.
+    if (declaration_removed || !bounded)
+    {
+        invalidate_fact_structures_cache();
+    }
+    else
+    {
+        _pImpl->invalidate_predicate_index();
+        erase_fact_structures(stale);
     }
 
     return doomed.size();

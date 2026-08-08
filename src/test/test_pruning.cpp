@@ -854,3 +854,113 @@ TEST_CASE("pruning: a conjunction that matches nothing leaves nothing behind")
         // The pattern's own vocabulary is not in the graph afterwards.
         CHECK_THROWS_AS(interactive.process(".node nothing"), std::runtime_error); });
 }
+
+// ---------------------------------------------------------------------------
+// remove_node drops the structure cache TARGETED rather than wholesale, so a
+// bulk removal can keep what it did not touch. The cases below are the ones a
+// stale entry would corrupt: a victim whose components are shared with a
+// survivor, and a removal whose cascade reaches a fact through another fact.
+//
+// Measured motivation, counters only: one prune removing 99 893 nodes did
+// 99 900 full cache clears and 199 797 cold structure walks; it now does 4 and
+// 99 904.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("removal: a bulk prune leaves the survivors structurally intact")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Every victim shares its predicate and its object with the next, so
+        // a cached reading kept from before an earlier removal would be read
+        // back for a node whose adjacency has since changed.
+        process_lines(interactive, R"(
+v1 rel target
+v2 rel target
+v3 rel target
+keep rel target
+v1 other keep
+v2 other keep
+)");
+        collector.clear();
+        interactive.process(".prune-nodes A other keep");
+        // Two victims, and FOUR facts: the two matched "other" facts plus the
+        // "rel target" fact each victim took with it.
+        CHECK(any_output_contains(collector, "Pruned 4 matching facts and 2 nodes"));
+
+        // v1 and v2 are gone with both of their facts; v3 and keep are not.
+        collector.clear();
+        interactive.process("S rel target");
+        const auto answers = collect_answers(collector);
+        CHECK(answers_contain(collector, "v3 rel target"));
+        CHECK(answers_contain(collector, "keep rel target"));
+        CHECK(answers.size() == 2);
+
+        // And nothing is left that reads as a self-fact -- the shape an
+        // incomplete fact degenerates into.
+        CHECK_FALSE(any_output_contains(collector, ":rel target"));
+
+        collector.clear();
+        interactive.process("S other O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("removal: a cascade through a nested fact survives a bulk prune")
+{
+    // The cascade runs upwards through facts, which is exactly where a
+    // structure read from the cache decides what goes: `(x (a p b) y)` is
+    // reached from `a p b`, which is reached from `b`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+c p b
+x (a p b) y
+u (c p b) w
+survivor p elsewhere
+)");
+        collector.clear();
+        interactive.process(".prune-nodes B p b");
+
+        // Both nested facts go with the inner facts that go with b.
+        collector.clear();
+        interactive.process("S (a p b) O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S (c p b) O");
+        CHECK(collect_answers(collector).empty());
+
+        // The untouched branch is still there and still reads as itself.
+        collector.clear();
+        interactive.process("S p elsewhere");
+        CHECK(answers_contain(collector, "survivor p elsewhere")); });
+}
+
+TEST_CASE("removal: a bulk prune survives a save/load round trip")
+{
+    // A fact minus one of its parts is not recognisable as incomplete -- it
+    // reads as a self-fact and goes into the .bin. That is what the wholesale
+    // clear was protecting, so the targeted one has to be pinned against it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_bulk_prune_roundtrip.bin";
+        std::filesystem::remove(out);
+
+        process_lines(interactive, R"(
+v1 rel doomed
+v2 rel doomed
+v3 rel doomed
+keep rel fine
+)");
+        interactive.process(".prune-nodes A rel doomed");
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, "keep rel fine"));
+        CHECK(collect_answers(collector).size() == 1);
+
+        std::filesystem::remove(out); });
+}
