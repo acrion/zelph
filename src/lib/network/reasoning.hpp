@@ -220,6 +220,9 @@ namespace zelph::network
 
         // --- Implemented in reasoning_pruning.cpp ---
 
+        /// Is `fact` the relation-type declaration of a CORE predicate?
+        bool is_core_declaration(Node fact) const;
+
         void prune_facts(Node pattern, size_t& removed_count);
 
         // `target_var` names whose bindings die, and 0 keeps the single-fact

@@ -227,6 +227,15 @@ namespace zelph::network
         void         store_fact_structures_cached(Node fact, FactStructurePtr value) const;
         void         invalidate_fact_structures_cache() const noexcept;
 
+        /// Is `fact` the relation-type declaration of a predicate -- `p ~ ->`?
+        /// Every path that REMOVES facts has to ask, because that one fact is
+        /// what makes a node readable as a fact at all: fact-structure
+        /// reconstruction rejects every predicate absent from the memoized
+        /// relation-type set, so removing it and leaving the set alone made
+        /// the session and a reload of its own `.save` disagree about whether
+        /// a rule exists.
+        bool         is_relation_type_declaration(Node fact) const;
+
         /// Drop exactly these nodes from the fact-structure cache, leaving the
         /// rest of it alone. The targeted counterpart of the wholesale clear
         /// above, for a caller that can name what its change made stale --
@@ -668,9 +677,14 @@ namespace zelph::network
         mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
         FactCreationObserver                                      _on_fact_created;
 
+        // Drop the memoized relation-type set, so the next predicate test
+        // rebuilds it from the graph. Protected rather than private: every
+        // path that removes facts has to call it when one of them was a
+        // relation-type declaration, and the prune paths live in Reasoning.
+        void invalidate_relation_type_set() const;
+
     private:
         zelph::io::OutputStream locked_stream(zelph::io::OutputChannel channel) const;
-        void                    invalidate_relation_type_set() const;
         void                    register_operator_display(std::size_t scheme, const std::vector<std::pair<Node, OperatorDisplay>>& entries);
     };
 }

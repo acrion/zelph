@@ -214,12 +214,7 @@ size_t Zelph::remove_node(Node node) const
 
     for (const Node dead : doomed)
     {
-        if (!declaration_removed && parse_relation(dead) == core.IsA)
-        {
-            adjacency_set objects;
-            parse_fact(dead, objects, 0);
-            if (objects.count(core.RelationTypeCategory) != 0) declaration_removed = true;
-        }
+        if (!declaration_removed && is_relation_type_declaration(dead)) declaration_removed = true;
 
         stale.push_back(dead);
 
@@ -239,14 +234,18 @@ size_t Zelph::remove_node(Node node) const
         _pImpl->remove_node_names(dead); // Separate method for name cleanup
     }
 
-    // NOT invalidated here: relation_type_set(). Removing a declaration leaves
-    // it saying that the predicate is still declared, and that is a question
-    // of MEANING rather than of caching -- `display: a marked pattern whose
-    // predicate is undeclared still prints as itself` (test_node_display.cpp)
-    // depends on the current answer, and refreshing the set turns that
-    // rendering into the fallback the test was written to rule out. Whether
-    // the set should be refreshed is Stefan's; it is not this change's to
-    // settle, and this change deliberately keeps the behaviour it found.
+    if (declaration_removed)
+    {
+        // A predicate that has lost its relation-type declaration must stop
+        // being read as one, and the memoized set is what every predicate test
+        // goes through. Without this the SESSION went on reading the facts of
+        // that predicate while a reload of its own `.save` did not: the same
+        // network answered `.list-rules` with a rule before the round trip and
+        // with "No rules found" after it, because the set is rebuilt from the
+        // graph on load and the declaration is not in the graph any more.
+        invalidate_relation_type_set();
+    }
+
     if (declaration_removed || !bounded)
     {
         invalidate_fact_structures_cache();

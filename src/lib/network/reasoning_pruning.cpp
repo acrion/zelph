@@ -105,6 +105,22 @@ void zelph::network::Reasoning::collect_prune_targets(const Node condition, cons
 
 using namespace zelph::network;
 
+// The engine's own vocabulary is not data -- and neither is the one fact that
+// makes it usable. "A ~ ->" binds A to every declared relation type, the core
+// predicates among them, and prune_nodes has always kept those NODES for that
+// reason. Their relation-type DECLARATIONS were pruned all the same, which
+// left a graph whose core predicates are no longer read as predicates: no fact
+// of `~`, `=>` or `in` is reconstructible any more. That stayed invisible only
+// because the memoized relation-type set was not refreshed on removal; with it
+// refreshed, `.prune-nodes A ~ ->` empties the network of readable facts.
+bool Reasoning::is_core_declaration(const Node fact) const
+{
+    if (!is_relation_type_declaration(fact)) return false;
+
+    adjacency_set objects;
+    return !get_core_name(parse_fact(fact, objects, 0)).empty();
+}
+
 void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 {
     invalidate_fact_structures_cache();
@@ -123,10 +139,31 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     if (removed_count > 0)
     {
         std::lock_guard<std::mutex> lock(_mtx_network);
+        bool                        declaration_removed = false;
+        size_t                      kept_core           = 0;
+
         for (Node fact : _facts_to_prune)
         {
+            if (is_core_declaration(fact))
+            {
+                ++kept_core;
+                continue;
+            }
+
+            // Same question remove_node asks: a predicate that has lost its
+            // relation-type declaration must stop being read as one. This path
+            // removes facts directly, so it has to ask for itself.
+            if (!declaration_removed && is_relation_type_declaration(fact)) declaration_removed = true;
             _pImpl->remove(fact);
         }
+
+        removed_count -= kept_core;
+        if (kept_core > 0)
+            out_stream() << "Kept " << kept_core
+                         << " relation-type declaration(s) of core predicates; they are part of the engine, not data."
+                         << std::endl;
+
+        if (declaration_removed) invalidate_relation_type_set();
     }
 
     _prune_mode = false;
@@ -151,10 +188,20 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
+    bool   declaration_removed = false;
+    size_t kept_core_facts     = 0;
     for (Node fact : _facts_to_prune)
     {
+        if (is_core_declaration(fact))
+        {
+            ++kept_core_facts;
+            continue;
+        }
+        if (!declaration_removed && is_relation_type_declaration(fact)) declaration_removed = true;
         _pImpl->remove(fact);
     }
+    removed_facts -= kept_core_facts;
+    if (declaration_removed) invalidate_relation_type_set();
 
     size_t kept_core_nodes = 0;
 
@@ -197,10 +244,12 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         ++removed_nodes;
     }
 
-    if (kept_core_nodes > 0)
+    if (kept_core_nodes > 0 || kept_core_facts > 0)
     {
         out_stream() << "Kept " << kept_core_nodes
-                     << " core node(s) that the pattern matched; they are part of the engine, not data."
+                     << " core node(s) and " << kept_core_facts
+                     << " of their relation-type declaration(s) that the pattern matched; "
+                        "they are part of the engine, not data."
                      << std::endl;
     }
 
@@ -356,4 +405,9 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
             removed_predicates++;
         }
     }
+
+    // A removed predicate is no longer a relation type, whether or not its
+    // declaration fact was among the zombies: the memoized set holds the
+    // predicate NODE, and that node is gone.
+    if (removed_predicates > 0) invalidate_relation_type_set();
 }

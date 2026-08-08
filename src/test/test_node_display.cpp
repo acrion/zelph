@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -921,29 +923,51 @@ TEST_CASE("display: the rule-pattern marking is never printed in place of its no
         CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
 }
 
-TEST_CASE("display: a marked pattern whose predicate is undeclared still prints as itself")
+TEST_CASE("display: a predicate that lost its relation-type declaration stops being one")
 {
-    // The second way into the same defect, and the one that does not depend
-    // on a rule being used as a predicate: parse_relation only recognises a
-    // DECLARED relation type, so removing the declaration leaves the node
-    // without the reading the proxy path tests for -- and the marking was
-    // substituted for it. ".list-rules" answered
-    // `(a p b) => ("rule pattern")`.
+    // `q ~ ->` is what marks q as a relation type, and fact-structure
+    // reconstruction rejects every predicate absent from the memoized set. So
+    // removing that one fact means the nodes built with q are no longer facts.
     //
-    // The recorded triple survives the missing declaration, so the honest
-    // rendering is the statement itself; this is what pins that the fix does
-    // not merely replace one wrong reading with "??".
+    // This used to be true only after a RELOAD. The set is a cache that the
+    // removal paths did not refresh, so the session went on reading q while a
+    // reload of its own `.save` did not: `.list-rules` answered with the rule
+    // before the round trip and "No rules found" after it -- the same network,
+    // two answers. Which of the two is right is a question about meaning, and
+    // the reading is that a node stops being a fact when its predicate stops
+    // being a predicate. The session now says so immediately.
+    //
+    // What this must NOT do is substitute the rule-pattern marking for the
+    // unreadable node -- the defect the neighbouring test pins. `??` is the
+    // honest answer; `("rule pattern")` would be a different wrong one.
     run_both_modes([](auto& collector, auto& interactive)
                    {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_undeclared_roundtrip.bin";
+        std::filesystem::remove(out);
+
         interactive.process("(a p b) => (c q d)");
         interactive.process(".prune-facts (q ~ ->)");
 
         collector.clear();
         interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
         CHECK_FALSE(any_output_contains(collector, "\"rule pattern\""));
-        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
 
         collector.clear();
         interactive.process(".node c q d");
-        CHECK(any_output_contains(collector, "Representation: c q d")); });
+        CHECK(any_output_contains(collector, "Representation: ??"));
+        CHECK_FALSE(any_output_contains(collector, "Representation: c q d"));
+
+        // The point of the whole thing: the session and a reload of its own
+        // save now agree. They did not.
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        std::filesystem::remove(out); });
 }

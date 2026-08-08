@@ -1769,6 +1769,15 @@ void Zelph::invalidate_fact_structures_for(const Node subject, const Node predic
     if (erased != 0 && logging_active()) _fs_cache_stale_erased.fetch_add(erased, std::memory_order_relaxed);
 }
 
+bool Zelph::is_relation_type_declaration(const Node fact) const
+{
+    if (fact == 0 || parse_relation(fact) != core.IsA) return false;
+
+    adjacency_set objects;
+    parse_fact(fact, objects, 0);
+    return objects.count(core.RelationTypeCategory) != 0;
+}
+
 void Zelph::erase_fact_structures(const std::vector<Node>& nodes) const noexcept
 {
     if (nodes.empty()) return;
