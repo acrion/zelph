@@ -16,9 +16,6 @@
 # then (commit 8a5a332) and now reaches about 46 % of the file's entities, so
 # the new file is a different artifact. Overwriting the old one would retire
 # every documented number without a trace; compare the two instead.
-#
-# `.quit` and not `.exit`: the latter is not a command, so it reports an
-# unknown command and leaves the session running.
 
 .load /home/stefan/zelph/wikidata-20260309-all.bin
 .import examples/wikidata/wikidata-prune
