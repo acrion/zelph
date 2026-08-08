@@ -32,11 +32,21 @@ A separate [presentation video](presentation.md) covers zelph's application to W
 
 see [this page](quickstart.md)
 
-### Community and Support
+### Funding and Collaboration
 
-Development of zelph is supported by the [Wikimedia Community Fund](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Wikidata_Contradiction_Detection_and_Constraint_Integration_(ID:_23553409)>).
+zelph is developed with support from the
+[NGI0 Commons Fund](https://nlnet.nl/project/Zelph/) (NLnet Foundation) for
+*Auditable Reasoning over Linked Open Data*, and has previously been supported
+by two grants from the Wikimedia Community Fund (Rapid Fund):
+[Wikidata Contradiction Detection and Constraint Integration](…/Final_Report)
+and
+[Transitive Reasoning, Qualifier Support, and SPARQL-Subset Integration](…/Final_Report).
 
-The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
+The project addresses real-world challenges in large-scale ontology management
+through direct collaboration with the
+[Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force)
+and the
+[Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
 
 ### Components
 
