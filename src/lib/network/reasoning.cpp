@@ -764,11 +764,37 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
                 score -= 800;
 
             // A path condition REFUSES both ends free, so it must not be
-            // scheduled before the condition that binds one of them. It is
-            // also expensive per evaluation (one closure), but far cheaper
-            // than the neural pass: after != (-500), before ≈ (-800).
+            // scheduled before something binds one of them -- but only then.
+            // The penalty is what keeps it from refusing itself; it is not a
+            // cost estimate, and reading it as one had it scheduled last even
+            // where an end was a CONSTANT.
+            //
+            // With an end bound it is the cheap side of the join: an INDEXED
+            // closure yielding one binding per node reached, against the full
+            // relation scan of the ordinary condition it was queued behind.
+            // Measured on `(A P31 C, C P279∗ Qx)`: last means scanning every
+            // P31 fact and reachability-testing each -- 16.9 s over 200 000
+            // instances, linear, where walking the closure from Qx first
+            // touches the classes and nothing else.
+            //
+            // "Bound" is the planner's own reading: an atom, or a variable an
+            // already-chosen condition of this plan binds. Both ends still
+            // free -- or a shape that does not decompose -- keeps -700, which
+            // is exactly the case the refusal exists for.
             if (_closure_pred != 0 && rels_for_score.size() == 1 && *rels_for_score.begin() == _closure_pred)
-                score -= 700;
+            {
+                // `subject` is the one-step pattern of the tag fact, already
+                // parsed above; parent=cond keeps the tag fact itself out of
+                // its subject candidates, as in evaluate_closure.
+                adjacency_set path_ends;
+                const Node    from = subject == 0 ? 0 : parse_fact(subject, path_ends, cond);
+                const Node    to   = path_ends.size() == 1 ? *path_ends.begin() : 0;
+
+                const bool executable = from != 0 && to != 0
+                                     && (is_bound_term(from, simulated_vars) || is_bound_term(to, simulated_vars));
+
+                if (!executable) score -= 700;
+            }
 
             // Prefer conditions whose predicate has fewer matching facts
             if (rels_for_score.size() == 1)
