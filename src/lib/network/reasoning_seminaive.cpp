@@ -205,6 +205,25 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                         continue;
                     }
 
+                    // A transitive path condition is no fact lookup either, and
+                    // it is worse off than the neural one: the facts it depends
+                    // on are every edge of the predicate it WALKS, and no
+                    // condition of the rule names that predicate. Its own
+                    // predicate is `closure`, so seeding waited for a new tag
+                    // fact -- which never comes, tag facts being rule
+                    // structure. So the rule fired once and was never revisited
+                    // when the closure grew underneath it.
+                    //
+                    // `(A P31 C, C P279⁺ T) => (A below T)` plus
+                    // `(X sub Y) => (X P279 Y)`, `a P31 c1`, `c1 sub c2`:
+                    // classic derives `(a below c2)`, semi-naive did not, and
+                    // semi-naive is the default. `.semi-naive check` named it.
+                    if (_closure_pred != 0 && rel == _closure_pred)
+                    {
+                        ir.delta_unsafe = true;
+                        continue;
+                    }
+
                     if (!Zelph::Impl::is_var(rel) && rel == core.Unequal)
                         continue; // guard: never a seed, binds no new variables
 

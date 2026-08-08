@@ -221,3 +221,41 @@ TEST_CASE("seminaive: seeded join order prefers connected conditions over unconn
         CHECK(any_event_contains(collector, "[0]=mark"));
         CHECK_FALSE(any_event_contains(collector, "[0]=big")); });
 }
+
+TEST_CASE("semi-naive: a path condition sees a closure that grew during the run")
+{
+    // A transitive path condition is no fact lookup, and it is worse off than
+    // the neural one: the facts it depends on are every edge of the predicate
+    // it WALKS, and no condition of the rule names that predicate. Its own
+    // predicate is `closure`, so seeding waited for a new tag fact -- which
+    // never comes, tag facts being rule structure. The rule fired once and was
+    // never revisited when the closure grew underneath it.
+    //
+    // Semi-naive is the DEFAULT, so this was a wrong answer by default:
+    // classic derived `(a below c2)`, semi-naive did not, and `.explain` said
+    // "Fact is not asserted". No existing test could see it -- the whole suite
+    // runs in check mode, but every other path-condition test enters its chain
+    // as DATA, so nothing ever grew the closure mid-run.
+    //
+    // The consuming rule is defined first on purpose (see the note at the top
+    // of this file): the classic first pass then cannot complete the chain, so
+    // completion has to come from the delta path or the delta-unsafe
+    // re-application -- which is the property under test.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A P31 C, C P279⁺ T) => (A below T)");
+        interactive.process("(X sub Y) => (X P279 Y)");
+        interactive.process("a P31 c1");
+        interactive.process("c1 sub c2");
+
+        collector.clear();
+        interactive.process("A below B");
+        CHECK(answers_contain(collector, "a below c2"));
+
+        // And it keeps up over more than one step of growth.
+        interactive.process("c2 sub c3");
+        collector.clear();
+        interactive.process("A below B");
+        CHECK(answers_contain(collector, "a below c2"));
+        CHECK(answers_contain(collector, "a below c3")); });
+}
