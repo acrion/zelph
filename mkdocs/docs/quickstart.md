@@ -174,6 +174,10 @@ zelph provides powerful commands for targeted data removal:
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
   **Warning**: a deleted node takes everything it is a **part** of with it — every fact naming it, every fact naming one of those, and every rule one of them is a condition or a conclusion of — including facts and rules unrelated to the pattern, plus its names. Use with caution!
 
+- `.prune-nodes <variable> (<conditions>)` – The same, selected by a **conjunction** whose named variable says which bindings die.  
+  Any number of variables and predicates is allowed there; the other conditions are the filter that selected the victims, and their own facts survive. With a [transitive path condition](logic.md#transitive-path-conditions) this replaces a hand-written list of subclasses:  
+  `.prune-nodes A (A P31 C, C P279∗ Q6999)` removes every instance of a class at or below Q6999.
+
 Both commands remove **claims**. A statement that exists only as a rule's own condition or consequence is graph structure rather than data — queries do not answer it and `.explain` calls it a rule pattern — so the prune commands leave it alone and say so. Use `.node` to get its ID and `.remove` if you really mean to delete that structure.
 
 - `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
@@ -247,6 +251,7 @@ Giving a node a name that another node already holds in that language **merges t
 - `.remove <name|id>` – Remove a node and everything it is a part of (destructive)
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
 - `.prune-nodes <pattern>` – Remove matching facts AND all involved subject/object nodes
+- `.prune-nodes <var> (<conditions>)` – ... selected by a conjunction, deleting what `<var>` binds
 - `.cleanup` – Remove isolated nodes and clean name mappings (core nodes exempt)
 - `.new` – Clear the complete network and re-initialize the core nodes
 

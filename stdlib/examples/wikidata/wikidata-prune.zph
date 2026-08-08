@@ -25,16 +25,30 @@
 #    2.2 million astronomical objects. A class named here must be a class that
 #    actually CARRIES instances, not the concept above it.
 #
+#    There IS a form that descends -- `.prune-nodes A (A P31 C, C P279∗ Qx)`,
+#    a conjunction whose named variable says which bindings die -- and it
+#    deliberately is not used below. The class list is not only a way to
+#    reach the instances: it is what the reach of this script was MEASURED
+#    against, class by class, including the nine entries that had to be
+#    withdrawn because their instances are themselves classes (see the
+#    "checked and deliberately not pruned" block). A closure over P279 from
+#    one root would delete a set nobody has counted, on a run that takes a
+#    night and cannot be undone. Use it for a NEW domain by measuring it
+#    first, the way the list below was measured.
+#
 # 2. `#` starts a comment only at the BEGINNING of a line. A trailing comment
 #    is not stripped: on a dot-command it becomes part of the argument and the
 #    command silently matches nothing, and on a fact line it becomes further
 #    OBJECTS of the fact. Every comment here is therefore a full line.
 #
-# A third one is about the pattern itself: `.prune-nodes` takes exactly ONE
-# variable, because with two it could not say which side to delete. The four
-# lines this file used to carry in the form `.prune-nodes A P131 B` were
-# rejected on every run and never did anything; they are `.prune-facts` now,
-# which drops the statements and keeps the entities.
+# A third one is about the pattern itself: the single-fact form of
+# `.prune-nodes` takes exactly ONE variable, because with two it could not say
+# which side to delete. The four lines this file used to carry in the form
+# `.prune-nodes A P131 B` were rejected on every run and never did anything;
+# they are `.prune-facts` now, which drops the statements and keeps the
+# entities. (The conjunction form of point 1 answers the same question by
+# naming the variable, but says nothing about which statements to keep, so
+# `.prune-facts` remains what those four lines mean.)
 #
 # ---------------------------------------------------------------------------
 # How to bring the class list up to date for a new dump, in two commands on

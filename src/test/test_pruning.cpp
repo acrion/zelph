@@ -652,3 +652,205 @@ x r y
         CHECK(collect_answers(collector).empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// .prune-nodes <variable> (<conditions>) -- a conjunction plus the one thing
+// a conjunction cannot say on its own: which of its variables names the
+// victims. The motivating case is the Wikidata prune script, where
+// ".prune-nodes A P31 Qx" matches DIRECT instances only and 60 hand-listed
+// catalogue classes stood in for one walk down the hierarchy.
+//
+// The focus operator was the first idea and does not work: "*A" inside a
+// conjunction makes the condition EVALUATE to the focused node, so the
+// condition is replaced by a bare variable and disappears from the set.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // star -> body, dwarf -> star; sirius and altair are instances below
+    // body, mercury is not.
+    constexpr const char* kSky =
+        "star P279 body\n"
+        "dwarf P279 star\n"
+        "sirius P31 dwarf\n"
+        "altair P31 star\n"
+        "mercury P31 planet\n";
+} // namespace
+
+TEST_CASE("pruning: a conjunction deletes what its named variable binds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        interactive.process(".prune-nodes A (A P31 C, C P279∗ body)");
+
+        // Two victims and the two P31 facts they were the subject of -- the
+        // same numbers the equivalent single-fact form reports, which it only
+        // does because remove_node's collateral is counted as facts.
+        CHECK(any_output_contains(collector, "Pruned 2 matching facts and 2 nodes"));
+
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "mercury P31 planet"));
+        CHECK_FALSE(any_output_contains(collector, "sirius"));
+        CHECK_FALSE(any_output_contains(collector, "altair"));
+
+        // The other conditions are the FILTER that selected the victims, not
+        // a second deletion list: the class hierarchy they walked survives.
+        collector.clear();
+        interactive.process("A P279 B");
+        CHECK(answers_contain(collector, "star P279 body"));
+        CHECK(answers_contain(collector, "dwarf P279 star")); });
+}
+
+TEST_CASE("pruning: which condition reaches the terminal does not matter")
+{
+    // optimize_order schedules a path condition after whatever binds an end,
+    // so the terminal is reached through the closure rather than through
+    // unification -- and that terminal returned early in prune mode (the
+    // v1 restriction ≈ still keeps). Written in either order, one of the two
+    // terminals fires, and both have to collect.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        interactive.process(".prune-nodes A (C P279∗ body, A P31 C)");
+        CHECK(any_output_contains(collector, "Pruned 2 matching facts and 2 nodes"));
+
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "mercury P31 planet"));
+        CHECK_FALSE(any_output_contains(collector, "sirius")); });
+}
+
+TEST_CASE("pruning: the named variable may be any of the conjunction's")
+{
+    // The whole point of naming it: the same conjunction deletes the classes
+    // instead of their instances when C is named.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        interactive.process(".prune-nodes C (A P31 C, C P279∗ body)");
+
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "mercury P31 planet"));
+        CHECK_FALSE(any_output_contains(collector, "star"));
+        CHECK_FALSE(any_output_contains(collector, "dwarf")); });
+}
+
+TEST_CASE("pruning: a named variable the pattern does not have is refused")
+{
+    // A typo in the one token that decides what gets deleted has to be an
+    // error, not a run that binds nothing and reports "Pruned 0".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        std::string message;
+        try
+        {
+            interactive.process(".prune-nodes Z (A P31 C, C P279∗ body)");
+        }
+        catch (const std::exception& ex)
+        {
+            message = ex.what();
+        }
+
+        CHECK(message.find("no variable Z") != std::string::npos);
+        // And it says which ones there are, since that is what a typo needs.
+        CHECK(message.find("A, C") != std::string::npos);
+
+        // Nothing was deleted on the way to the message.
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "sirius P31 dwarf")); });
+}
+
+TEST_CASE("pruning: .prune-facts does not take a named variable")
+{
+    // A leading variable names what gets DELETED, which is .prune-nodes'
+    // business; .prune-facts removes the facts its pattern matches, and a
+    // conjunction matches several per solution.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        CHECK_THROWS_WITH_AS(interactive.process(".prune-facts A (A P31 C, C P279∗ body)"),
+                             doctest::Contains("takes a pattern only"),
+                             std::runtime_error);
+
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "sirius P31 dwarf")); });
+}
+
+TEST_CASE("pruning: the single-fact form keeps its reading")
+{
+    // ".prune-nodes A rel b" is three tokens whose first is a variable, i.e.
+    // exactly what the new form starts with. The parenthesis is what tells
+    // them apart -- a statement needs three elements, so a variable followed
+    // by a bracketed pattern is never one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a rel b\nc rel b\nkeep other b\n");
+        collector.clear();
+
+        interactive.process(".prune-nodes A rel b");
+        CHECK(any_output_contains(collector, "Pruned 2 matching facts and 2 nodes"));
+
+        collector.clear();
+        interactive.process("S other O");
+        CHECK(answers_contain(collector, "keep other b"));
+
+        // And the two-variable refusal still points at the way out.
+        CHECK_THROWS_WITH_AS(interactive.process(".prune-nodes S other O"),
+                             doctest::Contains("exactly one variable"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("pruning: a named variable works over a single condition too")
+{
+    // Nothing about the reading needs a conjunction, and a rule with one
+    // exception fewer is a rule easier to document.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, kSky);
+        collector.clear();
+
+        interactive.process(".prune-nodes A (A P31 star)");
+        CHECK(any_output_contains(collector, "Pruned 1 matching facts and 1 nodes"));
+
+        collector.clear();
+        interactive.process("A P31 B");
+        CHECK(answers_contain(collector, "sirius P31 dwarf"));
+        CHECK_FALSE(any_output_contains(collector, "altair")); });
+}
+
+TEST_CASE("pruning: a conjunction that matches nothing leaves nothing behind")
+{
+    // Evaluating the pattern MATERIALIZES it, which is why the construction
+    // runs in a scratch cluster -- and a conjunction builds more of it than a
+    // single fact does (a set node, a PartOf fact per member, the tags).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a rel b\n");
+        collector.clear();
+
+        interactive.process(".prune-nodes X (X rel nothing, X other thing)");
+        CHECK(any_output_contains(collector, "Pruned 0 matching facts and 0 nodes"));
+
+        collector.clear();
+        interactive.process("S rel O");
+        CHECK(answers_contain(collector, "a rel b"));
+
+        // The pattern's own vocabulary is not in the graph afterwards.
+        CHECK_THROWS_AS(interactive.process(".node nothing"), std::runtime_error); });
+}

@@ -173,6 +173,10 @@ namespace zelph::network
         // Prune mode: record what the matched CONDITION denotes under these
         // bindings. Called from every terminal site of evaluate(), which is
         // why it is a function rather than the three copies it replaces.
+        //
+        // With a target variable set (`.prune-nodes A (...)`) the condition is
+        // not read at all: the victims are that variable's BINDING, and the
+        // conditions are the filter that selected it. See prune_nodes.
         void collect_prune_targets(Node condition, const Variables& bindings, Node parent);
 
         // The rendered "!" as a MARKED identifier -- the conclusion of a
@@ -209,7 +213,15 @@ namespace zelph::network
         // --- Implemented in reasoning_pruning.cpp ---
 
         void prune_facts(Node pattern, size_t& removed_count);
-        void prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes);
+
+        // `target_var` names whose bindings die, and 0 keeps the single-fact
+        // reading in which the pattern's one variable does. It is the VARIABLE
+        // NODE of this very pattern, not a name: a variable is quantified per
+        // statement and many nodes may display one letter (`be16650`), so the
+        // command resolves the letter against the pattern it just built and
+        // hands the node over. That is also what makes a conjunction usable --
+        // it has one variable per condition, and this says which is meant.
+        void prune_nodes(Node pattern, Node target_var, size_t& removed_facts, size_t& removed_nodes);
         void purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates);
 
         // --- Implemented in reasoning_seminaive.cpp ---
@@ -349,6 +361,7 @@ namespace zelph::network
         std::string                              _export_file;
         bool                                     _prune_mode{false};
         bool                                     _prune_nodes_mode{false};
+        Node                                     _prune_target_var{0};
         std::unordered_set<Node>                 _facts_to_prune;
         std::unordered_set<Node>                 _nodes_to_prune;
         std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};

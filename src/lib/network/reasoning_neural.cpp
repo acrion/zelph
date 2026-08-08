@@ -306,10 +306,17 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
 
     if (_prune_mode)
     {
-        // ≈ conditions inside prune patterns are not supported in v1:
-        // pruning removes concrete matched facts, while a terminal
-        // reached through ≈ carries a confidence judgement, not a
-        // matched fact instance. Nothing to prune here.
+        // A NAMED target variable is what the deletion stands on, and it is
+        // bound by the conditions, not by this one -- so a terminal reached
+        // through a path condition is as good as any other. Without one the
+        // ≈ v1 restriction stands: pruning removes concrete matched facts,
+        // while a terminal reached through ≈ carries a confidence judgement,
+        // not a matched fact instance, and the same holds for the path
+        // condition, whose "match" is a walk rather than a fact.
+        if (_prune_target_var != 0)
+        {
+            collect_prune_targets(ctx_copy.current_condition, *vars, rule.node);
+        }
         return;
     }
 

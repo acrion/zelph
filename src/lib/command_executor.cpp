@@ -1582,6 +1582,7 @@ private:
             "  .remove <name|id>                         – Remove a node and everything it is a part of (destructive)",
             "  .prune-facts <pattern>                    – Remove all facts matching the query pattern (only statements)",
             "  .prune-nodes <pattern>                    – Remove matching facts AND all involved subject/object nodes",
+            "  .prune-nodes <var> (<conditions>)         – ... selected by a conjunction, deleting what <var> binds",
             "  .cleanup                                  – Remove isolated nodes and clean name mappings",
             "  .new                                      – Clear the complete network and re-initialize the core nodes",
             "",
@@ -2021,11 +2022,22 @@ private:
                              "Reports how many facts were removed."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
+                             ".prune-nodes <variable> (<conditions>)\n"
                              "Removes all matching facts AND the nodes bound to the pattern's variable.\n"
-                             "Requirements:\n"
+                             "Requirements of the single-fact form:\n"
                              "- The relation (predicate) must be fixed (no variable in predicate position)\n"
                              "- EXACTLY ONE variable, in subject or object position: it names what gets\n"
                              "  deleted. Two variables are rejected rather than silently read as one.\n"
+                             "The second form takes a CONJUNCTION and is told which variable names the\n"
+                             "victims, which is the one thing a conjunction cannot say by itself:\n"
+                             "  .prune-nodes A (A P31 C, C P279∗ Q6999)\n"
+                             "deletes every instance of a class at or below Q6999. The other conditions\n"
+                             "are the filter that selected them -- their own facts are not removed, and\n"
+                             "a transitive path condition (P⁺ / P∗) is what lets one command\n"
+                             "replace a hand-written list of subclasses. Any number of variables is\n"
+                             "allowed there and the predicates may vary per condition; only the named\n"
+                             "variable's bindings die. The pattern has to be parenthesised for this\n"
+                             "reading, which is what keeps '.prune-nodes A rel b' the single fact form.\n"
                              "WARNING: This is highly destructive! A deleted node takes everything\n"
                              "it is a PART of with it -- see .help .remove -- including facts and\n"
                              "rules that have nothing to do with the pattern, and its names.\n"
@@ -2981,9 +2993,40 @@ private:
     }
     void cmd_prune(const std::vector<std::string>& cmd, bool facts_mode)
     {
-        require_full_graph_mode(facts_mode ? ".prune-facts" : ".prune-nodes");
+        const char* const command = facts_mode ? ".prune-facts" : ".prune-nodes";
+        require_full_graph_mode(command);
         if (cmd.size() < 2)
             throw std::runtime_error("Command requires a pattern");
+
+        // ".prune-nodes A (A P31 C, C P279∗ Q6999)": the leading token names
+        // whose bindings die, which is what makes a CONJUNCTION usable -- it
+        // has one variable per condition, and without this nothing says which
+        // of them is meant.
+        //
+        // The reading is unambiguous, and that is why the pattern has to be
+        // parenthesised for it: a statement needs three elements, so a
+        // variable followed by a bracketed pattern is never one, while
+        // ".prune-nodes A p B" -- the single-fact form, three tokens, the
+        // first a variable -- keeps its meaning untouched.
+        //
+        // The focus operator was the first idea and it does not work:
+        // "(*A P31 C, ...)" makes the condition EVALUATE to the focused node,
+        // so the condition is replaced by a bare variable and disappears from
+        // the conjunction.
+        std::size_t pattern_first = 1;
+        std::string target_name;
+        if (cmd.size() >= 3 && string::is_var(cmd[1]) && !cmd[2].empty() && cmd[2].front() == '(')
+        {
+            if (facts_mode)
+                throw std::runtime_error(
+                    ".prune-facts takes a pattern only. A leading variable names what gets DELETED, "
+                    "which is what .prune-nodes does; .prune-facts removes the facts its pattern "
+                    "matches, and a conjunction matches several per solution with nothing to say "
+                    "which was meant.");
+
+            target_name   = cmd[1];
+            pattern_first = 2;
+        }
 
         // The same reading .explain gives the same tokens -- see
         // pattern_code. Quoting every non-variable token, as this used to,
@@ -2991,7 +3034,12 @@ private:
         // structured pattern with it: a nested fact, a term island, ¬, an
         // &-literal, a list, a set, and a pattern the user wrapped in
         // parentheses the way .explain and the documentation write them.
-        const std::string janet_code = pattern_code({cmd.begin() + 1, cmd.end()}, 1);
+        //
+        // `pattern_first` is where the tokens start in the COMMAND, and it
+        // indexes _sources -- passing 1 for a pattern that begins at 2
+        // reconstructs it shifted by one token and drops the last one, which
+        // fails as "Could not parse pattern" without saying why.
+        const std::string janet_code = pattern_code({cmd.begin() + static_cast<long>(pattern_first), cmd.end()}, pattern_first);
 
         if (janet_code.empty())
             throw std::runtime_error("Could not parse pattern");
@@ -3041,25 +3089,78 @@ private:
             network::collect_variables(_n, pattern_fact, pattern_vars, 1, history);
         }
 
+        // The variable whose bindings die, as the NODE of this very pattern.
+        // Resolved here rather than by name at match time: the letter is text,
+        // a variable is quantified per statement, and many nodes may display
+        // one letter (`be16650`) -- but within the one expression that built
+        // this pattern a symbol is one variable node, so the letter has
+        // exactly one answer.
+        //
+        // collect_variables stops AT a conjunction container: its variables
+        // sit one level down, in the conditions, which is also why the
+        // pattern_vars above is empty for one.
+        network::Node target_var = 0;
+        if (!target_name.empty())
+        {
+            std::unordered_set<network::Node> vars;
+            std::vector<network::Node>        history;
+            network::adjacency_set            members;
+
+            if (_n->condition_set_members(pattern_fact, members))
+                for (const network::Node member : members)
+                    network::collect_variables(_n, member, vars, 1, history);
+            else
+                vars = pattern_vars;
+
+            std::vector<std::string> spelled;
+            for (const network::Node v : vars)
+            {
+                const std::string name = _n->get_name(v, _n->lang(), true);
+                if (name == target_name) target_var = v;
+                if (!name.empty()) spelled.push_back(name);
+            }
+
+            if (target_var == 0)
+            {
+                std::sort(spelled.begin(), spelled.end());
+                std::string list;
+                for (const std::string& s : spelled)
+                {
+                    if (!list.empty()) list += ", ";
+                    list += s;
+                }
+
+                discard_pattern();
+                throw std::runtime_error(
+                    "Command .prune-nodes: the pattern has no variable " + target_name
+                    + ", so nothing says what to delete. Its variables are: "
+                    + (list.empty() ? std::string("none") : list) + ".");
+            }
+        }
+
         // A CONJUNCTION reaches here with no variables of its own -- its
         // conditions carry them, one level down -- and fell into the branch
         // below, which reported "a pattern without variables binds nothing to
-        // delete" about a pattern full of variables and pruned nothing. The
-        // command genuinely does not take a conjunction: it deletes what its
-        // ONE variable binds, and a conjunction has one per condition with
-        // nothing to say which of them is meant. Saying so is the fix; taking
-        // conjunctions is a feature, not a message.
-        if (_n->check_fact(pattern_fact, _n->core.IsA, {_n->core.Conjunction}).is_known())
+        // delete" about a pattern full of variables and pruned nothing.
+        // Without a leading variable the command genuinely cannot take one: it
+        // deletes what ONE variable binds, and a conjunction has one per
+        // condition. Naming that variable is exactly what the leading token
+        // does, so the refusal says how instead of only that.
+        if (target_var == 0 && _n->check_fact(pattern_fact, _n->core.IsA, {_n->core.Conjunction}).is_known())
         {
             discard_pattern();
             throw std::runtime_error(
-                std::string(facts_mode ? ".prune-facts" : ".prune-nodes")
-                + " takes a single fact pattern, not a conjunction: it acts on what ONE "
-                  "variable binds, and a conjunction offers one per condition with nothing "
-                  "to say which is meant. Write one command per condition.");
+                std::string(command)
+                + (facts_mode
+                       ? " takes a single fact pattern, not a conjunction: it removes the facts its"
+                         " pattern matches, and a conjunction matches several per solution with"
+                         " nothing to say which is meant. Write one command per condition."
+                       : " over a conjunction needs to be told which variable names what gets"
+                         " deleted: write \".prune-nodes <variable> (<conditions>)\", e.g."
+                         " \".prune-nodes A (A P31 C, C P279∗ Q6999)\"."));
         }
 
-        if (pattern_vars.empty())
+        if (target_var == 0 && pattern_vars.empty())
         {
             discard_pattern();
 
@@ -3090,7 +3191,7 @@ private:
                                "the prune commands remove claims. Use .node to get its ID and .remove "
                                "to delete graph structure.",
                                true);
-            if (!present) explain_collection_literal({cmd.begin() + 1, cmd.end()});
+            if (!present) explain_collection_literal({cmd.begin() + static_cast<long>(pattern_first), cmd.end()});
             return;
         }
 
@@ -3104,27 +3205,36 @@ private:
         }
         else
         {
-            network::Node relation = _n->parse_relation(pattern_fact);
-            if (network::Network::is_var(relation))
+            // Both checks below ask which side of ONE fact is meant, and a
+            // named target variable has already answered that -- for a
+            // conjunction there is no single predicate to be fixed in the
+            // first place, and having several variables is the point.
+            if (target_var == 0)
             {
-                discard_pattern();
-                throw std::runtime_error("Command .prune-nodes: relation (predicate) must be fixed");
+                network::Node relation = _n->parse_relation(pattern_fact);
+                if (network::Network::is_var(relation))
+                {
+                    discard_pattern();
+                    throw std::runtime_error("Command .prune-nodes: relation (predicate) must be fixed");
+                }
+
+                // One variable is the documented requirement, and it is the
+                // only one the command can honour: with two, it deleted the
+                // SUBJECT bindings and left the object ones alone, without
+                // saying so. On a loaded dump that is half a deletion nobody
+                // asked for.
+                if (pattern_vars.size() > 1)
+                {
+                    discard_pattern();
+                    throw std::runtime_error("Command .prune-nodes: exactly one variable is allowed (the subject or a single object) -- "
+                                             "it names what gets deleted, or name it yourself with \".prune-nodes <variable> (<conditions>)\". "
+                                             "Use .prune-facts to remove facts without deleting nodes.");
+                }
             }
 
-            // One variable is the documented requirement, and it is the
-            // only one the command can honour: with two, it deleted the
-            // SUBJECT bindings and left the object ones alone, without
-            // saying so. On a loaded dump that is half a deletion nobody
-            // asked for.
-            if (pattern_vars.size() > 1)
-            {
-                discard_pattern();
-                throw std::runtime_error("Command .prune-nodes: exactly one variable is allowed (the subject or a single object) -- "
-                                         "it names what gets deleted. Use .prune-facts to remove facts without deleting nodes.");
-            }
             size_t removed_facts = 0;
             size_t removed_nodes = 0;
-            _n->prune_nodes(pattern_fact, removed_facts, removed_nodes);
+            _n->prune_nodes(pattern_fact, target_var, removed_facts, removed_nodes);
             discard_pattern();
             _n->out("Pruned " + std::to_string(removed_facts) + " matching facts and " + std::to_string(removed_nodes) + " nodes.", true);
             if (removed_facts > 0 || removed_nodes > 0)

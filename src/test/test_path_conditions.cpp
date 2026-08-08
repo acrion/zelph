@@ -183,11 +183,12 @@ TEST_CASE("path condition: the marker stays an ordinary character elsewhere")
         CHECK(any_output_contains(collector, "m ⁺ n")); });
 }
 
-// .prune-nodes acts on what its ONE variable binds. A conjunction has one per
-// condition, so it is not a pattern the command can take -- and it used to
-// say "a pattern without variables binds nothing to delete" about a pattern
-// full of them, then prune nothing.
-TEST_CASE("prune: a conjunction pattern is refused, and named as such")
+// .prune-nodes acts on what ONE variable binds. A conjunction has one per
+// condition, so a BARE conjunction says nothing about which is meant -- and
+// it used to answer "a pattern without variables binds nothing to delete"
+// about a pattern full of them, then prune nothing. Naming the variable is
+// what the leading token does, so the refusal names that form.
+TEST_CASE("prune: a conjunction without a named variable says how to name one")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -204,7 +205,7 @@ TEST_CASE("prune: a conjunction pattern is refused, and named as such")
             message = ex.what();
         }
 
-        CHECK(message.find("takes a single fact pattern, not a conjunction") != std::string::npos);
+        CHECK(message.find(".prune-nodes <variable> (<conditions>)") != std::string::npos);
         CHECK(message.find("without variables") == std::string::npos);
 
         // Nothing was deleted on the way to the message.

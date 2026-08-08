@@ -42,6 +42,23 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // lookups, nothing created, which is what a prune pass may do.
 void zelph::network::Reasoning::collect_prune_targets(const Node condition, const Variables& bindings, const Node parent)
 {
+    // `.prune-nodes A (...)`: the command named the variable whose bindings
+    // die, so the matched condition says nothing about what to delete -- it
+    // is one of several, and which one arrives here depends on the order
+    // optimize_order chose. The other conditions are the FILTER that selected
+    // the victim; their facts are not the user's to lose, and removing the
+    // node takes the facts it is part of with it anyway. Hence: no
+    // _facts_to_prune, and no reading of the condition at all.
+    if (_prune_target_var != 0)
+    {
+        const auto it = bindings.find(_prune_target_var);
+        if (it != bindings.end() && it->second != 0 && !Zelph::Impl::is_var(it->second))
+        {
+            _nodes_to_prune.insert(it->second);
+        }
+        return;
+    }
+
     adjacency_set objects;
     const Node    subject_pattern  = parse_fact(condition, objects, parent);
     const Node    relation_pattern = parse_relation(condition);
@@ -115,12 +132,13 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     _prune_mode = false;
 }
 
-void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed_nodes)
+void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed_facts, size_t& removed_nodes)
 {
     invalidate_fact_structures_cache();
 
     _prune_mode       = true;
     _prune_nodes_mode = true;
+    _prune_target_var = target_var;
     _facts_to_prune.clear();
     _nodes_to_prune.clear();
 
@@ -165,10 +183,18 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
         // remove_node, not Impl::remove: the names have to go with the
         // node, exactly as for the .remove command. Without that the name
         // still resolved to the deleted node, so ".node <name>" answered
-        // with an empty node that is no longer in the graph. Its return
-        // value is what actually went, which is more than one whenever the
-        // node took part in a fact.
-        removed_nodes += remove_node(node);
+        // with an empty node that is no longer in the graph.
+        //
+        // Its return value is what ACTUALLY went, which is more than one
+        // whenever the node took part in a fact -- and those are facts, not
+        // nodes the pattern named. Counting them as nodes made the two forms
+        // of this command report different numbers for the same destruction:
+        // the single-fact form removes the matched facts first, so its
+        // remove_node returns 1 apiece, while a target variable leaves them
+        // to their node and its remove_node returned 2. Same two victims,
+        // "2 facts and 2 nodes" against "0 facts and 4 nodes".
+        removed_facts += remove_node(node) - 1;
+        ++removed_nodes;
     }
 
     if (kept_core_nodes > 0)
@@ -180,6 +206,7 @@ void Reasoning::prune_nodes(Node pattern, size_t& removed_facts, size_t& removed
 
     _prune_mode       = false;
     _prune_nodes_mode = false;
+    _prune_target_var = 0;
 }
 
 void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_predicates)
