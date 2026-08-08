@@ -113,6 +113,14 @@ namespace zelph::network
         std::vector<std::shared_ptr<ProofNode>> premises; // positive conditions
         std::vector<Node>                       absent;   // NAF conditions, verified absent NOW
 
+        // Transitive path conditions, verified NOW by walking the closure.
+        // Like `absent` these carry the rule's PATTERN rather than a fact
+        // node, and for the same reason: what makes the premise hold is a
+        // walk, not a statement anybody claimed, so there is no node to
+        // point at. `bindings` turns the pattern into the path that was
+        // actually tested.
+        std::vector<Node>                       walked;
+
         // The instantiation that justifies this step (Derived only). The
         // positive premises are already ground nodes, but a NAF condition
         // usually has no node -- absence is why it holds -- so `absent`

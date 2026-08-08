@@ -213,3 +213,48 @@ TEST_CASE("prune: a conjunction without a named variable says how to name one")
         interactive.process(".node a");
         CHECK(any_output_contains(collector, "Name in language")); });
 }
+
+// .explain used to answer "asserted; no derivation found" for every fact
+// derived through a path condition -- although the deduction line printed at
+// derivation time named its premises correctly. The reconstruction looked for
+// the tag fact among the graph's facts, and a path condition has none: it
+// holds by a WALK. A reconstructible justification per result is what .explain
+// is for, so a whole class of results had none.
+TEST_CASE("path condition: .explain reconstructs a derivation that walked")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("(X rel S, S P279⁺ T) => (X above T)");
+
+        collector.clear();
+        interactive.process(".explain (x above d)");
+
+        // The derivation is found at all ...
+        CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        // ... its ordinary premise is an axiom ...
+        CHECK(any_output_contains(collector, "x rel a  [axiom]"));
+        // ... and the walked one says so, in the verbose form that re-enters
+        // as the same rule. NOT [axiom]: nobody asserted the path.
+        CHECK(any_output_contains(collector, "(a P279 d) closure one-or-more  [closure]")); });
+}
+
+TEST_CASE("path condition: .explain marks a zero-step path as walked too")
+{
+    // The reflexive variant reaches its start, and the premise then renders
+    // through the self-fact sugar -- `(:P279 a)` is `a P279 a`, which is what
+    // a zero-step path from a to a denotes.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("(X rel S, S P279∗ T) => (X reaches T)");
+
+        collector.clear();
+        interactive.process(".explain (x reaches a)");
+        CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        CHECK(any_output_contains(collector, "closure zero-or-more  [closure]"));
+
+        collector.clear();
+        interactive.process(".explain (x reaches d)");
+        CHECK(any_output_contains(collector, "(a P279 d) closure zero-or-more  [closure]")); });
+}

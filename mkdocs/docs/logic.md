@@ -1117,6 +1117,15 @@ The operator is **not a reserved character**. It is read only as a trailing mark
 
 Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
 
+A result derived through a path condition stays reconstructible. `.explain` marks the walked premise `[closure]` rather than `[axiom]`, because nobody asserted the path — the engine walked it, and there is no fact to expand further:
+
+```
+zelph> .explain (alice "belongs to" Q4)
+alice "belongs to" Q4
+   ├─ alice member Q1  [axiom]
+   └─ (Q1 P279 Q4) closure one-or-more  [closure]
+```
+
 ### Contradiction Detection
 
 Rules with `!` as the consequence detect logical inconsistencies:

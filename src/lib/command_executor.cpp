@@ -1784,7 +1784,9 @@ private:
                          "present, and .explain finds one by backward search (forward\n"
                          "chaining keeps full provenance in the graph itself). Leaves are\n"
                          "marked [axiom] (input facts); negation-as-failure premises show\n"
-                         "as ¬(...) [absent], verified against the CURRENT graph. A shared\n"
+                         "as ¬(...) [absent] and transitive path premises as [closure],\n"
+                         "both verified against the CURRENT graph -- a path holds by a\n"
+                         "walk, so there is no asserted fact to expand further. A shared\n"
                          "DERIVED subproof is expanded once and referenced afterwards\n"
                          "([see above]); repeated axioms stay written out, since [axiom]\n"
                          "is already their complete expansion.\n"
@@ -3992,10 +3994,24 @@ private:
 
         out += branch + line + "\n";
 
-        const std::size_t total = p->premises.size() + p->absent.size();
+        const std::size_t total = p->premises.size() + p->walked.size() + p->absent.size();
         std::size_t       index = 0;
         for (const auto& premise : p->premises)
             render_proof(premise, child_indent, ++index == total, printed, out);
+        for (const network::Node path : p->walked)
+        {
+            // The stored node is the rule's tag fact, so node_to_string writes
+            // the verbose "((C P279 T) closure one-or-more)" form -- the same
+            // one .list-rules prints and the same one that re-enters as this
+            // rule. The bindings turn it into the path that was actually
+            // walked. [closure] and not [axiom]: nobody asserted the path, the
+            // engine walked it, and a proof that claims otherwise is a
+            // category error of exactly the kind a mathematical reader checks.
+            std::string pline;
+            zelph::string::node_to_string(_n, pline, _n->lang(), path, 3, p->bindings);
+            pline = zelph::string::unmark_identifiers(pline);
+            out += child_indent + (++index == total ? "└─ " : "├─ ") + pline + "  [closure]\n";
+        }
         for (const network::Node neg : p->absent)
         {
             // The stored node is the rule's negation-tagged pattern, so

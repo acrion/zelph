@@ -60,8 +60,10 @@ namespace zelph::network
     {
         struct ExplainContext
         {
-            Zelph*      z{nullptr}; // mutable view for the Unification API; never used to write
-            Node        nn_pred{0}; // node named "nn" in lang "zelph" (approx conditions); 0 = inactive
+            Zelph*      z{nullptr};           // mutable view for the Unification API; never used to write
+            Node        nn_pred{0};           // node named "nn" in lang "zelph" (approx conditions); 0 = inactive
+            Node        closure_pred{0};      // "closure" (path conditions); 0 = inactive
+            Node        closure_zero_plus{0}; // "zero-or-more" -- the reflexive variant
             std::size_t max_depth{0};
 
             std::unordered_map<Node, std::shared_ptr<ProofNode>> memo;
@@ -69,12 +71,12 @@ namespace zelph::network
         };
 
         // Split a rule's condition part into positive conditions, NAF
-        // conditions, != guards, and detect neural conditions. Same detection
-        // scheme as Reasoning::evaluate: conjunction sets via
-        // (IsA Conjunction) plus PartOf membership, negation via the
-        // (IsA Negation) tag on the pattern itself, guards/neural via the
+        // conditions, != guards, transitive path conditions, and detect neural
+        // conditions. Same detection scheme as Reasoning::evaluate: conjunction
+        // sets via (IsA Conjunction) plus PartOf membership, negation via the
+        // (IsA Negation) tag on the pattern itself, the rest via the
         // condition's declared relation type.
-        void collect_conditions(Zelph* z, const Node nn_pred, const Node part, std::vector<Node>& positive, std::vector<Node>& negative, std::vector<Node>& guards, bool& neural)
+        void collect_conditions(Zelph* z, const Node nn_pred, const Node closure_pred, const Node part, std::vector<Node>& positive, std::vector<Node>& negative, std::vector<Node>& guards, std::vector<Node>& closures, bool& neural)
         {
             if (z->is_condition_set(part))
             {
@@ -84,7 +86,7 @@ namespace zelph::network
                     adjacency_set objs;
                     const Node    element = z->parse_fact(rel, objs);
                     if (element && objs.count(part) == 1)
-                        collect_conditions(z, nn_pred, element, positive, negative, guards, neural);
+                        collect_conditions(z, nn_pred, closure_pred, element, positive, negative, guards, closures, neural);
                 }
                 return;
             }
@@ -108,9 +110,60 @@ namespace zelph::network
                     neural = true;
                     return;
                 }
+                // A path condition holds by a WALK, so it has no fact node to
+                // resolve to. Left among the positive conditions it made every
+                // derivation through a path condition unreconstructible: the
+                // join looked for the tag fact, found nothing, and .explain
+                // answered "asserted; no derivation found" about a fact whose
+                // deduction line had named its premises correctly.
+                if (closure_pred != 0 && *rels.begin() == closure_pred)
+                {
+                    closures.push_back(part);
+                    return;
+                }
             }
 
             positive.push_back(part);
+        }
+
+        // A path condition under complete bindings: both ends have to be
+        // ground, and then it is the same reachability test the forward pass
+        // runs -- Zelph::transitive_targets, the indexed closure.
+        //
+        // `verifiable` reports whether the test could be made at all. An end
+        // that no other condition bound would need the GENERATOR reading, and
+        // generating from a proof is a different question from checking one;
+        // the rule is then skipped exactly as a neural condition is, which
+        // leaves the honest "no derivation found" rather than a guess.
+        bool closure_holds(Zelph* z, const Node closure_zero_plus, const Node condition, const Variables& bindings, bool& verifiable)
+        {
+            verifiable = false;
+
+            adjacency_set modes;
+            const Node    pattern = z->parse_fact(condition, modes, 0);
+            if (pattern == 0 || modes.size() != 1) return false;
+            const bool reflexive = (*modes.begin() == closure_zero_plus);
+
+            adjacency_set objects;
+            const Node    from_pattern = z->parse_fact(pattern, objects, condition);
+            const Node    step         = z->parse_relation(pattern);
+            if (from_pattern == 0 || step == 0 || objects.size() != 1) return false;
+
+            const auto resolved = [&](const Node n) -> Node
+            {
+                if (!Zelph::is_var(n)) return n;
+                const auto it = bindings.find(n);
+                return it == bindings.end() ? n : it->second;
+            };
+
+            const Node from = resolved(from_pattern);
+            const Node to   = resolved(*objects.begin());
+            const Node p    = resolved(step);
+
+            if (Zelph::is_var(from) || Zelph::is_var(to) || Zelph::is_var(p)) return false;
+
+            verifiable = true;
+            return z->transitive_targets(from, p, reflexive).count(to) != 0;
         }
 
         // != guard under complete bindings: violated only when both sides
@@ -238,9 +291,9 @@ namespace zelph::network
                     const Node    condition_part = z->parse_fact(rule, consequences);
                     if (condition_part == 0 || consequences.empty()) continue;
 
-                    std::vector<Node> positive, negative, guards;
+                    std::vector<Node> positive, negative, guards, closures;
                     bool              neural = false;
-                    collect_conditions(z, ctx.nn_pred, condition_part, positive, negative, guards, neural);
+                    collect_conditions(z, ctx.nn_pred, ctx.closure_pred, condition_part, positive, negative, guards, closures, neural);
 
                     for (const Node cons : consequences)
                     {
@@ -286,6 +339,22 @@ namespace zelph::network
                             }
                             if (!ok) continue;
 
+                            // Path conditions after the join, for the same
+                            // reason the guards are: the walk needs both ends
+                            // ground, and it is the join that grounds them.
+                            std::vector<Node> walked;
+                            for (const Node c : closures)
+                            {
+                                bool verifiable = false;
+                                if (!closure_holds(z, ctx.closure_zero_plus, c, bindings, verifiable) || !verifiable)
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                                walked.push_back(c);
+                            }
+                            if (!ok) continue;
+
                             // NAF: ground after the join (stratification); a
                             // condition that has since become true in the
                             // CURRENT graph disqualifies this justification.
@@ -315,6 +384,7 @@ namespace zelph::network
 
                             proof->status   = ProofNode::Status::Derived;
                             proof->rule     = rule;
+                            proof->walked   = std::move(walked);
                             proof->absent   = std::move(absent);
                             proof->bindings = bindings;
                             for (const Node premise : premises)
@@ -359,9 +429,11 @@ namespace zelph::network
         Reasoning* const self = const_cast<Reasoning*>(this);
 
         ExplainContext ctx;
-        ctx.z         = self;
-        ctx.nn_pred   = get_node("nn", "zelph");
-        ctx.max_depth = max_depth;
+        ctx.z                 = self;
+        ctx.nn_pred           = get_node("nn", "zelph");
+        ctx.closure_pred      = get_node("closure", "zelph");
+        ctx.closure_zero_plus = get_node("zero-or-more", "zelph");
+        ctx.max_depth         = max_depth;
 
         return reconstruct(ctx, fact, 0);
     }
