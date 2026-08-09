@@ -35,9 +35,41 @@ option(ZELPH_USE_MIMALLOC
        "Enable mimalloc for standalone Linux builds of zelph"
        ${_ZELPH_USE_MIMALLOC_DEFAULT})
 
+# mimalloc is a memory decision, not a speed one: it saves a great deal of RAM
+# on the bulk workloads this engine exists for, and RAM is what binds there.
+# ZELPH_USE_MIMALLOC=OFF is for isolating an allocator problem (and for ASAN,
+# which an override renders silent) -- never for a build that loads a dump.
+#
+# --- Raising the pinned version -------------------------------------------
+# The version is pinned rather than floating because a mismatch with the
+# system libc is fatal and silent. v3.3.2 against glibc 2.44 segfaults BEFORE
+# main, inside static initialization
+# (std::ios_base_library_init -> std::locale -> newlocale -> free), on any
+# input including none, with no output at all. Only the app is affected, since
+# only the app links the override -- the test suite stays green throughout,
+# so a green suite is no evidence that the binary runs.
+#
+# When raising it, in this order:
+#   1. A build directory configured for the OLD version keeps stale rules.
+#      Remove CMakeCache.txt and _deps/mimalloc-* and configure again, or the
+#      same error survives every rebuild.
+#   2. Build the DEFAULT target, not just zelph. Upstream ties its own
+#      mimalloc-obj-target to mimalloc-static (which is why MI_BUILD_STATIC
+#      stays ON below); a mismatch there fails "make all" while
+#      "--target zelph" succeeds quietly.
+#   3. Run the binary with empty input. An allocator that cannot initialize
+#      dies before it can report anything, so exit code 139 is the whole
+#      diagnosis.
+#   4. Check the override actually took: `nm -D bin/zelph` must define free
+#      and malloc, and `ldd bin/zelph` must NOT name libmimalloc -- the object
+#      is linked in, the system package is not used and its version says
+#      nothing about this one.
 if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+    # Upstream wires mimalloc-obj-target to mimalloc-static, so the OBJECT
+    # build needs the static one to exist even though only the object is
+    # linked. See point 2 above for how it fails when this is OFF.
+    set(MI_BUILD_STATIC ON CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT ON CACHE BOOL "" FORCE)
     set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(MI_OVERRIDE ON CACHE BOOL "" FORCE)
@@ -45,7 +77,7 @@ if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     FetchContent_Declare(
         mimalloc
         GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-        GIT_TAG v3.3.2
+        GIT_TAG v3.4.5
         SYSTEM
     )
     FetchContent_MakeAvailable(mimalloc)
