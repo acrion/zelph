@@ -343,6 +343,12 @@ bool Zelph::unmark_rule_pattern(const Node node) const
         _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
     }
 
+    // The one change an experiment makes to a PRE-EXISTING node that a drop
+    // has to undo -- see Network::note_unmarked for why this and nothing
+    // else. Recorded before the marking fact goes, so a failure below cannot
+    // leave the cluster claiming a revocation that did not happen.
+    _pImpl->note_unmarked(node);
+
     const Node pred = rule_pattern_predicate(false);
     if (pred != 0)
     {
@@ -1176,8 +1182,10 @@ size_t Zelph::drop_scratch_cluster(const std::string& name) const
 
 size_t Zelph::drop_cluster(const std::string& name) const
 {
-    const std::vector<Node> nodes = _pImpl->take_cluster(name);
-    if (nodes.empty()) return 0;
+    // Read before take_cluster, which drops both sets.
+    const std::vector<Node> unmarked = _pImpl->cluster_unmarked(name);
+    const std::vector<Node> nodes    = _pImpl->take_cluster(name);
+    if (nodes.empty() && unmarked.empty()) return 0;
 
     invalidate_fact_structures_cache();
 
@@ -1193,5 +1201,34 @@ size_t Zelph::drop_cluster(const std::string& name) const
             removed += remove_node(n);
         }
     }
+
+    restore_rule_patterns(unmarked);
+
     return removed;
+}
+
+// Re-mark the patterns whose marking the dropped cluster revoked. Runs AFTER
+// the removals, because a pattern the drop took with it is not to be marked
+// again -- and it may well have been taken: a rule built inside the cluster
+// records its patterns, and asserting one of them inside the same cluster
+// revokes the marking of a node the cluster itself created.
+void Zelph::restore_rule_patterns(const std::vector<Node>& patterns) const
+{
+    if (patterns.empty()) return;
+
+    const Node pred = rule_pattern_predicate(true);
+    auto*      self = const_cast<Zelph*>(this);
+
+    std::unique_lock lock(_pImpl->_rule_patterns_mtx);
+    for (const Node p : patterns)
+    {
+        if (!_pImpl->exists(p)) continue;
+
+        // Marking twice is not the same as marking once: the fact is
+        // hash-consed, so re-creating it is a no-op, but the index is a set
+        // and would grow. insert answers both questions at once.
+        self->fact(p, core.IsA, {pred});
+        _pImpl->_rule_patterns.insert(p);
+    }
+    _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
 }

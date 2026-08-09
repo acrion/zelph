@@ -2227,7 +2227,11 @@ private:
                          "With argument: activates the named cluster (created if needed). All nodes and\n"
                          "facts created from now on are recorded in it — including relation nodes,\n"
                          "rule definitions, query patterns, and facts deduced by .run. Facts that\n"
-                         "already existed before are never recorded.\n"
+                         "already existed before are never recorded -- with one exception a drop has\n"
+                         "to undo all the same: claiming a statement that was only a rule's ground\n"
+                         "pattern revokes that marking, and .cluster-drop puts it back. The node\n"
+                         "existed, so nothing was created and nothing would otherwise be rolled back,\n"
+                         "and the experiment would have turned the rule's patterns into data for good.\n"
                          "'.cluster default' deactivates cluster tracking.\n"
                          "Note: clusters are session state and are not persisted by .save."},
 

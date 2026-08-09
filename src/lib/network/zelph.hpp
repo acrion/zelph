@@ -551,6 +551,11 @@ namespace zelph::network
         /// construction emitted -- is left alone.
         void          mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
 
+        /// Re-mark patterns whose marking a dropped cluster revoked. A node
+        /// the drop removed is skipped, so this is safe to call with whatever
+        /// the cluster recorded.
+        void          restore_rule_patterns(const std::vector<Node>& patterns) const;
+
         /// Was this fact node built as a rule pattern and never claimed?
         /// One hash probe, and a single empty() test in the graphs -- the
         /// overwhelming majority -- whose rules all carry variables.

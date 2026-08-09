@@ -796,6 +796,7 @@ namespace zelph::network
         {
             std::lock_guard lock(_mtx_clusters);
             _active_cluster.store(&_clusters[name], std::memory_order_release);
+            _active_unmarked.store(&_cluster_unmarked[name], std::memory_order_release);
             _active_cluster_name = name;
         }
 
@@ -803,7 +804,39 @@ namespace zelph::network
         {
             std::lock_guard lock(_mtx_clusters);
             _active_cluster.store(nullptr, std::memory_order_release);
+            _active_unmarked.store(nullptr, std::memory_order_release);
             _active_cluster_name.clear();
+        }
+
+        // A cluster records what it CREATED, which is what lets a drop promise
+        // never to destroy pre-existing knowledge. One change it makes to a
+        // PRE-EXISTING node has to be undone all the same: asserting a
+        // statement that was only a rule's ground pattern revokes that
+        // marking, and the node existed, so nothing was recorded and the drop
+        // undid nothing. An experiment could turn a rule's patterns into data
+        // permanently -- both of them, since the ground consequence is
+        // materialized with the rule.
+        //
+        // The line the contract draws: a marking is the ENGINE's own
+        // bookkeeping about a node, not a claim anybody made. Names, merges
+        // and other statements about pre-existing nodes stay outside, as
+        // before.
+        void note_unmarked(Node n)
+        {
+            if (_active_unmarked.load(std::memory_order_acquire) == nullptr) return; // fast path
+            std::lock_guard lock(_mtx_clusters);
+            if (auto* u = _active_unmarked.load(std::memory_order_acquire)) u->insert(n);
+        }
+
+        // The pattern markings revoked while `name` was active, without
+        // touching the bookkeeping -- cluster_nodes' sibling. Read it BEFORE
+        // take_cluster, which drops both sets.
+        std::vector<Node> cluster_unmarked(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _cluster_unmarked.find(name);
+            if (it == _cluster_unmarked.end()) return {};
+            return {it->second.begin(), it->second.end()};
         }
 
         std::string active_cluster_name() const
@@ -862,9 +895,11 @@ namespace zelph::network
             if (_active_cluster.load(std::memory_order_acquire) == &it->second)
             {
                 _active_cluster.store(nullptr, std::memory_order_release);
+                _active_unmarked.store(nullptr, std::memory_order_release);
                 _active_cluster_name.clear();
             }
             _clusters.erase(it);
+            _cluster_unmarked.erase(name);
             return nodes;
         }
 
@@ -881,13 +916,26 @@ namespace zelph::network
                 auto& target = _clusters[to];
                 for (Node n : it->second)
                     target.insert(n);
+
+                // A merge commits the bookkeeping, so the revocations travel
+                // with the nodes: merging into `default` (to == "") drops both
+                // and turns everything into ordinary state, which is what
+                // committing an experiment means.
+                if (const auto u = _cluster_unmarked.find(from); u != _cluster_unmarked.end())
+                {
+                    auto& target_unmarked = _cluster_unmarked[to];
+                    for (Node n : u->second)
+                        target_unmarked.insert(n);
+                }
             }
             if (_active_cluster.load(std::memory_order_acquire) == &it->second)
             {
                 _active_cluster.store(nullptr, std::memory_order_release);
+                _active_unmarked.store(nullptr, std::memory_order_release);
                 _active_cluster_name.clear();
             }
             _clusters.erase(it);
+            _cluster_unmarked.erase(from);
             return true;
         }
 
@@ -910,7 +958,9 @@ namespace zelph::network
         Node                                                      _last{Node()};
         Node                                                      _last_var{Node()};
         std::map<std::string, ankerl::unordered_dense::set<Node>> _clusters;
+        std::map<std::string, ankerl::unordered_dense::set<Node>> _cluster_unmarked;
         std::atomic<ankerl::unordered_dense::set<Node>*>          _active_cluster{nullptr};
+        std::atomic<ankerl::unordered_dense::set<Node>*>          _active_unmarked{nullptr};
         std::string                                               _active_cluster_name;
 
         mutable std::mutex        _mtx_clusters;
