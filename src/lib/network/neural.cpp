@@ -25,22 +25,26 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "neural.hpp"
 
+#include <shared_mutex>
+
 #include "zelph.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <stdexcept>
 
 using namespace zelph::network;
 
 namespace
 {
-    // Computes the activations of all layers. Hidden layers use ReLU, the
-    // output layer is linear (identity).
+    // Computes the activations of all layers. Hidden layers use the net's
+    // activation, the output layer is linear (identity).
     std::vector<std::vector<double>> run_forward(const std::vector<std::vector<Node>>&   nodes,
                                                  const std::vector<std::vector<double>>& w,
                                                  const std::vector<double>&              input,
-                                                 const std::vector<size_t>*              active_input)
+                                                 const std::vector<size_t>*              active_input,
+                                                 const NeuralNet::Activation             activation)
     {
         if (input.size() != nodes.front().size())
         {
@@ -59,7 +63,7 @@ namespace
             const bool   is_output = (k + 2 == nodes.size());
 
             // Only the input layer is known to be sparse; hidden activations
-            // are dense after a ReLU that most units pass.
+            // are dense after an activation that most units pass.
             const bool sparse = (k == 0 && active_input != nullptr);
 
             std::vector<double> out(n_post, 0.0);
@@ -82,7 +86,12 @@ namespace
                         sum += row[i] * act[k][i];
                     }
                 }
-                out[j] = is_output ? sum : std::max(0.0, sum);
+                if (is_output)
+                    out[j] = sum;
+                else if (activation == NeuralNet::Activation::LeakyRelu)
+                    out[j] = std::max(leaky_relu_slope * sum, sum);
+                else
+                    out[j] = std::max(0.0, sum);
             }
             act.push_back(std::move(out));
         }
@@ -99,7 +108,36 @@ std::vector<Node> zelph::network::layer_members(const Zelph& z, const Node layer
     return sorted;
 }
 
-std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<Node>& layers)
+int64_t zelph::network::connect_layers(const Zelph& z, const Node from_layer, const Node to_layer, const double scale, const uint64_t seed)
+{
+    const std::vector<Node> pre  = layer_members(z, from_layer);
+    const std::vector<Node> post = layer_members(z, to_layer);
+    if (pre.empty() || post.empty())
+    {
+        throw std::runtime_error("connect_layers: a layer has no members (expected (neuron in layer) facts)");
+    }
+
+    std::mt19937_64                        rng(seed);
+    std::uniform_real_distribution<double> dist(-scale, scale);
+
+    int64_t created = 0;
+    for (const Node a : pre)
+    {
+        for (const Node b : post)
+        {
+            if (z.has_synapse(a, b)) continue; // preserve existing synapses and their weights
+
+            z.set_synapse(a, b, scale == 0.0 ? 0.0 : dist(rng));
+            ++created;
+        }
+    }
+
+    return created;
+}
+
+std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph&             z,
+                                              const std::vector<Node>& layers,
+                                              const Activation         activation)
 {
     if (layers.size() < 2)
     {
@@ -107,6 +145,7 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
     }
 
     auto nn = std::unique_ptr<NeuralNet>(new NeuralNet());
+    nn->_activation = activation;
     nn->_nodes.reserve(layers.size());
 
     // in NeuralNet::compile, replacing the previous member-collection loop:
@@ -170,7 +209,14 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph& z, const std::vector<
 std::vector<double> NeuralNet::forward(const std::vector<double>& input,
                                        const std::vector<size_t>* active_input) const
 {
-    return run_forward(_nodes, _w, input, active_input).back();
+    std::shared_lock lock(_mtx);
+    return run_forward(_nodes, _w, input, active_input, _activation).back();
+}
+
+std::vector<std::vector<double>> NeuralNet::weights() const
+{
+    std::shared_lock lock(_mtx);
+    return _w;
 }
 
 double NeuralNet::train_step(const std::vector<double>& input,
@@ -178,7 +224,8 @@ double NeuralNet::train_step(const std::vector<double>& input,
                              const double               learning_rate,
                              const std::vector<size_t>* active_input)
 {
-    const auto  act = run_forward(_nodes, _w, input, active_input);
+    std::unique_lock lock(_mtx);
+    const auto  act = run_forward(_nodes, _w, input, active_input, _activation);
     const auto& out = act.back();
 
     if (target.size() != out.size())
@@ -245,10 +292,18 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
         if (k > 0)
         {
-            // ReLU derivative of hidden layer k
+            // Derivative of hidden layer k. A leaky unit that is off still
+            // passes `slope` of the gradient, which is the whole point: with
+            // a hard zero here a layer that has gone negative everywhere can
+            // never come back.
             for (size_t i = 0; i < n_pre; ++i)
             {
-                if (act[k][i] <= 0.0) prev_delta[i] = 0.0;
+                if (act[k][i] <= 0.0)
+                {
+                    prev_delta[i] = _activation == Activation::LeakyRelu
+                                      ? prev_delta[i] * leaky_relu_slope
+                                      : 0.0;
+                }
             }
             delta = std::move(prev_delta);
         }
@@ -259,6 +314,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
 void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
 {
+    std::unique_lock lock(_mtx);
     if (w.size() != _w.size())
     {
         throw std::runtime_error("NeuralNet::set_weights: expected " + std::to_string(_w.size())
@@ -280,6 +336,7 @@ void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
 
 void NeuralNet::write_back(Zelph& z) const
 {
+    std::shared_lock lock(_mtx);
     for (size_t k = 0; k < _w.size(); ++k)
     {
         const auto& pre  = _nodes[k];

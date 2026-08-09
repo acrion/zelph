@@ -38,7 +38,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janetconf.h>
 #include <map>
 #include <mutex>
-#include <random>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -591,7 +590,7 @@ public:
 
         janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)janet_cfun_zelph_set_weight), "(zelph/set-weight from to w)\nSet the weight of an existing synapse or edge.");
 
-        janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
+        janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)janet_cfun_zelph_nn_compile), "(zelph/nn-compile layers &opt activation)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
                                                                                                      "input first, output last. Neurons are the subjects of (neuron in layer) facts, ordered by node id. "
                                                                                                      "Returns an integer handle. The compiled net is a discardable cache; the graph stays the source of truth.");
 
@@ -1262,7 +1261,7 @@ public:
     // of layer nodes, input first, output last. Returns an integer handle.
     static Janet janet_cfun_zelph_nn_compile(int32_t argc, Janet* argv)
     {
-        janet_fixarity(argc, 1);
+        janet_arity(argc, 1, 2);
         if (!s_instance) return janet_wrap_nil();
 
         const Janet* data;
@@ -1279,10 +1278,25 @@ public:
             layers.push_back(n);
         }
 
+        // The hidden-layer activation. Optional, and defaulting to the one
+        // every net compiled before this argument existed was trained with -
+        // a net evaluated with a different activation is a different net.
+        network::Activation activation = network::Activation::Relu;
+        if (argc >= 2 && !janet_checktype(argv[1], JANET_NIL))
+        {
+            const std::string name = janet_checktype(argv[1], JANET_KEYWORD)
+                                       ? reinterpret_cast<const char*>(janet_unwrap_keyword(argv[1]))
+                                       : reinterpret_cast<const char*>(janet_getstring(argv, 1));
+            if (name == "leaky-relu")
+                activation = network::Activation::LeakyRelu;
+            else if (name != "relu")
+                janet_panicf("zelph/nn-compile: unknown activation '%s' - use :relu or :leaky-relu", name.c_str());
+        }
+
         std::string err;
         try
         {
-            auto net = network::NeuralNet::compile(*s_instance->_n, layers);
+            auto net = network::NeuralNet::compile(*s_instance->_n, layers, activation);
 
             std::lock_guard<std::mutex> lock(s_instance->_state_mutex);
             s_instance->_neural_nets.push_back(std::move(net));
@@ -1499,28 +1513,18 @@ public:
         const double   scale = argc >= 3 ? janet_getnumber(argv, 2) : 0.1;
         const uint64_t seed  = argc >= 4 ? static_cast<uint64_t>(janet_getnumber(argv, 3)) : 42u;
 
-        const std::vector<network::Node> pre  = network::layer_members(*s_instance->_n, from_layer);
-        const std::vector<network::Node> post = network::layer_members(*s_instance->_n, to_layer);
-        if (pre.empty() || post.empty())
-            janet_panicf("zelph/nn-connect-layers: a layer has no members (expected (neuron in layer) facts)");
-
-        std::mt19937_64                        rng(seed);
-        std::uniform_real_distribution<double> dist(-scale, scale);
-
-        int64_t created = 0;
-        for (const network::Node a : pre)
+        std::string err;
+        try
         {
-            for (const network::Node b : post)
-            {
-                if (s_instance->_n->has_synapse(a, b)) continue; // preserve existing synapses and their weights
-
-                const double w = scale == 0.0 ? 0.0 : dist(rng);
-                s_instance->_n->set_synapse(a, b, w);
-                ++created;
-            }
+            const int64_t created = network::connect_layers(*s_instance->_n, from_layer, to_layer, scale, seed);
+            return janet_wrap_number(static_cast<double>(created));
         }
-
-        return janet_wrap_number(static_cast<double>(created));
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/nn-connect-layers: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
     }
 
     // One SGD step with node-addressed input/target.

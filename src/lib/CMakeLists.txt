@@ -325,6 +325,9 @@ else()
 endif()
 
 add_library(zelph_lib ${ZELPH_LIB_TYPE}
+    capi/zelph_c.cpp
+    capi/zelph_c.h
+
     command_executor.cpp
     command_executor.hpp
     interactive.cpp
@@ -511,6 +514,10 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ DESTINATION ${CMAKE_INSTALL_INCLU
 )
 
 install(FILES ${CAPNP_HDRS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zelph)
+
+# Generated next to the objects, so the directory install above does not see
+# it - although every public header includes it, the C ABI header included.
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/zelph_export.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zelph)
 
 option(ENABLE_PGO "Enable Profile Guided Optimization" OFF)
 if (ENABLE_PGO)

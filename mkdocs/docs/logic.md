@@ -702,6 +702,58 @@ zelph> r3 color red
 
 No contradiction — the coloring is valid. But assigning `r2 color red` instead would trigger the contradiction, since adjacent regions `r1` and `r2` would share the same color.
 
+#### Self-joins: derive the selection first
+
+A rule that pairs a relation with itself is quadratic in that relation, and `!=` does not
+make it cheaper — the guard **filters bindings after the join has produced them**. When the
+pairs you actually want are a small subset picked out by other conditions, deriving that
+subset first and joining over *it* is the same statement in a far cheaper order:
+
+```
+# quadratic over every `hits` fact, then filtered
+(A hits B, A hits C, B != C, B holds K, K ~ valuable, C holds L, L ~ valuable)
+    => (A ~ double_attacker)
+
+# the selection pushed below the join
+(A hits B, B holds K, K ~ valuable) => (A threatens B)
+(A threatens B, A threatens C, B != C) => (A ~ double_attacker)
+```
+
+Both derive the same facts. On a base of ~200 facts in which about 60 were `hits` and 8 of
+those were threats, the two-rule form ran **14× faster** — and the whole rule set it belonged
+to went from 4.07 ms to 0.96 ms.
+
+The reason is worth knowing, because it tells you when to expect this. `optimize_order` plans
+the join by **boundness**: a condition whose subject and objects are already bound scores
+higher, because unification can resolve it without scanning. It does not know **how many
+facts** a relation has, and cannot — that is a property of the data, not of the rule. So the
+planner can put a resolvable condition first, but it cannot tell a scan over 60 facts from a
+scan over 8. Where a relation's *size* is what makes one order cheap, the rule author supplies
+that knowledge by naming the smaller relation.
+
+The same reasoning applies to a negated condition or an `≈` condition inside a self-join: both
+are evaluated per candidate binding, so anything that shrinks the candidate set first pays for
+itself.
+
+#### "Is this the only one?"
+
+A derived marker also answers the question that looks as if it needed a negation over a
+*conjunction* — `¬(A prop Y, X != Y)`, which is not expressible. Derive the positive case with
+the guard, then negate that single pattern:
+
+```
+zelph> b prop w
+zelph> a prop v1
+zelph> a prop v2
+zelph> (A prop X, A prop Y, X != Y) => (A ~ several)
+zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
+( w ~ sole ) ⇐ ...
+```
+
+Note the order: **the facts come before the rules.** Negation is evaluated per run against the
+facts as they stand, and the graph is monotonic — with `a prop v1` alone in the graph, the
+second rule derives `v1 ~ sole`, and `a prop v2` arriving later cannot take that back.
+
 ### Fresh Variables: Generative Rules
 
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.
@@ -779,6 +831,10 @@ As in Datalog, disjunction is expressed through **multiple rules with the same c
 ```
 
 This is equivalent to `(bird(A) ∨ bat(A)) → can_fly(A)`.
+
+When both branches hold, the consequence is derived **once**, not twice: a fact is a node and
+nodes are hash-consed, so the second rule finds the fact the first one made. A query therefore
+answers a doubly-justified conclusion exactly once.
 
 ### Unary Predicates and Self-Facts
 

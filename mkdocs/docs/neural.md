@@ -250,6 +250,8 @@ Two dump-related notes, so they are not mistaken for bugs: entities absent from 
 
 ## Limitations and Outlook
 
+A compiled network is safe to share between threads: evaluation is concurrent, training is exclusive against it. See the threading note in the [Janet API reference](janet.md#neural-network-functions).
+
 The current implementation is a deliberate foundation, not a finished ML framework: networks have no bias terms, hidden layers are ReLU-only, the output is linear, features are identity-based, and `≈` supports plain S-P-O patterns only. What the foundation establishes is the _architectural_ claim: neurons as nodes, synapses as edges, training data gathered by reasoning queries, and network confidences flowing back into the graph as fact probabilities — all without leaving the semantic network.
 
 ## Appendix: Complete Session Log
@@ -463,4 +465,23 @@ P30-candidate facts: 43
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
 -- 2.497 s --
 wikidata->
+```
+
+## Hidden-layer activation
+
+`zelph/nn-compile` takes an optional second argument, `:relu` (the default) or
+`:leaky-relu`, which selects what the hidden layers do with a negative pre-activation.
+
+`:relu` is `max(0, x)`. It has a property worth knowing before training anything small
+online: a hidden layer whose every unit is negative for every input produces an output of
+exactly 0 **and** a gradient of exactly 0, so no further training can move it. That state is
+absorbing. `:leaky-relu` is `max(0.01 x, x)`, whose gradient is never exactly zero.
+
+The activation belongs to the compiled view rather than to the graph, so a net trained with
+one has to be evaluated with the same one. Record the choice yourself if it is not the
+default — a fact in the graph next to the net's layer list is the natural place, and it is
+where the layer list itself lives.
+
+```janet
+(def handle (zelph/nn-compile [in hidden out] :leaky-relu))
 ```

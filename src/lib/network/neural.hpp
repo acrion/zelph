@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <shared_mutex>
 #include <vector>
 
 namespace zelph::network
@@ -45,11 +46,59 @@ namespace zelph::network
     // NeuralNet::compile and by the layer-wiring helpers.
     ZELPH_EXPORT std::vector<Node> layer_members(const Zelph& z, Node layer);
 
+    // Fully connect two layers with raw synapses, weights drawn uniformly
+    // from [-scale, scale] (all zero when scale is 0). Existing synapses are
+    // left untouched, so trained weights survive re-wiring and the call is
+    // idempotent. Returns how many synapses were created; throws when either
+    // layer has no members.
+    ZELPH_EXPORT int64_t connect_layers(const Zelph& z, Node from_layer, Node to_layer, double scale, uint64_t seed);
+
+    /// How a hidden layer's pre-activation becomes its activation.
+    ///
+    /// This is a property of the compiled VIEW, not of the graph: two nets
+    /// over the same weights may use different activations, and a net trained
+    /// with one must be evaluated with the same one or its output changes.
+    /// That is why it is a compile argument and why the default is the one
+    /// every existing net was trained with.
+    enum class Activation
+    {
+        /// max(0, x). What every net compiled before this option existed
+        /// used, and the default.
+        Relu,
+
+        /// max(leak * x, x). The gradient is never exactly zero, which
+        /// matters more than it sounds: with plain ReLU a hidden layer whose
+        /// every unit is negative for every input has an output of exactly 0
+        /// AND a gradient of exactly 0, so no further training can move it.
+        /// That state is absorbing, and a small online-trained net can walk
+        /// into it and stay there.
+        LeakyRelu
+    };
+
+    /// The slope below zero for Activation::LeakyRelu.
+    constexpr double leaky_relu_slope = 0.01;
+
     // (class doc comment unchanged)
+    // Thread safety: any number of threads may evaluate concurrently
+    // (forward, eval_nodes, weights, write_back); a training step
+    // (train_step, train_nodes) or set_weights excludes them for its
+    // duration. A compiled net may therefore be evaluated from a search
+    // thread while another thread trains it. compile() itself is not
+    // synchronised - build the net before sharing the handle.
     class ZELPH_EXPORT NeuralNet
     {
     public:
-        static std::unique_ptr<NeuralNet> compile(const Zelph& z, const std::vector<Node>& layers);
+        /// So that both `Activation::LeakyRelu` and `NeuralNet::Activation::
+        /// LeakyRelu` name the same thing - the enum is declared next to
+        /// `connect_layers` because it is an argument to compilation rather
+        /// than a member of the result.
+        using Activation = zelph::network::Activation;
+
+        static std::unique_ptr<NeuralNet> compile(const Zelph&             z,
+                                                  const std::vector<Node>& layers,
+                                                  Activation               activation = Activation::Relu);
+
+        Activation activation() const { return _activation; }
 
         size_t                   layer_count() const { return _nodes.size(); }
         const std::vector<Node>& layer_nodes(size_t layer) const { return _nodes.at(layer); }
@@ -72,7 +121,10 @@ namespace zelph::network
         // that passes its best point and then leaves it: the criterion that
         // says "stop" can only fire after the fact, so without a way back the
         // weights that get saved are always some epochs past the good ones.
-        const std::vector<std::vector<double>>& weights() const { return _w; }
+        // A COPY, not a reference: the caller may read it while another
+        // thread trains, and a reference into _w would be a race the caller
+        // cannot guard against. See the threading note on this class.
+        std::vector<std::vector<double>> weights() const;
         void                                    set_weights(const std::vector<std::vector<double>>& w);
 
         // --- Node-addressed access (graph-driven training) ---
@@ -113,6 +165,17 @@ namespace zelph::network
         // sums in the same order a dense one does and returns the same value.
         std::vector<size_t> active_indices(size_t layer, const std::vector<std::pair<Node, double>>& active) const;
 
+        // Guards _w, the only member that changes after compile(). _nodes,
+        // _mask and _index are written once by compile() and read-only
+        // afterwards, so they need no protection.
+        //
+        // Taken shared by the const entry points (forward, write_back,
+        // weights) and exclusively by the mutating ones (train_step,
+        // set_weights). It is NOT taken by train_nodes or eval_nodes, which
+        // delegate to those - locking at both levels would deadlock.
+        mutable std::shared_mutex _mtx;
+
+        Activation                        _activation{Activation::Relu};
         std::vector<std::vector<Node>>    _nodes;
         std::vector<std::vector<double>>  _w;
         std::vector<std::vector<uint8_t>> _mask;

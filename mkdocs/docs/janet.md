@@ -596,6 +596,8 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
 
+**Threading.** Unlike most of the API above, a compiled network may be used from more than one thread. Any number of threads may **evaluate** concurrently — `nn-eval`, `nn-eval-nodes`, `nn-snapshot`, `nn-write-back` — while a **training** step (`nn-train`, `nn-train-nodes`) or `nn-restore` excludes them for its duration. So a program may evaluate a network from a worker thread while another thread trains it, which is what lets training run continuously alongside the work that uses the result. `nn-compile` is *not* synchronised: build the network before sharing its handle. The guarantee covers the network's weights only — the graph operations marked "Main thread only" above stay main-thread-only, so `zelph/save` and `zelph/load` must not run while another thread trains.
+
 The two node-addressed calls price the input layer by the number of active neurons rather than by its width, because they are told which ones are non-zero; the dense pair cannot be. Same numbers, so prefer them whenever the input is a multi-hot encoding of a large domain — see [Neural networks](neural.md#node-addressed-training).
 - **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
