@@ -1385,6 +1385,61 @@ TEST_CASE("rules: two consequences are two objects, not a conjunction")
         CHECK(any_output_contains(collector, "=>")); });
 }
 
+TEST_CASE("rules: a condition that is not a pattern is refused, not carried")
+{
+    // "(*A p C, C q b) => (A marked yes)" built a rule whose first condition
+    // was the NODE A. The focus operator did exactly what it promises -- the
+    // expression evaluates to the focused node rather than to the fact -- but
+    // a node carries no statement, so unification had nothing to match and the
+    // rule could never fire. It was accepted all the same, and printed with
+    // the offending member left out (an unbound variable is not shown as a
+    // container element), so .list-rules showed a one-condition rule that
+    // looked as if it worked.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* rule : {"(*A p C, C q b) => (A marked yes)",
+                                 "(C q b, *A p C) => (A marked yes)",
+                                 "(a, (c q b)) => (x marked yes)",
+                                 // The documented explicit spelling of the
+                                 // comma list has to agree with it.
+                                 "(*{a (c q b)} ~ conjunction) => (x marked yes)"})
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("can never match"),
+                                 std::runtime_error);
+        }
+
+        // The form the message names is the one that was meant.
+        interactive.process("(A p C, C q b) => (A marked yes)");
+        collector.clear();
+        interactive.process("u p c");
+        interactive.process("c q b");
+        CHECK(any_deduction_of(collector, "u marked yes"));
+
+        // A focus one level DOWN stays legitimate: the member evaluates to
+        // the fact "A q b", with "A p c" built on the side. What is asked is
+        // what a condition evaluates TO, not how it is written.
+        interactive.process(".new");
+        interactive.process("((*A p c) q b, A r d) => (A marked yes)");
+        collector.clear();
+        interactive.process("v q b");
+        interactive.process("v r d");
+        CHECK(any_deduction_of(collector, "v marked yes")); });
+}
+
+TEST_CASE("rules: zelph/rule refuses a condition that is not a pattern")
+{
+    // The Janet API is the other door to the same inert rule, and a generator
+    // that builds one has no way of noticing: the rule enters the graph, is
+    // listed, and derives nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/rule [(zelph/resolve "a")] (zelph/fact "x" "q" "y")))js"),
+                             doctest::Contains("can never match"),
+                             std::runtime_error); });
+}
+
 TEST_CASE("naming: a query variable does not take a real node's name")
 {
     // Variable names are cosmetic and statement-scoped, but they went into

@@ -621,6 +621,15 @@ A parenthesised group that contains commas is parsed as **conjunction syntax sug
 
 Each comma-separated condition is itself a normal zelph statement fragment (either a fact pattern like `X R Y`, or a nested expression). The whole parenthesised expression evaluates to a **set node** that is automatically tagged as a conjunction internally (i.e. it desugars to the same topology as `(*{...} ~ conjunction)`).
 
+What matters is what a condition **evaluates to**: it has to be a statement, because a condition is matched against the graph and a node carries nothing to match. A [focus](#the-focus-operator) in that position therefore does not do what it looks like — it makes its statement evaluate to the focused node — and is refused:
+
+```
+zelph> (*A p C, C q b) => (A marked yes)
+Error in line "(*A p C, C q b) => (A marked yes)": condition 1 of the comma list is "A", which is not a statement and can never match. A focus makes its statement evaluate to the focused node, so a condition written "*A p C" is the node A -- write it "A p C" instead.
+```
+
+A focus one level down stays useful, since the condition still evaluates to a fact: `((*A p c) q b, A r d)` is the condition `A q b`, with `A p c` created on the side.
+
 Practical consequence: you can write the above example rule as
 
 ```

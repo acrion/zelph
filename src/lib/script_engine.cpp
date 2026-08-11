@@ -492,6 +492,10 @@ public:
 
         janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)janet_cfun_zelph_collection), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it.");
 
+        janet_def(_janet_env, "zelph/conjunction", wrap((JanetCFunction)janet_cfun_zelph_conjunction), "(zelph/conjunction conditions...)\nCreate a rule's condition set, the `(cond, cond, ...)` comma list: a collection tagged `~ conjunction`. "
+                                                                                                       "Every condition must be readable as a fact pattern, or as a nested condition set; anything else is refused, "
+                                                                                                       "because a rule holding it can never fire.");
+
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)janet_cfun_zelph_resolve), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                "lang defaults to the current language (as set by .lang).");
 
@@ -2126,10 +2130,18 @@ public:
         for (int32_t i = 0; i < cond_len; ++i)
         {
             network::Node n = zelph_unwrap_node(cond_data[i]);
-            if (n)
-                condition_nodes.insert(n);
-            else
+            if (!n)
                 janet_panicf("zelph/rule: condition at index %d is not a valid zelph/node", i);
+
+            // Same reason as in zelph/conjunction: a condition that is not a
+            // pattern makes the rule inert, and a generator that builds one
+            // has no other way to find out.
+            if (!s_instance->is_condition_pattern(n))
+                janet_panicf("zelph/rule: condition at index %d is \"%s\", which is not a fact pattern and can never match",
+                             i,
+                             s_instance->_n->format(n).c_str());
+
+            condition_nodes.insert(n);
         }
 
         if (condition_nodes.empty())
@@ -2266,6 +2278,75 @@ public:
         return res;
     }
 
+    // Is `n` something a rule may hold as a condition?
+    //
+    // Unification matches a PATTERN, so a condition that carries no statement
+    // matches nothing and the rule containing it can never fire. A nested
+    // condition set is the one member that is not itself a fact: the
+    // evaluator descends into it.
+    bool is_condition_pattern(const network::Node n) const
+    {
+        if (n == 0) return false;
+        if (_n->predicate_of(n) != 0) return true;
+        return _n->check_fact(n, _n->core.IsA, {_n->core.Conjunction}).is_known();
+    }
+
+    // Every member of a set that has just been tagged `~ conjunction`.
+    void check_conditions_are_patterns(const network::Node set) const
+    {
+        network::adjacency_set members;
+        if (!_n->condition_set_members(set, members)) return;
+
+        for (const network::Node m : members)
+        {
+            if (is_condition_pattern(m)) continue;
+
+            const std::string offender = _n->format(m);
+            janet_panicf("\"%s\" is a condition of this rule but not a statement, so the rule can never match", offender.c_str());
+        }
+    }
+
+    // Build a rule's condition set from the `(cond, cond, ...)` comma list:
+    // a collection tagged `~ conjunction`.
+    //
+    // A member that is not a fact pattern used to be taken as it came, and
+    // the resulting rule was inert -- accepted, listed, and unable to fire.
+    // The focus operator is the way to write one by accident, because it does
+    // exactly what it promises: `(*A p C, C q b)` evaluates its first member
+    // to the node A, so the rule's conditions are the node A and one fact.
+    // A focus one level down stays legitimate -- `((*A p C) q b, ...)` is the
+    // condition `A q b` with a second fact built on the side -- which is why
+    // the test is what the member EVALUATES to rather than how it is written.
+    static Janet janet_cfun_zelph_conjunction(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 2, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/conjunction", argc, argv, true);
+
+        std::unordered_set<network::Node> conditions;
+        for (int32_t i = 0; i < argc; ++i)
+        {
+            const network::Node n = s_instance->resolve_janet_arg(argv[i]);
+            if (!n) janet_panicf("zelph/conjunction: condition %d is not a node", i + 1);
+
+            if (!s_instance->is_condition_pattern(n))
+                janet_panicf("condition %d of the comma list is \"%s\", which is not a statement and can never match. "
+                             "A focus makes its statement evaluate to the focused node, so a condition written "
+                             "\"*A p C\" is the node A -- write it \"A p C\" instead.",
+                             i + 1,
+                             s_instance->_n->format(n).c_str());
+
+            conditions.insert(n);
+        }
+
+        const network::Node set = s_instance->_n->collection(conditions);
+        s_instance->_n->fact(set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
+
+        Janet res = zelph_wrap_node(set);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/conjunction", argc, argv, false, res);
+        return res;
+    }
+
     static Janet janet_cfun_zelph_fact(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 3, -1);
@@ -2295,6 +2376,15 @@ public:
         }
 
         network::Node f = s_instance->_n->fact(s, p, objs);
+
+        // The tag is what MAKES a container a rule's condition set, so this is
+        // where the explicit spelling `(*{cond cond} ~ conjunction)` says what
+        // the comma list says -- and it has to be asked here, because the tag
+        // is the only thing that tells a set of conditions from a set of
+        // anything else. Asked after the fact exists: condition_set_members
+        // reads the tag, and several members mean nothing without it.
+        if (f && p == s_instance->_n->core.IsA && objs.count(s_instance->_n->core.Conjunction) == 1)
+            s_instance->check_conditions_are_patterns(s);
 
         // zelph/fact IS the assertion API, so calling it is a CLAIM and
         // revokes the pattern-only status the same statement may have
@@ -2944,18 +3034,15 @@ public:
             if (cond_codes.empty()) return "nil";
             if (cond_codes.size() == 1) return cond_codes[0]; // Safety: shouldn't happen with PEG
 
-            // (let [$c0 code0 $c1 code1 ...
-            //       $cs (zelph/collection $c0 $c1 ...)
-            //       _ (zelph/fact $cs "~" "conjunction")]
-            //   $cs)
-            std::string let_block = "(let [";
-            for (size_t i = 0; i < cond_codes.size(); ++i)
-                let_block += "$c" + std::to_string(i) + " " + cond_codes[i] + " ";
-            let_block += "$cs (zelph/collection";
-            for (size_t i = 0; i < cond_codes.size(); ++i)
-                let_block += " $c" + std::to_string(i);
-            let_block += R"() _ (zelph/fact $cs "~" "conjunction")] $cs))";
-            return let_block;
+            // (zelph/conjunction code0 code1 ...) -- the members are evaluated
+            // left to right, as they were when this built the collection and
+            // its tag inline. What the call adds is the refusal of a member
+            // that is not a fact pattern.
+            std::string call = "(zelph/conjunction";
+            for (const auto& code : cond_codes)
+                call += " " + code;
+            call += ")";
+            return call;
         }
         else if (type == "negation")
         {
