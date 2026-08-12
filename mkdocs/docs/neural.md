@@ -166,6 +166,7 @@ If the deduced fact already exists, its stored probability is _not_ modified —
 - The inner pattern must be a plain S-P-O triple with exactly one object.
 - Subject and predicate must be bound when the condition is evaluated (the automatic ordering normally guarantees this).
 - `≈` conditions are not supported inside `.prune-facts` / `.prune-nodes` patterns.
+- A fact derived through an `≈` condition cannot be reconstructed by `.explain` (see below).
 
 If the named net has no `nn-layers` definition — a misspelled name, or a
 definition that comes after the rule — every rule consulting it stays silent.
@@ -192,6 +193,28 @@ zelph> (X p Y, ≈badnet(X p Y)) => (X q Y)
 ((X p Y), ((X p Y) nn badnet)) => (X q Y)
 Neural condition: net 'badnet' has an nn-layers definition that is not a list of at least two layers -- write `net nn-layers < input hidden output >`.
 ```
+
+### `.explain` and a neural premise
+
+The backward search does **not** use a rule carrying a neural condition. A network confidence is not a structural premise: unlike a negation-as-failure premise (`[absent]`) or a transitive path (`[closure]`), it is not something the graph can be re-asked for. A fact derived only through such a rule is therefore reported as `no derivation found`, and a proof stops _at_ the neural step rather than being absent altogether — everything above it is reconstructed as usual:
+
+```
+zelph> s in KIn
+zelph> o in KOut
+zelph> %(zelph/nn-connect "s" "o" 0.9)
+zelph> knet nn-layers <KIn KOut>
+zelph> s relK o
+zelph> (A relK B, ≈knet(A relK B)) => (A verifiedK B)
+(((A relK B) nn knet), (A relK B)) => (A verifiedK B)
+(s verifiedK o) ⇐ {((s relK o) nn knet) (s relK o)}
+zelph> (A verifiedK B) => (A trustedK B)
+(s trustedK o) ⇐ (s verifiedK o)
+zelph> .explain (s trustedK o)
+s trustedK o
+   └─ s verifiedK o  [asserted; no derivation found]
+```
+
+The forward direction is unaffected, and it is where the provenance is: the deduction line names the tag fact `(pattern nn net)` as the premise, and the confidence is stored as the fact's probability, as described above.
 
 ## The Helper Library: `stdlib/nn.zph`
 

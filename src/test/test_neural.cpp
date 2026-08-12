@@ -807,3 +807,52 @@ r in SLout
 
         CHECK(any_output_contains(collector, "shapes=true")); });
 }
+
+// ---------------------------------------------------------------------------
+// The neural layer meets the symbolic one: a rule DERIVES what ≈ then consults
+// ---------------------------------------------------------------------------
+
+TEST_CASE("neural: an approx condition consults a derived fact, and a proof stops at it")
+{
+    // Two mechanisms that never met in one network before. Everything the
+    // neural condition sees here is derived rather than asserted, and the
+    // chain continues past it into a third, ordinary rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s4 in KIn
+o4 in KOut
+%(zelph/nn-connect "s4" "o4" 0.9)
+knet nn-layers <KIn KOut>
+(X containsK Y) => (X relK Y)
+(A relK B, ≈knet(A relK B)) => (A verifiedK B)
+(A verifiedK B) => (A trustedK B)
+s4 containsK o4
+)");
+        CHECK(any_output_starts_with(collector, "( s4 verifiedK o4 )"));
+        CHECK(any_output_starts_with(collector, "( s4 trustedK o4 )"));
+
+        // The confidence of the derived-premise step is the network's, not
+        // the default: the substrate below the ≈ condition changes nothing
+        // about what the condition contributes.
+        collector.clear();
+        interactive.process(R"js(%(let [f (zelph/fact "s4" "verifiedK" "o4")] (if (< 0.89 (zelph/weight f "verifiedK") 0.91) "conf-ok" "conf-bad")))js");
+        CHECK(any_output_contains(collector, "conf-ok"));
+
+        // The ordinary step below the neural one reconstructs as usual.
+        collector.clear();
+        interactive.process(".explain (s4 relK o4)");
+        CHECK(any_output_contains(collector, "s4 containsK o4"));
+        CHECK(any_output_contains(collector, "[axiom]"));
+
+        // The neural step does not, and that is the deliberate position of
+        // Reasoning::explain ("neural premises cannot be verified
+        // structurally") -- a network confidence is not a premise the graph
+        // can be re-asked for, unlike a `[closure]` walk or an `[absent]`
+        // negation. A proof therefore stops AT the neural step rather than
+        // being absent altogether: the step above it is still reconstructed.
+        collector.clear();
+        interactive.process(".explain (s4 trustedK o4)");
+        CHECK(any_output_contains(collector, "s4 verifiedK o4"));
+        CHECK(any_output_contains(collector, "no derivation found")); });
+}
