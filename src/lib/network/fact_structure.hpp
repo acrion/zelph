@@ -527,7 +527,9 @@ namespace zelph::network
         {
             if (!n->has_right_edge(candidate, predicate)) continue;
 
-            for (const auto& fs : *get_fact_structures(n, candidate, 1))
+            // The pointer is held: see the note at Zelph::get_fact_subjects.
+            const auto structures = get_fact_structures(n, candidate, 1);
+            for (const auto& fs : *structures)
             {
                 if (fs.predicate != predicate || fs.subject != subject) continue;
                 if (fs.objects.size() <= objects.size()) continue; // equal is the exact case

@@ -28,6 +28,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure.hpp"
 #include "zelph_impl.hpp"
 
+#include <exception>
+#include <mutex>
+#include <vector>
+
 // Prune mode: what does the matched condition denote?
 //
 // resolve_pattern rather than a lookup in the bindings, because a pattern is
@@ -133,6 +137,8 @@ bool Reasoning::is_core_declaration(const Node fact) const
 
 void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 {
+    const SuspendFactStructureCache no_cache(*this); // as in prune_nodes
+
     invalidate_fact_structures_cache();
 
     _prune_mode       = true;
@@ -187,6 +193,13 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 
 void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed_facts, size_t& removed_nodes)
 {
+    // A prune reconstructs the structure of each fact it touches ONCE and
+    // never comes back to it, so remembering them buys nothing and costs an
+    // exclusive lock per store plus a map that grows into the millions. It is
+    // the single biggest item on this workload; see
+    // store_fact_structures_cached for the measurement.
+    const SuspendFactStructureCache no_cache(*this);
+
     invalidate_fact_structures_cache();
 
     _prune_mode       = true;
@@ -237,45 +250,123 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
     // per second on the full Wikidata network.
     adjacency_set named_dead;
 
-    for (Node node : _nodes_to_prune)
+    // The engine's own vocabulary is not data. A pattern as ordinary as
+    // "A ~ ->" binds A to every declared relation type, the core predicates
+    // among them, and deleting those leaves a network whose next negation or
+    // list fails deep inside the engine. Skipped rather than refused: a prune
+    // is a bulk operation, and aborting it halfway leaves a graph nobody
+    // asked for.
+    std::vector<Node> victims;
+    victims.reserve(_nodes_to_prune.size());
+    for (const Node node : _nodes_to_prune)
     {
-        // The engine's own vocabulary is not data. A pattern as ordinary as
-        // "A ~ ->" binds A to every declared relation type, the core
-        // predicates among them, and deleting those leaves a network whose
-        // next negation or list fails deep inside the engine. Skipped rather
-        // than refused: a prune is a bulk operation, and aborting it halfway
-        // leaves a graph nobody asked for.
         if (!get_core_name(node).empty())
         {
             ++kept_core_nodes;
             continue;
         }
+        victims.push_back(node);
+    }
 
-        // A bound node can be gone before its turn: removing an earlier one
-        // takes the facts it is part of with it, and a bound node may BE
-        // such a fact -- "X rel o" binds X to `a` and to `(a p b)` alike.
-        // Which of the two comes first is not fixed (the set is unordered),
-        // so the case cannot be provoked reliably; remove_node REFUSES a
-        // node that does not exist, so asking is not decoration.
-        if (!_pImpl->exists(node)) continue;
+    // Removal is TWO halves with opposite natures, and this is where they are
+    // separated.
+    //
+    // Working out what a node takes with it is pure reading -- the cascade
+    // upwards, plus the fact-structure reconstruction that decides each step
+    // -- and a profile of the live Wikidata prune put ~90 % of the removal
+    // phase there, against ~8.5 % in the erasing itself. Reading parallelises.
+    //
+    // Erasing does not, for two independent reasons: there is one
+    // shared_mutex per adjacency map, so every writer is exclusive whatever
+    // the thread count, and a fact whose parts are half deleted reads as a
+    // DIFFERENT fact -- which is the reasoning Zelph::collect_doomed rests on
+    // and would be reading its own destruction.
+    //
+    // So: collect a batch of victims on the pool, erase the union serially,
+    // repeat. Zelph::collect_doomed carries the argument for why the union of
+    // closures taken against the unmutated graph is the set the sequential
+    // order would have removed.
+    //
+    // In BATCHES rather than all at once, because between two batches is the
+    // only place the fact-structure cache gets cleared: a single pass over
+    // eight million victims would let it grow all the way, and memory is the
+    // binding constraint on this workload. The batch is the progress step, so
+    // the two report together.
+    disable_fact_stores(); // one-way and idempotent; remove_node does it per call
 
-        // remove_node, not Impl::remove: the names have to go with the
-        // node, exactly as for the .remove command. Without that the name
-        // still resolved to the deleted node, so ".node <name>" answered
-        // with an empty node that is no longer in the graph.
-        //
-        // Its return value is what ACTUALLY went, which is more than one
-        // whenever the node took part in a fact -- and those are facts, not
-        // nodes the pattern named. Counting them as nodes made the two forms
-        // of this command report different numbers for the same destruction:
-        // the single-fact form removes the matched facts first, so its
-        // remove_node returns 1 apiece, while a target variable leaves them
-        // to their node and its remove_node returned 2. Same two victims,
-        // "2 facts and 2 nodes" against "0 facts and 4 nodes".
-        removed_facts += remove_node(node, &named_dead) - 1;
-        ++removed_nodes;
+    // `.parallel` off has to mean single-threaded HERE too, or the setting
+    // would be a half-truth and the suite's single-core subcase would not be
+    // one.
+    const size_t workers = use_parallel() ? std::max<size_t>(1, _pool->count()) : 1;
 
-        if (report && removed_nodes % prune_progress_step == 0)
+    for (size_t base = 0; base < victims.size(); base += prune_progress_step)
+    {
+        const size_t stop = std::min(base + prune_progress_step, victims.size());
+        const size_t span = ((stop - base) + workers - 1) / workers;
+
+        std::vector<adjacency_set> found(workers);
+        std::vector<size_t>        taken(workers, 0);
+        std::exception_ptr         failure;
+        std::mutex                 failure_mtx;
+
+        for (size_t w = 0; w < workers; ++w)
+        {
+            const size_t from = base + w * span;
+            const size_t to   = std::min(from + span, stop);
+            if (from >= to) continue;
+
+            _pool->enqueue([this, from, to, w, &victims, &found, &taken, &failure, &failure_mtx]()
+                           {
+                               try
+                               {
+                                   for (size_t i = from; i < to; ++i)
+                                   {
+                                       const Node victim = victims[i];
+
+                                       // A victim can be part of ANOTHER victim's
+                                       // closure -- "X rel o" binds X to `a` and to
+                                       // `(a p b)` alike. Whoever reaches it first
+                                       // walks it; the second call returns at once.
+                                       if (found[w].count(victim) != 0) continue;
+                                       if (!_pImpl->exists(victim)) continue;
+
+                                       collect_doomed(victim, found[w]);
+                                       ++taken[w];
+                                   }
+                               }
+                               catch (...)
+                               {
+                                   // The pool's worker loop does not catch, and an
+                                   // escaping exception would take the process with
+                                   // it. Kept and rethrown on the calling thread,
+                                   // where the serial version threw.
+                                   const std::lock_guard<std::mutex> guard(failure_mtx);
+                                   if (!failure) failure = std::current_exception();
+                               } });
+        }
+
+        _pool->wait();
+        if (failure) std::rethrow_exception(failure);
+
+        adjacency_set doomed;
+        size_t        victims_taken = 0;
+        for (size_t w = 0; w < workers; ++w)
+        {
+            for (const Node dead : found[w])
+                doomed.insert(dead);
+            victims_taken += taken[w];
+        }
+
+        remove_doomed(doomed, &named_dead);
+
+        // What the pattern NAMED against what came along: a doomed node that
+        // is not a victim is a fact the victim took with it. The two add up to
+        // the batch exactly, which the per-node counting could not promise --
+        // it depended on which of two victims the unordered set offered first.
+        removed_nodes += victims_taken;
+        removed_facts += doomed.size() - victims_taken;
+
+        if (report)
         {
             out_stream() << "  " << removed_nodes << " of " << _nodes_to_prune.size()
                          << " node(s) removed" << std::endl;

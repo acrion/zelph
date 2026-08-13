@@ -82,44 +82,31 @@ uint64_t Zelph::name_map_scans() const
 // of the time in that walk, which is two months for a script that has to
 // finish overnight. `.remove` keeps the per-node path, where one walk IS one
 // batch.
-size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
+// Everything that removing `node` would take with it: the node itself, whatever
+// it is a PART of (transitively), and a container that loses a member. Adds to
+// `out` and explores nothing `out` already holds, so a caller may accumulate
+// several victims into one set and a node reached twice is walked once.
+//
+// READ-ONLY -- it touches no adjacency and no name map, which is what lets a
+// bulk removal run MANY of these at once. Erasing is the half that cannot be
+// parallelised: there is one shared_mutex per adjacency map, so every writer
+// is exclusive anyway, and a fact whose parts are half deleted reads as a
+// different fact, which is the very reasoning this cascade rests on.
+//
+// That collecting a batch against the UNMUTATED graph gives the same set as
+// removing its victims one after another is the argument prune_nodes rests
+// on, and it holds in both directions. Removing other victims first only
+// DELETES structure, so a victim's closure on the reduced graph is a subset
+// of its closure on the full one. And a node this closure reaches through a
+// fact that another victim takes away is doomed by THAT victim's closure
+// instead, since the cascade runs upwards and whatever contains a doomed
+// node is doomed with it. The union is therefore the same -- and, unlike the
+// sequential answer, it does not depend on the order an unordered_set
+// happened to iterate in.
+void Zelph::collect_doomed(const Node node, adjacency_set& out) const
 {
-    // Removing a core node leaves a network in which the next negation, list
-    // or contradiction fails deep inside the engine ("requested node does not
-    // exist"), with nothing pointing back at the command that caused it. The
-    // merge path has always protected them; this is the same rule for the
-    // removal path, which .remove reaches now that core spellings resolve.
-    if (const std::string core = get_core_name(node); !core.empty())
-    {
-        throw std::runtime_error("Node '" + core + "' is part of the engine's core vocabulary and cannot be removed");
-    }
+    if (out.count(node) != 0) return; // walked already, cascade included
 
-    if (!_pImpl->exists(node))
-    {
-        throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));
-    }
-
-    // The fact-path stores are authoritative PER NODE -- absence of an entry
-    // is meaningful -- so an entry for a node that is about to go must never
-    // resurface. Disarming is one-way and idempotent, which is why it stays
-    // where the wholesale invalidation used to be. The structure CACHE is
-    // handled at the end, targeted; see the comment there.
-    disable_fact_stores();
-
-    // A fact minus one of its parts is not a fact -- and the graph cannot
-    // say which one it is missing. With the OBJECT gone, the subject is the
-    // only neighbour left, and a subject's link to its fact is
-    // bidirectional: exactly the shape of a self-fact. `outside rel d` was
-    // therefore indistinguishable from `outside rel outside`, answered
-    // `outside rel X` as that, and went into the .bin on the next .save --
-    // the engine asserting something nobody stated. So whatever the node is
-    // a PART of goes with it.
-    //
-    // Strictly upwards: a doomed fact takes the facts it occurs in, never
-    // its own subject, predicate or objects. Those exist in their own right
-    // -- a nested fact used elsewhere, a condition two rules share -- and
-    // walking down into them would delete knowledge that has nothing to do
-    // with the node being removed.
     // The EXACT decomposition, not parse_fact's adjacency reading. A fact
     // that uses `whole` as its PREDICATE points at it and is not pointed
     // back at -- exactly like an object -- so parse_fact reported every such
@@ -130,9 +117,14 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
     //
     // Every reading counts: on removal the conservative answer is the safe
     // one, and get_fact_structures offers all of them.
+    // The list is held by a NAMED pointer, not read through the call: see the
+    // note at Zelph::get_fact_subjects. This is where that bug was found --
+    // a prune that stops caching structures reads freed memory here, and the
+    // cascade then finds nothing.
     const auto is_part_of = [this](const Node whole, const Node part)
     {
-        for (const auto& fs : *get_fact_structures(this, whole, 3))
+        const auto structures = get_fact_structures(this, whole, 3);
+        for (const auto& fs : *structures)
         {
             if (fs.subject == part || fs.predicate == part) return true;
             if (fs.objects.count(part) != 0) return true;
@@ -141,16 +133,16 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
         return false;
     };
 
-    std::vector<Node>                  pending{node};
-    ankerl::unordered_dense::set<Node> doomed{node};
+    std::vector<Node> pending{node};
+    out.insert(node);
 
     const auto doom = [&](const Node candidate)
     {
-        if (doomed.count(candidate) != 0) return;
+        if (out.count(candidate) != 0) return;
         // The engine's vocabulary is not data, as in prune_nodes.
         if (!get_core_name(candidate).empty()) return;
 
-        doomed.insert(candidate);
+        out.insert(candidate);
         pending.push_back(candidate);
     };
 
@@ -240,7 +232,12 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
             }
         }
     }
+}
 
+// Erase what collect_doomed found, with the cache invalidation and the
+// relation-type memo that implies. The serial half of a removal.
+void Zelph::remove_doomed(const adjacency_set& doomed, adjacency_set* const deferred_names) const
+{
     // What this removal can make stale in the structure cache, collected
     // WHILE THE EDGES STILL EXIST. The counterpart of
     // invalidate_fact_structures_for on the creation side, and it rests on the
@@ -324,6 +321,49 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
         _pImpl->invalidate_predicate_index();
         erase_fact_structures(stale);
     }
+}
+
+size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
+{
+    // Removing a core node leaves a network in which the next negation, list
+    // or contradiction fails deep inside the engine ("requested node does not
+    // exist"), with nothing pointing back at the command that caused it. The
+    // merge path has always protected them; this is the same rule for the
+    // removal path, which .remove reaches now that core spellings resolve.
+    if (const std::string core = get_core_name(node); !core.empty())
+    {
+        throw std::runtime_error("Node '" + core + "' is part of the engine's core vocabulary and cannot be removed");
+    }
+
+    if (!_pImpl->exists(node))
+    {
+        throw std::runtime_error("Cannot remove non-existent node " + std::to_string(node));
+    }
+
+    // The fact-path stores are authoritative PER NODE -- absence of an entry
+    // is meaningful -- so an entry for a node that is about to go must never
+    // resurface. Disarming is one-way and idempotent, which is why it stays
+    // where the wholesale invalidation used to be. The structure CACHE is
+    // handled at the end, targeted; see the comment there.
+    disable_fact_stores();
+
+    // A fact minus one of its parts is not a fact -- and the graph cannot
+    // say which one it is missing. With the OBJECT gone, the subject is the
+    // only neighbour left, and a subject's link to its fact is
+    // bidirectional: exactly the shape of a self-fact. `outside rel d` was
+    // therefore indistinguishable from `outside rel outside`, answered
+    // `outside rel X` as that, and went into the .bin on the next .save --
+    // the engine asserting something nobody stated. So whatever the node is
+    // a PART of goes with it.
+    //
+    // Strictly upwards: a doomed fact takes the facts it occurs in, never
+    // its own subject, predicate or objects. Those exist in their own right
+    // -- a nested fact used elsewhere, a condition two rules share -- and
+    // walking down into them would delete knowledge that has nothing to do
+    // with the node being removed.
+    adjacency_set doomed;
+    collect_doomed(node, doomed);
+    remove_doomed(doomed, deferred_names);
 
     return doomed.size();
 }

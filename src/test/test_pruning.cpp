@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 
 #include <filesystem>
+#include <set>
 
 using namespace zelph::test;
 
@@ -1036,4 +1037,99 @@ keep rel fine
         CHECK(collect_answers(collector).size() == 1);
 
         std::filesystem::remove(out); });
+}
+
+// ---------------------------------------------------------------------------
+// Two implementations of one removal
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Every node the graph still holds. Node ids are hashes or creation
+    // positions, so two sessions that build the same script build the same
+    // ids -- which makes this an EXACT comparison of two resulting graphs,
+    // not a sampled one.
+    std::set<zelph::network::Node> live_nodes(zelph::network::Reasoning* const graph)
+    {
+        std::set<zelph::network::Node> out;
+        const auto                     view = graph->get_all_nodes_view();
+        for (auto it = view.begin(); it != view.end(); ++it)
+            out.insert(it->first);
+        return out;
+    }
+
+    // Awkward on purpose: a fact ABOUT a fact, a set constant holding a
+    // victim (the container rule), a nested fact, a multi-object fact, a rule
+    // whose condition names the pattern (a rule pattern is not data), and
+    // enough victims to reach every worker of the pool.
+    const char* const removal_fixture = R"(
+keep rel other
+v1 p b
+(v1 p b) q c
+v2 in {v2 keep}
+(v3 r d) s e
+v3 multi o1 o2
+(X rel target) => (X flagged yes)
+%(loop [i :range [1 61]] (zelph/fact (string "v" i) "rel" "target"))
+)";
+} // namespace
+
+TEST_CASE("pruning: the batched cascade removes exactly what removing one by one removes")
+{
+    // A prune collects the doomed closures of a whole batch on the thread
+    // pool and erases the union; `.remove` still walks one node at a time and
+    // erases as it goes. The two must agree, and nothing about the OUTCOME
+    // can say whether they do -- which is why the only honest test is to run
+    // both and compare the graphs they leave behind.
+    //
+    // What could make them differ is exactly what the batch argument has to
+    // rule out: a closure taken against the UNMUTATED graph reaches nodes
+    // that the sequential order had already deleted, and a victim that is
+    // part of another victim's closure is walked by whichever comes first.
+    std::set<zelph::network::Node> batched;
+    std::set<zelph::network::Node> one_by_one;
+    size_t                         before = 0;
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, removal_fixture);
+        before = live_nodes(interactive.graph()).size();
+        interactive.process(".prune-nodes A rel target");
+        batched = live_nodes(interactive.graph());
+    }
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, removal_fixture);
+
+        auto* const graph  = interactive.graph();
+        const auto  rel    = graph->get_node("rel");
+        const auto  target = graph->get_node("target");
+        REQUIRE(rel != 0);
+        REQUIRE(target != 0);
+
+        // The same victims the pattern binds, removed the old way.
+        std::vector<zelph::network::Node> victims;
+        for (const auto v : graph->get_fact_subjects(rel, target))
+            victims.push_back(v);
+        REQUIRE(victims.size() == 60);
+
+        for (const auto v : victims)
+        {
+            if (!graph->exists(v)) continue; // taken by an earlier one
+            graph->remove_node(v);
+        }
+        one_by_one = live_nodes(graph);
+    }
+
+    // Not vacuous: both really destroyed most of the graph, and something
+    // survived. Two paths that removed NOTHING would agree just as well.
+    REQUIRE(before > 100);
+    REQUIRE(batched.size() < before / 2);
+    REQUIRE(!batched.empty());
+
+    CHECK(batched.size() == one_by_one.size());
+    CHECK(batched == one_by_one);
 }

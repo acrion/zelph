@@ -224,6 +224,31 @@ namespace zelph::network
         AllNodeView  get_all_nodes_view() const;
         LangNodeView get_lang_nodes_view(const std::string& lang) const;
         bool         try_get_fact_structures_cached(Node fact, FactStructurePtr& out) const;
+
+        /// While one of these lives, fact structures are computed and not
+        /// remembered. For a bulk pass that visits every node once, where the
+        /// cache is an exclusive lock and a map growing into the millions,
+        /// bought with a reuse that never comes.
+        class ZELPH_EXPORT SuspendFactStructureCache
+        {
+        public:
+            explicit SuspendFactStructureCache(const Zelph& z)
+                : _z(z)
+                , _previous(z._fs_cache_suspended.exchange(true, std::memory_order_relaxed))
+            {
+            }
+            ~SuspendFactStructureCache() { _z._fs_cache_suspended.store(_previous, std::memory_order_relaxed); }
+
+            SuspendFactStructureCache(const SuspendFactStructureCache&)            = delete;
+            SuspendFactStructureCache& operator=(const SuspendFactStructureCache&) = delete;
+
+        private:
+            const Zelph& _z;
+            const bool   _previous;
+        };
+
+
+
         void         store_fact_structures_cached(Node fact, FactStructurePtr value) const;
         void         invalidate_fact_structures_cache() const noexcept;
 
@@ -486,13 +511,15 @@ namespace zelph::network
 
         // --- Implemented in zelph_maintenance.cpp (cleanup, rules, persistence) ---
 
-        void          cleanup_isolated(size_t& removed_count) const;
-        size_t        cleanup_names() const;
+        void   cleanup_isolated(size_t& removed_count) const;
+        size_t cleanup_names() const;
         /// Removes the node and everything it is a PART of, cascading
         /// upwards. Returns HOW MANY nodes went, which is more than one
         /// whenever the node took part in a fact -- the callers report it.
         /// `deferred_names` makes it affordable in BULK; see the definition.
         size_t        remove_node(Node node, adjacency_set* deferred_names = nullptr) const;
+        void          collect_doomed(Node node, adjacency_set& out) const;
+        void          remove_doomed(const adjacency_set& doomed, adjacency_set* deferred_names = nullptr) const;
         void          remove_names_of(const adjacency_set& dead) const;
         uint64_t      name_map_scans() const;
         adjacency_set get_rules() const;
@@ -500,7 +527,7 @@ namespace zelph::network
         /// Is this node a PART of some other fact -- its subject, its
         /// predicate or one of its objects? For a rule that is the
         /// difference between stating it and stating something ABOUT it.
-        bool          is_mentioned(Node node) const;
+        bool is_mentioned(Node node) const;
 
         // --- Rule patterns that are not data -------------------------------
         //
@@ -667,6 +694,7 @@ namespace zelph::network
         std::unordered_map<std::string, network::Node>            _core_names_by_name;
         bool                                                      _use_parallel{true};
         bool                                                      _use_anchors{true};
+        mutable std::atomic<bool>                                 _fs_cache_suspended{false};
         mutable std::atomic<uint64_t>                             _fs_cache_hits{0};
         mutable std::atomic<uint64_t>                             _fs_cache_misses{0};
         mutable std::atomic<uint64_t>                             _fs_cache_full_clears{0};

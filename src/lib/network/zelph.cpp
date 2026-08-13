@@ -276,7 +276,16 @@ adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) 
         // so `a p a` had no object at all and was invisible here while the
         // query answered it. get_fact_structures is the reading unification
         // uses, and it is what makes the two agree.
-        for (const auto& fs : *get_fact_structures(this, rel, 3))
+        // get_fact_structures returns the list BY SHARED POINTER, so binding a
+        // range-for to *get_fact_structures(...) reads a container whose only
+        // owner died at the end of that expression: the temporary is not
+        // lifetime-extended, because the reference binds to the POINTEE, not to
+        // the pointer. It survived on borrowed time -- while the structure
+        // cache held a second owner the memory stayed valid -- so the bug was
+        // invisible until a bulk pass stopped caching, and then the cascade in
+        // remove_node silently found nothing. Hold the pointer.
+        const auto structures = get_fact_structures(this, rel, 3);
+        for (const auto& fs : *structures)
         {
             if (fs.predicate != predicate || fs.subject != subject) continue;
 
@@ -315,7 +324,14 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
         // own subject, and was reported as one. `(a p b) note ok` made
         // itself a subject of `p` with object `b`, which the documented
         // contract of zelph/sources -- and the query `S p b` -- deny.
-        for (const auto& fs : *get_fact_structures(this, rel, 3))
+        // get_fact_structures returns the list BY SHARED POINTER, so binding a
+        // range-for to *get_fact_structures(...) reads a container whose only owner
+        // died at the end of that expression -- the temporary is not lifetime-extended,
+        // because the reference binds to the POINTEE. It survived on borrowed time:
+        // while the structure cache held a second owner the memory stayed valid, so
+        // the bug was invisible until a bulk pass stopped caching. Hold the pointer.
+        const auto structures = get_fact_structures(this, rel, 3);
+        for (const auto& fs : *structures)
         {
             if (fs.predicate != predicate || fs.objects.count(object) == 0) continue;
 
@@ -709,7 +725,7 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         if (predicate == core.IsA && objects.size() == 1)
         {
             const Node tag   = *objects.begin();
-            const Node other = tag == core.Negation ? core.Conjunction
+            const Node other = tag == core.Negation    ? core.Conjunction
                              : tag == core.Conjunction ? core.Negation
                                                        : 0;
 
@@ -1633,6 +1649,19 @@ bool Zelph::try_get_fact_structures_cached(Node fact, FactStructurePtr& out) con
 
 void Zelph::store_fact_structures_cached(Node fact, FactStructurePtr value) const
 {
+    // A bulk pass computes each structure once and never asks again, so
+    // remembering them is pure cost: an exclusive lock per store, and a map
+    // that grows into the millions and slows every later lookup. Measured on
+    // a 1.5 M-node prune: 45.1 s with the cache against 16.8 s without it,
+    // and 58.4 s against 27.2 s on a SINGLE core -- with several threads
+    // collecting, this lock is also what stopped them scaling past four.
+    //
+    // Correctness cannot depend on it: get_fact_structures recomputes on a
+    // miss and returns what it computed, never a re-read. The genuine
+    // structure STORE, where absence IS meaningful, is a different thing and
+    // is disarmed by the removal path anyway.
+    if (_fs_cache_suspended.load(std::memory_order_relaxed)) return;
+
     {
         std::unique_lock lock(_pImpl->_fs_cache_mtx);
         _pImpl->_fs_cache[fact] = std::move(value);
