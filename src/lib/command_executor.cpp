@@ -2050,7 +2050,10 @@ private:
                              "rules that have nothing to do with the pattern, and its names.\n"
                              "Relation nodes left isolated by the deletion are removed by .cleanup.\n"
                              "Like .prune-facts, it removes CLAIMS only -- see .help .prune-facts.\n"
-                             "Reports removed facts and nodes."},
+                             "Reports removed facts and nodes. From 100000 victims upwards it also\n"
+                             "names the size of the job before it starts and counts through it, so a\n"
+                             "prune of a full dump says where it is instead of running silently for\n"
+                             "hours."},
 
             {".cleanup", ".cleanup\n"
                          "Removes all nodes that have no connections (isolated nodes).\n"

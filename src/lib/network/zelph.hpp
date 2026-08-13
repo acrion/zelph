@@ -491,7 +491,10 @@ namespace zelph::network
         /// Removes the node and everything it is a PART of, cascading
         /// upwards. Returns HOW MANY nodes went, which is more than one
         /// whenever the node took part in a fact -- the callers report it.
-        size_t        remove_node(Node node) const;
+        /// `deferred_names` makes it affordable in BULK; see the definition.
+        size_t        remove_node(Node node, adjacency_set* deferred_names = nullptr) const;
+        void          remove_names_of(const adjacency_set& dead) const;
+        uint64_t      name_map_scans() const;
         adjacency_set get_rules() const;
 
         /// Is this node a PART of some other fact -- its subject, its

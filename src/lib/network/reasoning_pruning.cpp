@@ -105,6 +105,16 @@ void zelph::network::Reasoning::collect_prune_targets(const Node condition, cons
 
 using namespace zelph::network;
 
+// A prune of a real dump runs for hours and used to say nothing at all until
+// it was finished, so there was no way to tell a slow run from a stuck one
+// from outside the process. Below this many victims nothing is reported: a
+// small prune is over before a line could help, and the transcripts of the
+// documentation would change for nothing.
+namespace
+{
+    constexpr size_t prune_progress_step = 100000;
+}
+
 // The engine's own vocabulary is not data -- and neither is the one fact that
 // makes it usable. "A ~ ->" binds A to every declared relation type, the core
 // predicates among them, and prune_nodes has always kept those NODES for that
@@ -135,6 +145,12 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     _pool->wait();
 
     removed_count = _facts_to_prune.size();
+
+    // The matching is the long half on a real dump and says nothing while it
+    // runs, so the count is worth a line the moment it is known -- the same
+    // reason prune_nodes reports the size of its job.
+    if (removed_count >= prune_progress_step)
+        out_stream() << "Pruning " << removed_count << " matched fact(s)..." << std::endl;
 
     if (removed_count > 0)
     {
@@ -205,6 +221,22 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
 
     size_t kept_core_nodes = 0;
 
+    // The size of the job is known here, and it is what makes the progress
+    // lines below mean anything.
+    const bool report = _nodes_to_prune.size() >= prune_progress_step;
+
+    if (report)
+    {
+        out_stream() << "Pruning " << _nodes_to_prune.size() << " node(s) and "
+                     << removed_facts << " matched fact(s)..." << std::endl;
+    }
+
+    // Erasing a node's names costs a SCAN of the reverse name map, so a bulk
+    // removal collects its victims and pays for one scan at the end -- see
+    // Zelph::remove_node. Doing it per node is what made this run at one node
+    // per second on the full Wikidata network.
+    adjacency_set named_dead;
+
     for (Node node : _nodes_to_prune)
     {
         // The engine's own vocabulary is not data. A pattern as ordinary as
@@ -240,9 +272,19 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         // remove_node returns 1 apiece, while a target variable leaves them
         // to their node and its remove_node returned 2. Same two victims,
         // "2 facts and 2 nodes" against "0 facts and 4 nodes".
-        removed_facts += remove_node(node) - 1;
+        removed_facts += remove_node(node, &named_dead) - 1;
         ++removed_nodes;
+
+        if (report && removed_nodes % prune_progress_step == 0)
+        {
+            out_stream() << "  " << removed_nodes << " of " << _nodes_to_prune.size()
+                         << " node(s) removed" << std::endl;
+        }
     }
+
+    if (report) out_stream() << "  removing the names of " << named_dead.size() << " node(s)..." << std::endl;
+
+    remove_names_of(named_dead);
 
     if (kept_core_nodes > 0 || kept_core_facts > 0)
     {

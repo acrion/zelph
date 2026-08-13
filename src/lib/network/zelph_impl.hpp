@@ -1715,6 +1715,50 @@ namespace zelph::network
             return removed_count;
         }
 
+        // The names of MANY nodes, in ONE pass over the reverse map.
+        //
+        // remove_node_names below has to SCAN `_node_of_name` for a value
+        // equal to the node: the forward map holds one name per language,
+        // while several names may point AT one node, so it cannot say which
+        // reverse entries exist. One scan per node is the right trade for
+        // `.remove`, where one scan is one scan, and fatal in bulk.
+        //
+        // Measured on the live run of 11 August 2026: pruning the full
+        // Wikidata dump managed 1.11 nodes per second and spent 97.7 % of its
+        // time in remove_node_names, because that map holds ~204 million
+        // entries there (204 chunks of `chunk_entries`). The script's
+        // 6.2 million removals would have taken two months. The dead set
+        // answers the same question in one pass, so a prune costs one scan
+        // per COMMAND instead of one per node.
+        void remove_names_of(const adjacency_set& dead)
+        {
+            if (dead.empty()) return;
+
+            std::unique_lock lock1(_mtx_node_of_name);
+            std::unique_lock lock2(_mtx_name_of_node);
+
+            // Forward: keyed by the node, so no scan is needed either way.
+            for (auto& lang_map : _name_of_node)
+            {
+                for (const Node nd : dead)
+                    lang_map.second.erase(nd);
+            }
+
+            _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
+            for (auto& lang_map : _node_of_name)
+            {
+                auto& map = lang_map.second;
+                for (auto it = map.begin(); it != map.end();)
+                {
+                    if (dead.count(it->second) != 0)
+                        it = map.erase(it);
+                    else
+                        ++it;
+                }
+            }
+        }
+
         void remove_node_names(Node nd)
         {
             std::unique_lock lock1(_mtx_node_of_name);
@@ -1727,6 +1771,8 @@ namespace zelph::network
             }
 
             // Remove reverse mappings (name → node) for this node in all languages
+            _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
             for (auto& lang_map : _node_of_name)
             {
                 auto& map = lang_map.second;
@@ -2261,8 +2307,16 @@ namespace zelph::network
         ankerl::unordered_dense::map<std::string, name_of_node_map> _name_of_node; // key is language identifier
         ankerl::unordered_dense::map<std::string, node_of_name_map> _node_of_name; // key is language identifier
 
-        mutable std::shared_mutex    _mtx_node_of_name;
-        mutable std::shared_mutex    _mtx_name_of_node;
+        mutable std::shared_mutex _mtx_node_of_name;
+        mutable std::shared_mutex _mtx_name_of_node;
+
+        // How often `_node_of_name` was walked end to end. It is the only way
+        // to find the reverse entries of a node, and doing it PER NODE is what
+        // made a full-dump prune take two months; a bulk removal owes one walk
+        // per batch. Hardware-independent, so a test can hold the shape
+        // without a quiet machine -- see Impl::remove_names_of.
+        mutable std::atomic<uint64_t> _name_map_scans{0};
+
         mutable std::recursive_mutex _mtx_print;
 
         mutable std::shared_mutex                                    _fs_cache_mtx;

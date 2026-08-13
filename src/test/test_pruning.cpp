@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 #include <filesystem>
 
 using namespace zelph::test;
@@ -113,6 +115,77 @@ TEST_CASE("pruning: .prune-nodes deletes the node's names with the node")
 
         collector.clear();
         CHECK_THROWS_AS(interactive.process(".node a"), std::runtime_error); });
+}
+
+TEST_CASE("pruning: a batch loses its names in every language, and only its own")
+{
+    // The reverse name map can only be searched BY VALUE, so a bulk removal
+    // takes one pass over it for the whole batch instead of one per node.
+    // Two things that pass has to get right, and neither is exercised by a
+    // single-node removal: several languages hold several reverse entries for
+    // one node, and a pass that tests the value against a set must not take
+    // the entries of the nodes around it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        interactive.process("alpha rel beta");
+        interactive.process("gamma rel beta");
+        interactive.process("survivor rel other");
+        interactive.process(".name alpha en AlphaEN");
+        interactive.process(".name alpha de AlphaDE");
+        interactive.process(".name gamma en GammaEN");
+        interactive.process(".name survivor en SurvEN");
+        interactive.process(".name survivor de SurvDE");
+
+        interactive.process(".prune-nodes A rel beta");
+
+        interactive.process(".lang en");
+        CHECK_THROWS_AS(interactive.process(".node AlphaEN"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".node GammaEN"), std::runtime_error);
+        interactive.process(".node SurvEN"); // still there, or this throws
+
+        interactive.process(".lang de");
+        CHECK_THROWS_AS(interactive.process(".node AlphaDE"), std::runtime_error);
+        interactive.process(".node SurvDE"); });
+}
+
+TEST_CASE("pruning: what a prune costs in name-map walks does not grow with its victims")
+{
+    // A guard on a COST, not on a result, and the reason it exists is
+    // measured: `remove_node` erased names per node, each erase walking the
+    // whole reverse map end to end, so pruning the full Wikidata dump ran at
+    // 1.11 nodes per second with 97.7 % of the time in that walk -- two
+    // months for a script that has to finish overnight. Nothing about the
+    // OUTCOME changes when that shape comes back, which is precisely why the
+    // tests above cannot see it.
+    //
+    // What is asserted is the shape rather than a number: a prune costs the
+    // same few walks whether it kills one node or twenty. The constant part
+    // is the command's own housekeeping (the pattern node it materialised),
+    // which is per command and therefore harmless.
+    //
+    // The counter is hardware-independent, so this needs no quiet machine.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        auto* const graph = interactive.graph();
+        REQUIRE(graph != nullptr);
+
+        interactive.process("one rel small");
+
+        const uint64_t before_small = graph->name_map_scans();
+        interactive.process(".prune-nodes A rel small");
+        const uint64_t small = graph->name_map_scans() - before_small;
+
+        for (int i = 0; i < 20; ++i)
+            interactive.process("n" + std::to_string(i) + " rel big");
+
+        const uint64_t before_big = graph->name_map_scans();
+        interactive.process(".prune-nodes A rel big");
+        const uint64_t big = graph->name_map_scans() - before_big;
+
+        REQUIRE(small > 0); // the counter is wired at all
+        CHECK(big == small); });
 }
 
 TEST_CASE("pruning: .prune-nodes insists on the one variable it deletes by")

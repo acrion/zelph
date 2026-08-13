@@ -54,7 +54,35 @@ size_t Zelph::cleanup_names() const
     return _pImpl->cleanup_dangling_names();
 }
 
-size_t Zelph::remove_node(Node node) const
+// Erase the names of a whole batch of removed nodes in one pass over the
+// reverse name map -- what `remove_node`'s `deferred_names` collected.
+void Zelph::remove_names_of(const adjacency_set& dead) const
+{
+    _pImpl->remove_names_of(dead);
+}
+
+// How often the reverse name map was walked end to end. A node's reverse
+// entries can only be found BY VALUE, so the walk is unavoidable; what is
+// avoidable is doing it once per node instead of once per batch, which is
+// what made a full-dump prune run at one node per second. Hardware-
+// independent, so a test can hold that shape without a quiet machine.
+uint64_t Zelph::name_map_scans() const
+{
+    return _pImpl->_name_map_scans.load(std::memory_order_relaxed);
+}
+
+// `deferred_names`, when given, COLLECTS the removed nodes instead of having
+// their names erased here, and the caller then owes one `remove_names_of` for
+// the whole batch.
+//
+// That is the only way a bulk removal can afford names at all. Erasing them
+// per node costs a walk of the reverse name map apiece, and on the full
+// Wikidata network that map holds ~204 million entries: the 6.2 million
+// removals of wikidata-prune.zph measured 1.11 nodes per second with 97.7 %
+// of the time in that walk, which is two months for a script that has to
+// finish overnight. `.remove` keeps the per-node path, where one walk IS one
+// batch.
+size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
 {
     // Removing a core node leaves a network in which the next negation, list
     // or contradiction fails deep inside the engine ("requested node does not
@@ -230,8 +258,17 @@ size_t Zelph::remove_node(Node node) const
 
     for (const Node dead : doomed)
     {
-        _pImpl->remove(dead);            // Disconnects edges and removes from adjacency maps
-        _pImpl->remove_node_names(dead); // Separate method for name cleanup
+        _pImpl->remove(dead); // Disconnects edges and removes from adjacency maps
+
+        // Separate method for name cleanup -- unless the caller is removing
+        // in bulk and takes the whole batch at the end.
+        if (deferred_names == nullptr) _pImpl->remove_node_names(dead);
+    }
+
+    if (deferred_names != nullptr)
+    {
+        for (const Node dead : doomed)
+            deferred_names->insert(dead);
     }
 
     if (declaration_removed)

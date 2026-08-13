@@ -17,7 +17,13 @@
 # the new file is a different artifact. Overwriting the old one would retire
 # every documented number without a trace; compare the two instead.
 
+# Every prune command names the size of its job before it starts and counts
+# through it in steps of 100 000, so the log says where the run is. Keep the
+# log: the `.stat` below is what the result has to be checked against, and it
+# is not reproducible without loading the 88 GB source again.
+
 .load /home/stefan/zelph/wikidata-20260309-all.bin
 .import examples/wikidata/wikidata-prune
+.stat
 .save /home/stefan/zelph/wikidata-20260309-all-pruned-v2.bin
 .quit
