@@ -162,15 +162,47 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
         // Subject and object both point AT their fact, the predicate is
         // pointed at BY it, so both directions have to be looked at; which
         // of the two nodes is the WHOLE is then decided by is_part_of.
-        adjacency_set neighbours = _pImpl->get_right(current);
-        for (const Node from : _pImpl->get_left(current))
+        //
+        // Read under ONE scope, and by REFERENCE. Every adjacency read here
+        // used to copy the whole set -- two per neighbour, since
+        // parse_relation copies twice per call -- and a profile of the live
+        // Wikidata prune put 100 % of its time under this loop, 51 % of that
+        // in `adjacency_set::copy_from` and half of THAT in allocating the
+        // copy's hash buckets. Copying is also the worst thing to do to a
+        // graph that lives in swap: it touches every byte of the source and
+        // then writes a second one.
+        //
+        // The scope covers the READS only. is_part_of goes through
+        // get_fact_structures, which takes the same shared locks, so it runs
+        // after the scope is closed -- hence the two-pass shape: the cheap
+        // test names the candidates, the expensive one judges them.
+        std::vector<Node> candidates;
         {
-            neighbours.insert(from);
+            // The memo BEFORE the scope: building it lazily takes the locks.
+            const auto               rel_types = relation_type_set();
+            const Network::ReadScope scope     = read_scope();
+
+            adjacency_set neighbours;
+            for (const Node n : scope.right(current))
+                neighbours.insert(n);
+            for (const Node n : scope.left(current))
+                neighbours.insert(n);
+
+            for (const Node candidate : neighbours)
+            {
+                // parse_relation_scoped decides membership by the memo alone,
+                // where parse_relation additionally probes the declaration's
+                // probability. The two differ only for a declaration asserted
+                // as WRONG, which nothing produces -- and get_fact_structures,
+                // which is_part_of asks next, has always read the memo, so
+                // this makes the two steps agree rather than differ.
+                if (parse_relation_scoped(scope, *rel_types, candidate) == 0) continue; // ordinary data
+                candidates.push_back(candidate);
+            }
         }
 
-        for (const Node candidate : neighbours)
+        for (const Node candidate : candidates)
         {
-            if (parse_relation(candidate) == 0) continue; // ordinary data
             if (!is_part_of(candidate, current)) continue;
 
             doom(candidate);
