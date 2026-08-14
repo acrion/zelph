@@ -1579,6 +1579,20 @@ Node Zelph::parse_relation_scoped(const Network::ReadScope&                 scop
                                   const ankerl::unordered_dense::set<Node>& rel_types,
                                   const Node                                rule) const
 {
+    // An ATOM decomposes into nothing: a fact node's id IS the hash of its
+    // triple, an atom's id is a counter, and a variable is neither. Two bit
+    // tests, and they save the adjacency lookup below -- which on a graph
+    // that does not fit in RAM is a random page touch.
+    //
+    // The other two readers of a node's structure guard exactly like this
+    // (predicate_of, and get_fact_structures, whose comment records the atom
+    // share as ~17M cache probes per Jacobian phase). This one did not, and
+    // it is the hot path of a bulk removal: every doomed FACT offers its
+    // subject, its predicate and its objects as candidates, and all of those
+    // are atoms. Three quarters of the calls asked memory a question that
+    // the node id already answers.
+    if (!is_hash(rule) || is_var(rule)) return 0;
+
     Node relation = 0; // 0 means failure
     Node subject  = 0;
 
