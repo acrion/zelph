@@ -1133,3 +1133,66 @@ TEST_CASE("pruning: the batched cascade removes exactly what removing one by one
     CHECK(batched.size() == one_by_one.size());
     CHECK(batched == one_by_one);
 }
+
+TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phase")
+{
+    // A guard on a DIAGNOSTIC, and it is worth one because the diagnostic is
+    // the only thing a multi-day operation offers from outside the process.
+    //
+    // The progress line used to advance once per batch of 100 000 victims.
+    // On the full Wikidata dump one such batch took twelve minutes -- ~90 % of
+    // it in the collection phase, which said nothing -- so the log stood silent
+    // for twelve minutes at a time and a slow run was indistinguishable from a
+    // stuck one. The batch cannot simply be made smaller: its size is what
+    // bounds the fact-structure cache and what the union argument in
+    // collect_doomed rests on.
+    //
+    // 100 001 victims because the reporting threshold IS the batch size, and
+    // the interesting case is the one where a single batch has to speak while
+    // it works. The fixture is built through the Janet API rather than by
+    // typing 100 001 statements: parsing them costs 23 s, creating them 0.5 s,
+    // and what is under test is the removal.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("%(let [hub (zelph/resolve \"hub\") rel (zelph/resolve \"rel\")] "
+                            "(for i 0 100001 (zelph/fact (zelph/resolve (string \"n\" i)) rel hub)))");
+        collector.clear();
+
+        interactive.process(".prune-nodes A rel hub");
+
+        // In order, because the ORDER is the whole point: an "examined" line
+        // that only appears after the batch has been erased would report
+        // exactly what the old code already reported.
+        std::vector<size_t> examined_before_first_removal;
+        bool                removal_seen = false;
+        for (const auto& e : collector.events())
+        {
+            const auto pos = e.text.find(" of 100001 node(s) ");
+            if (pos == std::string::npos) continue;
+
+            if (e.text.find("node(s) removed") != std::string::npos)
+            {
+                removal_seen = true;
+                continue;
+            }
+            if (e.text.find("node(s) examined") == std::string::npos) continue;
+            if (removal_seen) continue;
+
+            examined_before_first_removal.push_back(std::stoull(e.text.substr(0, pos)));
+        }
+
+        // The batch spoke while it was collecting, not only once it was done.
+        REQUIRE(removal_seen); // not vacuous: the prune really ran
+        CHECK(examined_before_first_removal.size() >= 5);
+
+        // Monotone and inside the job it reports against -- a counter that
+        // restarts per worker, or overshoots the batch, is a wrong number
+        // rather than a missing one.
+        size_t previous = 0;
+        for (const size_t seen : examined_before_first_removal)
+        {
+            CHECK(seen > previous);
+            CHECK(seen <= 100001);
+            previous = seen;
+        } });
+}

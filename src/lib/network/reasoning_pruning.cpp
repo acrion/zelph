@@ -28,8 +28,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure.hpp"
 #include "zelph_impl.hpp"
 
+#include <atomic>
 #include <exception>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 // Prune mode: what does the matched condition denote?
@@ -117,6 +119,14 @@ using namespace zelph::network;
 namespace
 {
     constexpr size_t prune_progress_step = 100000;
+
+    // ...and reporting once per BATCH is not enough, because a batch is where
+    // the hours are. On the full Wikidata dump one batch of prune_progress_step
+    // victims took twelve minutes, of which ~90 % is the collection phase, so
+    // the log stood silent for twelve minutes at a time and looked hung on
+    // exactly the run the progress output was built for. The collection phase
+    // therefore reports on its own, this many victims at a time.
+    constexpr size_t prune_collect_step = 10000;
 }
 
 // The engine's own vocabulary is not data -- and neither is the one fact that
@@ -309,19 +319,26 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         std::exception_ptr         failure;
         std::mutex                 failure_mtx;
 
+        // Counts victims CONSIDERED, not walked, so it is monotone against the
+        // batch size and reaches it exactly. Only the calling thread reads it
+        // and only it prints, which is why no output lock is needed here.
+        std::atomic<size_t> examined{0};
+
         for (size_t w = 0; w < workers; ++w)
         {
             const size_t from = base + w * span;
             const size_t to   = std::min(from + span, stop);
             if (from >= to) continue;
 
-            _pool->enqueue([this, from, to, w, &victims, &found, &taken, &failure, &failure_mtx]()
+            _pool->enqueue([this, from, to, w, &victims, &found, &taken, &examined, &failure, &failure_mtx]()
                            {
                                try
                                {
                                    for (size_t i = from; i < to; ++i)
                                    {
                                        const Node victim = victims[i];
+
+                                       examined.fetch_add(1, std::memory_order_relaxed);
 
                                        // A victim can be part of ANOTHER victim's
                                        // closure -- "X rel o" binds X to `a` and to
@@ -343,6 +360,27 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
                                    const std::lock_guard<std::mutex> guard(failure_mtx);
                                    if (!failure) failure = std::current_exception();
                                } });
+        }
+
+        // ThreadPool::wait() spins on pending_tasks, so waiting here costs the
+        // same and buys the progress line. The batch is not divided into
+        // smaller ones instead, because its size is what bounds the
+        // fact-structure cache and what makes the union argument in
+        // collect_doomed hold.
+        size_t reported = 0;
+        while (_pool->pending_tasks > 0)
+        {
+            if (report)
+            {
+                const size_t seen = examined.load(std::memory_order_relaxed);
+                if (seen >= reported + prune_collect_step)
+                {
+                    reported = seen - seen % prune_collect_step;
+                    out_stream() << "  " << (base + seen) << " of " << victims.size()
+                                 << " node(s) examined" << std::endl;
+                }
+            }
+            std::this_thread::yield();
         }
 
         _pool->wait();
