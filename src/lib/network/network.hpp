@@ -186,26 +186,62 @@ namespace zelph::network
             }
         }
 
+        // ONE exclusive lock triple for the whole removal, and no copies.
+        //
+        // This called disconnect() per edge, and disconnect takes both
+        // adjacency locks plus the weight lock every time -- so a node of
+        // degree D cost 2D+2 exclusive acquisitions where two suffice. It also
+        // COPIED both adjacency sets first, and had to: disconnect erases from
+        // the very set the loop walks. On a graph that lives in swap a copy is
+        // the worst thing there is, since it touches every byte of the source
+        // and then writes a second one.
+        //
+        // Walking the live sets is safe because neither loop writes the map it
+        // reads: erasing `node` from a NEIGHBOUR's entry touches the OTHER
+        // map, and no entry is erased from `_left`/`_right` themselves until
+        // both loops are done. A self-loop needs no special case for the same
+        // reason -- `_left[node]` and `_right[node]` go wholesale at the end.
+        //
+        // The lock order is disconnect's own (left, right, weights), so the
+        // two remain interchangeable for any caller holding neither.
         void remove(Node node)
         {
-            // Disconnect all incoming and outgoing edges
-            {
-                adjacency_set incoming = get_left(node);
-                for (Node from : incoming)
-                {
-                    disconnect(from, node);
-                }
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            std::unique_lock                    lock_weights(_mtx_weights);
 
-                adjacency_set outgoing = get_right(node);
-                for (Node to : outgoing)
+            Node hash = 0;
+
+            const auto drop_weight = [&](const Node a, const Node b)
+            {
+                const auto it = find_weight(a, b, hash);
+                if (it != _weights.end()) _weights.erase(it);
+            };
+
+            // Incoming: every `from` that has `node` among its outgoing edges.
+            const auto incoming = _right.find(node);
+            if (incoming != _right.end())
+            {
+                for (const Node from : incoming->second)
                 {
-                    disconnect(node, to);
+                    const auto it = _left.find(from);
+                    if (it != _left.end()) it->second.erase(node);
+                    drop_weight(from, node);
                 }
             }
 
-            // Remove the node itself
-            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
-            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            // Outgoing: every `to` that has `node` among its incoming edges.
+            const auto outgoing = _left.find(node);
+            if (outgoing != _left.end())
+            {
+                for (const Node to : outgoing->second)
+                {
+                    const auto it = _right.find(to);
+                    if (it != _right.end()) it->second.erase(node);
+                    drop_weight(node, to);
+                }
+            }
+
             _left.erase(node);
             _right.erase(node);
         }

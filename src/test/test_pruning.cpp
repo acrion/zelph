@@ -1196,3 +1196,44 @@ TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phas
             previous = seen;
         } });
 }
+
+TEST_CASE("removal: a removed edge takes its probability with it")
+{
+    // Network::remove used to disconnect() every edge, and disconnect erases
+    // the edge's weight along with it. Doing the whole removal under one lock
+    // triple means erasing those weights by hand, and nothing about the GRAPH
+    // says whether that was done: a stale weight is invisible until the same
+    // edge comes back.
+    //
+    // It can come back exactly, which is what makes this testable. A fact
+    // node's id IS the hash of its triple, and a weight is keyed on the hash
+    // of the edge it belongs to, so re-asserting a removed fact lands on the
+    // same node and the same weight key. A weight that outlived its edge is
+    // then inherited by the new one.
+    zelph::io::OutputCollector collector;
+    zelph::network::Zelph      z(collector.sink());
+
+    const auto a = z.node("a");
+    const auto p = z.node("p");
+    const auto b = z.node("b");
+    z.fact(p, z.core.IsA, {z.core.RelationTypeCategory});
+
+    // Asserted as WRONG: probability 0 is what puts an entry in the weight map
+    // at all -- connect() stores nothing for the default probability of 1.
+    const auto wrong = z.fact(a, p, {b}, 0);
+    REQUIRE(wrong != 0);
+    REQUIRE(z.check_fact(a, p, {b}).is_wrong());
+
+    z.remove_node(wrong);
+    REQUIRE(!z.exists(wrong));
+
+    // The same triple again, this time with nothing said about its
+    // probability. It must come back as an ordinary fact.
+    const auto again = z.fact(a, p, {b});
+    REQUIRE(again == wrong); // the same node: the id is the hash of the triple
+
+    const auto answer = z.check_fact(a, p, {b});
+    CHECK(answer.is_known());
+    CHECK(!answer.is_wrong()); // a weight that outlived its edge would say WRONG
+    CHECK(answer.is_correct());
+}
