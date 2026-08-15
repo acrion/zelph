@@ -1577,7 +1577,8 @@ void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjac
 // are exactly equivalent.
 Node Zelph::parse_relation_scoped(const Network::ReadScope&                 scope,
                                   const ankerl::unordered_dense::set<Node>& rel_types,
-                                  const Node                                rule) const
+                                  const Node                                rule,
+                                  const adjacency_set*                      outgoing) const
 {
     // An ATOM decomposes into nothing: a fact node's id IS the hash of its
     // triple, an atom's id is a counter, and a variable is neither. Two bit
@@ -1596,7 +1597,10 @@ Node Zelph::parse_relation_scoped(const Network::ReadScope&                 scop
     Node relation = 0; // 0 means failure
     Node subject  = 0;
 
-    for (const Node nd : scope.right(rule))
+    if (outgoing == nullptr) outgoing = scope.try_right(rule);
+    if (outgoing == nullptr) return 0;
+
+    for (const Node nd : *outgoing)
     {
         if (rel_types.count(nd) == 0) continue;
 

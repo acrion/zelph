@@ -217,9 +217,13 @@ namespace zelph::network
         // adjacency reads via scope references, predicate detection via
         // the caller-provided relation-type memo. The memo MUST be fetched
         // BEFORE the scope opens (its lazy build takes network locks).
+        // `outgoing`, when given, is scope.right(rule) already fetched by the
+        // caller -- the removal cascade has it and used to pay a second probe
+        // for it here.
         Node         parse_relation_scoped(const Network::ReadScope&                 scope,
                                            const ankerl::unordered_dense::set<Node>& rel_types,
-                                           Node                                      rule) const;
+                                           Node                                      rule,
+                                           const adjacency_set*                      outgoing = nullptr) const;
         Node         count() const;
         AllNodeView  get_all_nodes_view() const;
         LangNodeView get_lang_nodes_view(const std::string& lang) const;

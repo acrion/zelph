@@ -144,6 +144,7 @@ namespace zelph::network
         const Network::ReadScope&                 scope,
         const ankerl::unordered_dense::set<Node>& rel_types,
         const Node                                fact,
+        const adjacency_set*                      outgoing,
         FactStructureList&                        structures,
         bool&                                     no_predicates)
     {
@@ -154,14 +155,15 @@ namespace zelph::network
             // block may write, take another network lock, or log (the
             // output handler is user code, and format/log lock).
 
-            if (!scope.exists(fact)) return false;
+            if (outgoing == nullptr) outgoing = scope.try_right(fact);
+            if (outgoing == nullptr) return false; // no _left entry IS "gone"
 
             // Zelph Topology:
             // S <-> F (Subject is bidirectional)
             // F -> P  (Predicate is outgoing)
             // O -> F  (Object is incoming)
-            const adjacency_set& right = scope.right(fact); // Contains P and S (and Parent-Facts P' where F <-> P')
-            const adjacency_set& left  = scope.left(fact);  // Contains O and S (and Parent-Facts P')
+            const adjacency_set& right = *outgoing;        // Contains P and S (and Parent-Facts P' where F <-> P')
+            const adjacency_set& left  = scope.left(fact); // Contains O and S (and Parent-Facts P')
 
             adjacency_set predicates;
             for (Node p : right)
@@ -535,7 +537,7 @@ namespace zelph::network
             const auto               rel_types = n->relation_type_set();
             const Network::ReadScope scope     = n->read_scope();
 
-            if (!reconstruct_fact_structures_scoped(n, scope, *rel_types, fact, structures, no_predicates))
+            if (!reconstruct_fact_structures_scoped(n, scope, *rel_types, fact, nullptr, structures, no_predicates))
                 return empty_structures();
         }
 
@@ -557,6 +559,7 @@ namespace zelph::network
         const Network::ReadScope&                 scope,
         const ankerl::unordered_dense::set<Node>& rel_types,
         const Node                                fact,
+        const adjacency_set*                      outgoing,
         const int                                 depth,
         FactStructureList&                        structures,
         bool&                                     no_predicates,
@@ -569,7 +572,7 @@ namespace zelph::network
 
         n->count_genuine_walk();
 
-        if (!reconstruct_fact_structures_scoped(n, scope, rel_types, fact, structures, no_predicates))
+        if (!reconstruct_fact_structures_scoped(n, scope, rel_types, fact, outgoing, structures, no_predicates))
         {
             out = empty_structures();
             return false;

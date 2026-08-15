@@ -194,7 +194,15 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
                 // as WRONG, which nothing produces -- and get_fact_structures,
                 // which is_part_of asks next, has always read the memo, so
                 // this makes the two steps agree rather than differ.
-                if (parse_relation_scoped(scope, *rel_types, candidate) == 0) continue; // ordinary data
+                // ONE probe of the candidate's outgoing set for the whole
+                // decision. It used to be three -- parse_relation_scoped
+                // fetched it, then the reconstruction asked exists() and
+                // fetched it again -- while do_find on these maps was 54 % of
+                // this loop's profile once the lock traffic was gone.
+                const adjacency_set* const outgoing = scope.try_right(candidate);
+                if (outgoing == nullptr) continue; // gone already
+
+                if (parse_relation_scoped(scope, *rel_types, candidate, outgoing) == 0) continue; // ordinary data
 
                 // The structure is reconstructed HERE, under the scope that is
                 // already open, rather than by is_part_of afterwards. That is
@@ -209,7 +217,7 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
                 // time.
                 Unfinished       u{candidate, {}, false};
                 FactStructurePtr done;
-                if (begin_fact_structures_scoped(this, scope, *rel_types, candidate, 3, u.structures, u.no_predicates, done))
+                if (begin_fact_structures_scoped(this, scope, *rel_types, candidate, outgoing, 3, u.structures, u.no_predicates, done))
                 {
                     unfinished.push_back(std::move(u));
                 }

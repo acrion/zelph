@@ -692,6 +692,18 @@ namespace zelph::network
                 return it == _n->_left.end() ? empty_set() : it->second;
             }
 
+            // right() and exists() in ONE probe, for callers that ask both of
+            // the same node -- nullptr IS "does not exist", since create()
+            // gives every node a _left entry and only removal takes it away.
+            // The removal cascade asked three times per candidate (exists,
+            // right, and right again inside parse_relation_scoped) while
+            // do_find on these maps was 54 % of its profile.
+            const adjacency_set* try_right(const Node b) const
+            {
+                const auto it = _n->_left.find(b);
+                return it == _n->_left.end() ? nullptr : &it->second;
+            }
+
             // Predecessors / incoming edges of b (counterpart of get_left).
             const adjacency_set& left(const Node b) const
             {
