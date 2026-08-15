@@ -45,23 +45,39 @@ namespace zelph::network
     // Returns the full disambiguated list as an immutable shared pointer;
     // callers that only need the single best structure use
     // get_preferred_structure (equivalent to the former prefer_single=true).
-    inline FactStructurePtr get_fact_structures(
-        const Zelph* n,
-        Node         fact,
-        int          depth)
+    // One shared instance backs ALL empty results (atoms, nonexistent
+    // nodes, predicate-free hash nodes): negative entries are by far
+    // the most frequent lookups on the unify recursion path, and this
+    // way they cost neither an allocation nor a per-entry list.
+    inline const FactStructurePtr& empty_structures()
     {
-        // One shared instance backs ALL empty results (atoms, nonexistent
-        // nodes, predicate-free hash nodes): negative entries are by far
-        // the most frequent lookups on the unify recursion path, and this
-        // way they cost neither an allocation nor a per-entry list.
         static const FactStructurePtr shared_empty = std::make_shared<FactStructureList>();
+        return shared_empty;
+    }
 
+    // The answers that need NO adjacency lock: a structureless node class, a
+    // fact-structure cache hit, a genuine-structure hit. Split out so that
+    // both entry points below can offer them before anyone pays for a scope --
+    // the scoped one included, since its caller's scope is exactly what these
+    // avoid needing. Each of the three touches its own mutex (_fs_cache_mtx,
+    // _genuine_mtx) or none, never _smtx_left/_smtx_right, so this is legal
+    // with or without a scope held.
+    inline bool try_fact_structures_lock_free(
+        const Zelph*      n,
+        const Node        fact,
+        const int         depth,
+        FactStructurePtr& out)
+    {
         if (n->should_log(depth))
         {
             n->log(depth, "get_fact_structures", "Starting for fact: " + n->format(fact));
         }
 
-        if (fact == 0) return shared_empty;
+        if (fact == 0)
+        {
+            out = empty_structures();
+            return true;
+        }
 
         // ---- Structureless node classes: answer without any lock ----
         // Atoms (sequential IDs) and variables can never decompose: they
@@ -72,7 +88,11 @@ namespace zelph::network
         // a map find; the classification is two bit tests. Holds
         // independently of the authoritative bits, i.e. also after binary
         // loads and trusted imports.
-        if (!Zelph::is_hash(fact) || Zelph::is_var(fact)) return shared_empty;
+        if (!Zelph::is_hash(fact) || Zelph::is_var(fact))
+        {
+            out = empty_structures();
+            return true;
+        }
 
         // ---- Cache lookup FIRST (ignores depth; depth is only for logging) ----
         // A hit answers without touching the adjacency locks: the former
@@ -80,14 +100,13 @@ namespace zelph::network
         // per hit -- ~60M pairs per Jacobian phase. Safe without it: every
         // removal/merge/load path clears the whole cache, so a present
         // entry implies a live node.
-        FactStructurePtr cached;
-        if (n->try_get_fact_structures_cached(fact, cached))
+        if (n->try_get_fact_structures_cached(fact, out))
         {
             if (n->should_log(depth))
             {
-                n->log(depth, "get_fact_structures", "Cache HIT for fact: " + n->format(fact) + " (structures=" + std::to_string(cached->size()) + ")");
+                n->log(depth, "get_fact_structures", "Cache HIT for fact: " + n->format(fact) + " (structures=" + std::to_string(out->size()) + ")");
             }
-            return cached;
+            return true;
         }
 
         // ---- Genuine-structure fast path ----
@@ -97,41 +116,45 @@ namespace zelph::network
         // a single lock pair; per-node invalidation may erase that copy at
         // any time -- harmless, the next probe re-promotes the same
         // immutable list.
-        FactStructurePtr genuine;
-        if (n->try_get_genuine_structure(fact, genuine))
+        if (n->try_get_genuine_structure(fact, out))
         {
-            n->store_fact_structures_cached(fact, genuine);
+            n->store_fact_structures_cached(fact, out);
             if (n->should_log(depth))
             {
                 n->log(depth, "get_fact_structures", "Genuine-store HIT for fact: " + n->format(fact));
             }
-            return genuine;
+            return true;
         }
 
-        n->count_genuine_walk(); // everything below is the historical reconstruction
+        return false;
+    }
 
-        // Predicate-detection memo for the whole reconstruction (see
-        // Zelph::relation_type_set). MUST be fetched before the ReadScope
-        // below opens: the memo's lazy build takes the very locks the
-        // scope will hold.
-        const auto rel_types = n->relation_type_set();
-
-        FactStructureList structures;
-        bool              no_predicates = false;
-
+    // The ADJACENCY half of the historical reconstruction: everything that
+    // needs the graph, and nothing that does not. Scope and predicate memo
+    // come from the CALLER, so a caller walking many nodes in a row pays for
+    // one scope instead of one per node -- which is the whole point of the
+    // split. Returns false when the node is not in the graph at all.
+    //
+    // What may NOT move in here is what forced the two-phase shape in the
+    // first place: the disambiguation calls parse_relation, and logging calls
+    // format, and both take the very locks the scope holds. Those live in
+    // finish_fact_structures below, which runs after the scope is released.
+    inline bool reconstruct_fact_structures_scoped(
+        const Zelph*                              n,
+        const Network::ReadScope&                 scope,
+        const ankerl::unordered_dense::set<Node>& rel_types,
+        const Node                                fact,
+        FactStructureList&                        structures,
+        bool&                                     no_predicates)
+    {
         {
-            // ---- Locked-scope reconstruction ----
-            // ONE shared lock pair covers the entire miss path. Previously
-            // every neighborhood probe -- dozens per reconstructed node,
-            // up to three hops deep in the child-fact heuristic -- paid
-            // its own rwlock pair plus a full adjacency_set copy. All
-            // reads below go through scope REFERENCES (stable while the
+            // ---- Reconstruction under the caller's scope ----
+            // All reads below go through scope REFERENCES (stable while the
             // scope is alive). Per the ReadScope contract, nothing in this
             // block may write, take another network lock, or log (the
             // output handler is user code, and format/log lock).
-            const Network::ReadScope scope = n->read_scope();
 
-            if (!scope.exists(fact)) return shared_empty;
+            if (!scope.exists(fact)) return false;
 
             // Zelph Topology:
             // S <-> F (Subject is bidirectional)
@@ -143,7 +166,7 @@ namespace zelph::network
             adjacency_set predicates;
             for (Node p : right)
             {
-                if (rel_types->count(p) != 0)
+                if (rel_types.count(p) != 0)
                 {
                     predicates.insert(p);
                 }
@@ -151,7 +174,7 @@ namespace zelph::network
 
             // See the object loop below: only a node that serves as a predicate
             // somewhere can have users mixed into its object candidates.
-            const bool fact_is_predicate = rel_types->count(fact) != 0;
+            const bool fact_is_predicate = rel_types.count(fact) != 0;
 
             if (predicates.empty())
             {
@@ -192,7 +215,7 @@ namespace zelph::network
                         // must not be filtered out as child-facts.
                         if (Zelph::is_hash(s) && !Zelph::is_var(s))
                         {
-                            Node s_pred = n->parse_relation_scoped(scope, *rel_types, s);
+                            Node s_pred = n->parse_relation_scoped(scope, rel_types, s);
                             if (s_pred != 0 && s_pred != p)
                             {
                                 const adjacency_set& s_right = scope.right(s);
@@ -225,7 +248,7 @@ namespace zelph::network
                                             // not an alternative subject.
                                             if (Zelph::is_hash(x))
                                             {
-                                                Node x_pred = n->parse_relation_scoped(scope, *rel_types, x);
+                                                Node x_pred = n->parse_relation_scoped(scope, rel_types, x);
                                                 if (x_pred != 0 && x_pred != s_pred)
                                                 {
                                                     // x has a different predicate than s — could be:
@@ -265,7 +288,7 @@ namespace zelph::network
                                                                 // y is itself just a child-fact of x.
                                                                 if (Zelph::is_hash(y))
                                                                 {
-                                                                    Node y_pred = n->parse_relation_scoped(scope, *rel_types, y);
+                                                                    Node y_pred = n->parse_relation_scoped(scope, rel_types, y);
                                                                     if (y_pred != 0 && y_pred != x_pred)
                                                                     {
                                                                         const adjacency_set& y_right3        = scope.right(y);
@@ -343,7 +366,7 @@ namespace zelph::network
                                     // at all, which no ordinary data node is.
                                     if (fact_is_predicate
                                         && Zelph::is_hash(o) && !Zelph::is_var(o)
-                                        && n->parse_relation_scoped(scope, *rel_types, o) == fact)
+                                        && n->parse_relation_scoped(scope, rel_types, o) == fact)
                                     {
                                         continue;
                                     }
@@ -365,7 +388,21 @@ namespace zelph::network
                     }
                 }
             }
-        } // ReadScope released -- locking API, logging and cache stores are legal again
+        }
+
+        return true;
+    }
+
+    // The half that must NOT hold a scope: hash verification, disambiguation
+    // (parse_relation locks), logging (format locks) and the cache store.
+    inline FactStructurePtr finish_fact_structures(
+        const Zelph*       n,
+        const Node         fact,
+        const int          depth,
+        FactStructureList& structures,
+        const bool         no_predicates)
+    {
+        const FactStructurePtr& shared_empty = empty_structures();
 
         if (no_predicates)
         {
@@ -475,6 +512,70 @@ namespace zelph::network
         }
 
         return result;
+    }
+
+    // The ordinary entry point: opens its own scope for the miss path, and
+    // never gets that far for a node the lock-free answers cover.
+    inline FactStructurePtr get_fact_structures(
+        const Zelph* n,
+        Node         fact,
+        int          depth)
+    {
+        FactStructurePtr quick;
+        if (try_fact_structures_lock_free(n, fact, depth, quick)) return quick;
+
+        n->count_genuine_walk(); // everything below is the historical reconstruction
+
+        FactStructureList structures;
+        bool              no_predicates = false;
+
+        {
+            // The memo BEFORE the scope: its lazy build takes the very locks
+            // the scope will hold.
+            const auto               rel_types = n->relation_type_set();
+            const Network::ReadScope scope     = n->read_scope();
+
+            if (!reconstruct_fact_structures_scoped(n, scope, *rel_types, fact, structures, no_predicates))
+                return empty_structures();
+        }
+
+        return finish_fact_structures(n, fact, depth, structures, no_predicates);
+    }
+
+    // The entry point for a caller that ALREADY holds a scope and a memo and
+    // walks many nodes under them -- the removal cascade is the one that does.
+    // It cannot finish the job: hash verification and disambiguation lock, so
+    // the caller has to release its scope and call finish_fact_structures for
+    // each node afterwards. That two-phase duty is why this is not simply
+    // get_fact_structures with an extra argument.
+    //
+    // Returns false when the lock-free half already answered (then `out`
+    // holds it) or the node is absent from the graph (then `out` is empty);
+    // in both cases there is nothing left to finish.
+    inline bool begin_fact_structures_scoped(
+        const Zelph*                              n,
+        const Network::ReadScope&                 scope,
+        const ankerl::unordered_dense::set<Node>& rel_types,
+        const Node                                fact,
+        const int                                 depth,
+        FactStructureList&                        structures,
+        bool&                                     no_predicates,
+        FactStructurePtr&                         out)
+    {
+        // Logging is a lock, so the lock-free half may only run here with
+        // logging off. It is off on every workload this exists for; when it
+        // is on, the caller falls back to the ordinary entry point.
+        if (!n->should_log(depth) && try_fact_structures_lock_free(n, fact, depth, out)) return false;
+
+        n->count_genuine_walk();
+
+        if (!reconstruct_fact_structures_scoped(n, scope, rel_types, fact, structures, no_predicates))
+        {
+            out = empty_structures();
+            return false;
+        }
+
+        return true;
     }
 
     // Convenience: return a single preferred structure (for reasoning/instantiation).

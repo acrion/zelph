@@ -116,22 +116,20 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
     // removal and silently took `z (a p b) w` and `a p b` as well.
     //
     // Every reading counts: on removal the conservative answer is the safe
-    // one, and get_fact_structures offers all of them.
-    // The list is held by a NAMED pointer, not read through the call: see the
-    // note at Zelph::get_fact_subjects. This is where that bug was found --
-    // a prune that stops caching structures reads freed memory here, and the
-    // cascade then finds nothing.
-    const auto is_part_of = [this](const Node whole, const Node part)
-    {
-        const auto structures = get_fact_structures(this, whole, 3);
-        for (const auto& fs : *structures)
-        {
-            if (fs.subject == part || fs.predicate == part) return true;
-            if (fs.objects.count(part) != 0) return true;
-        }
+    // one, and the reconstruction offers all of them. It happens in two
+    // phases below -- the graph reads under the scope, the rest after it --
+    // and the structures are held in NAMED storage, never read through a
+    // call returning a smart pointer: see the note at
+    // Zelph::get_fact_subjects. This is where that bug was found -- a prune
+    // that stops caching structures read freed memory here, and the cascade
+    // then found nothing.
 
-        return false;
-    };
+    // The predicate memo is fetched ONCE for the whole cascade, not once per
+    // node walked. It cannot change while this runs -- the collection phase
+    // only reads -- and its accessor takes a shared lock of its own, which is
+    // one more contended cache line per node when a dozen threads collect in
+    // parallel.
+    const auto rel_types = relation_type_set();
 
     std::vector<Node> pending{node};
     out.insert(node);
@@ -168,11 +166,19 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
         // get_fact_structures, which takes the same shared locks, so it runs
         // after the scope is closed -- hence the two-pass shape: the cheap
         // test names the candidates, the expensive one judges them.
-        std::vector<Node> candidates;
+        // A candidate whose structure still has to be finished once the scope
+        // is released, with the state the scoped half produced for it.
+        struct Unfinished
         {
-            // The memo BEFORE the scope: building it lazily takes the locks.
-            const auto               rel_types = relation_type_set();
-            const Network::ReadScope scope     = read_scope();
+            Node              candidate;
+            FactStructureList structures;
+            bool              no_predicates;
+        };
+
+        std::vector<Unfinished>                        unfinished;
+        std::vector<std::pair<Node, FactStructurePtr>> answered;
+        {
+            const Network::ReadScope scope = read_scope();
 
             adjacency_set neighbours;
             for (const Node n : scope.right(current))
@@ -189,15 +195,52 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
                 // which is_part_of asks next, has always read the memo, so
                 // this makes the two steps agree rather than differ.
                 if (parse_relation_scoped(scope, *rel_types, candidate) == 0) continue; // ordinary data
-                candidates.push_back(candidate);
+
+                // The structure is reconstructed HERE, under the scope that is
+                // already open, rather than by is_part_of afterwards. That is
+                // the whole reason this shape exists: is_part_of went through
+                // get_fact_structures, which opened its OWN scope per
+                // candidate, so a node with sixteen facts paid seventeen
+                // shared-lock pairs instead of one. With a dozen threads
+                // collecting in parallel those pairs do not contend for
+                // exclusivity -- they contend for the CACHE LINE the rwlock
+                // counter lives on, which is why the parallel phase measured
+                // five times the CPU of the single-core one for the same wall
+                // time.
+                Unfinished       u{candidate, {}, false};
+                FactStructurePtr done;
+                if (begin_fact_structures_scoped(this, scope, *rel_types, candidate, 3, u.structures, u.no_predicates, done))
+                {
+                    unfinished.push_back(std::move(u));
+                }
+                else if (done && !done->empty())
+                {
+                    answered.emplace_back(candidate, std::move(done));
+                }
             }
         }
 
-        for (const Node candidate : candidates)
+        // Scope released: finishing locks (disambiguation reads
+        // parse_relation, logging reads format), so it may only happen here.
+        const auto contains = [](const FactStructureList& structures, const Node part)
         {
-            if (!is_part_of(candidate, current)) continue;
+            for (const auto& fs : structures)
+            {
+                if (fs.subject == part || fs.predicate == part) return true;
+                if (fs.objects.count(part) != 0) return true;
+            }
+            return false;
+        };
 
-            doom(candidate);
+        for (auto& u : unfinished)
+        {
+            const auto structures = finish_fact_structures(this, u.candidate, 3, u.structures, u.no_predicates);
+            if (contains(*structures, current)) doom(u.candidate);
+        }
+
+        for (const auto& [candidate, structures] : answered)
+        {
+            if (contains(*structures, current)) doom(candidate);
         }
 
         // A set IS its elements, so a container that loses one is no longer
