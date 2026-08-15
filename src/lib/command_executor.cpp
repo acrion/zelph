@@ -1329,6 +1329,17 @@ public:
     }
 
 private:
+    // A listing over a real dump is an operation of hours, and one that says
+    // nothing until it is finished cannot be told apart from a stuck one --
+    // which is exactly what happened on 14 August 2026, when
+    // .list-predicate-value-usage P31 spent three and a half hours in silence
+    // on the full Wikidata network. Below these sizes nothing is reported: a
+    // listing on an ordinary network is over before a line could help, and the
+    // transcripts of the documentation must not change for nothing.
+    static constexpr size_t listing_report_threshold = 1000000;
+    static constexpr size_t listing_report_step      = 1000000;
+    static constexpr size_t predicate_report_step    = 1000;
+
     void list_predicate_usage(size_t limit)
     {
         // A fact carrying a VARIABLE is a pattern -- a rule's condition or
@@ -1346,6 +1357,15 @@ private:
         // Get all predicates directly: nodes that IsA RelationTypeCategory
         auto predicates = _n->get_sources(_n->core.IsA, _n->core.RelationTypeCategory, true);
 
+        // This walks every fact of every predicate, so on a full dump it is a
+        // pass over the whole network. The predicate count is the only
+        // denominator it has, and it is known here.
+        const bool report_predicates = predicates.size() >= predicate_report_step;
+        if (report_predicates)
+            _n->out("Reading the facts of " + std::to_string(predicates.size()) + " predicate(s)...", true);
+
+        size_t predicates_done = 0;
+
         for (const auto& pred : predicates)
         {
             // Get all facts where this node is used as a relation type --
@@ -1361,6 +1381,13 @@ private:
             }
 
             predicate_usage_counts[pred] = asserted;
+
+            if (report_predicates && ++predicates_done % predicate_report_step == 0)
+            {
+                _n->out("  " + std::to_string(predicates_done) + " of "
+                            + std::to_string(predicates.size()) + " predicate(s) read",
+                        true);
+            }
         }
 
         // Convert map to vector for sorting
@@ -1436,6 +1463,15 @@ private:
 
         ankerl::unordered_dense::map<network::Node, size_t> value_counts;
 
+        // Each fact below is visited ONCE and never asked about again, which is
+        // the exact shape prune_nodes suspends the cache for -- remembering a
+        // structure buys a reuse that never comes and costs an entry per fact.
+        // On the full Wikidata dump that is tens of millions of entries: this
+        // listing was measured growing its own footprint by 6 MiB/s, ~21 GiB
+        // per hour, on a run that was already memory bound and swapping. The
+        // memory it takes is the memory the graph needs.
+        const network::Zelph::SuspendFactStructureCache no_cache(*_n);
+
         // All fact nodes that use this predicate as their relation type.
         // get_left would also bring in the facts ABOUT the predicate, whose
         // objects then appeared as values of it -- `-> 1` from the
@@ -1445,8 +1481,25 @@ private:
         // Patterns are not values either; see .list-predicate-usage.
         const auto skip = _n->unasserted_snapshot();
 
+        // The size of the job is known HERE, before the expensive half starts,
+        // and it is the single most useful thing this command can say: the
+        // reconstruction below is a random touch per fact, so on a network that
+        // does not fit in RAM the count is the only estimate of what is left.
+        const bool report = facts.size() >= listing_report_threshold;
+        if (report)
+            _n->out("Reading " + std::to_string(facts.size()) + " fact(s) of this predicate...", true);
+
+        size_t facts_read = 0;
+
         for (network::Node fact : facts)
         {
+            if (report && ++facts_read % listing_report_step == 0)
+            {
+                _n->out("  " + std::to_string(facts_read) + " of " + std::to_string(facts.size())
+                            + " fact(s) read",
+                        true);
+            }
+
             if (skip != nullptr && skip->count(fact) != 0) continue;
 
             // The EXACT decomposition, not the adjacency reading. A fact's

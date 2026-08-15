@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "test_helpers.hpp"
 
 #include "io/output.hpp"
+#include "network/reasoning.hpp"
 #include "network/zelph.hpp"
 
 #include <thread>
@@ -617,4 +618,46 @@ socrates ~ human
         interactive.run(true, false, false);
         CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
     }
+}
+
+TEST_CASE("listing: a value listing does not fill a cache it never reads")
+{
+    // A guard on MEMORY, not on a result, and the reason it exists was
+    // measured on a live run: .list-predicate-value-usage P31 on the full
+    // Wikidata dump grew its own footprint by 6 MiB/s -- ~21 GiB per hour --
+    // with fact structures it stores once and never asks for again, on a run
+    // that was already swapping. Nothing about the OUTPUT changes when that
+    // comes back, which is why the listing tests above cannot see it.
+    //
+    // Same shape as prune_nodes, which suspends the cache for the same reason.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        auto* const graph = interactive.graph();
+        REQUIRE(graph != nullptr);
+
+        interactive.process("a rel x");
+        interactive.process("b rel y");
+        interactive.process("c rel x");
+
+        const auto rel = graph->get_node("rel");
+        REQUIRE(rel != 0);
+
+        const auto facts = graph->get_facts_of_predicate(rel);
+        REQUIRE(facts.size() == 3);
+
+        // Whatever asserting them warmed is not what is under test.
+        graph->invalidate_fact_structures_cache();
+
+        interactive.process(".list-predicate-value-usage rel");
+
+        // The listing reconstructed every one of these -- that is how it
+        // counted the values -- and kept none of them.
+        size_t cached = 0;
+        for (const auto fact : facts)
+        {
+            zelph::network::FactStructurePtr out;
+            if (graph->try_get_fact_structures_cached(fact, out)) ++cached;
+        }
+        CHECK(cached == 0); });
 }
