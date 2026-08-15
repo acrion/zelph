@@ -2194,7 +2194,16 @@ private:
 
             {".parallel", ".parallel\n"
                           "Toggles parallel processing on/off.\n"
-                          "Default is on for performance."},
+                          "Default is on for performance.\n"
+                          "\n"
+                          "'on' is a permission, not an instruction: a bulk removal decides per\n"
+                          "batch whether spreading its read phase over the pool is worth it, and\n"
+                          "on a graph that fits in memory it is not -- with no page faults to\n"
+                          "overlap, the extra threads only contend for the same locks and burn\n"
+                          "CPU for the same wall time. It measures its own major faults and\n"
+                          "keeps the pool exactly while the graph is being paged in, which is\n"
+                          "the case that made the read phase parallel in the first place.\n"
+                          "'off' means one thread everywhere, unconditionally."},
 
             {".anchors", ".anchors [on|off]\n"
                          "Controls the unification engine's anchor-based candidate lookups:\n"

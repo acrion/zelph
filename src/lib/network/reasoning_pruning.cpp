@@ -34,6 +34,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <thread>
 #include <vector>
 
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+    #include <sys/resource.h>
+#endif
+
 // Prune mode: what does the matched condition denote?
 //
 // resolve_pattern rather than a lookup in the bindings, because a pattern is
@@ -127,6 +131,42 @@ namespace
     // exactly the run the progress output was built for. The collection phase
     // therefore reports on its own, this many victims at a time.
     constexpr size_t prune_collect_step = 10000;
+
+    // Major faults per victim, below which the graph counts as RESIDENT and
+    // the collection phase stops spreading itself over the pool.
+    //
+    // Why the collection is parallel at all: on the full Wikidata dump the
+    // graph is ~200 GiB in zram, and there the pool pays twice over -- the
+    // page faults are handled per thread and zram decompression is CPU work
+    // that parallelises with them. Measured 5.1x on that workload.
+    //
+    // Why it must stop when the graph FITS: with nothing to fault, all that is
+    // left is a dozen threads on the same two shared_mutexes, and they contend
+    // for the cache line the rwlock counter lives on rather than for
+    // exclusivity. Measured on a 6.8 M-node fixture in RAM: identical wall
+    // time to a single core for five times the CPU. That CPU is not free --
+    // this machine is shared, and on a laptop it is battery and heat.
+    //
+    // The threshold has three orders of magnitude of room either way: the live
+    // dump ran at ~17 major faults per node, a resident graph at essentially
+    // zero. Erring towards parallel is the deliberate direction, because
+    // losing 5.1x on the workload that takes days is far worse than spending
+    // CPU on one that takes seconds.
+    constexpr double prune_resident_faults_per_victim = 1.0;
+
+    // Major faults this process has taken, or -1 where the platform will not
+    // say -- in which case the collection phase keeps the pool, which is what
+    // it did before this was measured at all.
+    long long process_major_faults()
+    {
+#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+        return -1; // single execution lane anyway / no portable counter here
+#else
+        rusage usage{};
+        if (getrusage(RUSAGE_SELF, &usage) != 0) return -1;
+        return static_cast<long long>(usage.ru_majflt);
+#endif
+    }
 }
 
 // The engine's own vocabulary is not data -- and neither is the one fact that
@@ -307,12 +347,22 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
     // `.parallel` off has to mean single-threaded HERE too, or the setting
     // would be a half-truth and the suite's single-core subcase would not be
     // one.
-    const size_t workers = use_parallel() ? std::max<size_t>(1, _pool->count()) : 1;
+    const size_t pool_workers = use_parallel() ? std::max<size_t>(1, _pool->count()) : 1;
+
+    // The FIRST batch spreads over the pool whatever the graph looks like:
+    // nothing has been measured yet, and the expensive mistake is the other
+    // one. Each batch then decides for the next from what it faulted -- see
+    // prune_resident_faults_per_victim. Re-deciding every time rather than
+    // once is what makes it follow a graph that changes: the prune itself
+    // frees memory, so a run can start out swapping and end up resident.
+    size_t workers = pool_workers;
 
     for (size_t base = 0; base < victims.size(); base += prune_progress_step)
     {
         const size_t stop = std::min(base + prune_progress_step, victims.size());
         const size_t span = ((stop - base) + workers - 1) / workers;
+
+        const long long faults_before = pool_workers > 1 ? process_major_faults() : -1;
 
         std::vector<adjacency_set> found(workers);
         std::vector<size_t>        taken(workers, 0);
@@ -386,6 +436,25 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         _pool->wait();
         if (failure) std::rethrow_exception(failure);
 
+        // What the COLLECTION faulted, sampled here and not later: the erase
+        // below is serial either way, and counting its faults would credit the
+        // pool for work it did not do. The verdict is applied at the end of
+        // the batch, because `workers` still dimensions `found` and `taken`.
+        size_t next_workers = workers;
+        if (faults_before >= 0)
+        {
+            const long long faults_after = process_major_faults();
+            const size_t    considered   = examined.load(std::memory_order_relaxed);
+
+            if (faults_after >= faults_before && considered > 0)
+            {
+                const double per_victim = static_cast<double>(faults_after - faults_before)
+                                        / static_cast<double>(considered);
+
+                next_workers = per_victim < prune_resident_faults_per_victim ? 1 : pool_workers;
+            }
+        }
+
         adjacency_set doomed;
         size_t        victims_taken = 0;
         for (size_t w = 0; w < workers; ++w)
@@ -409,6 +478,8 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
             out_stream() << "  " << removed_nodes << " of " << _nodes_to_prune.size()
                          << " node(s) removed" << std::endl;
         }
+
+        workers = next_workers; // `found` and `taken` are sized above, not here
     }
 
     if (report) out_stream() << "  removing the names of " << named_dead.size() << " node(s)..." << std::endl;
