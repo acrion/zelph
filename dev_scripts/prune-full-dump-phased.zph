@@ -20,7 +20,8 @@
 # happen before anything anyone might miss.
 #
 # ---------------------------------------------------------------------------
-# TWO SECTIONS OF wikidata-prune.zph ARE DELIBERATELY NOT HERE.
+# TWO SECTIONS ARE DELIBERATELY NOT HERE (they are in the continuation,
+# dev_scripts/prune-full-dump-phased-2.zph, which is what actually ran).
 #
 #   scholarly articles (Q13442814 and its section, incl. .prune-facts P1433/P921)
 #   humans            (Q5 and its section, incl. .prune-facts P131)

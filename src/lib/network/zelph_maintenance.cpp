@@ -78,7 +78,7 @@ uint64_t Zelph::name_map_scans() const
 // That is the only way a bulk removal can afford names at all. Erasing them
 // per node costs a walk of the reverse name map apiece, and on the full
 // Wikidata network that map holds ~204 million entries: the 6.2 million
-// removals of wikidata-prune.zph measured 1.11 nodes per second with 97.7 %
+// removals of the full-dump prune measured 1.11 nodes per second with 97.7 %
 // of the time in that walk, which is two months for a script that has to
 // finish overnight. `.remove` keeps the per-node path, where one walk IS one
 // batch.

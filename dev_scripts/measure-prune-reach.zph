@@ -1,4 +1,4 @@
-# What wikidata-prune.zph would DELETE, measured without deleting anything.
+# What a prune script would DELETE, measured without deleting anything.
 #
 #   build-release/bin/zelph < dev_scripts/measure-prune-reach.zph
 #
@@ -12,7 +12,7 @@
 #
 # It reads and reports; it removes nothing, and it saves nothing.
 #
-# 174 of the script's 181 prune lines select by P31, so ONE pass over the P31
+# Most prune lines select by P31, so ONE pass over the P31
 # facts answers all of them -- .list-predicate-value-usage sorts the classes
 # by how many instances they have. The seven lines that do not are counted
 # individually below. Doing it the other way round, a zelph/sources walk per
@@ -20,13 +20,13 @@
 #
 # What to do with the output:
 #
-#   * the class list of wikidata-prune.zph, ordered by the count this prints,
+#   * the class list of a prune script, ordered by the count this prints,
 #     is the order the prune should run in -- smallest first, so the graph
 #     shrinks before the expensive lines start;
 #   * a class whose count is in the tens of millions is a DECISION, not a
 #     line: it costs a day or more, and whether that domain belongs in the
 #     artifact at all is worth asking before paying for it;
-#   * the counts also belong in the header of wikidata-prune.zph, which
+#   * the counts also belong in the header of the prune script, which
 #     currently carries figures measured against a different network.
 #
 # Cost: one load of the 88 GB dump (~35 min, ~200 GiB of swap -- run it with
