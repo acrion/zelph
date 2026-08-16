@@ -1,0 +1,19 @@
+# Compact one artifact before publishing it.
+#
+#   sed 's|ARTIFACT|/home/stefan/zelph/wikidata-...-v2-x.bin|g' \
+#     dev_scripts/cleanup-artifact.zph | ./build-release/bin/zelph
+#
+# .cleanup is a full pass over every node, so it is not worth running after
+# each phase of a prune -- but it IS worth running once on a file that other
+# people will download. It removes the relation nodes a deletion left isolated
+# and any dangling name entries. The re-save then also writes a COMPACTED
+# string pool: a .save writes the pool at its current append-only size, and
+# only a load rebuilds it, so saving after a load is what makes the file as
+# small as its contents.
+.lang wikidata
+.load ARTIFACT
+.stat
+.cleanup
+.stat
+.save ARTIFACT
+.quit

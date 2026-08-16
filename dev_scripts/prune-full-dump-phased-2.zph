@@ -1,0 +1,137 @@
+# Continue the phased prune from -v2-d.bin, in decreasing order of how much
+# anyone would miss what goes.
+#
+#   nohup ./build-release/bin/zelph < dev_scripts/prune-full-dump-phased-2.zph > run2.log 2>&1 &
+#
+# Phases A-D (dev_scripts/prune-full-dump-phased.zph) removed 174.7 M of
+# 983.4 M nodes and left 73 GB / 178 GiB. That is an order of magnitude above
+# the 9 June artifact (6.0 GB / 15.2 GiB), and logs/wikidata-20260309-all.log
+# says why: that run used `.prune-nodes A <P> B`, which deletes every SUBJECT
+# of a predicate -- P131 13.7 M nodes, P17 5.2 M, P1433 1.1 M, P921 0.6 M --
+# where the current script uses .prune-facts, which deletes only the facts and
+# leaves the nodes standing. It also pruned scholarly articles and humans.
+# Both of those are undone here, in that order.
+#
+# THE SIZE OF EACH JOB IS PRINTED BEFORE IT STARTS ("Pruning N node(s)"), so
+# this script IS the measurement of the four new lines; no separate read-only
+# run is needed. Every phase ends in a save, so any of them is a stopping
+# point and an artifact.
+#
+# .cleanup is NOT run per phase. It is a full pass over every node, and this
+# engine already removes a pruned node's names with the node, so what it still
+# finds is isolated relation nodes -- worth having in a published file, not
+# worth paying for five times. dev_scripts/cleanup-artifact.zph does it once,
+# on whichever files are chosen for Hugging Face.
+#
+# The P279 acceptance query runs at the end, as before. On -v2-d it answered
+# 141 classes in 18 s; on the 9 June artifact it answers 78. Fewer results
+# after these phases is EXPECTED -- pruning instances removes culprits -- but
+# an empty answer or an error is not.
+
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-d.bin
+.stat
+
+# === PHASE E: publications, reached through their properties ===
+# `.prune-nodes A (A P B)` deletes every SUBJECT of a predicate. That is the
+# shape the 9 June artifact owed its size to and that the current script had
+# replaced with .prune-facts, which keeps the nodes. P1433 (published in) and
+# P921 (main subject) are carried by publications and by little else.
+
+.prune-nodes A (A P1433 B)
+.prune-nodes A (A P921 B)
+
+.stat
+.save /home/stefan/zelph/wikidata-20260309-all-pruned-v2-e.bin
+.new
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-e.bin
+.stat
+
+# === PHASE F: the rest of academic publishing ===
+# P2860 (cites work) is 312.8 M facts, both ends inside this class -- roughly 7
+# of the ~16 facts an article carries. .prune-facts costs no cascade, so it
+# goes FIRST and takes that weight off every node the next line then walks.
+
+.prune-facts A P2860 B
+.prune-nodes A P31 Q13442814
+.prune-nodes A P31 Q13433827
+.prune-nodes A P31 Q6451276
+.prune-nodes A P31 Q23927052
+.prune-nodes A P31 Q1143604
+
+.stat
+.save /home/stefan/zelph/wikidata-20260309-all-pruned-v2-f.bin
+.new
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-f.bin
+.stat
+
+# === PHASE G: everything filed under an administrative entity ===
+# Places, buildings, schools, businesses with an address. This is where it
+# starts to hurt: the CLASSES stay, the individual items go. 13.7 M nodes in
+# the 9 June run, and it ran there after far more had already gone.
+
+.prune-nodes A (A P131 B)
+
+.stat
+.save /home/stefan/zelph/wikidata-20260309-all-pruned-v2-g.bin
+.new
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-g.bin
+.stat
+
+# === PHASE H: everything with a country ===
+# The bluntest line in the file, and deliberately the last but one: almost
+# every geographic and organisational item carries P17.
+
+.prune-nodes A (A P17 B)
+
+.stat
+.save /home/stefan/zelph/wikidata-20260309-all-pruned-v2-h.bin
+.new
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-h.bin
+.stat
+
+# === PHASE I: humans ===
+# Last, because for most questions people ask of Wikidata this is the most
+# useful class in it. Whether to run this phase at all is a decision, not a
+# step -- the artifact saved before it is a legitimate stopping point.
+
+.prune-nodes A P31 Q5
+.prune-nodes A P31 Q101352
+.prune-nodes A P31 Q12308941
+.prune-nodes A P31 Q11879590
+.prune-nodes A P31 Q202444
+.prune-nodes A P31 Q66480858
+.prune-nodes A P31 Q18972207
+.prune-nodes A P31 Q79007
+.prune-nodes A P31 Q13100073
+.prune-nodes A P31 Q4022
+.prune-nodes A P31 Q8502
+.prune-nodes A P31 Q486972
+
+.stat
+.save /home/stefan/zelph/wikidata-20260309-all-pruned-v2-i.bin
+.new
+.lang wikidata
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-v2-i.bin
+.stat
+
+# === ACCEPTANCE ===
+.import sparql
+sparql
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT DISTINCT ?class WHERE {
+  ?class wdt:P279+ wd:Q215627 .
+  ?class wdt:P279+ wd:Q43229 .
+  MINUS {
+    ?class wdt:P279 ?parent .
+    ?parent wdt:P279+ wd:Q215627 .
+    ?parent wdt:P279+ wd:Q43229 .
+  }
+}
+
+.quit
