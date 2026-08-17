@@ -245,7 +245,7 @@ The script, step by step:
 
 1. **Select the entities.** Countries are collected as direct instances (P31) of _country_ (Q6256) **or** _sovereign state_ (Q3624078) — many countries carry only the latter.
 2. **Materialize the selection as facts** (`A demo-country yes`). This gives the rules a small, precise predicate to anchor on, instead of scanning the ~15 million P31 facts of the full dump.
-3. **Train a link predictor:** `(nn/link-predictor "geo" countries [p30] :epochs 150 :lr 0.2)` — input layer: countries + the P30 predicate node, output layer: the continents observed in the training triples. On the demo dump: 145 countries, 118 P30 samples.
+3. **Train a link predictor:** `(nn/link-predictor "geo" countries [p30] :epochs 150 :lr 0.2)` — input layer: countries + the P30 predicate node, output layer: the continents observed in the training triples. On the demo dump: 144 countries, 118 P30 samples.
 4. **Guard rule** — verify existing P30 facts through the network:
 
 ```
@@ -263,7 +263,7 @@ The script, step by step:
 
 ### Interpreting the results
 
-On the demo dump, the run deduces 99 `P30-verified` facts with confidences between ~0.51 and 1.0, and 43 `P30-candidate` facts — all with confidence ≈ 0.527 pointing to Europe (Q46). The uniformity of the candidates is worth understanding, because it illustrates both what this simple architecture learns and where its limits are:
+On the demo dump, the run deduces 99 `P30-verified` facts with confidences between ~0.51 and 1.0, and 42 `P30-candidate` facts — all with confidence ≈ 0.527 pointing to Europe (Q46). The uniformity of the candidates is worth understanding, because it illustrates both what this simple architecture learns and where its limits are:
 
 The input encoding is _identity-based_: each country is its own input neuron. The P30 predicate neuron is shared across **all** training samples, so its weights learn the _marginal distribution_ of continents in the training set (Europe dominates, thanks to the many historical European states in the dump). A country that has **no** P30 fact never receives a training signal on its own input neuron — its weights stay at their zero initialization. For such a country, the network's output is the P30 prior alone: ≈ 0.527 for Europe, just above the threshold. The candidates are therefore _prior-driven_, not country-specific — honest behavior for a model without generalizing features, and a useful baseline signal ("statistically, an unknown country is most likely European in this dataset").
 
@@ -279,42 +279,44 @@ The current implementation is a deliberate foundation, not a finished ML framewo
 
 ## Appendix: Complete Session Log
 
-The following is a complete, unedited session log of `stdlib/examples/neural/nn-wikidata-demo.zph` running against a pruned Wikidata dump (zelph 0.9.7), including the test-suite run: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph.
-
-> **Which artifact this was measured on:** `wikidata-20260309-all-pruned.bin`,
-> the pruned network published until August 2026 and since replaced by
-> [`-medium` and `-small`](binaries.md). Those carry a different set of
-> individual items, so the counts below — 145 countries, 118 samples, the loss
-> to five decimals — describe *that* file and have not yet been re-measured on
-> the current ones. The mechanism is unchanged; the numbers are pending.
->
-> **Reproducing it on the original artifact:** every number below still comes out identically — 145 countries, 118 samples, `final mean loss 0.10311`, 99 `P30-verified` and 43 `P30-candidate` facts. The one thing that differs is the per-deduction echo: the `⇐` lines are printed here because the default deduction mode was `all` when the log was taken. Focus mode, the default since, deliberately anchors only on statements you entered yourself — an imported script does not contribute anchors (see `.help .deductions`) — so the same run now reports `(skipped 142 deductions)` instead. Prefix the session with `.deductions all` to get the log below.
+The following is a complete, unaltered session log of `stdlib/examples/neural/nn-wikidata-demo.zph` executing against `wikidata-20260309-all-pruned-small.bin`: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph. It was generated non-interactively, which is how any transcript here is made reproducible:
 
 ```text
-❯ zelph
-zelph 0.9.7-dev
+.deductions all
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin
+.lang wikidata
+.import nn
+.import examples/neural/nn-wikidata-demo
+.quit
+```
+
+> **`.deductions all`** is what causes the `⇐` lines to show up. Focus mode, the
+> default, anchors only to statements you entered manually, and an imported
+> script adds no anchors (see `.help .deductions`), so without that initial
+> line the identical run displays `(skipped 142 deductions)` instead.
+
+```text
+$ zelph < demo.zph
+zelph 1.0.0-dev
 -- REPL mode - type .help for commands, .quit to exit --
 
-zelph> .load /home/stefan/zelph/wikidata-20260309-all-pruned.bin
-Auto-run has been disabled due to loading a large dataset.
-Loading network from generic file /home/stefan/zelph/wikidata-20260309-all-pruned.bin...
-Loading: left chunks=75, right chunks=75, nameOfNode chunks=21, nodeOfName chunks=21
-...........................................................................
-...........................................................................
-.....................
-.....................
-String pool size after load: 20389119
+zelph> Deduction printing mode: all
+zelph> Auto-run has been disabled due to loading a large dataset.
+Loading network from generic file /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin...
+Loading: left chunks=27, right chunks=27, nameOfNode chunks=13, nodeOfName chunks=13
+...........................
+...........................
+.............
+.............
+String pool size after load: 11423140
 Network loaded.
- Time needed for loading/importing: 0h0m52.905s
--- 52.906 s --
-zelph-> .import nn
-Importing file stdlib/nn.zph...
-<function nn/link-predictor>
--- 16 ms --
-zelph-> .import examples/neural/nn-wikidata-demo
-Importing file stdlib/examples/neural/nn-wikidata-demo.zph...
+ Time needed for loading/importing: 0h0m26.413s
+-- 26.413 s --
+zelph-> wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph2/build-release/bin/stdlib/nn.zph...
+wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph2/build-release/bin/stdlib/examples/neural/nn-wikidata-demo.zph...
 Active cluster: nn-demo
-countries found: 145
+Starting reasoning with 24 worker threads.
+countries found: 144
 nn/link-predictor: 118 samples, final mean loss 0.10311
 Q29999 (Kingdom of the Netherlands):
     Q49  0.434
@@ -328,173 +330,166 @@ Q12536 (Abbasid Caliphate):
     Q15  0.624
     Q48  0.376
     Q5401  0.001
-{((A  P30  X)  nn   geo ) (A  P30  X) (A  demo-country   yes )} => (A  P30-verified  X)
-{((¬(A  P30  X))  nn   geo ) (¬(A  P30  X)) (A  demo-country   yes )} => (A  P30-candidate  X)
-Starting reasoning with 24 worker threads.
---- Reasoning iteration 1 ---
-( Q580188   P30-verified   Q48 ) ⇐ {(( Q580188   P30   Q48 )  nn   geo ) ( Q580188   P30   Q48 ) ( Q580188   demo-country   yes )}
-( Q162192   P30-verified   Q18 ) ⇐ {(( Q162192   P30   Q18 )  nn   geo ) ( Q162192   P30   Q18 ) ( Q162192   demo-country   yes )}
-( Q193152   P30-verified   Q46 ) ⇐ {(( Q193152   P30   Q46 )  nn   geo ) ( Q193152   P30   Q46 ) ( Q193152   demo-country   yes )}
-( Q747314   P30-verified   Q15 ) ⇐ {(( Q747314   P30   Q15 )  nn   geo ) ( Q747314   P30   Q15 ) ( Q747314   demo-country   yes )}
-( Q756617   P30-verified   Q49 ) ⇐ {(( Q756617   P30   Q49 )  nn   geo ) ( Q756617   P30   Q49 ) ( Q756617   demo-country   yes )}
-( Q838261   P30-verified   Q46 ) ⇐ {(( Q838261   P30   Q46 )  nn   geo ) ( Q838261   P30   Q46 ) ( Q838261   demo-country   yes )}
-( Q191077   P30-verified   Q46 ) ⇐ {(( Q191077   P30   Q46 )  nn   geo ) ( Q191077   P30   Q46 ) ( Q191077   demo-country   yes )}
-( Q1078602   P30-verified   Q48 ) ⇐ {(( Q1078602   P30   Q48 )  nn   geo ) ( Q1078602   P30   Q48 ) ( Q1078602   demo-country   yes )}
-( Q185488   P30-verified   Q46 ) ⇐ {(( Q185488   P30   Q46 )  nn   geo ) ( Q185488   P30   Q46 ) ( Q185488   demo-country   yes )}
-( Q170468   P30-verified   Q15 ) ⇐ {(( Q170468   P30   Q15 )  nn   geo ) ( Q170468   P30   Q15 ) ( Q170468   demo-country   yes )}
-( Q2578028   P30-verified   Q48 ) ⇐ {(( Q2578028   P30   Q48 )  nn   geo ) ( Q2578028   P30   Q48 ) ( Q2578028   demo-country   yes )}
-( Q63158027   P30-verified   Q48 ) ⇐ {(( Q63158027   P30   Q48 )  nn   geo ) ( Q63158027   P30   Q48 ) ( Q63158027   demo-country   yes )}
-( Q878319   P30-verified   Q46 ) ⇐ {(( Q878319   P30   Q46 )  nn   geo ) ( Q878319   P30   Q46 ) ( Q878319   demo-country   yes )}
-( Q15864   P30-verified   Q46 ) ⇐ {(( Q15864   P30   Q46 )  nn   geo ) ( Q15864   P30   Q46 ) ( Q15864   demo-country   yes )}
-( Q3892131   P30-verified   Q18 ) ⇐ {(( Q3892131   P30   Q18 )  nn   geo ) ( Q3892131   P30   Q18 ) ( Q3892131   demo-country   yes )}
-( Q9903   P30-verified   Q48 ) ⇐ {(( Q9903   P30   Q48 )  nn   geo ) ( Q9903   P30   Q48 ) ( Q9903   demo-country   yes )}
-( Q7233551   P30-verified   Q48 ) ⇐ {(( Q7233551   P30   Q48 )  nn   geo ) ( Q7233551   P30   Q48 ) ( Q7233551   demo-country   yes )}
-( Q1649871   P30-verified   Q46 ) ⇐ {(( Q1649871   P30   Q46 )  nn   geo ) ( Q1649871   P30   Q46 ) ( Q1649871   demo-country   yes )}
-( Q2369784   P30-verified   Q46 ) ⇐ {(( Q2369784   P30   Q46 )  nn   geo ) ( Q2369784   P30   Q46 ) ( Q2369784   demo-country   yes )}
-( Q1415128   P30-verified   Q48 ) ⇐ {(( Q1415128   P30   Q48 )  nn   geo ) ( Q1415128   P30   Q48 ) ( Q1415128   demo-country   yes )}
-( Q684030   P30-verified   Q46 ) ⇐ {(( Q684030   P30   Q46 )  nn   geo ) ( Q684030   P30   Q46 ) ( Q684030   demo-country   yes )}
-( Q204920   P30-verified   Q46 ) ⇐ {(( Q204920   P30   Q46 )  nn   geo ) ( Q204920   P30   Q46 ) ( Q204920   demo-country   yes )}
-( Q11774   P30-verified   Q48 ) ⇐ {(( Q11774   P30   Q48 )  nn   geo ) ( Q11774   P30   Q48 ) ( Q11774   demo-country   yes )}
-( Q953432   P30-verified   Q46 ) ⇐ {(( Q953432   P30   Q46 )  nn   geo ) ( Q953432   P30   Q46 ) ( Q953432   demo-country   yes )}
-( Q28846511   P30-verified   Q46 ) ⇐ {(( Q28846511   P30   Q46 )  nn   geo ) ( Q28846511   P30   Q46 ) ( Q28846511   demo-country   yes )}
-( Q164079   P30-verified   Q46 ) ⇐ {(( Q164079   P30   Q46 )  nn   geo ) ( Q164079   P30   Q46 ) ( Q164079   demo-country   yes )}
-( Q962   P30-verified   Q15 ) ⇐ {(( Q962   P30   Q15 )  nn   geo ) ( Q962   P30   Q15 ) ( Q962   demo-country   yes )}
-( Q15102440   P30-verified   Q46 ) ⇐ {(( Q15102440   P30   Q46 )  nn   geo ) ( Q15102440   P30   Q46 ) ( Q15102440   demo-country   yes )}
-( Q172579   P30-verified   Q46 ) ⇐ {(( Q172579   P30   Q46 )  nn   geo ) ( Q172579   P30   Q46 ) ( Q172579   demo-country   yes )}
-( Q431731   P30-verified   Q15 ) ⇐ {(( Q431731   P30   Q15 )  nn   geo ) ( Q431731   P30   Q15 ) ( Q431731   demo-country   yes )}
-( Q189988   P30-verified   Q15 ) ⇐ {(( Q189988   P30   Q15 )  nn   geo ) ( Q189988   P30   Q15 ) ( Q189988   demo-country   yes )}
-( Q2273304   P30-verified   Q46 ) ⇐ {(( Q2273304   P30   Q46 )  nn   geo ) ( Q2273304   P30   Q46 ) ( Q2273304   demo-country   yes )}
-( Q2899771   P30-verified   Q46 ) ⇐ {(( Q2899771   P30   Q46 )  nn   geo ) ( Q2899771   P30   Q46 ) ( Q2899771   demo-country   yes )}
-( Q912052   P30-verified   Q48 ) ⇐ {(( Q912052   P30   Q48 )  nn   geo ) ( Q912052   P30   Q48 ) ( Q912052   demo-country   yes )}
-( Q176495   P30-verified   Q46 ) ⇐ {(( Q176495   P30   Q46 )  nn   geo ) ( Q176495   P30   Q46 ) ( Q176495   demo-country   yes )}
-( Q2597352   P30-verified   Q46 ) ⇐ {(( Q2597352   P30   Q46 )  nn   geo ) ( Q2597352   P30   Q46 ) ( Q2597352   demo-country   yes )}
-( Q599613   P30-verified   Q46 ) ⇐ {(( Q599613   P30   Q46 )  nn   geo ) ( Q599613   P30   Q46 ) ( Q599613   demo-country   yes )}
-( Q736727   P30-verified   Q46 ) ⇐ {(( Q736727   P30   Q46 )  nn   geo ) ( Q736727   P30   Q46 ) ( Q736727   demo-country   yes )}
-( Q207521   P30-verified   Q15 ) ⇐ {(( Q207521   P30   Q15 )  nn   geo ) ( Q207521   P30   Q15 ) ( Q207521   demo-country   yes )}
-( Q190025   P30-verified   Q27611 ) ⇐ {(( Q190025   P30   Q27611 )  nn   geo ) ( Q190025   P30   Q27611 ) ( Q190025   demo-country   yes )}
-( Q4304392   P30-verified   Q48 ) ⇐ {(( Q4304392   P30   Q48 )  nn   geo ) ( Q4304392   P30   Q48 ) ( Q4304392   demo-country   yes )}
-( Q43287   P30-verified   Q46 ) ⇐ {(( Q43287   P30   Q46 )  nn   geo ) ( Q43287   P30   Q46 ) ( Q43287   demo-country   yes )}
-( Q870055   P30-verified   Q48 ) ⇐ {(( Q870055   P30   Q48 )  nn   geo ) ( Q870055   P30   Q48 ) ( Q870055   demo-country   yes )}
-( Q175276   P30-verified   Q46 ) ⇐ {(( Q175276   P30   Q46 )  nn   geo ) ( Q175276   P30   Q46 ) ( Q175276   demo-country   yes )}
-( Q218023   P30-verified   Q15 ) ⇐ {(( Q218023   P30   Q15 )  nn   geo ) ( Q218023   P30   Q15 ) ( Q218023   demo-country   yes )}
-( Q20949725   P30-verified   Q46 ) ⇐ {(( Q20949725   P30   Q46 )  nn   geo ) ( Q20949725   P30   Q46 ) ( Q20949725   demo-country   yes )}
-( Q18285930   P30-verified   Q46 ) ⇐ {(( Q18285930   P30   Q46 )  nn   geo ) ( Q18285930   P30   Q46 ) ( Q18285930   demo-country   yes )}
-( Q717   P30-verified   Q18 ) ⇐ {(( Q717   P30   Q18 )  nn   geo ) ( Q717   P30   Q18 ) ( Q717   demo-country   yes )}
-( Q1232887   P30-verified   Q46 ) ⇐ {(( Q1232887   P30   Q46 )  nn   geo ) ( Q1232887   P30   Q46 ) ( Q1232887   demo-country   yes )}
-( Q2415003   P30-verified   Q46 ) ⇐ {(( Q2415003   P30   Q46 )  nn   geo ) ( Q2415003   P30   Q46 ) ( Q2415003   demo-country   yes )}
-( Q170588   P30-verified   Q49 ) ⇐ {(( Q170588   P30   Q49 )  nn   geo ) ( Q170588   P30   Q49 ) ( Q170588   demo-country   yes )}
-( Q618399   P30-verified   Q15 ) ⇐ {(( Q618399   P30   Q15 )  nn   geo ) ( Q618399   P30   Q15 ) ( Q618399   demo-country   yes )}
-( Q771193   P30-verified   Q46 ) ⇐ {(( Q771193   P30   Q46 )  nn   geo ) ( Q771193   P30   Q46 ) ( Q771193   demo-country   yes )}
-( Q115166787   P30-verified   Q48 ) ⇐ {(( Q115166787   P30   Q48 )  nn   geo ) ( Q115166787   P30   Q48 ) ( Q115166787   demo-country   yes )}
-( Q34   P30-verified   Q46 ) ⇐ {(( Q34   P30   Q46 )  nn   geo ) ( Q34   P30   Q46 ) ( Q34   demo-country   yes )}
-( Q16056854   P30-verified   Q46 ) ⇐ {(( Q16056854   P30   Q46 )  nn   geo ) ( Q16056854   P30   Q46 ) ( Q16056854   demo-country   yes )}
-( Q114327408   P30-verified   Q46 ) ⇐ {(( Q114327408   P30   Q46 )  nn   geo ) ( Q114327408   P30   Q46 ) ( Q114327408   demo-country   yes )}
-( Q243652   P30-verified   Q46 ) ⇐ {(( Q243652   P30   Q46 )  nn   geo ) ( Q243652   P30   Q46 ) ( Q243652   demo-country   yes )}
-( Q140359   P30-verified   Q46 ) ⇐ {(( Q140359   P30   Q46 )  nn   geo ) ( Q140359   P30   Q46 ) ( Q140359   demo-country   yes )}
-( Q330362   P30-verified   Q46 ) ⇐ {(( Q330362   P30   Q46 )  nn   geo ) ( Q330362   P30   Q46 ) ( Q330362   demo-country   yes )}
-( Q1054184   P30-verified   Q48 ) ⇐ {(( Q1054184   P30   Q48 )  nn   geo ) ( Q1054184   P30   Q48 ) ( Q1054184   demo-country   yes )}
-( Q12536   P30-verified   Q15 ) ⇐ {(( Q12536   P30   Q15 )  nn   geo ) ( Q12536   P30   Q15 ) ( Q12536   demo-country   yes )}
-( Q31747   P30-verified   Q46 ) ⇐ {(( Q31747   P30   Q46 )  nn   geo ) ( Q31747   P30   Q46 ) ( Q31747   demo-country   yes )}
-( Q267584   P30-verified   Q48 ) ⇐ {(( Q267584   P30   Q48 )  nn   geo ) ( Q267584   P30   Q48 ) ( Q267584   demo-country   yes )}
-( Q1998866   P30-verified   Q46 ) ⇐ {(( Q1998866   P30   Q46 )  nn   geo ) ( Q1998866   P30   Q46 ) ( Q1998866   demo-country   yes )}
-( Q2454585   P30-verified   Q46 ) ⇐ {(( Q2454585   P30   Q46 )  nn   geo ) ( Q2454585   P30   Q46 ) ( Q2454585   demo-country   yes )}
-( Q33   P30-verified   Q46 ) ⇐ {(( Q33   P30   Q46 )  nn   geo ) ( Q33   P30   Q46 ) ( Q33   demo-country   yes )}
-( Q8733   P30-verified   Q48 ) ⇐ {(( Q8733   P30   Q48 )  nn   geo ) ( Q8733   P30   Q48 ) ( Q8733   demo-country   yes )}
-( Q703695   P30-verified   Q48 ) ⇐ {(( Q703695   P30   Q48 )  nn   geo ) ( Q703695   P30   Q48 ) ( Q703695   demo-country   yes )}
-( Q3623202   P30-verified   Q46 ) ⇐ {(( Q3623202   P30   Q46 )  nn   geo ) ( Q3623202   P30   Q46 ) ( Q3623202   demo-country   yes )}
-( Q173065   P30-verified   Q46 ) ⇐ {(( Q173065   P30   Q46 )  nn   geo ) ( Q173065   P30   Q46 ) ( Q173065   demo-country   yes )}
-( Q1147441   P30-verified   Q48 ) ⇐ {(( Q1147441   P30   Q48 )  nn   geo ) ( Q1147441   P30   Q48 ) ( Q1147441   demo-country   yes )}
-( Q216632   P30-verified   Q15 ) ⇐ {(( Q216632   P30   Q15 )  nn   geo ) ( Q216632   P30   Q15 ) ( Q216632   demo-country   yes )}
-( Q19083   P30-verified   Q5401 ) ⇐ {(( Q19083   P30   Q5401 )  nn   geo ) ( Q19083   P30   Q5401 ) ( Q19083   demo-country   yes )}
-( Q671658   P30-verified   Q828 ) ⇐ {(( Q671658   P30   Q828 )  nn   geo ) ( Q671658   P30   Q828 ) ( Q671658   demo-country   yes )}
-( Q1483495   P30-verified   Q46 ) ⇐ {(( Q1483495   P30   Q46 )  nn   geo ) ( Q1483495   P30   Q46 ) ( Q1483495   demo-country   yes )}
-( Q12060881   P30-verified   Q48 ) ⇐ {(( Q12060881   P30   Q48 )  nn   geo ) ( Q12060881   P30   Q48 ) ( Q12060881   demo-country   yes )}
-( Q335088   P30-verified   Q48 ) ⇐ {(( Q335088   P30   Q48 )  nn   geo ) ( Q335088   P30   Q48 ) ( Q335088   demo-country   yes )}
-( Q10957559   P30-verified   Q46 ) ⇐ {(( Q10957559   P30   Q46 )  nn   geo ) ( Q10957559   P30   Q46 ) ( Q10957559   demo-country   yes )}
-( Q1155700   P30-verified   Q48 ) ⇐ {(( Q1155700   P30   Q48 )  nn   geo ) ( Q1155700   P30   Q48 ) ( Q1155700   demo-country   yes )}
-( Q245160   P30-verified   Q5401 ) ⇐ {(( Q245160   P30   Q5401 )  nn   geo ) ( Q245160   P30   Q5401 ) ( Q245160   demo-country   yes )}
-( Q7313   P30-verified   Q48 ) ⇐ {(( Q7313   P30   Q48 )  nn   geo ) ( Q7313   P30   Q48 ) ( Q7313   demo-country   yes )}
-( Q4147013   P30-verified   Q15 ) ⇐ {(( Q4147013   P30   Q15 )  nn   geo ) ( Q4147013   P30   Q15 ) ( Q4147013   demo-country   yes )}
-( Q1057542   P30-verified   Q538 ) ⇐ {(( Q1057542   P30   Q538 )  nn   geo ) ( Q1057542   P30   Q538 ) ( Q1057542   demo-country   yes )}
-( Q774783   P30-verified   Q46 ) ⇐ {(( Q774783   P30   Q46 )  nn   geo ) ( Q774783   P30   Q46 ) ( Q774783   demo-country   yes )}
-( Q107258515   P30-verified   Q48 ) ⇐ {(( Q107258515   P30   Q48 )  nn   geo ) ( Q107258515   P30   Q48 ) ( Q107258515   demo-country   yes )}
-( Q37102   P30-verified   Q15 ) ⇐ {(( Q37102   P30   Q15 )  nn   geo ) ( Q37102   P30   Q15 ) ( Q37102   demo-country   yes )}
-( Q203493   P30-verified   Q46 ) ⇐ {(( Q203493   P30   Q46 )  nn   geo ) ( Q203493   P30   Q46 ) ( Q203493   demo-country   yes )}
-( Q1470101   P30-verified   Q46 ) ⇐ {(( Q1470101   P30   Q46 )  nn   geo ) ( Q1470101   P30   Q46 ) ( Q1470101   demo-country   yes )}
-( Q29520   P30-verified   Q48 ) ⇐ {(( Q29520   P30   Q48 )  nn   geo ) ( Q29520   P30   Q48 ) ( Q29520   demo-country   yes )}
-( Q187035   P30-verified   Q46 ) ⇐ {(( Q187035   P30   Q46 )  nn   geo ) ( Q187035   P30   Q46 ) ( Q187035   demo-country   yes )}
-( Q23366230   P30-verified   Q46 ) ⇐ {(( Q23366230   P30   Q46 )  nn   geo ) ( Q23366230   P30   Q46 ) ( Q23366230   demo-country   yes )}
-( Q1048340   P30-verified   Q46 ) ⇐ {(( Q1048340   P30   Q46 )  nn   geo ) ( Q1048340   P30   Q46 ) ( Q1048340   demo-country   yes )}
-( Q200262   P30-verified   Q46 ) ⇐ {(( Q200262   P30   Q46 )  nn   geo ) ( Q200262   P30   Q46 ) ( Q200262   demo-country   yes )}
-( Q127424576   P30-verified   Q15 ) ⇐ {(( Q127424576   P30   Q15 )  nn   geo ) ( Q127424576   P30   Q15 ) ( Q127424576   demo-country   yes )}
-( Q4453003   P30-verified   Q48 ) ⇐ {(( Q4453003   P30   Q48 )  nn   geo ) ( Q4453003   P30   Q48 ) ( Q4453003   demo-country   yes )}
-( Q110362913   P30-verified   Q48 ) ⇐ {(( Q110362913   P30   Q48 )  nn   geo ) ( Q110362913   P30   Q48 ) ( Q110362913   demo-country   yes )}
-( Q80211   P30-verified   Q46 ) ⇐ {(( Q80211   P30   Q46 )  nn   geo ) ( Q80211   P30   Q46 ) ( Q80211   demo-country   yes )}
-( Q2712121   P30-verified   Q46 ) ⇐ {(( Q2712121   P30   Q46 )  nn   geo ) ( Q2712121   P30   Q46 ) ( Q2712121   demo-country   yes )}
-( Q2526751   P30-candidate   Q46 ) ⇐ {((¬( Q2526751   P30   Q46 ))  nn   geo ) (¬( Q2526751   P30   Q46 )) ( Q2526751   demo-country   yes )}
-( Q62389   P30-candidate   Q46 ) ⇐ {((¬( Q62389   P30   Q46 ))  nn   geo ) (¬( Q62389   P30   Q46 )) ( Q62389   demo-country   yes )}
-( Q42345769   P30-candidate   Q46 ) ⇐ {((¬( Q42345769   P30   Q46 ))  nn   geo ) (¬( Q42345769   P30   Q46 )) ( Q42345769   demo-country   yes )}
-( Q188736   P30-candidate   Q46 ) ⇐ {((¬( Q188736   P30   Q46 ))  nn   geo ) (¬( Q188736   P30   Q46 )) ( Q188736   demo-country   yes )}
-( Q814959   P30-candidate   Q46 ) ⇐ {((¬( Q814959   P30   Q46 ))  nn   geo ) (¬( Q814959   P30   Q46 )) ( Q814959   demo-country   yes )}
-( Q3136869   P30-candidate   Q46 ) ⇐ {((¬( Q3136869   P30   Q46 ))  nn   geo ) (¬( Q3136869   P30   Q46 )) ( Q3136869   demo-country   yes )}
-( Q1530762   P30-candidate   Q46 ) ⇐ {((¬( Q1530762   P30   Q46 ))  nn   geo ) (¬( Q1530762   P30   Q46 )) ( Q1530762   demo-country   yes )}
-( Q109534069   P30-candidate   Q46 ) ⇐ {((¬( Q109534069   P30   Q46 ))  nn   geo ) (¬( Q109534069   P30   Q46 )) ( Q109534069   demo-country   yes )}
-( Q126282254   P30-candidate   Q46 ) ⇐ {((¬( Q126282254   P30   Q46 ))  nn   geo ) (¬( Q126282254   P30   Q46 )) ( Q126282254   demo-country   yes )}
-( Q3167772   P30-candidate   Q46 ) ⇐ {((¬( Q3167772   P30   Q46 ))  nn   geo ) (¬( Q3167772   P30   Q46 )) ( Q3167772   demo-country   yes )}
-( Q96051590   P30-candidate   Q46 ) ⇐ {((¬( Q96051590   P30   Q46 ))  nn   geo ) (¬( Q96051590   P30   Q46 )) ( Q96051590   demo-country   yes )}
-( Q1152126   P30-candidate   Q46 ) ⇐ {((¬( Q1152126   P30   Q46 ))  nn   geo ) (¬( Q1152126   P30   Q46 )) ( Q1152126   demo-country   yes )}
-( Q282475   P30-candidate   Q46 ) ⇐ {((¬( Q282475   P30   Q46 ))  nn   geo ) (¬( Q282475   P30   Q46 )) ( Q282475   demo-country   yes )}
-( Q85804030   P30-candidate   Q46 ) ⇐ {((¬( Q85804030   P30   Q46 ))  nn   geo ) (¬( Q85804030   P30   Q46 )) ( Q85804030   demo-country   yes )}
-( Q134302030   P30-candidate   Q46 ) ⇐ {((¬( Q134302030   P30   Q46 ))  nn   geo ) (¬( Q134302030   P30   Q46 )) ( Q134302030   demo-country   yes )}
-( Q977566   P30-candidate   Q46 ) ⇐ {((¬( Q977566   P30   Q46 ))  nn   geo ) (¬( Q977566   P30   Q46 )) ( Q977566   demo-country   yes )}
-( Q332005   P30-candidate   Q46 ) ⇐ {((¬( Q332005   P30   Q46 ))  nn   geo ) (¬( Q332005   P30   Q46 )) ( Q332005   demo-country   yes )}
-( Q5362837   P30-candidate   Q46 ) ⇐ {((¬( Q5362837   P30   Q46 ))  nn   geo ) (¬( Q5362837   P30   Q46 )) ( Q5362837   demo-country   yes )}
-( Q370372   P30-candidate   Q46 ) ⇐ {((¬( Q370372   P30   Q46 ))  nn   geo ) (¬( Q370372   P30   Q46 )) ( Q370372   demo-country   yes )}
-( Q2362063   P30-candidate   Q46 ) ⇐ {((¬( Q2362063   P30   Q46 ))  nn   geo ) (¬( Q2362063   P30   Q46 )) ( Q2362063   demo-country   yes )}
-( Q6037274   P30-candidate   Q46 ) ⇐ {((¬( Q6037274   P30   Q46 ))  nn   geo ) (¬( Q6037274   P30   Q46 )) ( Q6037274   demo-country   yes )}
-( Q113411770   P30-candidate   Q46 ) ⇐ {((¬( Q113411770   P30   Q46 ))  nn   geo ) (¬( Q113411770   P30   Q46 )) ( Q113411770   demo-country   yes )}
-( Q976099   P30-candidate   Q46 ) ⇐ {((¬( Q976099   P30   Q46 ))  nn   geo ) (¬( Q976099   P30   Q46 )) ( Q976099   demo-country   yes )}
-( Q137386301   P30-candidate   Q46 ) ⇐ {((¬( Q137386301   P30   Q46 ))  nn   geo ) (¬( Q137386301   P30   Q46 )) ( Q137386301   demo-country   yes )}
-( Q449639   P30-candidate   Q46 ) ⇐ {((¬( Q449639   P30   Q46 ))  nn   geo ) (¬( Q449639   P30   Q46 )) ( Q449639   demo-country   yes )}
-( Q1968554   P30-candidate   Q46 ) ⇐ {((¬( Q1968554   P30   Q46 ))  nn   geo ) (¬( Q1968554   P30   Q46 )) ( Q1968554   demo-country   yes )}
-( Q30890672   P30-candidate   Q46 ) ⇐ {((¬( Q30890672   P30   Q46 ))  nn   geo ) (¬( Q30890672   P30   Q46 )) ( Q30890672   demo-country   yes )}
-( Q13125117   P30-candidate   Q46 ) ⇐ {((¬( Q13125117   P30   Q46 ))  nn   geo ) (¬( Q13125117   P30   Q46 )) ( Q13125117   demo-country   yes )}
-( Q2480041   P30-candidate   Q46 ) ⇐ {((¬( Q2480041   P30   Q46 ))  nn   geo ) (¬( Q2480041   P30   Q46 )) ( Q2480041   demo-country   yes )}
-( Q138562037   P30-candidate   Q46 ) ⇐ {((¬( Q138562037   P30   Q46 ))  nn   geo ) (¬( Q138562037   P30   Q46 )) ( Q138562037   demo-country   yes )}
-( Q950101   P30-candidate   Q46 ) ⇐ {((¬( Q950101   P30   Q46 ))  nn   geo ) (¬( Q950101   P30   Q46 )) ( Q950101   demo-country   yes )}
-( Q96028967   P30-candidate   Q46 ) ⇐ {((¬( Q96028967   P30   Q46 ))  nn   geo ) (¬( Q96028967   P30   Q46 )) ( Q96028967   demo-country   yes )}
-( Q494625   P30-candidate   Q46 ) ⇐ {((¬( Q494625   P30   Q46 ))  nn   geo ) (¬( Q494625   P30   Q46 )) ( Q494625   demo-country   yes )}
-( Q5124786   P30-candidate   Q46 ) ⇐ {((¬( Q5124786   P30   Q46 ))  nn   geo ) (¬( Q5124786   P30   Q46 )) ( Q5124786   demo-country   yes )}
-( Q4453007   P30-candidate   Q46 ) ⇐ {((¬( Q4453007   P30   Q46 ))  nn   geo ) (¬( Q4453007   P30   Q46 )) ( Q4453007   demo-country   yes )}
-( Q16674373   P30-candidate   Q46 ) ⇐ {((¬( Q16674373   P30   Q46 ))  nn   geo ) (¬( Q16674373   P30   Q46 )) ( Q16674373   demo-country   yes )}
-( Q707128   P30-candidate   Q46 ) ⇐ {((¬( Q707128   P30   Q46 ))  nn   geo ) (¬( Q707128   P30   Q46 )) ( Q707128   demo-country   yes )}
-( Q3267672   P30-candidate   Q46 ) ⇐ {((¬( Q3267672   P30   Q46 ))  nn   geo ) (¬( Q3267672   P30   Q46 )) ( Q3267672   demo-country   yes )}
-( Q6773257   P30-candidate   Q46 ) ⇐ {((¬( Q6773257   P30   Q46 ))  nn   geo ) (¬( Q6773257   P30   Q46 )) ( Q6773257   demo-country   yes )}
-( Q11681694   P30-candidate   Q46 ) ⇐ {((¬( Q11681694   P30   Q46 ))  nn   geo ) (¬( Q11681694   P30   Q46 )) ( Q11681694   demo-country   yes )}
-( Q20507218   P30-candidate   Q46 ) ⇐ {((¬( Q20507218   P30   Q46 ))  nn   geo ) (¬( Q20507218   P30   Q46 )) ( Q20507218   demo-country   yes )}
-( Q12491063   P30-candidate   Q46 ) ⇐ {((¬( Q12491063   P30   Q46 ))  nn   geo ) (¬( Q12491063   P30   Q46 )) ( Q12491063   demo-country   yes )}
-( Q1362278   P30-candidate   Q46 ) ⇐ {((¬( Q1362278   P30   Q46 ))  nn   geo ) (¬( Q1362278   P30   Q46 )) ( Q1362278   demo-country   yes )}
---- Reasoning iteration 2 ---
-Reasoning complete. Total unification matches processed: 816. Total contradictions found: 0.
-Reasoning summary: 816 matches processed, 0 contradictions found.
+(Q33 P30-verified Q46) ⇐ {((Q33 P30 Q46) nn geo) (Q33 demo-country yes) (Q33 P30 Q46)}
+(Q8733 P30-verified Q48) ⇐ {((Q8733 P30 Q48) nn geo) (Q8733 demo-country yes) (Q8733 P30 Q48)}
+(Q267584 P30-verified Q48) ⇐ {((Q267584 P30 Q48) nn geo) (Q267584 demo-country yes) (Q267584 P30 Q48)}
+(Q774783 P30-verified Q46) ⇐ {((Q774783 P30 Q46) nn geo) (Q774783 demo-country yes) (Q774783 P30 Q46)}
+(Q107258515 P30-verified Q48) ⇐ {((Q107258515 P30 Q48) nn geo) (Q107258515 demo-country yes) (Q107258515 P30 Q48)}
+(Q12060881 P30-verified Q48) ⇐ {((Q12060881 P30 Q48) nn geo) (Q12060881 demo-country yes) (Q12060881 P30 Q48)}
+(Q335088 P30-verified Q48) ⇐ {((Q335088 P30 Q48) nn geo) (Q335088 demo-country yes) (Q335088 P30 Q48)}
+(Q1155700 P30-verified Q48) ⇐ {((Q1155700 P30 Q48) nn geo) (Q1155700 demo-country yes) (Q1155700 P30 Q48)}
+(Q10957559 P30-verified Q46) ⇐ {((Q10957559 P30 Q46) nn geo) (Q10957559 demo-country yes) (Q10957559 P30 Q46)}
+(Q1147441 P30-verified Q48) ⇐ {((Q1147441 P30 Q48) nn geo) (Q1147441 demo-country yes) (Q1147441 P30 Q48)}
+(Q216632 P30-verified Q15) ⇐ {((Q216632 P30 Q15) nn geo) (Q216632 demo-country yes) (Q216632 P30 Q15)}
+(Q2454585 P30-verified Q46) ⇐ {((Q2454585 P30 Q46) nn geo) (Q2454585 demo-country yes) (Q2454585 P30 Q46)}
+(Q1998866 P30-verified Q46) ⇐ {((Q1998866 P30 Q46) nn geo) (Q1998866 demo-country yes) (Q1998866 P30 Q46)}
+(Q1057542 P30-verified Q538) ⇐ {((Q1057542 P30 Q538) nn geo) (Q1057542 demo-country yes) (Q1057542 P30 Q538)}
+(Q187035 P30-verified Q46) ⇐ {((Q187035 P30 Q46) nn geo) (Q187035 demo-country yes) (Q187035 P30 Q46)}
+(Q7313 P30-verified Q48) ⇐ {((Q7313 P30 Q48) nn geo) (Q7313 demo-country yes) (Q7313 P30 Q48)}
+(Q4147013 P30-verified Q15) ⇐ {((Q4147013 P30 Q15) nn geo) (Q4147013 demo-country yes) (Q4147013 P30 Q15)}
+(Q37102 P30-verified Q15) ⇐ {((Q37102 P30 Q15) nn geo) (Q37102 demo-country yes) (Q37102 P30 Q15)}
+(Q245160 P30-verified Q5401) ⇐ {((Q245160 P30 Q5401) nn geo) (Q245160 demo-country yes) (Q245160 P30 Q5401)}
+(Q115166787 P30-verified Q48) ⇐ {((Q115166787 P30 Q48) nn geo) (Q115166787 demo-country yes) (Q115166787 P30 Q48)}
+(Q771193 P30-verified Q46) ⇐ {((Q771193 P30 Q46) nn geo) (Q771193 demo-country yes) (Q771193 P30 Q46)}
+(Q114327408 P30-verified Q46) ⇐ {((Q114327408 P30 Q46) nn geo) (Q114327408 demo-country yes) (Q114327408 P30 Q46)}
+(Q618399 P30-verified Q15) ⇐ {((Q618399 P30 Q15) nn geo) (Q618399 demo-country yes) (Q618399 P30 Q15)}
+(Q140359 P30-verified Q46) ⇐ {((Q140359 P30 Q46) nn geo) (Q140359 demo-country yes) (Q140359 P30 Q46)}
+(Q3623202 P30-verified Q46) ⇐ {((Q3623202 P30 Q46) nn geo) (Q3623202 demo-country yes) (Q3623202 P30 Q46)}
+(Q173065 P30-verified Q46) ⇐ {((Q173065 P30 Q46) nn geo) (Q173065 demo-country yes) (Q173065 P30 Q46)}
+(Q703695 P30-verified Q48) ⇐ {((Q703695 P30 Q48) nn geo) (Q703695 demo-country yes) (Q703695 P30 Q48)}
+(Q1483495 P30-verified Q46) ⇐ {((Q1483495 P30 Q46) nn geo) (Q1483495 demo-country yes) (Q1483495 P30 Q46)}
+(Q671658 P30-verified Q828) ⇐ {((Q671658 P30 Q828) nn geo) (Q671658 demo-country yes) (Q671658 P30 Q828)}
+(Q19083 P30-verified Q5401) ⇐ {((Q19083 P30 Q5401) nn geo) (Q19083 demo-country yes) (Q19083 P30 Q5401)}
+(Q1054184 P30-verified Q48) ⇐ {((Q1054184 P30 Q48) nn geo) (Q1054184 demo-country yes) (Q1054184 P30 Q48)}
+(Q330362 P30-verified Q46) ⇐ {((Q330362 P30 Q46) nn geo) (Q330362 demo-country yes) (Q330362 P30 Q46)}
+(Q243652 P30-verified Q46) ⇐ {((Q243652 P30 Q46) nn geo) (Q243652 demo-country yes) (Q243652 P30 Q46)}
+(Q12536 P30-verified Q15) ⇐ {((Q12536 P30 Q15) nn geo) (Q12536 demo-country yes) (Q12536 P30 Q15)}
+(Q31747 P30-verified Q46) ⇐ {((Q31747 P30 Q46) nn geo) (Q31747 demo-country yes) (Q31747 P30 Q46)}
+(Q185488 P30-verified Q46) ⇐ {((Q185488 P30 Q46) nn geo) (Q185488 demo-country yes) (Q185488 P30 Q46)}
+(Q838261 P30-verified Q46) ⇐ {((Q838261 P30 Q46) nn geo) (Q838261 demo-country yes) (Q838261 P30 Q46)}
+(Q9903 P30-verified Q48) ⇐ {((Q9903 P30 Q48) nn geo) (Q9903 demo-country yes) (Q9903 P30 Q48)}
+(Q15864 P30-verified Q46) ⇐ {((Q15864 P30 Q46) nn geo) (Q15864 demo-country yes) (Q15864 P30 Q46)}
+(Q3892131 P30-verified Q18) ⇐ {((Q3892131 P30 Q18) nn geo) (Q3892131 demo-country yes) (Q3892131 P30 Q18)}
+(Q1078602 P30-verified Q48) ⇐ {((Q1078602 P30 Q48) nn geo) (Q1078602 demo-country yes) (Q1078602 P30 Q48)}
+(Q170468 P30-verified Q15) ⇐ {((Q170468 P30 Q15) nn geo) (Q170468 demo-country yes) (Q170468 P30 Q15)}
+(Q2578028 P30-verified Q48) ⇐ {((Q2578028 P30 Q48) nn geo) (Q2578028 demo-country yes) (Q2578028 P30 Q48)}
+(Q191077 P30-verified Q46) ⇐ {((Q191077 P30 Q46) nn geo) (Q191077 demo-country yes) (Q191077 P30 Q46)}
+(Q878319 P30-verified Q46) ⇐ {((Q878319 P30 Q46) nn geo) (Q878319 demo-country yes) (Q878319 P30 Q46)}
+(Q1415128 P30-verified Q48) ⇐ {((Q1415128 P30 Q48) nn geo) (Q1415128 demo-country yes) (Q1415128 P30 Q48)}
+(Q63158027 P30-verified Q48) ⇐ {((Q63158027 P30 Q48) nn geo) (Q63158027 demo-country yes) (Q63158027 P30 Q48)}
+(Q29520 P30-verified Q48) ⇐ {((Q29520 P30 Q48) nn geo) (Q29520 demo-country yes) (Q29520 P30 Q48)}
+(Q1048340 P30-verified Q46) ⇐ {((Q1048340 P30 Q46) nn geo) (Q1048340 demo-country yes) (Q1048340 P30 Q46)}
+(Q23366230 P30-verified Q46) ⇐ {((Q23366230 P30 Q46) nn geo) (Q23366230 demo-country yes) (Q23366230 P30 Q46)}
+(Q200262 P30-verified Q46) ⇐ {((Q200262 P30 Q46) nn geo) (Q200262 demo-country yes) (Q200262 P30 Q46)}
+(Q1470101 P30-verified Q46) ⇐ {((Q1470101 P30 Q46) nn geo) (Q1470101 demo-country yes) (Q1470101 P30 Q46)}
+(Q203493 P30-verified Q46) ⇐ {((Q203493 P30 Q46) nn geo) (Q203493 demo-country yes) (Q203493 P30 Q46)}
+(Q580188 P30-verified Q48) ⇐ {((Q580188 P30 Q48) nn geo) (Q580188 demo-country yes) (Q580188 P30 Q48)}
+(Q193152 P30-verified Q46) ⇐ {((Q193152 P30 Q46) nn geo) (Q193152 demo-country yes) (Q193152 P30 Q46)}
+(Q162192 P30-verified Q18) ⇐ {((Q162192 P30 Q18) nn geo) (Q162192 demo-country yes) (Q162192 P30 Q18)}
+(Q747314 P30-verified Q15) ⇐ {((Q747314 P30 Q15) nn geo) (Q747314 demo-country yes) (Q747314 P30 Q15)}
+(Q756617 P30-verified Q49) ⇐ {((Q756617 P30 Q49) nn geo) (Q756617 demo-country yes) (Q756617 P30 Q49)}
+(Q599613 P30-verified Q46) ⇐ {((Q599613 P30 Q46) nn geo) (Q599613 demo-country yes) (Q599613 P30 Q46)}
+(Q2273304 P30-verified Q46) ⇐ {((Q2273304 P30 Q46) nn geo) (Q2273304 demo-country yes) (Q2273304 P30 Q46)}
+(Q912052 P30-verified Q48) ⇐ {((Q912052 P30 Q48) nn geo) (Q912052 demo-country yes) (Q912052 P30 Q48)}
+(Q176495 P30-verified Q46) ⇐ {((Q176495 P30 Q46) nn geo) (Q176495 demo-country yes) (Q176495 P30 Q46)}
+(Q431731 P30-verified Q15) ⇐ {((Q431731 P30 Q15) nn geo) (Q431731 demo-country yes) (Q431731 P30 Q15)}
+(Q189988 P30-verified Q15) ⇐ {((Q189988 P30 Q15) nn geo) (Q189988 demo-country yes) (Q189988 P30 Q15)}
+(Q2597352 P30-verified Q46) ⇐ {((Q2597352 P30 Q46) nn geo) (Q2597352 demo-country yes) (Q2597352 P30 Q46)}
+(Q1649871 P30-verified Q46) ⇐ {((Q1649871 P30 Q46) nn geo) (Q1649871 demo-country yes) (Q1649871 P30 Q46)}
+(Q684030 P30-verified Q46) ⇐ {((Q684030 P30 Q46) nn geo) (Q684030 demo-country yes) (Q684030 P30 Q46)}
+(Q11774 P30-verified Q48) ⇐ {((Q11774 P30 Q48) nn geo) (Q11774 demo-country yes) (Q11774 P30 Q48)}
+(Q204920 P30-verified Q46) ⇐ {((Q204920 P30 Q46) nn geo) (Q204920 demo-country yes) (Q204920 P30 Q46)}
+(Q2369784 P30-verified Q46) ⇐ {((Q2369784 P30 Q46) nn geo) (Q2369784 demo-country yes) (Q2369784 P30 Q46)}
+(Q7233551 P30-verified Q48) ⇐ {((Q7233551 P30 Q48) nn geo) (Q7233551 demo-country yes) (Q7233551 P30 Q48)}
+(Q164079 P30-verified Q46) ⇐ {((Q164079 P30 Q46) nn geo) (Q164079 demo-country yes) (Q164079 P30 Q46)}
+(Q2899771 P30-verified Q46) ⇐ {((Q2899771 P30 Q46) nn geo) (Q2899771 demo-country yes) (Q2899771 P30 Q46)}
+(Q962 P30-verified Q15) ⇐ {((Q962 P30 Q15) nn geo) (Q962 demo-country yes) (Q962 P30 Q15)}
+(Q172579 P30-verified Q46) ⇐ {((Q172579 P30 Q46) nn geo) (Q172579 demo-country yes) (Q172579 P30 Q46)}
+(Q953432 P30-verified Q46) ⇐ {((Q953432 P30 Q46) nn geo) (Q953432 demo-country yes) (Q953432 P30 Q46)}
+(Q28846511 P30-verified Q46) ⇐ {((Q28846511 P30 Q46) nn geo) (Q28846511 demo-country yes) (Q28846511 P30 Q46)}
+(Q15102440 P30-verified Q46) ⇐ {((Q15102440 P30 Q46) nn geo) (Q15102440 demo-country yes) (Q15102440 P30 Q46)}
+(Q1232887 P30-verified Q46) ⇐ {((Q1232887 P30 Q46) nn geo) (Q1232887 demo-country yes) (Q1232887 P30 Q46)}
+(Q717 P30-verified Q18) ⇐ {((Q717 P30 Q18) nn geo) (Q717 demo-country yes) (Q717 P30 Q18)}
+(Q20949725 P30-verified Q46) ⇐ {((Q20949725 P30 Q46) nn geo) (Q20949725 demo-country yes) (Q20949725 P30 Q46)}
+(Q34 P30-verified Q46) ⇐ {((Q34 P30 Q46) nn geo) (Q34 demo-country yes) (Q34 P30 Q46)}
+(Q16056854 P30-verified Q46) ⇐ {((Q16056854 P30 Q46) nn geo) (Q16056854 demo-country yes) (Q16056854 P30 Q46)}
+(Q18285930 P30-verified Q46) ⇐ {((Q18285930 P30 Q46) nn geo) (Q18285930 demo-country yes) (Q18285930 P30 Q46)}
+(Q170588 P30-verified Q49) ⇐ {((Q170588 P30 Q49) nn geo) (Q170588 demo-country yes) (Q170588 P30 Q49)}
+(Q2415003 P30-verified Q46) ⇐ {((Q2415003 P30 Q46) nn geo) (Q2415003 demo-country yes) (Q2415003 P30 Q46)}
+(Q207521 P30-verified Q15) ⇐ {((Q207521 P30 Q15) nn geo) (Q207521 demo-country yes) (Q207521 P30 Q15)}
+(Q175276 P30-verified Q46) ⇐ {((Q175276 P30 Q46) nn geo) (Q175276 demo-country yes) (Q175276 P30 Q46)}
+(Q870055 P30-verified Q48) ⇐ {((Q870055 P30 Q48) nn geo) (Q870055 demo-country yes) (Q870055 P30 Q48)}
+(Q190025 P30-verified Q27611) ⇐ {((Q190025 P30 Q27611) nn geo) (Q190025 demo-country yes) (Q190025 P30 Q27611)}
+(Q736727 P30-verified Q46) ⇐ {((Q736727 P30 Q46) nn geo) (Q736727 demo-country yes) (Q736727 P30 Q46)}
+(Q4304392 P30-verified Q48) ⇐ {((Q4304392 P30 Q48) nn geo) (Q4304392 demo-country yes) (Q4304392 P30 Q48)}
+(Q218023 P30-verified Q15) ⇐ {((Q218023 P30 Q15) nn geo) (Q218023 demo-country yes) (Q218023 P30 Q15)}
+(Q43287 P30-verified Q46) ⇐ {((Q43287 P30 Q46) nn geo) (Q43287 demo-country yes) (Q43287 P30 Q46)}
+(Q127424576 P30-verified Q15) ⇐ {((Q127424576 P30 Q15) nn geo) (Q127424576 demo-country yes) (Q127424576 P30 Q15)}
+(Q4453003 P30-verified Q48) ⇐ {((Q4453003 P30 Q48) nn geo) (Q4453003 demo-country yes) (Q4453003 P30 Q48)}
+(Q110362913 P30-verified Q48) ⇐ {((Q110362913 P30 Q48) nn geo) (Q110362913 demo-country yes) (Q110362913 P30 Q48)}
+(Q80211 P30-verified Q46) ⇐ {((Q80211 P30 Q46) nn geo) (Q80211 demo-country yes) (Q80211 P30 Q46)}
+(Q2712121 P30-verified Q46) ⇐ {((Q2712121 P30 Q46) nn geo) (Q2712121 demo-country yes) (Q2712121 P30 Q46)}
+(Q137386301 P30-candidate Q46) ⇐ {(¬(Q137386301 P30 Q46)) (Q137386301 demo-country yes) ((Q137386301 P30 Q46) nn geo)}
+(Q30890672 P30-candidate Q46) ⇐ {(¬(Q30890672 P30 Q46)) (Q30890672 demo-country yes) ((Q30890672 P30 Q46) nn geo)}
+(Q1968554 P30-candidate Q46) ⇐ {(¬(Q1968554 P30 Q46)) (Q1968554 demo-country yes) ((Q1968554 P30 Q46) nn geo)}
+(Q96028967 P30-candidate Q46) ⇐ {(¬(Q96028967 P30 Q46)) (Q96028967 demo-country yes) ((Q96028967 P30 Q46) nn geo)}
+(Q13125117 P30-candidate Q46) ⇐ {(¬(Q13125117 P30 Q46)) (Q13125117 demo-country yes) ((Q13125117 P30 Q46) nn geo)}
+(Q976099 P30-candidate Q46) ⇐ {(¬(Q976099 P30 Q46)) (Q976099 demo-country yes) ((Q976099 P30 Q46) nn geo)}
+(Q42345769 P30-candidate Q46) ⇐ {(¬(Q42345769 P30 Q46)) (Q42345769 demo-country yes) ((Q42345769 P30 Q46) nn geo)}
+(Q3136869 P30-candidate Q46) ⇐ {(¬(Q3136869 P30 Q46)) (Q3136869 demo-country yes) ((Q3136869 P30 Q46) nn geo)}
+(Q1530762 P30-candidate Q46) ⇐ {(¬(Q1530762 P30 Q46)) (Q1530762 demo-country yes) ((Q1530762 P30 Q46) nn geo)}
+(Q950101 P30-candidate Q46) ⇐ {(¬(Q950101 P30 Q46)) (Q950101 demo-country yes) ((Q950101 P30 Q46) nn geo)}
+(Q138562037 P30-candidate Q46) ⇐ {(¬(Q138562037 P30 Q46)) (Q138562037 demo-country yes) ((Q138562037 P30 Q46) nn geo)}
+(Q2480041 P30-candidate Q46) ⇐ {(¬(Q2480041 P30 Q46)) (Q2480041 demo-country yes) ((Q2480041 P30 Q46) nn geo)}
+(Q188736 P30-candidate Q46) ⇐ {(¬(Q188736 P30 Q46)) (Q188736 demo-country yes) ((Q188736 P30 Q46) nn geo)}
+(Q62389 P30-candidate Q46) ⇐ {(¬(Q62389 P30 Q46)) (Q62389 demo-country yes) ((Q62389 P30 Q46) nn geo)}
+(Q2526751 P30-candidate Q46) ⇐ {(¬(Q2526751 P30 Q46)) (Q2526751 demo-country yes) ((Q2526751 P30 Q46) nn geo)}
+(Q96051590 P30-candidate Q46) ⇐ {(¬(Q96051590 P30 Q46)) (Q96051590 demo-country yes) ((Q96051590 P30 Q46) nn geo)}
+(Q3167772 P30-candidate Q46) ⇐ {(¬(Q3167772 P30 Q46)) (Q3167772 demo-country yes) ((Q3167772 P30 Q46) nn geo)}
+(Q109534069 P30-candidate Q46) ⇐ {(¬(Q109534069 P30 Q46)) (Q109534069 demo-country yes) ((Q109534069 P30 Q46) nn geo)}
+(Q814959 P30-candidate Q46) ⇐ {(¬(Q814959 P30 Q46)) (Q814959 demo-country yes) ((Q814959 P30 Q46) nn geo)}
+(Q126282254 P30-candidate Q46) ⇐ {(¬(Q126282254 P30 Q46)) (Q126282254 demo-country yes) ((Q126282254 P30 Q46) nn geo)}
+(Q332005 P30-candidate Q46) ⇐ {(¬(Q332005 P30 Q46)) (Q332005 demo-country yes) ((Q332005 P30 Q46) nn geo)}
+(Q6037274 P30-candidate Q46) ⇐ {(¬(Q6037274 P30 Q46)) (Q6037274 demo-country yes) ((Q6037274 P30 Q46) nn geo)}
+(Q977566 P30-candidate Q46) ⇐ {(¬(Q977566 P30 Q46)) (Q977566 demo-country yes) ((Q977566 P30 Q46) nn geo)}
+(Q134302030 P30-candidate Q46) ⇐ {(¬(Q134302030 P30 Q46)) (Q134302030 demo-country yes) ((Q134302030 P30 Q46) nn geo)}
+(Q85804030 P30-candidate Q46) ⇐ {(¬(Q85804030 P30 Q46)) (Q85804030 demo-country yes) ((Q85804030 P30 Q46) nn geo)}
+(Q2362063 P30-candidate Q46) ⇐ {(¬(Q2362063 P30 Q46)) (Q2362063 demo-country yes) ((Q2362063 P30 Q46) nn geo)}
+(Q113411770 P30-candidate Q46) ⇐ {(¬(Q113411770 P30 Q46)) (Q113411770 demo-country yes) ((Q113411770 P30 Q46) nn geo)}
+(Q1152126 P30-candidate Q46) ⇐ {(¬(Q1152126 P30 Q46)) (Q1152126 demo-country yes) ((Q1152126 P30 Q46) nn geo)}
+(Q5362837 P30-candidate Q46) ⇐ {(¬(Q5362837 P30 Q46)) (Q5362837 demo-country yes) ((Q5362837 P30 Q46) nn geo)}
+(Q370372 P30-candidate Q46) ⇐ {(¬(Q370372 P30 Q46)) (Q370372 demo-country yes) ((Q370372 P30 Q46) nn geo)}
+(Q282475 P30-candidate Q46) ⇐ {(¬(Q282475 P30 Q46)) (Q282475 demo-country yes) ((Q282475 P30 Q46) nn geo)}
+(Q494625 P30-candidate Q46) ⇐ {(¬(Q494625 P30 Q46)) (Q494625 demo-country yes) ((Q494625 P30 Q46) nn geo)}
+(Q5124786 P30-candidate Q46) ⇐ {(¬(Q5124786 P30 Q46)) (Q5124786 demo-country yes) ((Q5124786 P30 Q46) nn geo)}
+(Q4453007 P30-candidate Q46) ⇐ {(¬(Q4453007 P30 Q46)) (Q4453007 demo-country yes) ((Q4453007 P30 Q46) nn geo)}
+(Q16674373 P30-candidate Q46) ⇐ {(¬(Q16674373 P30 Q46)) (Q16674373 demo-country yes) ((Q16674373 P30 Q46) nn geo)}
+(Q707128 P30-candidate Q46) ⇐ {(¬(Q707128 P30 Q46)) (Q707128 demo-country yes) ((Q707128 P30 Q46) nn geo)}
+(Q3267672 P30-candidate Q46) ⇐ {(¬(Q3267672 P30 Q46)) (Q3267672 demo-country yes) ((Q3267672 P30 Q46) nn geo)}
+(Q6773257 P30-candidate Q46) ⇐ {(¬(Q6773257 P30 Q46)) (Q6773257 demo-country yes) ((Q6773257 P30 Q46) nn geo)}
+(Q11681694 P30-candidate Q46) ⇐ {(¬(Q11681694 P30 Q46)) (Q11681694 demo-country yes) ((Q11681694 P30 Q46) nn geo)}
+(Q20507218 P30-candidate Q46) ⇐ {(¬(Q20507218 P30 Q46)) (Q20507218 demo-country yes) ((Q20507218 P30 Q46) nn geo)}
+(Q12491063 P30-candidate Q46) ⇐ {(¬(Q12491063 P30 Q46)) (Q12491063 demo-country yes) ((Q12491063 P30 Q46) nn geo)}
+(Q1362278 P30-candidate Q46) ⇐ {(¬(Q1362278 P30 Q46)) (Q1362278 demo-country yes) ((Q1362278 P30 Q46) nn geo)}
+Reasoning complete. Total unification matches processed: 1074. Total contradictions found: 0.
+Reasoning summary: 1074 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
-Reasoning complete in 0h0m2.344s – 816 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m0.234s – 1074 matches processed, 0 contradictions found.
 Ready.
+-- 330 ms --
 P30-verified facts: 99
-  Q1057542 (Republic of Hawaii) -> Q538  conf=1.000
-  Q747314 (Bechuanaland Protectorate) -> Q15  conf=0.994
-  Q245160 (Democratic Republic of Georgia) -> Q5401  conf=1.000
-  Q170468 (Q170468) -> Q15  conf=0.609
-  Q115166787 (Q115166787) -> Q48  conf=0.989
-P30-candidate facts: 43
-  Q1530762 (Kingdom of Kandy) -> Q46  conf=0.527
-  Q109534069 (Kingdom of Wolaita) -> Q46  conf=0.527
-  Q3136869 (Kingdom of Dambadeniya) -> Q46  conf=0.527
-  Q3267672 (Republic of Entre Ríos) -> Q46  conf=0.527
-  Q814959 (Beiyang Government) -> Q46  conf=0.527
+  Q203493 (Kingdom of Romania) -> Q46  conf=1.000
+  Q193152 (Great Moravia) -> Q46  conf=1.000
+  Q189988 (Central African Empire) -> Q15  conf=0.986
+  Q7313 (Yuan dynasty) -> Q48  conf=0.981
+  Q107258515 (Pahlavi Iran) -> Q48  conf=0.999
+P30-candidate facts: 42
+  Q85804030 (Sultanate of Tarim) -> Q46  conf=0.527
+  Q134302030 (Fetu kingdom) -> Q46  conf=0.527
+  Q977566 (sub-Roman Britain) -> Q46  conf=0.527
+  Q5362837 (Emirate of Jabal Shammar) -> Q46  conf=0.527
+  Q332005 (Principality of Achaea) -> Q46  conf=0.527
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
--- 2.497 s --
-wikidata->
 ```
 
 ## Hidden-layer activation

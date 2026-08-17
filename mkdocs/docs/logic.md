@@ -1216,16 +1216,10 @@ zelph can load and reason over millions of Wikidata facts. A typical consistency
 .run
 ```
 
-!!! note "Which artifact"
-    The rule works on any of the [published networks](binaries.md); how many
-    asymmetries it finds depends on which one, since each carries a different
-    set of individual items. The counts quoted in the surrounding text were
-    taken on an earlier pruned artifact and have not yet been re-measured on
-    the current ones.
 
 Here, P361 ("part of") and P527 ("has part") are inverse properties. The rule flags every entity declared "part of" something whose parent does not list it among its parts.
 
-Thousands of such asymmetries exist in Wikidata. These are not necessarily errors — they may reflect deliberate modeling choices about redundancy — but detecting them systematically is the first step toward improving data quality at scale. This is exactly the kind of analysis performed in the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force), supported by a [Wikimedia Community Fund grant](wikidata.md).
+On `wikidata-20260309-all-pruned-medium.bin` this reports **355,073 contradictions from 547,551 unification matches**, in five minutes of reasoning. How many a given network yields depends on which one – each [published variant](binaries.md) carries a different set of individual items – but the order of magnitude is the point: these are not a handful of stragglers. They are also not necessarily errors, since they may reflect deliberate modeling choices about redundancy; detecting them systematically is the first step toward improving data quality at scale. This is exactly the kind of analysis performed in the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force), supported by a [Wikimedia Community Fund grant](wikidata.md).
 
 ## The Programmatic Layer: Janet
 
