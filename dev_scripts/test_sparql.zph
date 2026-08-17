@@ -1,4 +1,4 @@
-.load /home/stefan/zelph/wikidata-20260309-all-pruned.bin
+.load /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin
 .import sparql
 %(set sparql-profile true)
 sparql

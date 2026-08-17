@@ -21,7 +21,7 @@ Although the script contains convenience handling for Wikidata prefixes (`wd:`, 
 Load a network, import the script, then type `sparql` and paste your query. An empty line executes it:
 
 ```
-zelph> .load /path/to/wikidata-20260309-all-pruned.bin
+zelph> .load /path/to/wikidata-20260309-all-pruned-small.bin
 zelph> .import sparql
 zelph-> sparql
 SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }

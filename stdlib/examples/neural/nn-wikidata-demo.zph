@@ -3,7 +3,7 @@
 # rule conditions.
 #
 # Prerequisites, in this order:
-#   .load wikidata-20260309-all-pruned.bin     (full dump works too)
+#   .load wikidata-20260309-all-pruned-medium.bin   (any published network works)
 #   .import nn
 #   .import examples/neural/nn-wikidata-demo
 #

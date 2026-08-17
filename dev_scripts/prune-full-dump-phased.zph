@@ -40,11 +40,11 @@
 # they are instances of, so the hierarchy should survive untouched -- but
 # "should" is not "does", and the check is three lines.
 #
-# The reference figures, from wikidata-20260309-all-pruned.bin (9 June):
-# 78 topmost culprits of 18 933 affected classes, over 1 193 228 P279 edges.
-# The new artifact is a DIFFERENT one, so its numbers will differ; what must
-# hold is that the query still answers, and that the class count is of the
-# same order rather than collapsed.
+# The reference figure, from the artifact published until August 2026:
+# 78 topmost culprits. Each artifact this script produces is a DIFFERENT
+# network, so its number will differ; what must hold is that the query still
+# answers, and that the class count is of the same order rather than
+# collapsed. The two published results are 81 on both -medium and -small.
 # ---------------------------------------------------------------------------
 
 .lang wikidata

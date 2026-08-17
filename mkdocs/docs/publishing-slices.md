@@ -20,31 +20,31 @@ next to them:
 ```
 $ cd ~/zelph
 $ zelph
-zelph> .load /home/stefan/zelph/wikidata-20260309-all-pruned.bin
+zelph> .load /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin
 ...
-String pool size after load: 20389119
+String pool size after load: 11423140
 Network loaded.
- Time needed for loading/importing: 0h1m30.799s
--- 1m30.799s --
+ Time needed for loading/importing: 0h0m26.249s
+-- 26.249 s --
 zelph-> .lang wikidata
-wikidata-> .save-predicates wikidata-20260309-all-pruned-P279.bin P279
-Saving: probabilities size=0, left size=74608727, right size=74608727
+wikidata-> .save-predicates wikidata-20260309-all-pruned-small-P279.bin P279
+Saving: probabilities size=0, left size=26533048, right size=26533048
 Saving: name_of_node outer size=2, node_of_name outer size=2
-Saving: string pool size=20389119
-Saved 1193228 fact(s) of 1 predicate(s) to wikidata-20260309-all-pruned-P279.bin
--- 15.779 s --
+Saving: string pool size=11423140
+Saved 1114757 fact(s) of 1 predicate(s) to wikidata-20260309-all-pruned-small-P279.bin
+-- 6.4 s --
 wikidata-> .quit
 ```
 
-The result is 236 MB.
+The result is 224 MB.
 
 Several predicates go into one file by listing them:
 
 ```
-wikidata> .save-predicates wikidata-20260309-all-pruned-P279-P31.bin P279 P31
+wikidata> .save-predicates wikidata-20260309-all-pruned-small-P279-P31.bin P279 P31
 ```
 
-What this costs, measured on the pruned network (74.6 million nodes, 15.2 GiB resident): **15 seconds and 0.5 GiB on top of the loaded network**. The pass is linear in the size of the network and the extra memory is one entry per retained node, so on the complete dump expect minutes rather than seconds, and a few gigabytes on top of the 210 — plan the slice as part of the same session that already has the network loaded, not as a separate load.
+What this costs, measured on the small pruned network (26.5 million nodes, 6.0 GiB resident): **six seconds and a fraction of a GiB on top of the loaded network**. The pass is linear in the size of the network and the extra memory is one entry per retained node, so on the complete dump expect minutes rather than seconds, and a few gigabytes on top of the 224 — plan the slice as part of the same session that already has the network loaded, not as a separate load.
 
 Which predicates are worth slicing is a content question, not a technical one. `P279` alone answers everything about the class hierarchy, which is where the documented demand is.
 
@@ -71,7 +71,7 @@ Keep the name of the source network and append the predicates:
 | Source network                     | Slice                                        |
 | ---------------------------------- | -------------------------------------------- |
 | `wikidata-20260309-all.bin`        | `wikidata-20260309-all-P279.bin`             |
-| `wikidata-20260309-all-pruned.bin` | `wikidata-20260309-all-pruned-P279.bin`      |
+| `wikidata-20260309-all-pruned-small.bin` | `wikidata-20260309-all-pruned-small-P279.bin` |
 
 The dump date has to stay in the name: it is what makes a reported number reproducible, and the whole point of publishing a file rather than an endpoint.
 
@@ -83,24 +83,24 @@ Three checks, in increasing strength. The first two take seconds.
 
 ```
 $ zelph
-zelph> .load wikidata-20260309-all-pruned-P279.bin
-Loading network from generic file wikidata-20260309-all-pruned-P279.bin...
+zelph> .load wikidata-20260309-all-pruned-small-P279.bin
+Loading network from generic file wikidata-20260309-all-pruned-small-P279.bin...
 Loading: left chunks=3, right chunks=3, nameOfNode chunks=2, nodeOfName chunks=2
 ...
-String pool size after load: 1757443
+String pool size after load: 1666410
 Network loaded.
- Time needed for loading/importing: 0h0m2.836s
+ Time needed for loading/importing: 0h0m2.306s
 zelph-> .stat
 Network Statistics:
 ------------------------
-Nodes: 2152901
+Nodes: 2005552
 RAM Usage: 0.6 GiB
 Name-of-Node Entries by language:
-  wikidata: 959657
-  en: 797786
+  wikidata: 890779
+  en: 775631
 Node-of-Name Entries by language:
-  wikidata: 959657
-  en: 797786
+  wikidata: 890779
+  en: 775631
 Languages: 2
 Rules: 0
 ------------------------
@@ -112,12 +112,12 @@ Rules: 0
 zelph-> .import wikidata-classes
 zelph-> %(culprits "Q215627" "Q43229" 5)
 below	class
-14634	Q703534 (employee)
+14498	Q703534 (employee)
 1761	Q30185
-1733	Q1097498
+1689	Q1097498
 812	Q11974939 (health professional)
 46	Q12773225 (slave)
--- 81 topmost culprit(s) of 18933 affected class(es); showing 5 --
+-- 81 topmost culprit(s) of 18757 affected class(es); showing 5 --
 ```
 
 **It agrees with the network it came from.** This is the check that matters, and it is worth running once per dump. Put the query in a file:
@@ -142,8 +142,8 @@ EOF
 
 run() { (echo ".load $1"; cat /tmp/culprits.zph) | zelph | grep -E '^Q[0-9]+' | sed 's/ .*//' | sort; }
 
-diff <(run /home/stefan/zelph/wikidata-20260309-all-pruned-P279.bin) \
-     <(run /home/stefan/zelph/wikidata-20260309-all-pruned.bin) \
+diff <(run /home/stefan/zelph/wikidata-20260309-all-pruned-small-P279.bin) \
+     <(run /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin) \
   && echo "slice and source agree"
 ```
 
@@ -151,10 +151,10 @@ For the 2026-03-09 pruned pair this prints `slice and source agree` over 81 clas
 
 ## 3. Do not publish the adjacency index
 
-Loading a slice and asking a transitive question builds an adjacency index and writes it next to the file:
+Loading a slice and asking a transitive question builds an adjacency index and writes it next to the file (what the file is, and why it exists at all, is described under [the `.pidx` sidecar files](binaries.md#the-pidx-sidecar-files)):
 
 ```
-Saved adjacency index to wikidata-20260309-all-pruned-P279.bin.pidx.322 (1117131 edges).
+Saved adjacency index to wikidata-20260309-all-pruned-small-P279.bin.pidx.322 (1114757 edges).
 ```
 
 That file is a **machine-local cache**: it stores raw pairs in host byte order and is validated against the exact network it was built from. It must not be uploaded — it would be wrong on a machine of different endianness and stale against any regenerated file. Rebuilding costs about 15 seconds and happens automatically on every user's first transitive question.
@@ -171,7 +171,7 @@ The dataset repository is [acrion/zelph](https://huggingface.co/datasets/acrion/
 
 ```bash
 cd /home/stefan/zelph
-hf upload acrion/zelph wikidata-20260309-all-pruned-P279.bin --repo-type dataset
+hf upload acrion/zelph wikidata-20260309-all-pruned-small-P279.bin --repo-type dataset
 ```
 
 (`upload-to-hf.sh <file>` in that directory is the same command.) A few hundred megabytes take a minute or two; the Xet backend deduplicates content, so re-uploading an unchanged file is cheap.
@@ -179,7 +179,7 @@ hf upload acrion/zelph wikidata-20260309-all-pruned-P279.bin --repo-type dataset
 Verify what arrived, from a directory that does not contain the file:
 
 ```bash
-cd /tmp && hf download acrion/zelph wikidata-20260309-all-pruned-P279.bin \
+cd /tmp && hf download acrion/zelph wikidata-20260309-all-pruned-small-P279.bin \
   --repo-type dataset --local-dir /tmp/hf-check
 ls -la /tmp/hf-check
 ```

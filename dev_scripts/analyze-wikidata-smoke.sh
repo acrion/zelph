@@ -24,7 +24,7 @@
 set -eu
 
 BIN=build-release/bin/zelph
-DUMP=/home/stefan/zelph/wikidata-20260309-all-pruned.bin
+DUMP=/home/stefan/zelph/wikidata-20260309-all-pruned-small.bin
 LOG_FILE=$(mktemp /tmp/zelph-wd-smoke-XXXXXX.log)
 
 printf '%s\n' \

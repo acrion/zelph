@@ -10,14 +10,45 @@ All `.bin` files are available on [Hugging Face](https://huggingface.co/datasets
 
 Currently, I offer the following Wikidata variants:
 
-| File                               | Variant                                                                            |       Nodes | File Size | RAM Usage | Name Entries (`wikidata` / `en`) | Load Time |
-| ---------------------------------- | ---------------------------------------------------------------------------------- | ----------: | --------: | --------: | -------------------------------: | --------: |
-| `wikidata-20260309-all.bin`        | Current full Wikidata dump for high-memory systems                                 | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
-| `wikidata-20260309-all-pruned.bin` | Current pruned Wikidata dump optimised for substantially lower memory requirements |  74,608,727 |   5.6 GiB |  15.4 GiB |           13,610,498 / 6,778,692 |     58.7s |
-| `wikidata-20171227.bin`            | Historic full Wikidata dump from 2017                                              | 203,190,311 |    18 GiB |  44.6 GiB |          42,187,613 / 27,960,315 |    3m 20s |
-| `wikidata-20171227-pruned.bin`     | Historic pruned Wikidata dump from 2017 with reduced memory requirements           |  17,407,259 |   1.4 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
+| File                                      | Variant                                                        |       Nodes | File Size | RAM Usage | Name Entries (`wikidata` / `en`) | Load Time |
+| ----------------------------------------- | -------------------------------------------------------------- | ----------: | --------: | --------: | -------------------------------: | --------: |
+| `wikidata-20260309-all.bin`               | Current full Wikidata dump, a 1:1 port of the JSON dump        | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
+| `wikidata-20260309-all-pruned-medium.bin` | Pruned, **keeps people**                                       | 114,477,445 |   9.0 GiB |  25.9 GiB |          21,015,182 / 14,668,496 |    2m 08s |
+| `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   6.0 GiB |            7,106,526 / 4,316,673 |       25s |
+| `wikidata-20171227.bin`                   | Historic full Wikidata dump from 2017                          | 203,190,311 |    18 GiB |  44.6 GiB |          42,187,613 / 27,960,315 |    3m 20s |
+| `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.4 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
 
 The values above reflect observed loading statistics from zelph on my system. Actual loading times and memory usage may vary depending on hardware and build configuration.
+
+### Which one do you want?
+
+**RAM decides, and it is the RAM column, not the file size.** A `.bin` roughly
+triples when it is loaded, because the graph is rebuilt as adjacency maps and
+name tables rather than mapped from the file.
+
+* **`-small`** (6.0 GiB) is the one to start with. It loads in 25 seconds and
+  leaves room to work on a 16 GiB machine; on 8 GiB it fits, though not with
+  much to spare.
+* **`-medium`** (25.9 GiB) is the same network with **people** still in it, and
+  wants 32 GiB.
+* The **full** file is the faithful port of the Wikidata dump and needs a
+  machine built for it — 223.7 GiB resident. It is the right choice when you
+  need everything, and the wrong one for anything else.
+
+**What the pruned variants drop** — in the order they were removed, least
+missed first: the encyclopedia's own plumbing (categories, templates, list and
+disambiguation pages, one item per integer and per calendar day), astronomical
+catalogues, sequence databases and chemistry, individual museum objects,
+publications and their citation graph, everything filed under an
+administrative entity, everything carrying a country, and — in `-small` only —
+people.
+
+**What they keep, deliberately: the class hierarchy.** Pruning instances never
+removes the classes they are instances of, so both pruned variants answer
+class-level questions exactly like each other. The disjointness query of
+[Working on the Wikidata Class Hierarchy](class-hierarchy.md) returns the same
+81 topmost culprits on `-medium` and on `-small`; they differ only in which
+individual items they still carry.
 
 ## Loading a Full Network
 
@@ -59,16 +90,16 @@ Each section is divided into multiple chunks. For example, the pruned Wikidata 2
 Use `.stat-file` to get a quick overview of a file's chunk counts without loading it:
 
 ```
-zelph> .stat-file /path/to/wikidata-20260309-all-pruned.bin
+zelph> .stat-file /path/to/wikidata-20260309-all-pruned-small.bin
 Serialized File Statistics:
 ------------------------
-File: /path/to/wikidata-20260309-all-pruned.bin
-File Size: 5996415596 bytes
-Left Chunks: 75
-Right Chunks: 75
-Name-of-Node Chunks: 21
-Node-of-Name Chunks: 21
-Total Chunks: 192
+File: /path/to/wikidata-20260309-all-pruned-small.bin
+File Size: 2367565351 bytes
+Left Chunks: 27
+Right Chunks: 27
+Name-of-Node Chunks: 13
+Node-of-Name Chunks: 13
+Total Chunks: 80
 ------------------------
 (declared by the header; use .index-file to verify the chunks)
 ```
@@ -131,22 +162,22 @@ A selector naming a chunk the file does not have is refused before anything is l
 The following session loads a subset of the pruned Wikidata file and inspects it:
 
 ```
-zelph> .load-partial /path/to/wikidata-20260309-all-pruned.bin left=0,1,2 right=5,6,9,10
-Partial loading: left chunks=3/75, right chunks=4/75,
-  nameOfNode chunks=21/21, nodeOfName chunks=21/21, skip_payload=false
-...
+zelph> .load-partial /path/to/wikidata-20260309-all-pruned-small.bin left=0,1,2 right=5,6,9,10
+Partial loading: left chunks=3/27, right chunks=4/27,
+  nameOfNode chunks=13/13, nodeOfName chunks=13/13, skip_payload=false
+String pool size after partial load: 11423140
 WARNING: partial/incomplete graph loaded; reasoning, pruning, cleanup,
   and destructive edits are blocked.
- Time needed for partial loading: 0h0m31.961s
+ Time needed for partial loading: 0h0m16.968s
 zelph-> .stat
 Network Statistics:
 ------------------------
 Nodes: 3000000
-RAM Usage: 4.3 GiB
+RAM Usage: 2.6 GiB
 ...
 ```
 
-With only 7 out of 150 adjacency chunks loaded, RAM usage dropped from 15.4 GiB to 4.3 GiB (the name maps still account for a significant share). You can now use `.node`, `.out`, `.in`, and `.lang` to inspect the loaded data.
+With only 7 out of 54 adjacency chunks loaded, RAM usage dropped from 6.0 GiB to 2.6 GiB. The floor is the name maps: they are loaded whole here, and at 7.1 M `wikidata` plus 4.3 M `en` entries they are most of what remains. `nameOfNode=none` drops them as well, at the cost of being unable to look a node up by name.
 
 ## Manifest-Based Loading
 
@@ -291,9 +322,67 @@ We are working on publishing pre-sharded versions of the full available `.bin` f
 
 The partial loading and manifest infrastructure is designed not only for interactive use in the zelph REPL, but also as a foundation for programmatic access by external tools. For example, [SensibLaw](https://github.com/chboishabba/SensibLaw) (part of the [ITIR-suite](https://github.com/chboishabba/ITIR-suite)) uses zelph as a downstream reasoning engine: it ingests and structures source material with full provenance, then exports bounded graph slices for zelph to reason over. With partial loading and sharded manifests, such tools can query specific parts of a zelph graph hosted on Hugging Face without needing to load the entire network locally.
 
+## The `.pidx` Sidecar Files
+
+After a transitive query, zelph writes a companion file next to the `.bin`,
+named `<file>.bin.pidx.<number>`, for example
+`wikidata-20260309-all-pruned-small.bin.pidx.322`. The number is the node id of
+a predicate — 322 is [P279](https://www.wikidata.org/wiki/Property:P279),
+*subclass of* — and the file holds the **persisted transitive closure** of that
+predicate.
+
+**It is a cache, not data.** Nothing in it cannot be recomputed from the `.bin`
+itself, and the engine rebuilds it automatically whenever it is missing or was
+written by an older format version. Deleting one costs time, never
+information. What it buys is exactly that time: the first `p+` or `p*` query
+over a large hierarchy has to walk the closure once, and on a full dump that is
+substantial.
+
+Three consequences worth knowing:
+
+* **It is not part of the download, deliberately.** The file stores raw pairs
+  in *host byte order* and is validated against the exact network it was built
+  from, so it would be wrong on a machine of different endianness and stale
+  against any regenerated file. Published datasets therefore ship the `.bin`
+  alone; see [Publishing Slices](publishing-slices.md) for the upload rule.
+  Your own copy appears on the first transitive question and costs about
+  fifteen seconds to build.
+* **It is bound to the file it sits next to.** A closure computed on one
+  network does not describe another, so the sidecar is only valid for the
+  `.bin` whose name it extends.
+* **A version bump silently retires old sidecars.** The format version was
+  raised to 2 on 3 August 2026; files written before that are ignored and
+  rebuilt rather than misread.
+
 ## Generation of the Pruned Files
 
-The pruned versions mentioned above were created by systematically pruning (removing) large knowledge domains from the corresponding full Wikidata dumps. The goal was to reduce biological, chemical, astronomical, and geographical domains in order to lower the memory requirement without losing the core data. The process involved loading the data, targeted removal of nodes and facts based on instance ([P31](https://www.wikidata.org/wiki/Property:P31)) and subclass relationships ([P279](https://www.wikidata.org/wiki/Property:P279)), and cleanup operations. For details, please refer to the corresponding log files, see [https://github.com/acrion/zelph/tree/main/logs](https://github.com/acrion/zelph/tree/main/logs).
+The pruned versions above were created by loading the full dump and removing
+large knowledge domains from it, in phases, saving after each one. The removal
+works in two ways, and the difference matters:
+
+* **by class** — `.prune-nodes A P31 Q13442814` deletes the direct instances of
+  a class (here: scholarly articles). It does *not* descend the class
+  hierarchy, so the class named has to be one that actually carries instances.
+* **by property** — `.prune-nodes A (A P1433 B)` deletes every **subject** of a
+  predicate (here: everything with a *published in* statement). This turned out
+  to be the far stronger lever: that single line removed 544 million nodes,
+  because the cascade takes every fact hanging off each deleted item with it,
+  and it reached the publication domain more completely than naming its classes
+  did.
+
+Each phase ends with `.save`, then a reload, because a removal does not shrink
+the resident set on its own — the containers keep their capacity and the string
+pool is append-only, so only loading the saved file compacts it. A final
+`.cleanup` removes the nodes that deletions left isolated (~1.7 million in each
+of the two published variants).
+
+The scripts that produced the published files are
+[`dev_scripts/prune-full-dump-phased.zph`](https://github.com/acrion/zelph/tree/main/dev_scripts)
+and `prune-full-dump-phased-2.zph`. Older log files of earlier generations are
+kept under
+[https://github.com/acrion/zelph/tree/main/logs](https://github.com/acrion/zelph/tree/main/logs);
+note that they document a different, earlier pruning run and not the files
+listed above.
 
 ## Acknowledgments
 

@@ -281,7 +281,14 @@ The current implementation is a deliberate foundation, not a finished ML framewo
 
 The following is a complete, unedited session log of `stdlib/examples/neural/nn-wikidata-demo.zph` running against a pruned Wikidata dump (zelph 0.9.7), including the test-suite run: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph.
 
-> **Reproducing it today:** every number below still comes out identically — 145 countries, 118 samples, `final mean loss 0.10311`, 99 `P30-verified` and 43 `P30-candidate` facts. The one thing that differs is the per-deduction echo: the `⇐` lines are printed here because the default deduction mode was `all` when the log was taken. Focus mode, the default since, deliberately anchors only on statements you entered yourself — an imported script does not contribute anchors (see `.help .deductions`) — so the same run now reports `(skipped 142 deductions)` instead. Prefix the session with `.deductions all` to get the log below.
+> **Which artifact this was measured on:** `wikidata-20260309-all-pruned.bin`,
+> the pruned network published until August 2026 and since replaced by
+> [`-medium` and `-small`](binaries.md). Those carry a different set of
+> individual items, so the counts below — 145 countries, 118 samples, the loss
+> to five decimals — describe *that* file and have not yet been re-measured on
+> the current ones. The mechanism is unchanged; the numbers are pending.
+>
+> **Reproducing it on the original artifact:** every number below still comes out identically — 145 countries, 118 samples, `final mean loss 0.10311`, 99 `P30-verified` and 43 `P30-candidate` facts. The one thing that differs is the per-deduction echo: the `⇐` lines are printed here because the default deduction mode was `all` when the log was taken. Focus mode, the default since, deliberately anchors only on statements you entered yourself — an imported script does not contribute anchors (see `.help .deductions`) — so the same run now reports `(skipped 142 deductions)` instead. Prefix the session with `.deductions all` to get the log below.
 
 ```text
 ❯ zelph

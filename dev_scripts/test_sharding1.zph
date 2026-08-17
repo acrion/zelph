@@ -1,2 +1,2 @@
-.load-partial /home/stefan/zelph/wikidata-20260309-all-pruned.bin left=0 right=0 nameOfNode=0 nodeOfName=0
+.load-partial /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin left=0 right=0 nameOfNode=0 nodeOfName=0
 .stat

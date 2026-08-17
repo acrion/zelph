@@ -143,17 +143,17 @@ zelph> .load-partial /path/to/file.bin meta-only
 ### Example
 
 ```
-zelph> .load-partial /path/to/wikidata-20260309-all-pruned.bin left=0 right=0 nameOfNode=0 nodeOfName=0
-Partial loading: left chunks=1/75, right chunks=1/75,
-  nameOfNode chunks=1/21, nodeOfName chunks=1/21, skip_payload=false
-...
+zelph> .load-partial /path/to/wikidata-20260309-all-pruned-small.bin left=0 right=0 nameOfNode=0 nodeOfName=0
+Partial loading: left chunks=1/27, right chunks=1/27,
+  nameOfNode chunks=1/13, nodeOfName chunks=1/13, skip_payload=false
+String pool size after partial load: 1940990
 WARNING: partial/incomplete graph loaded; reasoning, pruning, cleanup,
   and destructive edits are blocked.
 zelph-> .stat
 Network Statistics:
 ------------------------
 Nodes: 1000000
-RAM Usage: 2.3 GiB
+RAM Usage: 1.2 GiB
 Name-of-Node Entries by language:
   wikidata: 1000000
 Node-of-Name Entries by language:
@@ -162,7 +162,7 @@ Languages: 1
 ...
 ```
 
-Because `nameOfNode=0` is a single section-global chunk, only one language's first chunk is loaded. To load the first chunk of each language, name both indices explicitly — in the pruned file that is `nameOfNode=0,14` — or omit the selector to load all name chunks.
+Because `nameOfNode=0` is a single section-global chunk, only one language's first chunk is loaded. To load the first chunk of each language, name both indices explicitly — in `wikidata-20260309-all-pruned-small.bin` the `en` names begin at chunk 8, so `nameOfNode=0,8` gives one chunk of each — or omit the selector to load all name chunks. The boundary is a property of the file, not a constant: use `.stat-file` to see how many name chunks it declares.
 
 ## Manifest-Based Loading
 

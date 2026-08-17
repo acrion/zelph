@@ -9,7 +9,7 @@ Pick two classes that should be disjoint — say _profession_ ([Q215627](https:/
 - **how much each one is worth fixing** — how many entries of the violation set disappear with it;
 - **why each entry is there** — the chain of `P279` statements that produced it. Every arrow in that chain is one statement in Wikidata, and one of them is the edit.
 
-For the pair above, on the pruned 2026-03-09 dump: **18,933 classes are in violation, 78 of them carry the mistake, and a single edit at one class removes 14,634 of the 18,933.**
+For the pair above, on the pruned 2026-03-09 dump: **18,757 classes are in violation, 81 of them carry the mistake, and a single edit at one class removes 14,498 of the 18,757.**
 
 Nothing here is a query against a public endpoint. There is no timeout, no result cap, and no service that has to be up. You download one file and work offline.
 
@@ -19,38 +19,38 @@ Nothing here is a query against a public endpoint. There is no timeout, no resul
 2. One class-hierarchy file. It contains the `P279` ("subclass of") statements of a Wikidata dump and the names of the classes they connect, and nothing else:
 
 ```bash
-hf download acrion/zelph wikidata-20260309-all-pruned-P279.bin --repo-type dataset --local-dir .
+hf download acrion/zelph wikidata-20260309-all-pruned-small-P279.bin --repo-type dataset --local-dir .
 ```
 
 (Or download it from the [dataset page](https://huggingface.co/datasets/acrion/zelph) in a browser.) It is a few hundred megabytes and loads in about three seconds:
 
 ```
-zelph> .load wikidata-20260309-all-pruned-P279.bin
+zelph> .load wikidata-20260309-all-pruned-small-P279.bin
 Auto-run has been disabled due to loading a large dataset.
-Loading network from generic file wikidata-20260309-all-pruned-P279.bin...
+Loading network from generic file wikidata-20260309-all-pruned-small-P279.bin...
 Loading: left chunks=3, right chunks=3, nameOfNode chunks=2, nodeOfName chunks=2
 ...
-String pool size after load: 1757443
+String pool size after load: 1666410
 Network loaded.
- Time needed for loading/importing: 0h0m2.836s
--- 2.836 s --
+ Time needed for loading/importing: 0h0m2.249s
+-- 2.249 s --
 zelph-> .stat
 Network Statistics:
 ------------------------
-Nodes: 2152901
+Nodes: 2005552
 RAM Usage: 0.6 GiB
 Name-of-Node Entries by language:
-  wikidata: 959657
-  en: 797786
+  wikidata: 890779
+  en: 775631
 Node-of-Name Entries by language:
-  wikidata: 959657
-  en: 797786
+  wikidata: 890779
+  en: 775631
 Languages: 2
 Rules: 0
 ------------------------
 ```
 
-0.6 GiB of memory. The complete network the file was cut from needs 16 GiB, and the full dump behind that needs about 210 GiB.
+0.6 GiB of memory. The complete network the file was cut from needs 6.0 GiB, and the full dump behind that needs 223.7 GiB.
 
 ## The first result, in three commands
 
@@ -59,13 +59,13 @@ zelph-> .import wikidata-classes
 Importing file /usr/share/zelph/wikidata-classes.zph...
 Wikidata class tools loaded: (culprits A B), (culprit-path X A), (class-report X).
 zelph-> %(culprits "Q215627" "Q43229" 10)
-Building adjacency index over 1193229 relation nodes (24 thread(s))...
-Adjacency index ready: 1193228 edges.
-Saved adjacency index to wikidata-20260309-all-pruned-P279.bin.pidx.322 (1193228 edges).
+Building adjacency index over 1114758 relation nodes (24 thread(s))...
+Adjacency index ready: 1114757 edges.
+Saved adjacency index to wikidata-20260309-all-pruned-small-P279.bin.pidx.322 (1114757 edges).
 below	class
-14634	Q703534 (employee)
+14498	Q703534 (employee)
 1761	Q30185
-1733	Q1097498
+1689	Q1097498
 812	Q11974939 (health professional)
 46	Q12773225 (slave)
 35	Q138001889 (uncle-in-law or aunt-in-law)
@@ -73,17 +73,17 @@ below	class
 13	Q7933191 (armed non-state actor)
 11	Q2538889 (weapons manufacturing company)
 8	Q12885585 (Native American tribe)
--- 78 topmost culprit(s) of 18933 affected class(es); showing 10 --
--- 408 ms --
+-- 81 topmost culprit(s) of 18757 affected class(es); showing 10 --
+-- 220 ms --
 ```
 
-The adjacency index is built once and then written next to the file, so this happens on the first transitive question only — in this session the same call answered in 140 ms the second time, and a smaller pair (`Q5` against `Q43229`: 216 affected classes, 50 culprits) in 54 ms.
+The adjacency index is built once and then written next to the file, so this happens on the first transitive question only — in this session the same call answered in 109 ms the second time, and a smaller pair (`Q5` against `Q43229`: 216 affected classes, 50 culprits) in 40 ms.
 
 Reading the output:
 
 - **`below`** — how many of the 18,933 affected classes sit at or below this one. Removing the wrong `P279` statement here takes that many entries out of the report in one edit.
 - **the list** — only the _topmost_ classes in violation. A class whose parent is already in violation is not listed: the mistake is not there, and it disappears by itself once the parent is fixed.
-- **the last line** — the raw count next to the number of places you actually have to look. The gap between 18,933 and 78 is the point of the report.
+- **the last line** — the raw count next to the number of places you actually have to look. The gap between 18,757 and 81 is the point of the report.
 
 The third argument is how many rows to print (default 25). Leave it out to see more.
 
@@ -125,7 +125,7 @@ Direct superclasses: 2
 
 ## The same thing in SPARQL
 
-If you would rather write the query yourself, the [SPARQL layer](sparql.md) works on this file too and gives the same 78 classes:
+If you would rather write the query yourself, the [SPARQL layer](sparql.md) works on this file too and gives the same 81 classes:
 
 ```
 zelph-> .import sparql
@@ -144,7 +144,7 @@ SELECT DISTINCT ?class WHERE {
 
 ```
 
-(A blank line runs the query.) What SPARQL cannot express is the ranking: `MINUS` gives you the 78 topmost classes as a set, in no particular order. The `below` column comes from counting, per candidate, how much of the violation set hangs underneath it — which is one closure per candidate, not one query.
+(A blank line runs the query.) What SPARQL cannot express is the ranking: `MINUS` gives you the 81 topmost classes as a set, in no particular order. The `below` column comes from counting, per candidate, how much of the violation set hangs underneath it — which is one closure per candidate, not one query.
 
 ## What is in the file, and what is not
 
@@ -157,7 +157,7 @@ The file is a **predicate slice**: every `P279` statement of the dump, the class
   wrong, or this network does not carry the class hierarchy.
   ```
 - English labels are missing for some classes, because the dump does not carry one for them. They appear as bare IDs (`Q30185` above).
-- The **pruned** dump has whole domains removed (biology, chemistry, astronomy) to keep the full network within 16 GiB. Its class hierarchy is correspondingly smaller: 1.19 million `P279` edges against 5.17 million in the complete dump. Numbers from a pruned file are not the numbers of Wikidata. If a slice of the complete dump is published, it is named without `-pruned` and used exactly the same way.
+- The **pruned** dump has whole domains removed (biology, chemistry, astronomy and more) to keep the full network within 6.0 GiB. Its class hierarchy is correspondingly smaller: 1.11 million `P279` edges against 5.17 million in the complete dump. Numbers from a pruned file are not the numbers of Wikidata. If a slice of the complete dump is published, it is named without `-pruned` and used exactly the same way.
 
 ## Reproducibility
 
@@ -167,7 +167,7 @@ Wikidata itself moves on, of course: a class that is in violation in the file ma
 
 ### A worked example of a disagreement
 
-That is not a footnote. Here is a query on the pruned 2026-03-09 slice — classes below _class_ ([Q5127848](https://www.wikidata.org/wiki/Q5127848)) that do not go through _class_ in the metaclass sense ([Q16889133](https://www.wikidata.org/wiki/Q16889133)):
+That is not a footnote. Here is a query on the 2026-03-09 `-small` slice — classes below _class_ ([Q5127848](https://www.wikidata.org/wiki/Q5127848)) that do not go through _class_ in the metaclass sense ([Q16889133](https://www.wikidata.org/wiki/Q16889133)):
 
 ```
 zelph-> .import sparql
@@ -178,7 +178,7 @@ SELECT ?cls WHERE {
 }
 
 -- 201 result(s) --
--- 1.628 s --
+-- 1.050 s --
 ```
 
 Against live Wikidata the same query answers a single-digit number. Neither side is miscounting. In the pinned dump, `Q5127848` has five direct subclasses, and two of them — _class of anatomical entity_ ([Q112826905](https://www.wikidata.org/wiki/Q112826905)) and _rank_ ([Q4120621](https://www.wikidata.org/wiki/Q4120621)) — have since been re-parented to `Q16889133`, which is exactly the kind of edit this page is meant to prompt. Their subtrees are the difference; subtract them and the file agrees:
@@ -207,7 +207,7 @@ Two statements moved, 194 results changed. Both numbers are right about the data
 
 ## How it works, in one paragraph
 
-zelph is not a query engine over triples; it is an inference engine whose graph happens to answer queries. Two properties matter here. First, a network can be cut down to the statements of chosen predicates and still be a complete network — that is what `.save-predicates` produces, and why the class hierarchy can be shipped as a file that is three orders of magnitude smaller than the dump it comes from. Second, transitive questions are not answered by walking triples per query but by a closure engine over an adjacency index that is built once per predicate and cached next to the file (`.pidx.322` above). The 18,933 affected classes and the 78 culprits fall out of set operations on two closures. `stdlib/wikidata-classes.zph`, which `.import wikidata-classes` loads, is 200 lines of ordinary script on top of the public API — you can read it, change it, and ask different questions with it.
+zelph is not a query engine over triples; it is an inference engine whose graph happens to answer queries. Two properties matter here. First, a network can be cut down to the statements of chosen predicates and still be a complete network — that is what `.save-predicates` produces, and why the class hierarchy can be shipped as a file that is three orders of magnitude smaller than the dump it comes from. Second, transitive questions are not answered by walking triples per query but by a closure engine over an adjacency index that is built once per predicate and cached next to the file (`.pidx.322` above). The 18,757 affected classes and the 81 culprits fall out of set operations on two closures. `stdlib/wikidata-classes.zph`, which `.import wikidata-classes` loads, is 200 lines of ordinary script on top of the public API — you can read it, change it, and ask different questions with it.
 
 If you want to produce such a file yourself — for another dump, another property, or a combination — see [Publishing a Predicate Slice](publishing-slices.md).
 

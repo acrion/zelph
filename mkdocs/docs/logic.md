@@ -1210,11 +1210,18 @@ This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), wher
 zelph can load and reason over millions of Wikidata facts. A typical consistency check uses negation to detect missing inverse relations:
 
 ```
-.load wikidata-20260309-all-pruned.bin
+.load wikidata-20260309-all-pruned-medium.bin
 .lang wikidata
 (X P361 Y, ¬(Y P527 X)) => !
 .run
 ```
+
+!!! note "Which artifact"
+    The rule works on any of the [published networks](binaries.md); how many
+    asymmetries it finds depends on which one, since each carries a different
+    set of individual items. The counts quoted in the surrounding text were
+    taken on an earlier pruned artifact and have not yet been re-measured on
+    the current ones.
 
 Here, P361 ("part of") and P527 ("has part") are inverse properties. The rule flags every entity declared "part of" something whose parent does not list it among its parts.
 
