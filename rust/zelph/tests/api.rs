@@ -103,6 +103,61 @@ fn structurally_identical_lists_are_one_node() {
 }
 
 #[test]
+fn a_fact_reads_back_as_its_parts() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let socrates = z.resolve("Socrates").unwrap();
+    let is = z.resolve("is").unwrap();
+    let mortal = z.resolve("mortal").unwrap();
+
+    let fact = z.fact(socrates, is, &[mortal]).unwrap();
+    let (subject, predicate, objects) = z.fact_parts(fact).unwrap();
+    assert_eq!(subject, socrates);
+    assert_eq!(predicate, is);
+    assert_eq!(objects, vec![mortal]);
+
+    // A cons cell is the fact (car cons cdr), so the two readers meet here.
+    let list = z.list(&[socrates, mortal]).unwrap();
+    let (car, _, tail) = z.fact_parts(list).unwrap();
+    assert_eq!(car, socrates);
+    assert_eq!(z.elements(tail[0]).unwrap(), vec![mortal]);
+
+    // A name is not a statement.
+    assert!(z.fact_parts(socrates).is_err());
+}
+
+#[test]
+fn a_list_reads_back_as_what_it_was_built_from() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let x = z.resolve("x").unwrap();
+    let y = z.resolve("y").unwrap();
+    let w = z.resolve("w").unwrap();
+
+    let inner = z.list(&[x, y]).unwrap();
+    assert_eq!(z.elements(inner).unwrap(), vec![x, y]);
+
+    // Order, not membership: it is the distinction between a list and a
+    // set, and the reason a list can designate something.
+    assert_ne!(z.elements(z.list(&[y, x]).unwrap()).unwrap(), vec![x, y]);
+
+    // An element is a node like any other, so nesting results in nesting.
+    let outer = z.list(&[inner, w]).unwrap();
+    let read = z.elements(outer).unwrap();
+    assert_eq!(read, vec![inner, w]);
+    assert_eq!(z.elements(read[0]).unwrap(), vec![x, y]);
+
+    assert!(z.elements(z.list(&[]).unwrap()).unwrap().is_empty());
+
+    // A name isn’t a list of one. Reading a non-list results in an error,
+    // so a caller can tell a structure it composed from a node that
+    // simply exists.
+    assert!(z.elements(x).is_err());
+}
+
+#[test]
 fn sources_are_directional_and_may_be_empty() {
     let _guard = engine_lock();
     let z = silent_engine();

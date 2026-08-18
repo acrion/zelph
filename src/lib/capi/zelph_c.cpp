@@ -236,6 +236,55 @@ int32_t zelph_fact(zelph_engine*     engine,
         return succeed(); });
 }
 
+int32_t zelph_fact_parts(zelph_engine*    engine,
+                         const zelph_node fact,
+                         zelph_node*      out_subject,
+                         zelph_node*      out_predicate,
+                         zelph_node*      out_objects,
+                         size_t*          count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+    if (!fact)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "fact is 0");
+    }
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+
+        const zelph::network::Node predicate = graph->exists(fact) ? graph->parse_relation(fact) : 0;
+        if (!predicate)
+        {
+            *count = 0;
+            return fail(ZELPH_INVALID_ARGUMENT, "node is not a fact");
+        }
+
+        zelph::network::adjacency_set objects;
+        const zelph::network::Node    subject = graph->parse_fact(fact, objects, 0);
+        if (!subject)
+        {
+            *count = 0;
+            return fail(ZELPH_INVALID_ARGUMENT, "node is not a fact");
+        }
+
+        std::vector<zelph_node> values;
+        values.reserve(objects.size());
+        for (const zelph::network::Node object : objects)
+            values.push_back(object);
+
+        const int32_t status = write_array(values, out_objects, count);
+        if (status != ZELPH_OK) return status;
+
+        // Written only once the objects are, so that a caller which asked for
+        // the size first never reads a subject it has no objects to go with.
+        if (out_subject) *out_subject = subject;
+        if (out_predicate) *out_predicate = predicate;
+
+        return succeed(); });
+}
+
 int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, const size_t count, zelph_node* out_node)
 {
     if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
@@ -263,6 +312,49 @@ int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, const size_
 
         *out_node = graph->list(nodes);
         return succeed(); });
+}
+
+int32_t zelph_list_elements(zelph_engine* engine, const zelph_node list, zelph_node* out_nodes, size_t* count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+    if (!list)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "list is 0");
+    }
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+
+        std::vector<zelph_node> values;
+
+        // A cons cell is the fact (car cons cdr): the car is its subject and
+        // the cdr its single object. Traversing it is therefore parse_fact,
+        // not a list operation - which is why a caller outside the library
+        // could not do this with the calls that existed.
+        zelph::network::Node cell = list;
+        while (cell != graph->core.Nil)
+        {
+            if (!graph->exists(cell) || graph->parse_relation(cell) != graph->core.Cons)
+            {
+                *count = 0;
+                return fail(ZELPH_INVALID_ARGUMENT, "node is not a cons list");
+            }
+
+            zelph::network::adjacency_set objects;
+            const zelph::network::Node    car = graph->parse_fact(cell, objects, 0);
+            if (!car || objects.empty())
+            {
+                *count = 0;
+                return fail(ZELPH_INVALID_ARGUMENT, "cons cell is malformed");
+            }
+
+            values.push_back(car);
+            cell = *objects.begin();
+        }
+
+        return write_array(values, out_nodes, count); });
 }
 
 int32_t zelph_name(zelph_engine* engine, const zelph_node node, const char* lang, char** out_name)

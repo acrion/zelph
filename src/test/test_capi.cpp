@@ -233,6 +233,185 @@ TEST_CASE("capi: a list of the same nodes is the same node, and the empty list i
     CHECK(name_of(engine, empty) == "nil");
 }
 
+TEST_CASE("capi: a fact reads back as its subject, its predicate and its objects")
+{
+    Engine engine;
+
+    const zelph_node socrates    = engine.node("Socrates");
+    const zelph_node is          = engine.node("is");
+    const zelph_node objects[2]  = {engine.node("mortal"), engine.node("greek")};
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, socrates, is, objects, 2, &fact) == ZELPH_OK);
+
+    size_t count = 0;
+    CHECK(zelph_fact_parts(engine, fact, nullptr, nullptr, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 2);
+
+    zelph_node              subject   = 0;
+    zelph_node              predicate = 0;
+    std::vector<zelph_node> read(count);
+    REQUIRE(zelph_fact_parts(engine, fact, &subject, &predicate, read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 2);
+    CHECK(subject == socrates);
+    CHECK(predicate == is);
+
+    // The objects of a fact constitute a SET - `(S P a b)` indicates merely
+    // that both serve as objects of the same statement - thus they return
+    // without a sequence to depend on. That is why a requester requiring
+    // one opts for a list instead.
+    std::vector<zelph_node> expected{objects[0], objects[1]};
+    std::sort(read.begin(), read.end());
+    std::sort(expected.begin(), expected.end());
+    CHECK(read == expected);
+
+    // A cons cell is a fact too, `(car cons cdr)`, which is the whole of the
+    // relationship between this call and zelph_list_elements.
+    const zelph_node elements[2] = {engine.node("x"), engine.node("y")};
+    zelph_node       list        = 0;
+    REQUIRE(zelph_list(engine, elements, 2, &list) == ZELPH_OK);
+
+    zelph_node cdr = 0;
+    count          = 1;
+    REQUIRE(zelph_fact_parts(engine, list, &subject, &predicate, &cdr, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    CHECK(subject == elements[0]);
+
+    zelph_node tail = 0;
+    count           = 1;
+    REQUIRE(zelph_list_elements(engine, cdr, &tail, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    CHECK(tail == elements[1]);
+
+    // A name is not a statement.
+    count = 0;
+    CHECK(zelph_fact_parts(engine, socrates, nullptr, nullptr, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_fact_parts(engine, 0, nullptr, nullptr, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi: a cons list reads back as the elements it was built from")
+{
+    Engine engine;
+
+    const zelph_node elements[3] = {engine.node("x"), engine.node("y"), engine.node("z")};
+
+    zelph_node list = 0;
+    REQUIRE(zelph_list(engine, elements, 3, &list) == ZELPH_OK);
+
+    // Asked the way each array-valued call in this ABI is asked: a null
+    // buffer with capacity 0 is the size question.
+    size_t count = 0;
+    CHECK(zelph_list_elements(engine, list, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 3);
+
+    std::vector<zelph_node> read(count);
+    REQUIRE(zelph_list_elements(engine, list, read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 3);
+
+    // ORDER, not membership. A list is not a set, and the reason
+    // to construct an identifier from one is precisely that <x y> and <y x>
+    // are two nodes.
+    CHECK(read[0] == elements[0]);
+    CHECK(read[1] == elements[1]);
+    CHECK(read[2] == elements[2]);
+
+    // Nesting endures, because an element is a node like any other: the
+    // caller receives the inner list back as a node and reads that in
+    // turn.
+    const zelph_node outer_elements[2] = {list, engine.node("w")};
+    zelph_node       outer             = 0;
+    REQUIRE(zelph_list(engine, outer_elements, 2, &outer) == ZELPH_OK);
+
+    std::vector<zelph_node> outer_read(2);
+    count = outer_read.size();
+    REQUIRE(zelph_list_elements(engine, outer, outer_read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 2);
+    CHECK(outer_read[0] == list);
+
+    std::vector<zelph_node> inner(3);
+    count = inner.size();
+    REQUIRE(zelph_list_elements(engine, outer_read[0], inner.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 3);
+    CHECK(inner[1] == elements[1]);
+
+    // The empty list is nil, and accessing it returns no elements instead of
+    // failing: "there is nothing in it" is a response, as it is for
+    // zelph_name on an unnamed node.
+    zelph_node empty = 0;
+    REQUIRE(zelph_list(engine, nullptr, 0, &empty) == ZELPH_OK);
+    count = 0;
+    CHECK(zelph_list_elements(engine, empty, nullptr, &count) == ZELPH_OK);
+    CHECK(count == 0);
+
+    // What isn’t a list isn’t half a list. A simple name and a fact both
+    // respond with a status rather than with whatever a walk discovers,
+    // because a caller that stores structures must be able to distinguish
+    // a structure it wrote from a node that simply exists.
+    count = 0;
+    CHECK(zelph_list_elements(engine, engine.node("x"), nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    const zelph_node object = engine.node("mortal");
+    zelph_node       fact   = 0;
+    REQUIRE(zelph_fact(engine, engine.node("Socrates"), engine.node("is"), &object, 1, &fact) == ZELPH_OK);
+    count = 0;
+    CHECK(zelph_list_elements(engine, fact, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    CHECK(zelph_list_elements(engine, 0, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi: a structure is the same node in a fresh engine, and still holds its elements")
+{
+    const auto path = fs::temp_directory_path() / "zelph_capi_structure.bin";
+    fs::remove(path);
+
+    zelph_node saved_list = 0;
+
+    {
+        Engine           engine;
+        const zelph_node elements[2] = {engine.node("alpha"), engine.node("beta")};
+        REQUIRE(zelph_list(engine, elements, 2, &saved_list) == ZELPH_OK);
+
+        // Something has to be said ABOUT the structure, or there is nothing to
+        // save: a list nobody mentions is not part of the graph’s content.
+        const zelph_node object = saved_list;
+        zelph_node       fact   = 0;
+        REQUIRE(zelph_fact(engine, engine.node("pair"), engine.node("is"), &object, 1, &fact) == ZELPH_OK);
+
+        REQUIRE(zelph_save(engine, path.string().c_str()) == ZELPH_OK);
+    }
+
+    {
+        Engine engine;
+        REQUIRE(zelph_load(engine, path.string().c_str()) == ZELPH_OK);
+
+        // Recreating the identical structure in a new engine reaches the node
+        // the file references, without the caller having retained an id. This
+        // is what transforms a saved graph into a store instead of a cache:
+        // the key is the structure itself.
+        const zelph_node elements[2] = {engine.node("alpha"), engine.node("beta")};
+        zelph_node       rebuilt     = 0;
+        REQUIRE(zelph_list(engine, elements, 2, &rebuilt) == ZELPH_OK);
+        CHECK(rebuilt == saved_list);
+
+        std::vector<zelph_node> read(2);
+        size_t                  count = read.size();
+        REQUIRE(zelph_list_elements(engine, saved_list, read.data(), &count) == ZELPH_OK);
+        REQUIRE(count == 2);
+        CHECK(read[0] == elements[0]);
+        CHECK(read[1] == elements[1]);
+
+        // And what was stated regarding it is still stated
+        // regarding it.
+        std::vector<zelph_node> objects(1);
+        count = objects.size();
+        REQUIRE(zelph_targets(engine, engine.node("pair"), engine.node("is"), objects.data(), &count) == ZELPH_OK);
+        REQUIRE(count == 1);
+        CHECK(objects[0] == saved_list);
+    }
+
+    fs::remove(path);
+}
+
 TEST_CASE("capi: a network is wired, compiled, trained and read back through the ABI")
 {
     Engine engine;

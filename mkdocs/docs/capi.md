@@ -37,13 +37,17 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 | --- | --- |
 | `zelph_resolve(engine, name, lang, out_node)` | Name to node, creating it if needed. `lang` may be null for the current language. |
 | `zelph_fact(engine, subject, predicate, objects, object_count, out_fact)` | Create the fact `(subject predicate object...)` and return its node. |
+| `zelph_fact_parts(engine, fact, out_subject, out_predicate, out_objects, count)` | The subject, predicate and objects of a fact – the inverse of `zelph_fact`. The objects come back unordered, because a fact’s objects are a set. |
 | `zelph_list(engine, elements, count, out_node)` | Cons list; the first element becomes the outermost cell. An empty list is the `nil` node. |
+| `zelph_list_elements(engine, list, out_nodes, count)` | The elements of a cons list, in order – the inverse of `zelph_list`. `nil` has none; a node that is not a list is an error, not an empty answer. |
 | `zelph_name(engine, node, lang, out_name)` | The node's name, or null when it has none — an answer, not an error. Free with `zelph_string_free`. |
 | `zelph_sources(engine, predicate, target, out_nodes, count)` | Every subject of a fact `(X predicate target)`. Directional: `(target predicate X)` does not contribute. |
 | `zelph_load(engine, path)` | As the `.load` command, including format detection. |
 | `zelph_save(engine, path)` | As the `.save` command. The path must end in `.bin`. |
 
 Structural identity is the property to build on: `zelph_list` over the same nodes returns the same node, because the graph interns structurally identical subgraphs. Two callers that describe the same structure arrive at the same identifier without agreeing on one.
+
+And it survives the file. Because a node *is* its hash, describing the same structure again in a freshly loaded graph arrives at the node the file talks about, so a caller that saved facts about `<a b c>` finds them again without having stored an id anywhere – the structure is the key. `zelph_list_elements` and `zelph_fact_parts` close the loop by reading a structure back, which is what a program needs to use one as a *stored* identifier rather than only as a lookup key. Everything the ABI can build it can also take apart, including what the ABI did not build: a cons cell is the fact `(car cons cdr)`, so the two readers are one mechanism seen twice.
 
 ### Networks
 
@@ -234,7 +238,7 @@ Two crates in `rust/` sit on this ABI and are maintained with it:
 | | |
 | --- | --- |
 | `zelph-sys` | The raw declarations, generated from `zelph_c.h` by bindgen **at build time**, so header and bindings cannot drift. Its `build.rs` also rebuilds the C++ library on every `cargo build` — a stale library silently invalidates every measurement taken against it, and nothing in the output says so. `ZELPH_BUILD_DIR` selects the CMake build directory (default `build-release`), `ZELPH_NO_BUILD` skips the CMake step. |
-| `zelph` | The safe wrapper: `Engine` (resolve, fact, list, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
+| `zelph` | The safe wrapper: `Engine` (resolve, fact, list, elements, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
 
 The types state what the C header only documents. `Engine` is neither `Send` nor `Sync`, because graph mutation belongs to the thread that created it. `Net` is both — so a compiled network can be handed to a pool of search threads and evaluated there while another thread trains it, and the compiler checks that rather than a comment.
 

@@ -182,9 +182,32 @@ extern "C"
                                     size_t            object_count,
                                     zelph_node*       out_fact);
 
+    /* The parts of a fact node: its subject, its predicate and its objects –
+       the inverse of zelph_fact. A statement is a node, so a caller that
+       stored one, or received one from a query, can read it back rather than
+       having to remember what it built.
+
+       out_subject and out_predicate can be null when only the objects are
+       desired. No output is generated unless the object buffer is
+       sufficiently large, as throughout this ABI. A node that is not a fact
+       answers ZELPH_INVALID_ARGUMENT. */
+    ZELPH_EXPORT int32_t zelph_fact_parts(zelph_engine* engine,
+                                          zelph_node    fact,
+                                          zelph_node*   out_subject,
+                                          zelph_node*   out_predicate,
+                                          zelph_node*   out_objects,
+                                          size_t*       count);
+
     /* Build a cons list from nodes. The first element becomes the outermost
        cons cell. An empty list is the nil node, as it is in Janet. */
     ZELPH_EXPORT int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
+
+    /* The elements of a cons list, in order - the inverse of zelph_list. The
+       nil node is a list of no elements. A node that is neither nil nor a cons
+       cell is not a list and answers ZELPH_INVALID_ARGUMENT, as does a chain
+       that ends in something other than nil: half a structure is not an
+       answer. */
+    ZELPH_EXPORT int32_t zelph_list_elements(zelph_engine* engine, zelph_node list, zelph_node* out_nodes, size_t* count);
 
     /* The name of a node, or null in *out_name when it has none. `lang` may
        be null for the current language; the lookup falls back to another
