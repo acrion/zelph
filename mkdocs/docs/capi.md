@@ -60,6 +60,10 @@ And it survives the file. Because a node *is* its hash, describing the same stru
 | `zelph_nn_layer_nodes(engine, handle, layer, out_nodes, count)` | The neurons of one layer in slot order; layer 0 is the input layer. The mapping a slot-addressed caller needs. |
 | `zelph_nn_eval_slots(engine, handle, in_slots, in_activations, in_count, top_k, out_nodes, out_scores, count)` | `zelph_nn_eval_nodes` with the active inputs named by slot. A slot outside the input layer is an error. |
 | `zelph_nn_train_slots(engine, handle, in_slots, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | `zelph_nn_train_nodes` with the input named by slot; the target stays node-addressed. |
+| `zelph_nn_accumulator_size(engine, handle, out_size)` | How many doubles one accumulator of this network holds. |
+| `zelph_nn_accumulator_set(engine, handle, slots, activations, count, accumulator, accumulator_size)` | The input layer's pre-activation for an active set. Set then eval is `zelph_nn_eval_slots` to the bit. |
+| `zelph_nn_accumulator_update(engine, handle, added, added_activations, added_count, removed, removed_activations, removed_count, accumulator, accumulator_size)` | The same vector moved: the removed rows are subtracted before the added ones are added. |
+| `zelph_nn_accumulator_eval(engine, handle, accumulator, accumulator_size, top_k, out_nodes, out_scores, count)` | The layers behind the first, from an accumulator. Sorted and limited as `zelph_nn_eval_nodes` is. |
 | `zelph_nn_write_back(engine, handle)` | Copy the compiled net's weights into the graph's edge-weight store — required before `zelph_save`, or what is persisted is the untrained graph. |
 | `zelph_nn_snapshot_shape(engine, handle, out_sizes, count)` | One element count per weight matrix. |
 | `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. One matrix is row-major by post-synaptic unit: input `i` to unit `j` is at `j * n_pre + i`. |
@@ -68,6 +72,14 @@ And it survives the file. Because a node *is* its hash, describing the same stru
 The node-addressed entry points are the ones that matter for a sparse input layer: the input is the *list of active neurons*, so a 768-input encoding with 32 pieces on the board costs 32 terms, not 768.
 
 A caller that evaluates the same layer millions of times can go one step further and name the active neurons by their slot in the input layer rather than by their node. That skips a hash lookup per active neuron, which on a small network is the largest single item an evaluation has left – 0.17 of 0.43 microseconds for 34 active inputs of 780. Resolve the mapping once with `zelph_nn_layer_nodes` after compiling, then pass slots for ever after.
+
+### Keeping the first layer between calls
+
+An accumulator is the input layer’s pre-activation vector, maintained by the caller and shifted by the difference between one active input set and the next rather than being reconstructed from all of them. Where consecutive queries share most of their active inputs – a search over states that change by a few features per move, or a fixed context scored against many candidates – that transforms the cost of the first layer from `O(active)` into `O(changed)`, and what remains is the layers behind it.
+
+The buffer is `zelph_nn_accumulator_size` doubles and belongs to the caller, so it incurs no allocation, no handle and no lock to copy: a search retains one per ply and duplicates the parent’s on the way down. Measured on a 780 × 32 × 1 network with 34 active inputs, two of which a move changes: 0.12 µs for a moved accumulator against 0.32 µs for the same evaluation built from scratch.
+
+Two points to grasp. An accumulator holds value only in relation to the weights it was constructed with, thus a training iteration nullifies each of those. And `zelph_nn_accumulator_update` is not bit-identical to `zelph_nn_accumulator_set` when applied to the same active set: adding and subtracting rows introduces rounding disparities compared to summing them in a single operation, and that divergence builds up across a sequence of updates. Set it afresh whenever that becomes relevant.
 
 ### The hidden-layer activation
 

@@ -455,6 +455,66 @@ extern "C"
                                               double            learning_rate,
                                               double*           out_loss);
 
+    /* --- The first layer, kept between calls ---
+
+       An accumulator is the input layer's pre-activation vector, retained by
+       the caller and shifted by the difference between one active input set
+       and the next rather than being reconstructed from all of them. Where
+       consecutive queries share most of their active inputs - a search over
+       states that change by a few features per move, a fixed context scored
+       against many candidates - that transforms the cost of the first layer
+       from O(active) into O(changed), and what remains is the layers behind
+       it.
+
+       The buffer is zelph_nn_accumulator_size doubles and belongs to the
+       caller, so it incurs no allocation, no handle and no lock to copy: a
+       search retains one per ply and duplicates the parent's on the way down.
+
+       Two points to note. An accumulator holds value only in relation to the
+       weights it was constructed from, thus a training iteration nullifies
+       each of them. And zelph_nn_accumulator_update is NOT bit-identical to
+       zelph_nn_accumulator_set over the same active set: adding and
+       subtracting rows diverge in rounding behaviour from summing them once,
+       and this discrepancy grows across a sequence of updates. Set afresh
+       when that matters; with weights and activations that combine exactly,
+       the two match to the bit. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_size(zelph_engine* engine, zelph_net handle, size_t* out_size);
+
+    /* The initial layer from scratch. A set followed by an eval is
+       zelph_nn_eval_slots to the bit. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_set(zelph_engine* engine,
+                                                  zelph_net     handle,
+                                                  const size_t* slots,
+                                                  const double* activations,
+                                                  size_t        count,
+                                                  double*       accumulator,
+                                                  size_t        accumulator_size);
+
+    /* The same vector shifted instead of being reconstructed: the removed
+       rows are subtracted before the added ones are added. Either list may be
+       empty. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_update(zelph_engine* engine,
+                                                     zelph_net     handle,
+                                                     const size_t* added,
+                                                     const double* added_activations,
+                                                     size_t        added_count,
+                                                     const size_t* removed,
+                                                     const double* removed_activations,
+                                                     size_t        removed_count,
+                                                     double*       accumulator,
+                                                     size_t        accumulator_size);
+
+    /* The layers behind the first, from an accumulator. Sorted and limited by
+       top_k exactly as zelph_nn_eval_nodes is. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_eval(zelph_engine* engine,
+                                                   zelph_net     handle,
+                                                   const double* accumulator,
+                                                   size_t        accumulator_size,
+                                                   int32_t       top_k,
+                                                   zelph_node*   out_nodes,
+                                                   double*       out_scores,
+                                                   size_t*       count);
+
     /* Write the compiled net's weights back into the graph's edge-weight
        store, which is what zelph_save then persists. */
     ZELPH_EXPORT int32_t zelph_nn_write_back(zelph_engine* engine, zelph_net handle);

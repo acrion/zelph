@@ -178,6 +178,56 @@ namespace zelph::network
                            const std::vector<std::pair<Node, double>>& target,
                            double                                      learning_rate);
 
+        // --- The first layer, kept between calls ---
+        //
+        // An accumulator is the input layer’s pre-activation vector,
+        // maintained by the caller and shifted by the difference between one
+        // active input set and the next instead of being reconstructed from
+        // all of them. Where consecutive queries share most of their active
+        // inputs - a search over states that change by a few features per
+        // move, a fixed context scored against many candidates - that
+        // transforms the cost of the first layer from O(active) into
+        // O(changed).
+        //
+        // The buffer is `accumulator_size()` doubles and belongs to the
+        // caller, thus incurring no allocation, no handle, and no lock during
+        // copying: a search retains one per ply and duplicates the parent’s
+        // on the path down.
+        //
+        // Two points to understand. An accumulator holds value only in
+        // relation to the weights it was constructed from, thus a training
+        // iteration nullifies each of them. And `accumulator_update` is NOT
+        // bit-identical to `accumulator_set` across the identical active set:
+        // adding and subtracting rows diverges from aggregating them in a
+        // single pass, and that gap grows with each successive update. Set it
+        // afresh when such divergence matters; when weights and activations
+        // combine precisely, both operations match to the bit.
+        size_t accumulator_size() const { return _nodes.at(1).size(); }
+
+        // The first layer from scratch. `set` followed by `eval` is
+        // `eval_slots` to the bit.
+        void accumulator_set(const size_t* slots,
+                             const double* activations,
+                             size_t        count,
+                             double*       accumulator,
+                             size_t        accumulator_size) const;
+
+        // The same vector moved rather than rebuilt: the removed rows are
+        // subtracted before the added ones are added.
+        void accumulator_update(const size_t* added,
+                                const double* added_activations,
+                                size_t        added_count,
+                                const size_t* removed,
+                                const double* removed_activations,
+                                size_t        removed_count,
+                                double*       accumulator,
+                                size_t        accumulator_size) const;
+
+        // The layers behind the first, from an accumulator. Returns
+        // (node, score) pairs for the output layer in neuron index order.
+        std::vector<std::pair<Node, double>> accumulator_eval(const double* accumulator,
+                                                              size_t        accumulator_size) const;
+
         // Membership test, used by the reasoning engine's ≈ evaluation.
         bool has_node(size_t layer, Node n) const { return _index.at(layer).count(n) != 0; }
 
@@ -201,6 +251,21 @@ namespace zelph::network
                           const double*                           activations,
                           size_t                                  count,
                           std::vector<std::pair<size_t, double>>& out) const;
+
+        // Throws unless the buffer the caller provides is one accumulator:
+        // the C ABI passes a raw pointer, and a wrong length here would be a
+        // write past the end of it.
+        void check_accumulator_size(size_t size) const;
+
+        // Layer 0's pre-activations, prior to the activation function. The
+        // accumulator contains exactly this, which is why a set-then-evaluate
+        // is bit for bit the from-scratch pass: both traverse here.
+        void first_layer(const std::vector<std::pair<size_t, double>>& active, double* out) const;
+
+        // Everything following those pre-activations: the activation function
+        // and the dense layers behind it. `cur` arrives bearing layer 0's
+        // output and departs holding the net’s.
+        const std::vector<double>& remaining_layers(std::vector<double>& cur) const;
 
         // The forward pass over an ascending, duplicate-free active input
         // list. The result is a per-thread buffer, valid until this thread

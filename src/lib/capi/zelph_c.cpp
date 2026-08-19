@@ -637,6 +637,92 @@ int32_t zelph_nn_train_slots(zelph_engine*     engine,
         return succeed(); });
 }
 
+int32_t zelph_nn_accumulator_size(zelph_engine* engine, const zelph_net handle, size_t* out_size)
+{
+    if (!engine || !out_size) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_size are required");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+
+    return guarded([&]
+                   {
+        *out_size = net->accumulator_size();
+        return succeed(); });
+}
+
+int32_t zelph_nn_accumulator_set(zelph_engine*   engine,
+                                 const zelph_net handle,
+                                 const size_t*   slots,
+                                 const double*   activations,
+                                 const size_t    count,
+                                 double*         accumulator,
+                                 const size_t    accumulator_size)
+{
+    if (!engine || !accumulator) return fail(ZELPH_INVALID_ARGUMENT, "engine and accumulator are required");
+    if (count > 0 && !slots) return fail(ZELPH_INVALID_ARGUMENT, "slots is null");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+
+    return guarded([&]
+                   {
+        net->accumulator_set(slots, activations, count, accumulator, accumulator_size);
+        return succeed(); });
+}
+
+int32_t zelph_nn_accumulator_update(zelph_engine*   engine,
+                                    const zelph_net handle,
+                                    const size_t*   added,
+                                    const double*   added_activations,
+                                    const size_t    added_count,
+                                    const size_t*   removed,
+                                    const double*   removed_activations,
+                                    const size_t    removed_count,
+                                    double*         accumulator,
+                                    const size_t    accumulator_size)
+{
+    if (!engine || !accumulator) return fail(ZELPH_INVALID_ARGUMENT, "engine and accumulator are required");
+    if (added_count > 0 && !added) return fail(ZELPH_INVALID_ARGUMENT, "added is null");
+    if (removed_count > 0 && !removed) return fail(ZELPH_INVALID_ARGUMENT, "removed is null");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+
+    return guarded([&]
+                   {
+        net->accumulator_update(added, added_activations, added_count,
+                                removed, removed_activations, removed_count,
+                                accumulator, accumulator_size);
+        return succeed(); });
+}
+
+int32_t zelph_nn_accumulator_eval(zelph_engine*   engine,
+                                  const zelph_net handle,
+                                  const double*   accumulator,
+                                  const size_t    accumulator_size,
+                                  const int32_t   top_k,
+                                  zelph_node*     out_nodes,
+                                  double*         out_scores,
+                                  size_t*         count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+    if (!accumulator) return fail(ZELPH_INVALID_ARGUMENT, "accumulator is null");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+    }
+
+    return guarded([&]
+                   { return write_ranked(net->accumulator_eval(accumulator, accumulator_size),
+                                         top_k,
+                                         out_nodes,
+                                         out_scores,
+                                         count); });
+}
+
 int32_t zelph_nn_write_back(zelph_engine* engine, const zelph_net handle)
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");

@@ -61,6 +61,25 @@ namespace
         }
     }
 
+    // The mirror of add_input_row, for an input that has ceased being
+    // active. Removing the row is what enables an accumulator to exist at
+    // all; it is not the same rounding as excluding the row from a fresh
+    // sum, which is the one property an accumulator lacks.
+    inline void sub_input_row(const double* wt, const size_t n_post, const size_t i, const double v, double* out)
+    {
+        const double* col = wt + i * n_post;
+        if (v == 1.0)
+        {
+            for (size_t j = 0; j < n_post; ++j)
+                out[j] -= col[j];
+        }
+        else
+        {
+            for (size_t j = 0; j < n_post; ++j)
+                out[j] -= col[j] * v;
+        }
+    }
+
     // The pre-activation of one unit in a dense layer, whose weights are
     // row-major by post unit. Shared by every caller so that the sequence of
     // additions - and therefore the last bit of the result - cannot drift
@@ -618,36 +637,33 @@ double NeuralNet::train_slots(const size_t*                               slots,
     return train_gathered(active, target, learning_rate);
 }
 
-const std::vector<double>& NeuralNet::forward_sparse(const std::vector<std::pair<size_t, double>>& active) const
+void NeuralNet::first_layer(const std::vector<std::pair<size_t, double>>& active, double* out) const
 {
-    // The dense input vector the layer-addressed entry point handles is what
-    // a sparse call would spend most of its time on: allocating and zeroing
-    // one slot per input neuron, of which a sparse sample touches a handful.
-    // Nothing here requires it - the input layer reads the activation out of
-    // the gathered list - so it is never constructed, and the two activation
-    // buffers are kept per thread and reused.
-    thread_local std::vector<double> cur;
+    const size_t  n_post = _nodes[1].size();
+    const double* wt     = _w[0].data();
+
+    std::fill(out, out + n_post, 0.0);
+    for (const auto& [i, v] : active)
+        add_input_row(wt, n_post, i, v, out);
+}
+
+const std::vector<double>& NeuralNet::remaining_layers(std::vector<double>& cur) const
+{
+    // One buffer per thread, reused: the layers after the first are dense,
+    // so this is the only place an evaluation needs scratch at all.
     thread_local std::vector<double> next;
 
-    for (size_t k = 0; k + 1 < _nodes.size(); ++k)
+    if (_nodes.size() > 2) apply_activation(cur.data(), _nodes[1].size(), _activation);
+
+    for (size_t k = 1; k + 1 < _nodes.size(); ++k)
     {
         const size_t n_pre  = _nodes[k].size();
         const size_t n_post = _nodes[k + 1].size();
 
         next.assign(n_post, 0.0);
-
-        if (k == 0)
+        for (size_t j = 0; j < n_post; ++j)
         {
-            const double* wt = _w[0].data();
-            for (const auto& [i, v] : active)
-                add_input_row(wt, n_post, i, v, next.data());
-        }
-        else
-        {
-            for (size_t j = 0; j < n_post; ++j)
-            {
-                next[j] = dense_unit(_w[k].data() + j * n_pre, cur.data(), n_pre);
-            }
+            next[j] = dense_unit(_w[k].data() + j * n_pre, cur.data(), n_pre);
         }
 
         if (k + 2 != _nodes.size()) apply_activation(next.data(), n_post, _activation);
@@ -656,6 +672,21 @@ const std::vector<double>& NeuralNet::forward_sparse(const std::vector<std::pair
     }
 
     return cur;
+}
+
+const std::vector<double>& NeuralNet::forward_sparse(const std::vector<std::pair<size_t, double>>& active) const
+{
+    // The dense input vector the layer-addressed entry point handles is what
+    // a sparse call would spend most of its time on: allocating and zeroing
+    // one slot per input neuron, of which a sparse sample touches a handful.
+    // Nothing here requires it - the input layer reads the activation out of
+    // the gathered list - so it is never constructed, and the buffer is kept
+    // per thread and reused.
+    thread_local std::vector<double> cur;
+
+    cur.resize(_nodes[1].size());
+    first_layer(active, cur.data());
+    return remaining_layers(cur);
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::scored_output(const std::vector<double>& out) const
@@ -669,6 +700,71 @@ std::vector<std::pair<Node, double>> NeuralNet::scored_output(const std::vector<
         scored.emplace_back(outputs[i], out[i]);
     }
     return scored;
+}
+
+void NeuralNet::check_accumulator_size(const size_t size) const
+{
+    if (size != accumulator_size())
+    {
+        throw std::runtime_error("NeuralNet: an accumulator of this net holds "
+                                 + std::to_string(accumulator_size()) + " values, not " + std::to_string(size));
+    }
+}
+
+void NeuralNet::accumulator_set(const size_t* slots,
+                                const double* activations,
+                                const size_t  count,
+                                double*       accumulator,
+                                const size_t  size) const
+{
+    thread_local std::vector<std::pair<size_t, double>> active;
+
+    check_accumulator_size(size);
+    gather_slots(slots, activations, count, active);
+
+    std::shared_lock lock(_mtx);
+    first_layer(active, accumulator);
+}
+
+void NeuralNet::accumulator_update(const size_t* added,
+                                   const double* added_activations,
+                                   const size_t  added_count,
+                                   const size_t* removed,
+                                   const double* removed_activations,
+                                   const size_t  removed_count,
+                                   double*       accumulator,
+                                   const size_t  size) const
+{
+    // Two buffers instead of one: both lists are collected prior to either
+    // being applied, so a slot the caller misidentified is rejected with
+    // the accumulator unaltered instead of partially updated.
+    thread_local std::vector<std::pair<size_t, double>> gone;
+    thread_local std::vector<std::pair<size_t, double>> arrived;
+
+    check_accumulator_size(size);
+    gather_slots(removed, removed_activations, removed_count, gone);
+    gather_slots(added, added_activations, added_count, arrived);
+
+    const size_t     n_post = _nodes[1].size();
+    std::shared_lock lock(_mtx);
+
+    const double* wt = _w[0].data();
+    for (const auto& [i, v] : gone)
+        sub_input_row(wt, n_post, i, v, accumulator);
+    for (const auto& [i, v] : arrived)
+        add_input_row(wt, n_post, i, v, accumulator);
+}
+
+std::vector<std::pair<Node, double>> NeuralNet::accumulator_eval(const double* accumulator,
+                                                                 const size_t  size) const
+{
+    thread_local std::vector<double> cur;
+
+    check_accumulator_size(size);
+    cur.assign(accumulator, accumulator + size);
+
+    std::shared_lock lock(_mtx);
+    return scored_output(remaining_layers(cur));
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std::pair<Node, double>>& input) const

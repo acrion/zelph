@@ -631,6 +631,171 @@ TEST_CASE("capi: slots and nodes are two names for the same input")
     CHECK(zelph_nn_train_slots(engine, net, &past, nullptr, 1, &target, nullptr, 1, 0.1, nullptr) == ZELPH_RUNTIME_ERROR);
 }
 
+// ---------------------------------------------------------------------------
+// The accumulator: the first layer kept between calls.
+//
+// Two properties hold it, and they differ in nature. Setting it and
+// evaluating it must be the from-scratch pass BIT FOR BIT, since both
+// traverse the same code and any deviation would constitute a bug. Updating
+// it must arrive at the same vector as setting it – yet only precisely when
+// the arithmetic is exact, which is why the weights below are small integers
+// and why a second net with awkward ones verifies the inexact scenario
+// separately.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: an accumulator set and evaluated is the from-scratch pass")
+{
+    Engine engine;
+
+    engine.member_of("c1", "AcIn");
+    engine.member_of("c2", "AcIn");
+    engine.member_of("c3", "AcIn");
+    engine.member_of("c4", "AcIn");
+    engine.member_of("d1", "AcHid");
+    engine.member_of("d2", "AcHid");
+    engine.member_of("e1", "AcOut");
+
+    int64_t created = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("AcIn"), engine.node("AcHid"), 0.0, 1, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("AcHid"), engine.node("AcOut"), 0.0, 2, &created) == ZELPH_OK);
+
+    const zelph_node layers[3] = {engine.node("AcIn"), engine.node("AcHid"), engine.node("AcOut")};
+    zelph_net        net       = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    // Powers of two, so that every sum below is exact in binary floating
+    // point and an update can be held to the bit; the inexact case is the
+    // test after this one. Put in through the snapshot, which is the only way
+    // the ABI can name an individual weight - and which therefore also holds
+    // the documented layout, row-major by post-synaptic unit.
+    const double chosen[10] = {1, 4, 16, 64,   // input i to hidden unit 0
+                               2, 8, 32, 128,  // input i to hidden unit 1
+                               1, 1};          // both hidden units to the output
+    const size_t sizes[2]   = {8, 2};
+    REQUIRE(zelph_nn_restore(engine, net, chosen, 10, sizes, 2) == ZELPH_OK);
+
+    size_t width = 0;
+    REQUIRE(zelph_nn_accumulator_size(engine, net, &width) == ZELPH_OK);
+    CHECK(width == 2); // the hidden layer, not the input one
+
+    const auto by_slots = [&](const std::vector<size_t>& slots)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_slots(engine, net, slots.data(), nullptr, slots.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    const auto by_accumulator = [&](const std::vector<double>& acc)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_accumulator_eval(engine, net, acc.data(), acc.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    std::vector<double> acc(width, 0.0);
+
+    // Set then evaluate, against the same call in one piece. Bit for bit:
+    // both run the same first layer over the same slots in the same order.
+    for (const std::vector<size_t>& slots : {std::vector<size_t>{},
+                                             std::vector<size_t>{0},
+                                             std::vector<size_t>{1, 3},
+                                             std::vector<size_t>{0, 1, 2, 3}})
+    {
+        REQUIRE(zelph_nn_accumulator_set(engine, net, slots.data(), nullptr, slots.size(), acc.data(), acc.size()) == ZELPH_OK);
+        CHECK(by_accumulator(acc) == by_slots(slots));
+    }
+
+    // Moved rather than rebuilt: from {0, 1} to {1, 2, 3} is one removal and
+    // two additions, and with exact weights it lands on the same vector.
+    REQUIRE(zelph_nn_accumulator_set(engine, net, std::vector<size_t>{0, 1}.data(), nullptr, 2, acc.data(), acc.size()) == ZELPH_OK);
+
+    const size_t added[2]  = {2, 3};
+    const size_t removed[1] = {0};
+    REQUIRE(zelph_nn_accumulator_update(engine, net, added, nullptr, 2, removed, nullptr, 1, acc.data(), acc.size()) == ZELPH_OK);
+
+    std::vector<double> fresh(width, 0.0);
+    const size_t        target[3] = {1, 2, 3};
+    REQUIRE(zelph_nn_accumulator_set(engine, net, target, nullptr, 3, fresh.data(), fresh.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+    CHECK(by_accumulator(acc) == by_slots({1, 2, 3}));
+
+    // An empty update is a no-op rather than a reset.
+    REQUIRE(zelph_nn_accumulator_update(engine, net, nullptr, nullptr, 0, nullptr, nullptr, 0, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+
+    // A graded activation goes in and comes out again: removing what was
+    // added with the same weight restores the vector exactly.
+    const double graded = 0.5;
+    const size_t one[1] = {0};
+    REQUIRE(zelph_nn_accumulator_update(engine, net, one, &graded, 1, nullptr, nullptr, 0, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc != fresh);
+    REQUIRE(zelph_nn_accumulator_update(engine, net, nullptr, nullptr, 0, one, &graded, 1, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+
+    // The buffer length is checked, because the ABI cannot see it otherwise
+    // and the write would go past the end.
+    CHECK(zelph_nn_accumulator_set(engine, net, one, nullptr, 1, acc.data(), width + 1) == ZELPH_RUNTIME_ERROR);
+    CHECK(zelph_nn_accumulator_eval(engine, net, acc.data(), width - 1, 1, nullptr, nullptr, &width) == ZELPH_RUNTIME_ERROR);
+
+    // And so is a slot outside the input layer.
+    const size_t past[1] = {4};
+    CHECK(zelph_nn_accumulator_set(engine, net, past, nullptr, 1, acc.data(), acc.size()) == ZELPH_RUNTIME_ERROR);
+}
+
+TEST_CASE("capi: an updated accumulator drifts from a fresh one, and the drift is small")
+{
+    // The property the test above cannot reveal, because it selects weights
+    // that add exactly. Adding and subtracting rows rounds differently from
+    // summing them once, so an accumulator carried a long way is close rather
+    // than equal - the reason the API says to set it afresh when that matters.
+    Engine engine;
+
+    const char* const inputs[6] = {"f0", "f1", "f2", "f3", "f4", "f5"};
+    for (const char* name : inputs) engine.member_of(name, "DrIn");
+    engine.member_of("g1", "DrHid");
+    engine.member_of("g2", "DrHid");
+    engine.member_of("h1", "DrOut");
+
+    int64_t created = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("DrIn"), engine.node("DrHid"), 0.37, 11, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("DrHid"), engine.node("DrOut"), 0.71, 12, &created) == ZELPH_OK);
+
+    const zelph_node layers[3] = {engine.node("DrIn"), engine.node("DrHid"), engine.node("DrOut")};
+    zelph_net        net       = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    size_t width = 0;
+    REQUIRE(zelph_nn_accumulator_size(engine, net, &width) == ZELPH_OK);
+
+    std::vector<double> carried(width, 0.0);
+    const size_t        start[3] = {0, 1, 2};
+    REQUIRE(zelph_nn_accumulator_set(engine, net, start, nullptr, 3, carried.data(), carried.size()) == ZELPH_OK);
+
+    // Walk it around a cycle of single swaps and come back to where it began.
+    for (int round = 0; round < 200; ++round)
+    {
+        for (size_t slot = 3; slot < 6; ++slot)
+        {
+            const size_t out[1] = {slot - 3};
+            const size_t in[1]  = {slot};
+            REQUIRE(zelph_nn_accumulator_update(engine, net, in, nullptr, 1, out, nullptr, 1, carried.data(), carried.size()) == ZELPH_OK);
+            REQUIRE(zelph_nn_accumulator_update(engine, net, out, nullptr, 1, in, nullptr, 1, carried.data(), carried.size()) == ZELPH_OK);
+        }
+    }
+
+    std::vector<double> fresh(width, 0.0);
+    REQUIRE(zelph_nn_accumulator_set(engine, net, start, nullptr, 3, fresh.data(), fresh.size()) == ZELPH_OK);
+
+    for (size_t j = 0; j < width; ++j)
+    {
+        CHECK(carried[j] == doctest::Approx(fresh[j]).epsilon(1e-12));
+    }
+}
+
 TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")
 {
     Engine engine;

@@ -149,6 +149,88 @@ impl<'e> Net<'e> {
         Ok((count > 0).then_some((Node(node), score)))
     }
 
+    /// How many doubles one accumulator of this net holds.
+    pub fn accumulator_size(&self) -> Result<usize> {
+        let mut size: usize = 0;
+        check(unsafe { zelph_sys::zelph_nn_accumulator_size(self.engine, self.handle, &mut size) })?;
+        Ok(size)
+    }
+
+    /// The input layer's pre-activation for a set of active slots.
+    ///
+    /// An accumulator is that vector maintained between calls: where
+    /// consecutive queries share most of their active inputs, moving it with
+    /// [`accumulator_update`](Net::accumulator_update) costs the difference
+    /// rather than the whole set. The buffer is the caller’s, so a search can
+    /// hold one per ply and copy the parent’s on the way down.
+    ///
+    /// Set followed by [`accumulator_best`](Net::accumulator_best) is
+    /// [`best_slots`](Net::best_slots) to the bit.
+    pub fn accumulator_set(&self, slots: &[usize], accumulator: &mut [f64]) -> Result<()> {
+        check(unsafe {
+            zelph_sys::zelph_nn_accumulator_set(
+                self.engine,
+                self.handle,
+                slots.as_ptr(),
+                ptr::null(),
+                slots.len(),
+                accumulator.as_mut_ptr(),
+                accumulator.len(),
+            )
+        })
+    }
+
+    /// The same vector moved: the `removed` rows are subtracted before the
+    /// `added` ones are added.
+    ///
+    /// This is not bit-identical to reconstructing it - adding and
+    /// subtracting rows yields different rounding outcomes from aggregating
+    /// them once, and the discrepancy grows across a long sequence of
+    /// modifications. Set afresh when that becomes relevant.
+    pub fn accumulator_update(
+        &self,
+        added: &[usize],
+        removed: &[usize],
+        accumulator: &mut [f64],
+    ) -> Result<()> {
+        check(unsafe {
+            zelph_sys::zelph_nn_accumulator_update(
+                self.engine,
+                self.handle,
+                added.as_ptr(),
+                ptr::null(),
+                added.len(),
+                removed.as_ptr(),
+                ptr::null(),
+                removed.len(),
+                accumulator.as_mut_ptr(),
+                accumulator.len(),
+            )
+        })
+    }
+
+    /// The single highest-scoring output neuron, from an accumulator.
+    pub fn accumulator_best(&self, accumulator: &[f64]) -> Result<Option<(Node, f64)>> {
+        let mut node: zelph_sys::zelph_node = 0;
+        let mut score: f64 = 0.0;
+        let mut count: usize = 1;
+
+        check(unsafe {
+            zelph_sys::zelph_nn_accumulator_eval(
+                self.engine,
+                self.handle,
+                accumulator.as_ptr(),
+                accumulator.len(),
+                1,
+                &mut node,
+                &mut score,
+                &mut count,
+            )
+        })?;
+
+        Ok((count > 0).then_some((Node(node), score)))
+    }
+
     /// The neurons of one layer, in slot order: the node at index `i` is what
     /// the slot-addressed calls mean by slot `i`. Layer 0 is the input layer.
     pub fn layer_nodes(&self, layer: usize) -> Result<Vec<Node>> {
