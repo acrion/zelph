@@ -119,6 +119,64 @@ impl<'e> Net<'e> {
         Ok((count > 0).then_some((Node(node), score)))
     }
 
+    /// As [`best`](Net::best), with the active inputs named by their slot in
+    /// the input layer.
+    ///
+    /// A node incurs a hash lookup per invocation and a slot incurs none,
+    /// which on a small network is the most significant single component
+    /// remaining in an evaluation. Use [`layer_nodes`](Net::layer_nodes)
+    /// once, after compiling, to determine which node each slot corresponds
+    /// to; from then on the caller maintains the mapping.
+    pub fn best_slots(&self, slots: &[usize]) -> Result<Option<(Node, f64)>> {
+        let mut node: zelph_sys::zelph_node = 0;
+        let mut score: f64 = 0.0;
+        let mut count: usize = 1;
+
+        check(unsafe {
+            zelph_sys::zelph_nn_eval_slots(
+                self.engine,
+                self.handle,
+                slots.as_ptr(),
+                ptr::null(),
+                slots.len(),
+                1,
+                &mut node,
+                &mut score,
+                &mut count,
+            )
+        })?;
+
+        Ok((count > 0).then_some((Node(node), score)))
+    }
+
+    /// The neurons of one layer, in slot order: the node at index `i` is what
+    /// the slot-addressed calls mean by slot `i`. Layer 0 is the input layer.
+    pub fn layer_nodes(&self, layer: usize) -> Result<Vec<Node>> {
+        let mut count: usize = 0;
+        let query = unsafe {
+            zelph_sys::zelph_nn_layer_nodes(self.engine, self.handle, layer, ptr::null_mut(), &mut count)
+        };
+        match check(query) {
+            Ok(()) => return Ok(Vec::new()),
+            Err(e) if e.kind() != ErrorKind::BufferTooSmall => return Err(e),
+            Err(_) => {}
+        }
+
+        let mut nodes: Vec<Node> = vec![Node(0); count];
+        check(unsafe {
+            zelph_sys::zelph_nn_layer_nodes(
+                self.engine,
+                self.handle,
+                layer,
+                nodes.as_mut_ptr().cast(),
+                &mut count,
+            )
+        })?;
+
+        nodes.truncate(count);
+        Ok(nodes)
+    }
+
     /// Forward pass with a multi-hot input: every listed neuron is 1.0.
     ///
     /// The result is sorted by descending score, ties by ascending node.

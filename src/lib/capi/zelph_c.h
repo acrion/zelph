@@ -392,6 +392,56 @@ extern "C"
                                              double*           out_scores,
                                              size_t*           count);
 
+    /* The neurons in a single layer of a compiled network, arranged by
+       slot: the node at position i is the neuron referred to by the
+       slot-addressed calls listed below for slot i. Layer 0 serves as the
+       input layer. Adheres to the in/out count convention: query with
+       capacity 0 to determine the size. The Janet binding of the same thing
+       is zelph/nn-nodes. */
+    ZELPH_EXPORT int32_t zelph_nn_layer_nodes(zelph_engine* engine,
+                                              zelph_net     handle,
+                                              size_t        layer,
+                                              zelph_node*   out_nodes,
+                                              size_t*       count);
+
+    /* The identical two invocations with the active input neurons
+       identified by their SLOT in the input layer rather than by their node.
+
+       A node must be retrieved from a hash map on each invocation and a slot
+       does not, and in a compact network, that lookup constitutes the most
+       significant operation during an evaluation: 0.17 of 0.43 microseconds
+       for 34 active inputs of 780. A caller that evaluates the same layer
+       millions of times resolves its features to slots once, at the time of
+       network compilation, and passes slots thereafter. zelph_nn_layer_nodes
+       reports a layer's neurons in slot order, which is the structure such a
+       caller constructs its table from.
+
+       Everything else conforms to the node-addressed pair: a null activation
+       array implies every listed neuron is 1.0, the sequence of the input is
+       irrelevant, and a repeated slot retains its final activation. A slot
+       beyond the input layer is an error instead of a read past the
+       weights. */
+    ZELPH_EXPORT int32_t zelph_nn_eval_slots(zelph_engine* engine,
+                                             zelph_net     handle,
+                                             const size_t* input_slots,
+                                             const double* input_activations,
+                                             size_t        input_count,
+                                             int32_t       top_k,
+                                             zelph_node*   out_nodes,
+                                             double*       out_scores,
+                                             size_t*       count);
+
+    ZELPH_EXPORT int32_t zelph_nn_train_slots(zelph_engine*     engine,
+                                              zelph_net         handle,
+                                              const size_t*     input_slots,
+                                              const double*     input_activations,
+                                              size_t            input_count,
+                                              const zelph_node* target_nodes,
+                                              const double*     target_activations,
+                                              size_t            target_count,
+                                              double            learning_rate,
+                                              double*           out_loss);
+
     /* One SGD step on a single node-addressed sample. Returns the loss
        BEFORE the update in `out_loss`, which may be null. */
     ZELPH_EXPORT int32_t zelph_nn_train_nodes(zelph_engine*     engine,

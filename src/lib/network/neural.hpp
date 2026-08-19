@@ -152,6 +152,32 @@ namespace zelph::network
         // the output layer in neuron index order (unsorted).
         std::vector<std::pair<Node, double>> eval_nodes(const std::vector<std::pair<Node, double>>& input) const;
 
+        // --- Slot-addressed input ---
+        //
+        // The identical two calls with the input neurons identified by their
+        // position in the input layer rather than by their node. A node must
+        // be retrieved from a hash map on each call and a slot does not, and
+        // on a small net that lookup is the most significant single
+        // component remaining: 0.17 of 0.43 microseconds for 34 active
+        // inputs of 780. A caller that evaluates the same layer millions of
+        // times can resolve its features once, when the net is compiled, and
+        // pass slots for ever after - layer_nodes() provides it with the
+        // order.
+        //
+        // `activations` may be null, meaning each specified neuron is 1.0.
+        // Slots beyond the layer are rejected. Order is irrelevant and
+        // duplicates retain their final activation, precisely as in the
+        // node-addressed pair.
+        std::vector<std::pair<Node, double>> eval_slots(const size_t* slots,
+                                                        const double* activations,
+                                                        size_t        count) const;
+
+        double train_slots(const size_t*                               slots,
+                           const double*                               activations,
+                           size_t                                      count,
+                           const std::vector<std::pair<Node, double>>& target,
+                           double                                      learning_rate);
+
         // Membership test, used by the reasoning engine's ≈ evaluation.
         bool has_node(size_t layer, Node n) const { return _index.at(layer).count(n) != 0; }
 
@@ -159,14 +185,36 @@ namespace zelph::network
         NeuralNet() = default;
 
         // The same resolution encode() carries out, in a single pass and
-        // without a dense vector: (slot, activation) for each listed neuron,
-        // ascending by slot and one entry per slot. A repeated node retains
-        // its LAST activation, because that is what writing into a dense
-        // vector achieves. Throws when a node is not a member of the layer,
-        // as encode() does.
+        // without a dense vector: the slots of the listed neurons and their
+        // activations, ascending by slot and one entry per slot. A repeated
+        // node retains its LAST activation, because that is what writing into
+        // a dense vector achieves. Throws when a node is not a member of the
+        // layer, as encode() does.
         void gather_active(size_t                                      layer,
                            const std::vector<std::pair<Node, double>>& active,
                            std::vector<std::pair<size_t, double>>&     out) const;
+
+        // The same, from slots a caller already holds. Throws when a slot is
+        // outside the input layer - a C caller can pass anything, and an
+        // unchecked index here would be a read past the weight matrix.
+        void gather_slots(const size_t*                           slots,
+                          const double*                           activations,
+                          size_t                                  count,
+                          std::vector<std::pair<size_t, double>>& out) const;
+
+        // The forward pass over an ascending, duplicate-free active input
+        // list. The result is a per-thread buffer, valid until this thread
+        // evaluates again; the shared lock must be held across both.
+        const std::vector<double>& forward_sparse(const std::vector<std::pair<size_t, double>>& active) const;
+
+        // The output layer paired with its nodes, in neuron index order.
+        std::vector<std::pair<Node, double>> scored_output(const std::vector<double>& out) const;
+
+        // One SGD step from an already gathered input, shared by the
+        // node-addressed and the slot-addressed entry point.
+        double train_gathered(const std::vector<std::pair<size_t, double>>& active,
+                              const std::vector<std::pair<Node, double>>&   target,
+                              double                                        learning_rate);
 
         // Guards _w, the only member that changes after compile(). _nodes,
         // _mask and _index are written once by compile() and read-only

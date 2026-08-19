@@ -140,6 +140,35 @@ namespace
         return engine->nets[static_cast<size_t>(handle)].get();
     }
 
+    // The output of a forward pass, in the order zelph/nn-eval-nodes
+    // yields: descending by score, ties broken by ascending node, thus a
+    // top-k from either is the identical set in the identical sequence.
+    // Common to both the node-addressed and the slot-addressed entry point.
+    int32_t write_ranked(std::vector<std::pair<zelph::network::Node, double>> scored,
+                         const int32_t                                        top_k,
+                         zelph_node*                                          out_nodes,
+                         double*                                              out_scores,
+                         size_t*                                              count)
+    {
+        std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b)
+                  { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+
+        const size_t wanted = top_k < 0 ? scored.size() : std::min(static_cast<size_t>(top_k), scored.size());
+
+        const size_t capacity = *count;
+        *count                = wanted;
+        if (wanted > capacity || (!out_nodes && wanted > 0))
+            return fail(ZELPH_BUFFER_TOO_SMALL,
+                        "buffer holds " + std::to_string(capacity) + " elements, " + std::to_string(wanted) + " needed");
+
+        for (size_t i = 0; i < wanted; ++i)
+        {
+            out_nodes[i] = scored[i].first;
+            if (out_scores) out_scores[i] = scored[i].second;
+        }
+        return succeed();
+    }
+
     // Node-addressed activations, the shape NeuralNet's node API takes. A
     // null activation array means "every listed neuron is 1.0", which is the
     // multi-hot case and the only one a sparse feature vector needs.
@@ -493,29 +522,65 @@ int32_t zelph_nn_eval_nodes(zelph_engine*     engine,
     }
 
     return guarded([&]
+                   { return write_ranked(net->eval_nodes(activations(input_nodes, input_activations, input_count)),
+                                         top_k,
+                                         out_nodes,
+                                         out_scores,
+                                         count); });
+}
+
+int32_t zelph_nn_layer_nodes(zelph_engine*   engine,
+                             const zelph_net handle,
+                             const size_t    layer,
+                             zelph_node*     out_nodes,
+                             size_t*         count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+    }
+
+    return guarded([&]
                    {
-        auto scored = net->eval_nodes(activations(input_nodes, input_activations, input_count));
-
-        // Descending by score, ties by ascending node - the order
-        // zelph/nn-eval-nodes produces, so a top-k of either is the same set
-        // in the same sequence.
-        std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b)
-                  { return a.second != b.second ? a.second > b.second : a.first < b.first; });
-
-        const size_t wanted = top_k < 0 ? scored.size() : std::min(static_cast<size_t>(top_k), scored.size());
-
-        const size_t capacity = *count;
-        *count                = wanted;
-        if (wanted > capacity || (!out_nodes && wanted > 0))
-            return fail(ZELPH_BUFFER_TOO_SMALL,
-                        "buffer holds " + std::to_string(capacity) + " elements, " + std::to_string(wanted) + " needed");
-
-        for (size_t i = 0; i < wanted; ++i)
+        if (layer >= net->layer_count())
         {
-            out_nodes[i] = scored[i].first;
-            if (out_scores) out_scores[i] = scored[i].second;
+            *count = 0;
+            return fail(ZELPH_INVALID_ARGUMENT,
+                        "layer " + std::to_string(layer) + " of a network with " + std::to_string(net->layer_count()));
         }
-        return succeed(); });
+        return write_array(net->layer_nodes(layer), out_nodes, count); });
+}
+
+int32_t zelph_nn_eval_slots(zelph_engine*   engine,
+                            const zelph_net handle,
+                            const size_t*   input_slots,
+                            const double*   input_activations,
+                            const size_t    input_count,
+                            const int32_t   top_k,
+                            zelph_node*     out_nodes,
+                            double*         out_scores,
+                            size_t*         count)
+{
+    if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
+    if (input_count > 0 && !input_slots) return fail(ZELPH_INVALID_ARGUMENT, "input_slots is null");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net)
+    {
+        *count = 0;
+        return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+    }
+
+    return guarded([&]
+                   { return write_ranked(net->eval_slots(input_slots, input_activations, input_count),
+                                         top_k,
+                                         out_nodes,
+                                         out_scores,
+                                         count); });
 }
 
 int32_t zelph_nn_train_nodes(zelph_engine*     engine,
@@ -539,6 +604,33 @@ int32_t zelph_nn_train_nodes(zelph_engine*     engine,
     return guarded([&]
                    {
         const double loss = net->train_nodes(activations(input_nodes, input_activations, input_count),
+                                             activations(target_nodes, target_activations, target_count),
+                                             learning_rate);
+        if (out_loss) *out_loss = loss;
+        return succeed(); });
+}
+
+int32_t zelph_nn_train_slots(zelph_engine*     engine,
+                             const zelph_net   handle,
+                             const size_t*     input_slots,
+                             const double*     input_activations,
+                             const size_t      input_count,
+                             const zelph_node* target_nodes,
+                             const double*     target_activations,
+                             const size_t      target_count,
+                             const double      learning_rate,
+                             double*           out_loss)
+{
+    if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+    if (input_count > 0 && !input_slots) return fail(ZELPH_INVALID_ARGUMENT, "input_slots is null");
+    if (target_count > 0 && !target_nodes) return fail(ZELPH_INVALID_ARGUMENT, "target_nodes is null");
+
+    zelph::network::NeuralNet* net = find_net(engine, handle);
+    if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
+
+    return guarded([&]
+                   {
+        const double loss = net->train_slots(input_slots, input_activations, input_count,
                                              activations(target_nodes, target_activations, target_count),
                                              learning_rate);
         if (out_loss) *out_loss = loss;

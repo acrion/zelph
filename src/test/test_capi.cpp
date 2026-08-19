@@ -487,6 +487,150 @@ TEST_CASE("capi: a network is wired, compiled, trained and read back through the
     CHECK(all_scores[0] >= all_scores[1]);
 }
 
+// ---------------------------------------------------------------------------
+// Slot-addressed input: the identical two invocations without the
+// individual-call node lookup.
+//
+// It is an optimisation and nothing else, so what has to be pinned is that it
+// answers what the node-addressed pair answers - not approximately, since the
+// two run the same arithmetic over the same slots. The net below has three
+// inputs of distinct magnitude, so an answer names which slots were summed
+// and a permuted mapping cannot pass by luck.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: slots and nodes are two names for the same input")
+{
+    Engine engine;
+
+    engine.member_of("s1", "SlIn");
+    engine.member_of("s2", "SlIn");
+    engine.member_of("s3", "SlIn");
+    engine.member_of("t1", "SlOut");
+
+    const zelph_node layers[2] = {engine.node("SlIn"), engine.node("SlOut")};
+    zelph_net        net       = -1;
+    int64_t          created   = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.0, 1, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    // The mapping a caller needs to use slots at all, and the only way to
+    // learn it through the ABI.
+    size_t                  count = 0;
+    std::vector<zelph_node> inputs;
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 0, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 3);
+    inputs.resize(count);
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 0, inputs.data(), &count) == ZELPH_OK);
+    CHECK(inputs[0] == engine.node("s1"));
+    CHECK(inputs[1] == engine.node("s2"));
+    CHECK(inputs[2] == engine.node("s3"));
+
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 2, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    // Trained via the node entry point intentionally: a permuted slot
+    // mapping employed during both training and evaluation is
+    // self-consistent and responds to every query accurately. Only a
+    // network trained through one path and queried by the other pins the
+    // mapping itself.
+    const zelph_node target    = engine.node("t1");
+    const double     wanted[3] = {1.0, 10.0, 100.0};
+    for (int epoch = 0; epoch < 400; ++epoch)
+    {
+        for (size_t i = 0; i < 3; ++i)
+        {
+            REQUIRE(zelph_nn_train_nodes(engine, net, &inputs[i], nullptr, 1, &target, &wanted[i], 1, 0.1, nullptr) == ZELPH_OK);
+        }
+    }
+
+    const auto score_by_slots = [&](const std::vector<size_t>& slots, const double* activations)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_slots(engine, net, slots.data(), activations, slots.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    const auto score_by_nodes = [&](const std::vector<zelph_node>& nodes, const double* activations)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_nodes(engine, net, nodes.data(), activations, nodes.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    // Asked by slot, taught by node: each magnitude names the slot it
+    // belongs to, so any permutation of the mapping answers wrongly here.
+    CHECK(score_by_slots({0}, nullptr) == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(score_by_slots({1}, nullptr) == doctest::Approx(10.0).epsilon(0.01));
+    CHECK(score_by_slots({2}, nullptr) == doctest::Approx(100.0).epsilon(0.01));
+
+    // Equal to the last bit, not approximately: both routes add the same
+    // weights in the same sequence. The sets are asymmetric, because a
+    // mapping that simply inverts the layer maps {0, 2} to itself.
+    CHECK(score_by_slots({0, 1}, nullptr) == score_by_nodes({inputs[0], inputs[1]}, nullptr));
+    CHECK(score_by_slots({1, 2}, nullptr) == score_by_nodes({inputs[1], inputs[2]}, nullptr));
+    CHECK(score_by_slots({0, 1, 2}, nullptr) == score_by_nodes({inputs[0], inputs[1], inputs[2]}, nullptr));
+    CHECK(score_by_slots({}, nullptr) == score_by_nodes({}, nullptr));
+
+    // A graded activation reaches the right slot, which a swapped mapping
+    // would get wrong while a multi-hot case over a symmetric set passed.
+    const double graded[2] = {0.5, 0.25};
+    CHECK(score_by_slots({1, 2}, graded) == score_by_nodes({inputs[1], inputs[2]}, graded));
+
+    // The training half reads its input through the same gather, and a
+    // learning rate of 0 reports the loss without moving a weight - so the
+    // two entry points must agree on it for the same sample.
+    double           loss_by_slots = 0;
+    double           loss_by_nodes = 0;
+    const size_t     two_slots[2]  = {0, 2};
+    const zelph_node two_nodes[2]  = {inputs[0], inputs[2]};
+    REQUIRE(zelph_nn_train_slots(engine, net, two_slots, graded, 2, &target, wanted, 1, 0.0, &loss_by_slots) == ZELPH_OK);
+    REQUIRE(zelph_nn_train_nodes(engine, net, two_nodes, graded, 2, &target, wanted, 1, 0.0, &loss_by_nodes) == ZELPH_OK);
+    CHECK(loss_by_slots == loss_by_nodes);
+
+    // And a genuine step through the slot path results in the net being
+    // left where the same step by node results in it. Execute from one
+    // origin point, twice, with the snapshot in between, so the two updates
+    // are compared and not merged.
+    size_t shape_count = 0;
+    CHECK(zelph_nn_snapshot_shape(engine, net, nullptr, &shape_count) == ZELPH_BUFFER_TOO_SMALL);
+    std::vector<size_t> sizes(shape_count, 0);
+    REQUIRE(zelph_nn_snapshot_shape(engine, net, sizes.data(), &shape_count) == ZELPH_OK);
+
+    size_t weight_count = 0;
+    CHECK(zelph_nn_snapshot(engine, net, nullptr, &weight_count) == ZELPH_BUFFER_TOO_SMALL);
+    std::vector<double> start(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, start.data(), &weight_count) == ZELPH_OK);
+
+    REQUIRE(zelph_nn_train_slots(engine, net, two_slots, graded, 2, &target, wanted, 1, 0.05, nullptr) == ZELPH_OK);
+    std::vector<double> after_slots(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, after_slots.data(), &weight_count) == ZELPH_OK);
+
+    REQUIRE(zelph_nn_restore(engine, net, start.data(), start.size(), sizes.data(), sizes.size()) == ZELPH_OK);
+    REQUIRE(zelph_nn_train_nodes(engine, net, two_nodes, graded, 2, &target, wanted, 1, 0.05, nullptr) == ZELPH_OK);
+    std::vector<double> after_nodes(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, after_nodes.data(), &weight_count) == ZELPH_OK);
+
+    CHECK(after_slots != start);       // the step did something
+    CHECK(after_slots == after_nodes); // and it was the same something
+
+    // Order does not matter and a repeat keeps its LAST activation, exactly
+    // as writing into a dense vector would.
+    CHECK(score_by_slots({2, 0}, nullptr) == score_by_slots({0, 2}, nullptr));
+    const double repeated[2] = {1.0, 0.25};
+    CHECK(score_by_slots({2, 2}, repeated) == score_by_slots({2}, &repeated[1]));
+
+    // A slot past the layer is refused rather than read.
+    zelph_node   top   = 0;
+    double       value = 0;
+    size_t       n     = 1;
+    const size_t past  = 3;
+    CHECK(zelph_nn_eval_slots(engine, net, &past, nullptr, 1, 1, &top, &value, &n) == ZELPH_RUNTIME_ERROR);
+    CHECK(zelph_nn_train_slots(engine, net, &past, nullptr, 1, &target, nullptr, 1, 0.1, nullptr) == ZELPH_RUNTIME_ERROR);
+}
+
 TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")
 {
     Engine engine;

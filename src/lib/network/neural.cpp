@@ -152,6 +152,29 @@ namespace
         }
     }
 
+    // Most callers enumerate their features in increasing order, and then
+    // there is nothing to sort. When one does not, sorting is what
+    // maintains the summation order and the slot count identical to the
+    // dense pass, so it cannot be omitted.
+    void normalise(std::vector<std::pair<size_t, double>>& active)
+    {
+        std::stable_sort(active.begin(), active.end(), [](const auto& a, const auto& b)
+                         { return a.first < b.first; });
+
+        // Stable, so the final entry in a sequence of identical slots is the
+        // final one the caller provided – which is the one that would remain
+        // when stored in a dense vector.
+        auto keep = active.begin();
+        for (auto it = active.begin(); it != active.end(); ++it)
+        {
+            if (keep != active.begin() && (keep - 1)->first == it->first)
+                *(keep - 1) = *it;
+            else
+                *keep++ = *it;
+        }
+        active.erase(keep, active.end());
+    }
+
     // [pre][post] to [post][pre] and back - the identical permutation
     // regardless of direction, which is why a single function handles both
     // ways.
@@ -504,46 +527,48 @@ void NeuralNet::gather_active(const size_t                                layer,
         out.emplace_back(it->second, activation);
     }
 
-    // Most callers enumerate their features in increasing order, and then
-    // there is nothing to sort. When one does not, sorting is what
-    // maintains the summation order and the slot count identical to the
-    // dense pass, so it cannot be omitted.
-    if (ascending) return;
-
-    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b)
-                     { return a.first < b.first; });
-
-    // Stable, so the final entry in a sequence of identical slots is the
-    // final one the caller provided – which is the one that would remain
-    // when stored in a dense vector.
-    auto keep = out.begin();
-    for (auto it = out.begin(); it != out.end(); ++it)
-    {
-        if (keep != out.begin() && (keep - 1)->first == it->first)
-            *(keep - 1) = *it;
-        else
-            *keep++ = *it;
-    }
-    out.erase(keep, out.end());
+    if (!ascending) normalise(out);
 }
 
-double NeuralNet::train_nodes(const std::vector<std::pair<Node, double>>& input,
-                              const std::vector<std::pair<Node, double>>& target,
-                              const double                                learning_rate)
+void NeuralNet::gather_slots(const size_t*                           slots,
+                             const double*                           activations,
+                             const size_t                            count,
+                             std::vector<std::pair<size_t, double>>& out) const
+{
+    const size_t width = _nodes.front().size();
+
+    out.clear();
+    out.reserve(count);
+
+    bool ascending = true;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (slots[i] >= width)
+        {
+            throw std::runtime_error("NeuralNet: input slot " + std::to_string(slots[i])
+                                     + " is outside an input layer of " + std::to_string(width));
+        }
+        if (i > 0 && slots[i] <= slots[i - 1]) ascending = false;
+        out.emplace_back(slots[i], activations ? activations[i] : 1.0);
+    }
+
+    if (!ascending) normalise(out);
+}
+
+double NeuralNet::train_gathered(const std::vector<std::pair<size_t, double>>& active,
+                                 const std::vector<std::pair<Node, double>>&   target,
+                                 const double                                  learning_rate)
 {
     // The dense input vector train_step takes is read at the active slots
     // and nowhere else, so it is constructed once per thread and retained: an
     // epoch over a wide sparse layer would otherwise allocate and zero the
     // entire input width once per sample. Reinstating only the slots that
     // were modified keeps the cost of a sample proportional to what it
-    // activates, which is the property the node-addressed API is for.
-    thread_local std::vector<std::pair<size_t, double>> active;
-    thread_local std::vector<double>                    dense;
-    thread_local std::vector<size_t>                    slots;
+    // activates, which is the property these entry points are for.
+    thread_local std::vector<double> dense;
+    thread_local std::vector<size_t> slots;
 
-    gather_active(0, input, active);
-
-    if (dense.size() != _nodes[0].size()) dense.assign(_nodes[0].size(), 0.0);
+    if (dense.size() != _nodes.front().size()) dense.assign(_nodes.front().size(), 0.0);
 
     slots.clear();
     slots.reserve(active.size());
@@ -571,21 +596,38 @@ double NeuralNet::train_nodes(const std::vector<std::pair<Node, double>>& input,
     return train_step(dense, encode(_nodes.size() - 1, target), learning_rate, &slots);
 }
 
-std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std::pair<Node, double>>& input) const
+double NeuralNet::train_nodes(const std::vector<std::pair<Node, double>>& input,
+                              const std::vector<std::pair<Node, double>>& target,
+                              const double                                learning_rate)
 {
-    // The dense input vector the layer-addressed entry point handles is what
-    // a node-addressed call would spend most of its time on: allocating and
-    // zeroing one slot per input neuron, of which a sparse sample touches a
-    // handful. Nothing here requires it - the sparse pass reads the
-    // activation out of the gathered list - so it is never constructed, and
-    // the buffers that are needed are kept per thread and reused.
     thread_local std::vector<std::pair<size_t, double>> active;
-    thread_local std::vector<double>                    cur;
-    thread_local std::vector<double>                    next;
 
     gather_active(0, input, active);
+    return train_gathered(active, target, learning_rate);
+}
 
-    std::shared_lock lock(_mtx);
+double NeuralNet::train_slots(const size_t*                               slots,
+                              const double*                               activations,
+                              const size_t                                count,
+                              const std::vector<std::pair<Node, double>>& target,
+                              const double                                learning_rate)
+{
+    thread_local std::vector<std::pair<size_t, double>> active;
+
+    gather_slots(slots, activations, count, active);
+    return train_gathered(active, target, learning_rate);
+}
+
+const std::vector<double>& NeuralNet::forward_sparse(const std::vector<std::pair<size_t, double>>& active) const
+{
+    // The dense input vector the layer-addressed entry point handles is what
+    // a sparse call would spend most of its time on: allocating and zeroing
+    // one slot per input neuron, of which a sparse sample touches a handful.
+    // Nothing here requires it - the input layer reads the activation out of
+    // the gathered list - so it is never constructed, and the two activation
+    // buffers are kept per thread and reused.
+    thread_local std::vector<double> cur;
+    thread_local std::vector<double> next;
 
     for (size_t k = 0; k + 1 < _nodes.size(); ++k)
     {
@@ -613,13 +655,40 @@ std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std
         cur.swap(next);
     }
 
+    return cur;
+}
+
+std::vector<std::pair<Node, double>> NeuralNet::scored_output(const std::vector<double>& out) const
+{
     const std::vector<Node>& outputs = _nodes.back();
 
     std::vector<std::pair<Node, double>> scored;
-    scored.reserve(cur.size());
-    for (size_t i = 0; i < cur.size(); ++i)
+    scored.reserve(out.size());
+    for (size_t i = 0; i < out.size(); ++i)
     {
-        scored.emplace_back(outputs[i], cur[i]);
+        scored.emplace_back(outputs[i], out[i]);
     }
     return scored;
+}
+
+std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std::pair<Node, double>>& input) const
+{
+    thread_local std::vector<std::pair<size_t, double>> active;
+
+    gather_active(0, input, active);
+
+    std::shared_lock lock(_mtx);
+    return scored_output(forward_sparse(active));
+}
+
+std::vector<std::pair<Node, double>> NeuralNet::eval_slots(const size_t* slots,
+                                                           const double* activations,
+                                                           const size_t  count) const
+{
+    thread_local std::vector<std::pair<size_t, double>> active;
+
+    gather_slots(slots, activations, count, active);
+
+    std::shared_lock lock(_mtx);
+    return scored_output(forward_sparse(active));
 }
