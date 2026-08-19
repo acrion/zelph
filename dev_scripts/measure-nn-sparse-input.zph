@@ -1,0 +1,72 @@
+# What a wide sparse input layer costs, through both entry points.
+#
+#     build-release/bin/zelph dev_scripts/measure-nn-sparse-input.zph
+#
+# The figure cited in mkdocs/docs/neural.md originates from here. Both paths
+# are measured in a single process on one network, alternating, because
+# absolute throughput on a desktop varies by several per cent across runs and
+# only an interleaved comparison endures that.
+#
+# The sample remains unchanged at each step and the learning rate is 0,
+# intentionally. At every step, the entire forward pass and the entire
+# update loop run over a fixed network, so the two paths are compared using
+# identical arithmetic and neither convergence nor a drifting loss
+# influences the timing. Nothing within the loop modifies the input either,
+# which excludes the Janet side from the measurement rather than assigning
+# the sparse path an array it would not construct in C.
+
+.import nn
+%
+(def n-in     768)
+(def n-hidden 32)
+(def n-active 32)
+(def samples  50000)
+
+(loop [i :range [0 n-in]]     (zelph/fact (string "mi" i) "in" "MeasureIn"))
+(loop [j :range [0 n-hidden]] (zelph/fact (string "mh" j) "in" "MeasureHidden"))
+(zelph/fact "mo0" "in" "MeasureOut")
+
+(zelph/nn-connect-layers "MeasureIn" "MeasureHidden" 0.05 1)
+(zelph/nn-connect-layers "MeasureHidden" "MeasureOut" 0.05 2)
+
+(def net (zelph/nn-compile [(zelph/resolve "MeasureIn")
+                            (zelph/resolve "MeasureHidden")
+                            (zelph/resolve "MeasureOut")]))
+
+# Every 24th neuron, so the active slots are distributed across the layer
+# rather than residing in one cache line.
+(def stride (div n-in n-active))
+(def active-nodes (seq [k :range [0 n-active]] (zelph/resolve (string "mi" (* k stride)))))
+
+(def dense-input (array/new-filled n-in 0))
+(each k (range n-active) (put dense-input (* k stride) 1))
+
+(def target [0.25])
+
+(defn timed [what f]
+  (def t0 (os/clock))
+  (def loss (f))
+  (def dt (- (os/clock) t0))
+  (printf "%-28s %8.3f s   %7.3f us/sample   last loss %.6f"
+          what dt (* 1e6 (/ dt samples)) loss)
+  dt)
+
+# One step through each first, so that neither path incurs a cold cache or a
+# first-call allocation that the other one then discovers warm.
+(zelph/nn-train      net dense-input  target 0)
+(zelph/nn-train-nodes net active-nodes [["mo0" 0.25]] 0)
+
+(def dense-seconds
+  (timed "dense entry point"
+         (fn [] (var l 0) (loop [_ :range [0 samples]]
+                            (set l (zelph/nn-train net dense-input target 0))) l)))
+
+(def sparse-seconds
+  (timed "node-addressed entry point"
+         (fn [] (var l 0) (loop [_ :range [0 samples]]
+                            (set l (zelph/nn-train-nodes net active-nodes [["mo0" 0.25]] 0))) l)))
+
+(printf "\n%d inputs, %d active, %d hidden, %d samples per path"
+        n-in n-active n-hidden samples)
+(printf "node-addressed is %.1fx cheaper per sample" (/ dense-seconds sparse-seconds))
+%

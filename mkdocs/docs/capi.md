@@ -59,7 +59,7 @@ And it survives the file. Because a node *is* its hash, describing the same stru
 | `zelph_nn_train_nodes(engine, handle, in_nodes, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | One SGD step; `out_loss` is the loss *before* the update. |
 | `zelph_nn_write_back(engine, handle)` | Copy the compiled net's weights into the graph's edge-weight store — required before `zelph_save`, or what is persisted is the untrained graph. |
 | `zelph_nn_snapshot_shape(engine, handle, out_sizes, count)` | One element count per weight matrix. |
-| `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. |
+| `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. One matrix is row-major by post-synaptic unit: input `i` to unit `j` is at `j * n_pre + i`. |
 | `zelph_nn_restore(engine, handle, weights, weight_count, sizes, size_count)` | Put a snapshot back. The shapes must match. |
 
 The node-addressed entry points are the ones that matter for a sparse input layer: the input is the *list of active neurons*, so a 768-input encoding with 32 pieces on the board costs 32 terms, not 768.

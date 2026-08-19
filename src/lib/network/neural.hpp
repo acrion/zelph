@@ -158,25 +158,44 @@ namespace zelph::network
     private:
         NeuralNet() = default;
 
-        // Sorted indices of the active input slots. The node-addressed entry
-        // points know which inputs are non-zero; passing that on lets the
-        // input layer cost O(active) instead of O(width), which is what makes
-        // a wide sparse input layer usable at all. Sorted, so a sparse pass
-        // sums in the same order a dense one does and returns the same value.
-        std::vector<size_t> active_indices(size_t layer, const std::vector<std::pair<Node, double>>& active) const;
+        // The same resolution encode() carries out, in a single pass and
+        // without a dense vector: (slot, activation) for each listed neuron,
+        // ascending by slot and one entry per slot. A repeated node retains
+        // its LAST activation, because that is what writing into a dense
+        // vector achieves. Throws when a node is not a member of the layer,
+        // as encode() does.
+        void gather_active(size_t                                      layer,
+                           const std::vector<std::pair<Node, double>>& active,
+                           std::vector<std::pair<size_t, double>>&     out) const;
 
         // Guards _w, the only member that changes after compile(). _nodes,
         // _mask and _index are written once by compile() and read-only
         // afterwards, so they need no protection.
         //
-        // Taken shared by the const entry points (forward, write_back,
-        // weights) and exclusively by the mutating ones (train_step,
-        // set_weights). It is NOT taken by train_nodes or eval_nodes, which
-        // delegate to those - locking at both levels would deadlock.
+        // Taken shared by the const entry points (forward, eval_nodes,
+        // write_back, weights) and exclusively by the mutating ones
+        // (train_step, set_weights). It is NOT taken by train_nodes, which
+        // delegates to train_step - locking at both levels would deadlock.
         mutable std::shared_mutex _mtx;
 
-        Activation                        _activation{Activation::Relu};
-        std::vector<std::vector<Node>>    _nodes;
+        Activation                     _activation{Activation::Relu};
+        std::vector<std::vector<Node>> _nodes;
+
+        // Weight matrix k, and the mask beside it, hold one entry per
+        // (pre, post) pair. Every matrix is stored row-major by post unit,
+        // element (i, j) at j * n_pre + i - EXCEPT matrix 0, which is stored
+        // transposed, element (i, j) at i * n_post + j.
+        //
+        // The input layer is accessed sparsely, and a sparse pass reads it
+        // by pre unit: one active input then contributes one contiguous run
+        // of n_post weights instead of one scattered load out of each of
+        // n_post rows. On a 780x32 net that is 34 rows of 32 against 1088
+        // loads spread over 200 KB, and it is worth about a third of the
+        // cost of an evaluation.
+        //
+        // The layout is internal. weights() transposes matrix 0 back on the
+        // way out and set_weights() transposes it on the way in, so a caller
+        // observes one layout for all of them.
         std::vector<std::vector<double>>  _w;
         std::vector<std::vector<uint8_t>> _mask;
 

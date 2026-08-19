@@ -414,7 +414,10 @@ extern "C"
        zelph_nn_snapshot needs. */
     ZELPH_EXPORT int32_t zelph_nn_snapshot_shape(zelph_engine* engine, zelph_net handle, size_t* out_sizes, size_t* count);
 
-    /* Copy the weights out, matrices concatenated in layer order. */
+    /* Copy the weights out, matrices concatenated in layer order. One matrix
+       is row-major by post-synaptic unit: the weight from input i to unit j
+       of the layer behind it is at j * n_pre + i, where n_pre is the number
+       of neurons in the layer in front. */
     ZELPH_EXPORT int32_t zelph_nn_snapshot(zelph_engine* engine, zelph_net handle, double* out_weights, size_t* count);
 
     /* Put a snapshot back. `sizes` describes how `weights` splits into
