@@ -967,6 +967,16 @@ private:
             _n->out_stream() << "  Negated by a rule: yes" << std::endl;
         }
 
+        // A refutation is the opposite case and is written INTO the term by
+        // the renderer, because it is the claim the node stands for rather
+        // than an annotation about it. Said here as well, since the structural
+        // reading is what `.node` is for: the marking is an ordinary fact of
+        // the predicate "refuted", visible among the connections below.
+        if (_n->is_refuted_fact(nd))
+        {
+            _n->out_stream() << "  Refuted (claimed not to hold): yes" << std::endl;
+        }
+
         // The same reading for the rule-pattern marking, and for the same
         // reason: the renderer no longer substitutes it for the node, so the
         // one place that used to show it is gone. ".explain" says it too.

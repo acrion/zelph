@@ -1911,7 +1911,11 @@ bool Zelph::var_in_closure(const Node nd) const
 
 bool Zelph::is_asserted_fact(const Node fact) const
 {
-    return !is_rule_pattern(fact) && !var_in_closure(fact);
+    // A refuted fact is the third way a fact node can be in the graph without
+    // anyone claiming it holds -- beside a rule's own pattern and a pattern
+    // carrying variables. `¬(F)` claims the opposite, which is a claim about
+    // F and not an instance of it.
+    return !is_rule_pattern(fact) && !is_refuted_fact(fact) && !var_in_closure(fact);
 }
 
 std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
@@ -1922,6 +1926,13 @@ std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
     {
         std::shared_lock lock(_pImpl->_rule_patterns_mtx);
         for (const Node n : _pImpl->_rule_patterns)
+            out->insert(n);
+    }
+
+    if (_pImpl->_has_refuted_facts.load(std::memory_order_acquire))
+    {
+        std::shared_lock lock(_pImpl->_refuted_facts_mtx);
+        for (const Node n : _pImpl->_refuted_facts)
             out->insert(n);
     }
 

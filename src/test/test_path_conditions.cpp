@@ -221,6 +221,62 @@ TEST_CASE("path condition: a refusal is reported once, not once per binding")
         CHECK(refusals == 1); });
 }
 
+// `⁺` and `∗` say what the engine WALKS. A rule condition may therefore use
+// them, and a question may ask with them -- but a ground statement outside a
+// rule would be asserting a reachability, which is not a thing anyone can
+// assert. It did worse than mean nothing: the sugar builds its operand with
+// zelph/fact, so `a p⁺ b` entered `a p b` as a claim and hung a closure tag
+// off it that nothing ever reads, since only a rule condition is walked.
+TEST_CASE("path condition: a ground path outside a rule is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("a P279⁺ d"));
+
+    // And nothing of it reached the graph -- neither the one step it would
+    // have asserted nor a closure tag.
+    collector.clear();
+    interactive.process("S P279 d");
+    CHECK_FALSE(any_output_contains(collector, "a P279 d"));
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
+// The same shape with a variable in it is a QUESTION, and answering it is the
+// feature. The refusal above is decided when the ends are resolved, not by the
+// syntax, which is why it cannot live in the parser.
+TEST_CASE("path condition: a path with a free end is a question and answers one")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        collector.clear();
+
+        interactive.process("S P279⁺ d");
+
+        CHECK(any_output_contains(collector, "(a P279 d) closure one-or-more"));
+        CHECK(any_output_contains(collector, "(c P279 d) closure one-or-more")); });
+}
+
+TEST_CASE("path condition: a path as a rule consequence is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    collector.clear();
+
+    // It used to be accepted, listed by .list-rules and derive nothing at all.
+    CHECK_THROWS(interactive.process("(X rel S) => (S P279⁺ d)"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+}
+
 TEST_CASE("path condition: the printed rule re-enters as the same rule")
 {
     run_both_modes([](auto& collector, auto& interactive)

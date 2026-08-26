@@ -604,6 +604,24 @@ namespace zelph::network
         /// to be read back off the marker's extent afterwards.
         void          rebuild_rule_pattern_index() const;
 
+        /// Does the graph hold this fact as known-WRONG? That is what `¬(F)`
+        /// says outside a rule condition, and the set is what keeps such a
+        /// fact from answering a positive query: structurally it is an
+        /// ordinary fact, because a fact's probability rides on its edge to
+        /// its predicate. Same cost profile as is_rule_pattern -- one atomic
+        /// load in every graph that refutes nothing.
+        bool is_refuted_fact(Node node) const;
+
+        /// Record the claim that this fact does not hold. The caller has
+        /// already created it with a probability below 0.5; this adds the
+        /// marking fact that survives a save and the index that makes the
+        /// per-candidate test cheap.
+        void mark_refuted_fact(Node node) const;
+
+        /// Rebuild that index from the graph, for the same reason
+        /// rebuild_rule_pattern_index exists.
+        void rebuild_refuted_index() const;
+
         // A node IS the hash of what it is built from, so merging one node
         // away invalidates the identity of everything built on it: the fact
         // `a p b` whose subject was merged into `c` still carries the hash of

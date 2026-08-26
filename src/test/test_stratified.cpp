@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -195,6 +197,79 @@ b before c
         CHECK(any_output_contains(collector, "a is earliest"));
         CHECK_FALSE(any_output_contains(collector, "b is earliest"));
         CHECK_FALSE(any_output_contains(collector, "c is earliest")); });
+}
+
+// What `¬(F)` means when it stands on its own line rather than in a rule
+// condition. It used to mean the opposite of itself: the sugar builds its
+// operand with zelph/fact and tags the result, so the line ASSERTED F and then
+// marked the node it had just claimed as negated -- `.node` said "Negated by a
+// rule: yes" on a fact that answered every positive query.
+//
+// It now reaches the mechanism zelph has always had for a negative claim: the
+// probability argument of Zelph::fact, and Answer::is_wrong over it.
+TEST_CASE("negation: ¬(F) on its own line claims that F does not hold")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+¬(a p b)
+c p d
+(X p Y) => (X q Y)
+)");
+        // The refuted fact answers nothing and no rule fires on it, while the
+        // ordinary one beside it does both.
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "c p d"));
+        CHECK_FALSE(any_output_contains(collector, "a p b"));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "c q d"));
+        CHECK_FALSE(any_output_contains(collector, "a q b"));
+
+        collector.clear();
+        interactive.process(R"(%(if (zelph/exists "a" "p" "b") "holds" "does-not-hold"))");
+        CHECK(any_output_contains(collector, "does-not-hold"));
+
+        // And it prints as what it is. The echo used to come back as `a p b`,
+        // which re-enters as the OPPOSITE of the line that produced it -- the
+        // round trip is part of the notation, not a convenience.
+        collector.clear();
+        interactive.process("¬(x q y)");
+        CHECK(any_output_contains(collector, "¬(x q y)"));
+
+        // And the graph refuses to claim both. Zelph::fact has always had this
+        // guard; nothing could reach it before, because no spelling created a
+        // fact below probability 0.5.
+        CHECK_THROWS(interactive.process("a p b")); });
+}
+
+TEST_CASE("negation: a refutation survives a save and a load")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_refuted_roundtrip.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "¬(a p b)\nc p d\n");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    collector.clear();
+
+    // The probability alone could not carry this: the weight store is keyed by
+    // a hash of the edge, so a loaded file cannot be asked which of its entries
+    // were fact probabilities. The marking fact is what the index is rebuilt
+    // from, exactly as for a rule pattern.
+    interactive.process("S p O");
+    CHECK(answers_contain(collector, "c p d"));
+    CHECK_FALSE(any_output_contains(collector, "a p b"));
+
+    std::filesystem::remove(file);
 }
 
 TEST_CASE("stratified: ¬ over an inequality guard is refused, not silently dropped")

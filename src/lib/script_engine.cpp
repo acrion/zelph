@@ -85,6 +85,21 @@ static bool is_negation_ast(Janet node)
     return false;
 }
 
+// The same question for the neural condition. `≈` is written as a prefix on a
+// value, so the AST names it directly.
+static bool is_approx_ast(Janet node)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+    if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+    const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+    if (type == "approx") return true;
+    if (type == "nested" && len == 2) return is_approx_ast(data[1]);
+    return false;
+}
+
 // --- Implementation Class ---
 
 class ScriptEngine::Impl
@@ -484,6 +499,8 @@ public:
         { return janet_wrap_cfunction(f); };
 #endif
         janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)janet_cfun_zelph_fact), "(zelph/fact s p o)\nCreate fact.");
+        janet_def(_janet_env, "zelph/refute", wrap((JanetCFunction)janet_cfun_zelph_refute), "(zelph/refute s p o)\nClaim that the fact does NOT hold: same node as zelph/fact, created with probability 0 so that Answer::is_wrong holds for it. This is what the statement \"¬(s p o)\" means outside a rule condition. Refused if the graph already claims the fact.");
+        janet_def(_janet_env, "zelph/path-guard", wrap((JanetCFunction)janet_cfun_zelph_path_guard), "(zelph/path-guard from to)\nRefuse a path marker whose two ends are both concrete, outside a rule and outside a Janet block: reachability is walked, not asserted. Emitted by the \"P⁺\"/\"P∗\" sugar BEFORE the pattern is built, since building it is what would assert the one step.");
 
         janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)janet_cfun_zelph_list), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell).");
 
@@ -1648,6 +1665,50 @@ public:
         return res;
     }
 
+    // A GROUND path outside a rule is the one shape a path marker has no
+    // reading for. As a rule condition it is a reachability TEST, and with a
+    // variable in it -- "S P279⁺ Q3" -- it is a question the engine answers.
+    // Typed on its own line with both ends concrete it asserted the one step
+    // underneath it: "a p⁺ b" put `a p b` into the graph as a claim and hung a
+    // closure tag off it that nothing ever reads, because only a rule
+    // condition is ever walked.
+    //
+    // Whether the ends are variables is not visible to the parser -- it is
+    // decided when the tokens are RESOLVED -- so the refusal cannot live
+    // beside the one for a path in a consequence slot. It cannot live in
+    // zelph/path either: by then the operand FACT has been built, which is the
+    // half that does the damage. So the sugar emits this guard ahead of the
+    // construction, with the two ends bound exactly once.
+    //
+    // A Janet block is exempt: there the caller is using the API directly and
+    // may well be assembling a condition for zelph/rule by hand.
+    static Janet janet_cfun_zelph_path_guard(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+
+        if (s_instance->_in_janet_block || s_instance->_building_rule) return janet_wrap_nil();
+
+        // Decided on the ARGUMENT, not on a resolved node: resolve_janet_arg
+        // reads a Janet symbol as a variable and a Janet string as a name, so
+        // the two are already told apart here -- and asking this way creates
+        // nothing, which matters for a statement that is about to be refused.
+        // A node value (an evaluated subterm) is asked the general question.
+        const auto is_open = [](Janet arg)
+        {
+            if (janet_checktype(arg, JANET_SYMBOL)) return true;
+            if (janet_checktype(arg, JANET_STRING)) return false;
+            const network::Node nd = zelph_unwrap_node(arg);
+            return nd == 0 || s_instance->_n->var_in_closure(nd);
+        };
+
+        if (is_open(argv[0]) || is_open(argv[1])) return janet_wrap_nil();
+
+        janet_panicf("\"⁺\" and \"∗\" are condition operators: reachability is what the engine "
+                     "WALKS, not what you assert. Write a variable to ASK (\"S p⁺ b\"), or use "
+                     "the path condition in a rule.");
+    }
+
     // Register the digit alphabet for &-literal display (inverse of the
     // &-input syntax). Digits are given in ascending order of value; the
     // base is the array length. C++ makes no assumptions about the digit
@@ -2403,6 +2464,65 @@ public:
         return res;
     }
 
+    // The claim that a fact does NOT hold, which is what `¬(F)` says when it
+    // stands on its own line rather than in a rule condition.
+    //
+    // Same arguments and the same node identity as zelph/fact -- what differs
+    // is the probability the fact is created with. zelph has always been able
+    // to hold a fact as known-wrong (Answer::is_wrong, and the two refusals in
+    // Zelph::fact that keep a graph from claiming both), and that mechanism is
+    // what a top-level negation now reaches. It had no spelling before, which
+    // is why `¬(a p b)` ASSERTED `a p b`: the operand was built by zelph/fact
+    // before the tag was applied to it.
+    //
+    // Asserting the opposite of something the graph already claims is refused
+    // by Zelph::fact rather than silently overwritten, in both directions.
+    static Janet janet_cfun_zelph_refute(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 3, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/refute", argc, argv, true);
+
+        network::Node s = s_instance->resolve_janet_arg(argv[0]);
+        network::Node p = s_instance->resolve_janet_arg(argv[1]);
+        if (!s || !p)
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/refute", argc, argv, false, res);
+            return res;
+        }
+
+        network::adjacency_set objs;
+        for (int i = 2; i < argc; ++i)
+        {
+            network::Node o = s_instance->resolve_janet_arg(argv[i]);
+            if (o) objs.insert(o);
+        }
+        if (objs.empty())
+        {
+            Janet res = janet_wrap_nil();
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/refute", argc, argv, false, res);
+            return res;
+        }
+
+        network::Node f = s_instance->_n->fact(s, p, objs, 0.0L);
+
+        // A refutation is a claim about the fact, so it revokes pattern-only
+        // status exactly as an assertion does -- the reasoning in
+        // janet_cfun_zelph_fact applies unchanged.
+        if (f && s_instance->_in_janet_block && !s_instance->_building_rule)
+            s_instance->_n->unmark_rule_pattern(f);
+
+        // The probability says what the graph believes; this is what the read
+        // surface consults, because a fact's probability sits on an edge and
+        // asking for it per candidate would be a lock on the hot path.
+        if (f) s_instance->_n->mark_refuted_fact(f);
+
+        Janet res = zelph_wrap_node(f);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/refute", argc, argv, false, res);
+        return res;
+    }
+
     // A variable node as a VALUE, so a caller can decide its extent.
     //
     // A variable symbol passed to zelph/fact is scoped to one evaluation of a
@@ -2863,6 +2983,30 @@ public:
         return !(text.size() >= 2 && text.front() == '"'); // a quoted atom is a literal name, never an operator
     }
 
+    // Does this argument stand for a path condition? The marker has no AST
+    // node of its own -- it is a suffix on the PREDICATE token -- so the
+    // statement has to be decomposed far enough to look at it. Asked of the
+    // SYNTAX for the same reason is_negation_ast is: the tag fact the sugar
+    // builds is hash-consed and says nothing about which line wrote it.
+    static bool is_path_ast(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if (type != "nested") return false;
+        if (len == 2) return is_path_ast(data[1]);
+
+        // [:nested subject predicate object ...] -- the same positions
+        // build_smart_call reads.
+        std::string token;
+        std::string base;
+        std::string mode;
+        return atom_text(data[2], token) && split_path_marker(token, base, mode);
+    }
+
     std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
     {
         if (args.empty()) return "nil";
@@ -2876,6 +3020,24 @@ public:
             std::string mode;
             if (atom_text(args[1], token) && split_path_marker(token, base, mode))
             {
+                // Exactly one object is the only shape a path condition has --
+                // evaluate_closure refuses the rest and says so. That is also
+                // the shape whose two ends can be guarded, so the guard is
+                // emitted for it and the others fall through to the refusal
+                // the evaluator gives them.
+                if (args.size() == 3)
+                {
+                    const std::string from = transform_arg(args[0]);
+                    const std::string to   = transform_arg(args[2]);
+
+                    // Bound once each: a variable token resolves to a FRESH
+                    // variable node per evaluation, so naming the ends twice
+                    // would give the guard and the pattern different variables.
+                    const std::string head = "(let [$pfrom " + from + " $pto " + to + "]";
+                    const std::string body = " (do (zelph/path-guard $pfrom $pto) (zelph/path (zelph/fact $pfrom \"";
+                    return head + body + string::escape_atom(base) + "\" $pto) \"" + mode + "\")))";
+                }
+
                 std::string call = "(zelph/fact " + transform_arg(args[0]) + " \"" + string::escape_atom(base) + "\"";
                 for (size_t i = 2; i < args.size(); ++i)
                     call += " " + transform_arg(args[i]);
@@ -3326,6 +3488,35 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                 std::string val_type = reinterpret_cast<const char*>(janet_unwrap_keyword(val_data[0]));
                 if (val_type == "nested")
                     return ""; // Syntax error: (fact) at top level is not a valid statement
+
+                // `¬(F)` on its own line is the one condition operator that
+                // has a reading outside a condition, and it is not the one it
+                // used to get. The sugar builds its operand with zelph/fact
+                // and tags the result, so the line ASSERTED F and then marked
+                // the very node it had just claimed as negated -- the graph
+                // said the fact holds and that it does not. It now means what
+                // it says: F is entered as known-wrong, through the
+                // probability argument Zelph::fact has always had.
+                if (val_type == "negation" && val_len >= 2)
+                {
+                    const Janet* inner_data;
+                    int32_t      inner_len;
+                    if (janet_indexed_view(val_data[1], &inner_data, &inner_len)
+                        && inner_len > 3
+                        && janet_checktype(inner_data[0], JANET_KEYWORD)
+                        && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(inner_data[0]))) == "nested")
+                    {
+                        std::vector<Janet> inner_args;
+                        for (int32_t i = 1; i < inner_len; ++i)
+                            inner_args.push_back(inner_data[i]);
+                        return _pImpl->build_smart_call("zelph/refute", inner_args);
+                    }
+
+                    throw std::runtime_error(
+                        "\"¬\" on its own line says that a FACT does not hold, so it needs one -- "
+                        "write \"¬(a p b)\". Inside a rule condition it is the "
+                        "negation-as-failure operator and applies to a pattern.");
+                }
             }
             return _pImpl->transform_arg(root_data[1]);
         }
@@ -3353,8 +3544,33 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                             "a rule derives what holds, not what does not. To say that the two "
                             "may not hold together, write a contradiction rule -- "
                             "\"(A p B, A q B) => !\".");
+
+                    // The other two condition operators reached the consequence
+                    // slot unchecked and each failed its own way: a path
+                    // consequence was listed by .list-rules and derived nothing
+                    // at all, and both would have written their tag fact -- and
+                    // with it the one-step fact underneath it -- into the graph
+                    // as a claim nobody made.
+                    if (Impl::is_path_ast(fact_args[i]))
+                        throw std::runtime_error(
+                            "\"⁺\" and \"∗\" are condition operators and have no meaning as a "
+                            "consequence: reachability is what the engine WALKS, not what a rule "
+                            "asserts. Derive the one-step fact instead, and let the path condition "
+                            "read it.");
+
+                    if (is_approx_ast(fact_args[i]))
+                        throw std::runtime_error(
+                            "\"≈\" is a condition operator and has no meaning as a consequence: "
+                            "a rule cannot assert what a network believes. Consult the net in a "
+                            "condition and derive an ordinary fact from it.");
                 }
             }
+
+            // A path marker standing alone is refused too, but not here: only
+            // the GROUND form asserts anything, and whether the ends are
+            // variables is decided when they are resolved, not by the syntax.
+            // "S P279⁺ Q3" is a legitimate question and answers one. See
+            // janet_cfun_zelph_path.
 
             const std::string call = _pImpl->build_smart_call("zelph/fact", fact_args);
 

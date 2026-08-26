@@ -641,6 +641,29 @@ s1 relG o2
         CHECK(any_output_contains(collector, "conf-full")); });
 }
 
+// `≈` consults what a network believes, which a rule can read but cannot
+// assert. It reached the consequence slot unchecked and would have written its
+// tag fact -- and the one-step fact underneath it -- into the graph as a claim
+// nobody made.
+TEST_CASE("neural: ≈ as a rule consequence is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    process_lines(interactive, R"(
+s4 in KIn
+o4 in KOut
+knet nn-layers <KIn KOut>
+)");
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("(A rel B) => ≈knet(A relK B)"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+}
+
 TEST_CASE("neural: a negated ≈ with an unbound object is refused")
 {
     run_both_modes([](auto& collector, auto& interactive)

@@ -573,8 +573,26 @@ consequence:
 Negating a group directly is an open direction, not a decision against it —
 see [Where the logic goes next](index.md#where-the-logic-goes-next).
 
-**Where `¬` may stand.** In a condition, and only there.
-A rule derives what holds, so a negated *consequence* has no reading, and writing one is refused rather than dropped:
+**Where `¬` may stand, and what it means there.** In a rule condition it is the negation-as-failure operator above. Alone on a line it is a claim: the fact does _not_ hold.
+
+```
+zelph> ¬(a p b)
+zelph> c p d
+zelph> S p O
+Answer: c p d
+```
+
+The refuted fact answers nothing, no rule fires on it, and `zelph/exists` reports it as absent – but it is not absent, it is denied. Asserting it afterwards is refused rather than silently overwritten, and so is refuting something the graph already claims:
+
+```
+zelph> ¬(a p b)
+zelph> a p b
+Error in line "a p b": fact(): this fact is known to be wrong
+```
+
+This reaches a mechanism zelph has had all along: a fact carries a probability, and one below 0.5 makes it known-wrong. What was missing was a way to write it. The claim survives `.save` and `.load`, and it prints as what it is – the echo of `¬(a p b)` is `¬(a p b)`, not `a p b`.
+
+A rule derives what holds, so a negated _consequence_ still has no reading and is refused:
 
 ```
 zelph> (A p B) => ¬(A q B)
@@ -582,6 +600,17 @@ Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no me
 ```
 
 The [contradiction rule](#contradiction-detection) the message names is what "these two must not hold together" is written as.
+
+The other two condition operators have no reading outside a condition at all, and say so. `≈` asks what a network believes and `⁺` / `∗` ask what the engine can walk to; neither is something a line can assert. A path marker whose two ends are both concrete is refused, while the same shape with a variable in it is an ordinary question:
+
+```
+zelph> a P279⁺ d
+Error in line "a P279⁺ d": "⁺" and "∗" are condition operators: reachability is what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b"), or use the path condition in a rule.
+zelph> S P279⁺ d
+Answer: (a P279 d) closure one-or-more
+Answer: (b P279 d) closure one-or-more
+Answer: (c P279 d) closure one-or-more
+```
 
 **What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
 

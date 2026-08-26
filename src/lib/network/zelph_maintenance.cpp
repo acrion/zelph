@@ -472,6 +472,11 @@ bool Zelph::is_mentioned(const Node node) const
 namespace
 {
     constexpr const char* rule_pattern_name = "rule pattern";
+
+    // A NAMED node for the same reason, and the criterion in CLAUDE.md under
+    // "What must be a CORE node" gives the same answer: nothing has to reach
+    // it without a name lookup.
+    constexpr const char* refuted_fact_name = "refuted";
 }
 
 Node Zelph::rule_pattern_predicate(const bool create) const
@@ -491,6 +496,48 @@ bool Zelph::is_rule_pattern(const Node node) const
 
     std::shared_lock lock(_pImpl->_rule_patterns_mtx);
     return _pImpl->_rule_patterns.count(node) != 0;
+}
+
+bool Zelph::is_refuted_fact(const Node node) const
+{
+    if (!_pImpl->_has_refuted_facts.load(std::memory_order_acquire)) return false;
+
+    std::shared_lock lock(_pImpl->_refuted_facts_mtx);
+    return _pImpl->_refuted_facts.count(node) != 0;
+}
+
+void Zelph::mark_refuted_fact(const Node node) const
+{
+    if (node == 0) return;
+
+    // The marking is a fact like the rule-pattern one, so it survives a save
+    // and is what rebuild_refuted_index reads a loaded network back from. The
+    // probability alone cannot serve: the weight store is keyed by a hash of
+    // the edge, so a loaded file cannot be asked which of its entries were
+    // fact probabilities rather than synapse weights.
+    auto*      self = const_cast<Zelph*>(this);
+    const Node pred = self->node(refuted_fact_name, "zelph");
+    self->fact(node, core.IsA, {pred});
+
+    std::unique_lock lock(_pImpl->_refuted_facts_mtx);
+    _pImpl->_refuted_facts.insert(node);
+    _pImpl->_has_refuted_facts.store(true, std::memory_order_release);
+}
+
+void Zelph::rebuild_refuted_index() const
+{
+    std::unique_lock lock(_pImpl->_refuted_facts_mtx);
+    _pImpl->_refuted_facts.clear();
+    _pImpl->_has_refuted_facts.store(false, std::memory_order_release);
+
+    auto*      self = const_cast<Zelph*>(this);
+    const Node pred = self->get_node(refuted_fact_name, "zelph");
+    if (pred == 0) return;
+
+    for (const Node subject : get_sources(core.IsA, pred, true))
+        _pImpl->_refuted_facts.insert(subject);
+
+    _pImpl->_has_refuted_facts.store(!_pImpl->_refuted_facts.empty(), std::memory_order_release);
 }
 
 bool Zelph::unmark_rule_pattern(const Node node) const
@@ -817,6 +864,7 @@ void Zelph::rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& re
     invalidate_fact_structures_cache();
     invalidate_relation_type_set();
     rebuild_rule_pattern_index();
+    rebuild_refuted_index();
 }
 
 void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created) const
@@ -1262,6 +1310,7 @@ void Zelph::load_from_file(const std::string& filename) const
 
     _pImpl->loadFromFile(filename);
     rebuild_rule_pattern_index();
+    rebuild_refuted_index();
 }
 
 void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const
@@ -1270,6 +1319,7 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
 
     _pImpl->loadFromFile(filename, selection, skip_payload);
     rebuild_rule_pattern_index();
+    rebuild_refuted_index();
 }
 
 void Zelph::load_from_manifest(const std::string&       manifest_path,
@@ -1282,6 +1332,7 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
 
     _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
     rebuild_rule_pattern_index();
+    rebuild_refuted_index();
 }
 #endif
 

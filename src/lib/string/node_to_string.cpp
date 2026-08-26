@@ -763,6 +763,17 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // "is". Substituting it hid every tagged term behind its concept and
     // echoed the statement as "t ~ t", which is not re-enterable input.
     bool is_negation = false;
+
+    // A REFUTED fact is the other way round from a rule-pattern marking, and
+    // the distinction is the one CLAUDE.md draws under "What the mathematics
+    // audience will not forgive": that marking is a statement ABOUT a term and
+    // belongs beside it, but a refutation is the claim the graph actually
+    // holds -- the fact does not hold -- and `¬` is syntactically part of the
+    // line that said so. Printing `a p b` for it broke the round trip in the
+    // direction that matters most: what came back re-entered as the opposite
+    // of what was typed.
+    const bool refuted = z->is_refuted_fact(resolved);
+
     if (z->exists(resolved))
     {
         // Exactly the condition under which the structural path below can
@@ -1152,10 +1163,14 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // rule's conjunction set. Everywhere else the tag is reported BESIDE the
     // term; see the property line of `.node` and the axiom label of
     // `.explain`.
-    if (is_negation && parent != 0
-        && (z->parse_relation(parent) == z->core.Causes
-            || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known()))
+    if (refuted
+        || (is_negation && parent != 0
+            && (z->parse_relation(parent) == z->core.Causes
+                || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known())))
     {
+        // A refutation needs no such parent test: it is not a tag on somebody
+        // else's pattern but the claim this node stands for, wherever it is
+        // printed.
         result = "¬(" + result + ")";
     }
     else if (scheme_render && !children_ok)

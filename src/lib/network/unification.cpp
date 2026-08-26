@@ -947,6 +947,8 @@ Unification::Unification(
                                    {
                                        Node fact = _snapshot_vec[i];
                                        if (_n->is_rule_pattern(fact)) continue; // not data, see Next()
+
+                                       if (_n->is_refuted_fact(fact)) continue; // claimed NOT to hold, likewise
                                        auto structs = get_fact_structures(_n, fact, _log_depth);
                                        ++local_scanned;
 
@@ -1215,6 +1217,14 @@ std::shared_ptr<Variables> Unification::Next()
                 // Zelph::is_rule_pattern -- one hash probe, and a single
                 // empty() test wherever no rule has a ground pattern.
                 if (_n->is_rule_pattern(fact)) continue;
+
+                // Nor is a fact the graph holds as known-WRONG. It has to BE a
+                // fact structurally -- its probability rides on its edge to
+                // its predicate -- so without this a rule condition matched
+                // the very statement `¬(F)` had entered as not holding, and
+                // derived from it. Same cost shape as the test above: one
+                // atomic load in every graph that refutes nothing.
+                if (_n->is_refuted_fact(fact)) continue;
 
                 if (_n->logging_active())
                     PROF(facts_scanned_sequential.fetch_add(1, std::memory_order_relaxed));

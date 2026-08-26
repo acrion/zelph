@@ -2367,6 +2367,20 @@ namespace zelph::network
         // never marks anything and therefore never takes a lock at all.
         std::atomic<bool>                                                                   _has_rule_patterns{false};
 
+        // Facts the graph holds as known-WRONG, which is what `¬(F)` says
+        // outside a rule condition. Structurally they are ordinary facts --
+        // they have to be, since a fact's probability rides on its edge to its
+        // predicate -- so nothing but this set keeps them from answering a
+        // positive query as though they held.
+        //
+        // Same shape and the same reasoning as _rule_patterns beside it: the
+        // atomic is read first on the per-candidate path, so a graph that
+        // refutes nothing, which is every graph built before this existed and
+        // every bulk import, never takes the lock.
+        mutable std::shared_mutex _refuted_facts_mtx;
+        std::unordered_set<Node>  _refuted_facts;
+        std::atomic<bool>         _has_refuted_facts{false};
+
         // Genuine-structure store: the exact (subject, predicate, objects)
         // triple of every node materialized through triple-level
         // construction (Zelph::fact), stored at creation as an immutable
