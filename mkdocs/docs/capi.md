@@ -37,13 +37,17 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 | --- | --- |
 | `zelph_resolve(engine, name, lang, out_node)` | Name to node, creating it if needed. `lang` may be null for the current language. |
 | `zelph_fact(engine, subject, predicate, objects, object_count, out_fact)` | Create the fact `(subject predicate object...)` and return its node. |
+| `zelph_fact_parts(engine, fact, out_subject, out_predicate, out_objects, count)` | The subject, predicate and objects of a fact – the inverse of `zelph_fact`. The objects come back unordered, because a fact’s objects are a set. |
 | `zelph_list(engine, elements, count, out_node)` | Cons list; the first element becomes the outermost cell. An empty list is the `nil` node. |
+| `zelph_list_elements(engine, list, out_nodes, count)` | The elements of a cons list, in order – the inverse of `zelph_list`. `nil` has none; a node that is not a list is an error, not an empty answer. |
 | `zelph_name(engine, node, lang, out_name)` | The node's name, or null when it has none — an answer, not an error. Free with `zelph_string_free`. |
 | `zelph_sources(engine, predicate, target, out_nodes, count)` | Every subject of a fact `(X predicate target)`. Directional: `(target predicate X)` does not contribute. |
 | `zelph_load(engine, path)` | As the `.load` command, including format detection. |
 | `zelph_save(engine, path)` | As the `.save` command. The path must end in `.bin`. |
 
 Structural identity is the property to build on: `zelph_list` over the same nodes returns the same node, because the graph interns structurally identical subgraphs. Two callers that describe the same structure arrive at the same identifier without agreeing on one.
+
+And it survives the file. Because a node *is* its hash, describing the same structure again in a freshly loaded graph arrives at the node the file talks about, so a caller that saved facts about `<a b c>` finds them again without having stored an id anywhere – the structure is the key. `zelph_list_elements` and `zelph_fact_parts` close the loop by reading a structure back, which is what a program needs to use one as a *stored* identifier rather than only as a lookup key. Everything the ABI can build it can also take apart, including what the ABI did not build: a cons cell is the fact `(car cons cdr)`, so the two readers are one mechanism seen twice.
 
 ### Networks
 
@@ -53,12 +57,29 @@ Structural identity is the property to build on: `zelph_list` over the same node
 | `zelph_nn_connect_layers(engine, from, to, scale, seed, out_created)` | Fully connect two layers with raw synapses drawn from `[-scale, scale]`. Existing synapses keep their weights, so the call is idempotent and re-wiring never destroys training. |
 | `zelph_nn_eval_nodes(engine, handle, in_nodes, in_activations, in_count, top_k, out_nodes, out_scores, count)` | Forward pass with node-addressed multi-hot input. A null activation array means every listed neuron is `1.0`. Results are sorted by descending score, ties by ascending node; `top_k < 0` returns the whole output layer. |
 | `zelph_nn_train_nodes(engine, handle, in_nodes, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | One SGD step; `out_loss` is the loss *before* the update. |
+| `zelph_nn_layer_nodes(engine, handle, layer, out_nodes, count)` | The neurons of one layer in slot order; layer 0 is the input layer. The mapping a slot-addressed caller needs. |
+| `zelph_nn_eval_slots(engine, handle, in_slots, in_activations, in_count, top_k, out_nodes, out_scores, count)` | `zelph_nn_eval_nodes` with the active inputs named by slot. A slot outside the input layer is an error. |
+| `zelph_nn_train_slots(engine, handle, in_slots, in_activations, in_count, target_nodes, target_activations, target_count, learning_rate, out_loss)` | `zelph_nn_train_nodes` with the input named by slot; the target stays node-addressed. |
+| `zelph_nn_accumulator_size(engine, handle, out_size)` | How many doubles one accumulator of this network holds. |
+| `zelph_nn_accumulator_set(engine, handle, slots, activations, count, accumulator, accumulator_size)` | The input layer's pre-activation for an active set. Set then eval is `zelph_nn_eval_slots` to the bit. |
+| `zelph_nn_accumulator_update(engine, handle, added, added_activations, added_count, removed, removed_activations, removed_count, accumulator, accumulator_size)` | The same vector moved: the removed rows are subtracted before the added ones are added. |
+| `zelph_nn_accumulator_eval(engine, handle, accumulator, accumulator_size, top_k, out_nodes, out_scores, count)` | The layers behind the first, from an accumulator. Sorted and limited as `zelph_nn_eval_nodes` is. |
 | `zelph_nn_write_back(engine, handle)` | Copy the compiled net's weights into the graph's edge-weight store — required before `zelph_save`, or what is persisted is the untrained graph. |
 | `zelph_nn_snapshot_shape(engine, handle, out_sizes, count)` | One element count per weight matrix. |
-| `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. |
+| `zelph_nn_snapshot(engine, handle, out_weights, count)` | The weights, matrices concatenated in layer order. One matrix is row-major by post-synaptic unit: input `i` to unit `j` is at `j * n_pre + i`. |
 | `zelph_nn_restore(engine, handle, weights, weight_count, sizes, size_count)` | Put a snapshot back. The shapes must match. |
 
 The node-addressed entry points are the ones that matter for a sparse input layer: the input is the *list of active neurons*, so a 768-input encoding with 32 pieces on the board costs 32 terms, not 768.
+
+A caller that evaluates the same layer millions of times can go one step further and name the active neurons by their slot in the input layer rather than by their node. That skips a hash lookup per active neuron, which on a small network is the largest single item an evaluation has left – 0.17 of 0.43 microseconds for 34 active inputs of 780. Resolve the mapping once with `zelph_nn_layer_nodes` after compiling, then pass slots for ever after.
+
+### Keeping the first layer between calls
+
+An accumulator is the input layer’s pre-activation vector, maintained by the caller and shifted by the difference between one active input set and the next rather than being reconstructed from all of them. Where consecutive queries share most of their active inputs – a search over states that change by a few features per move, or a fixed context scored against many candidates – that transforms the cost of the first layer from `O(active)` into `O(changed)`, and what remains is the layers behind it.
+
+The buffer is `zelph_nn_accumulator_size` doubles and belongs to the caller, so it incurs no allocation, no handle and no lock to copy: a search retains one per ply and duplicates the parent’s on the way down. Measured on a 780 × 32 × 1 network with 34 active inputs, two of which a move changes: 0.12 µs for a moved accumulator against 0.32 µs for the same evaluation built from scratch.
+
+Two points to grasp. An accumulator holds value only in relation to the weights it was constructed with, thus a training iteration nullifies each of those. And `zelph_nn_accumulator_update` is not bit-identical to `zelph_nn_accumulator_set` when applied to the same active set: adding and subtracting rows introduces rounding disparities compared to summing them in a single operation, and that divergence builds up across a sequence of updates. Set it afresh whenever that becomes relevant.
 
 ### The hidden-layer activation
 
@@ -234,7 +255,7 @@ Two crates in `rust/` sit on this ABI and are maintained with it:
 | | |
 | --- | --- |
 | `zelph-sys` | The raw declarations, generated from `zelph_c.h` by bindgen **at build time**, so header and bindings cannot drift. Its `build.rs` also rebuilds the C++ library on every `cargo build` — a stale library silently invalidates every measurement taken against it, and nothing in the output says so. `ZELPH_BUILD_DIR` selects the CMake build directory (default `build-release`), `ZELPH_NO_BUILD` skips the CMake step. |
-| `zelph` | The safe wrapper: `Engine` (resolve, fact, list, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
+| `zelph` | The safe wrapper: `Engine` (resolve, fact, list, elements, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
 
 The types state what the C header only documents. `Engine` is neither `Send` nor `Sync`, because graph mutation belongs to the thread that created it. `Net` is both — so a compiled network can be handed to a pool of search threads and evaluated there while another thread trains it, and the compiler checks that rather than a comment.
 

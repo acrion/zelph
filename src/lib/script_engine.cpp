@@ -610,7 +610,8 @@ public:
                                                                                                            "so they survive .save and are picked up by future zelph/nn-compile calls.");
 
         janet_def(_janet_env, "zelph/nn-snapshot", wrap((JanetCFunction)janet_cfun_zelph_nn_snapshot), "(zelph/nn-snapshot handle)\nCopy the compiled net's weights out as an array of arrays of numbers, "
-                                                                                                       "one per layer transition. Use it to keep the best epoch of a training run: the criterion that says a run has passed its "
+                                                                                                       "one per layer transition, each row-major by post-synaptic unit: input i to unit j is at (+ (* j n-pre) i). "
+                                                                                                       "Use it to keep the best epoch of a training run: the criterion that says a run has passed its "
                                                                                                        "optimum can only fire afterwards, so without a snapshot the saved weights are always some epochs past the good ones.");
 
         janet_def(_janet_env, "zelph/nn-restore", wrap((JanetCFunction)janet_cfun_zelph_nn_restore), "(zelph/nn-restore handle snapshot)\nPut a zelph/nn-snapshot back into the compiled net. "

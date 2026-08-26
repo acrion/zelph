@@ -233,6 +233,185 @@ TEST_CASE("capi: a list of the same nodes is the same node, and the empty list i
     CHECK(name_of(engine, empty) == "nil");
 }
 
+TEST_CASE("capi: a fact reads back as its subject, its predicate and its objects")
+{
+    Engine engine;
+
+    const zelph_node socrates    = engine.node("Socrates");
+    const zelph_node is          = engine.node("is");
+    const zelph_node objects[2]  = {engine.node("mortal"), engine.node("greek")};
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, socrates, is, objects, 2, &fact) == ZELPH_OK);
+
+    size_t count = 0;
+    CHECK(zelph_fact_parts(engine, fact, nullptr, nullptr, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 2);
+
+    zelph_node              subject   = 0;
+    zelph_node              predicate = 0;
+    std::vector<zelph_node> read(count);
+    REQUIRE(zelph_fact_parts(engine, fact, &subject, &predicate, read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 2);
+    CHECK(subject == socrates);
+    CHECK(predicate == is);
+
+    // The objects of a fact constitute a SET - `(S P a b)` indicates merely
+    // that both serve as objects of the same statement - thus they return
+    // without a sequence to depend on. That is why a requester requiring
+    // one opts for a list instead.
+    std::vector<zelph_node> expected{objects[0], objects[1]};
+    std::sort(read.begin(), read.end());
+    std::sort(expected.begin(), expected.end());
+    CHECK(read == expected);
+
+    // A cons cell is a fact too, `(car cons cdr)`, which is the whole of the
+    // relationship between this call and zelph_list_elements.
+    const zelph_node elements[2] = {engine.node("x"), engine.node("y")};
+    zelph_node       list        = 0;
+    REQUIRE(zelph_list(engine, elements, 2, &list) == ZELPH_OK);
+
+    zelph_node cdr = 0;
+    count          = 1;
+    REQUIRE(zelph_fact_parts(engine, list, &subject, &predicate, &cdr, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    CHECK(subject == elements[0]);
+
+    zelph_node tail = 0;
+    count           = 1;
+    REQUIRE(zelph_list_elements(engine, cdr, &tail, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    CHECK(tail == elements[1]);
+
+    // A name is not a statement.
+    count = 0;
+    CHECK(zelph_fact_parts(engine, socrates, nullptr, nullptr, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_fact_parts(engine, 0, nullptr, nullptr, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi: a cons list reads back as the elements it was built from")
+{
+    Engine engine;
+
+    const zelph_node elements[3] = {engine.node("x"), engine.node("y"), engine.node("z")};
+
+    zelph_node list = 0;
+    REQUIRE(zelph_list(engine, elements, 3, &list) == ZELPH_OK);
+
+    // Asked the way each array-valued call in this ABI is asked: a null
+    // buffer with capacity 0 is the size question.
+    size_t count = 0;
+    CHECK(zelph_list_elements(engine, list, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 3);
+
+    std::vector<zelph_node> read(count);
+    REQUIRE(zelph_list_elements(engine, list, read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 3);
+
+    // ORDER, not membership. A list is not a set, and the reason
+    // to construct an identifier from one is precisely that <x y> and <y x>
+    // are two nodes.
+    CHECK(read[0] == elements[0]);
+    CHECK(read[1] == elements[1]);
+    CHECK(read[2] == elements[2]);
+
+    // Nesting endures, because an element is a node like any other: the
+    // caller receives the inner list back as a node and reads that in
+    // turn.
+    const zelph_node outer_elements[2] = {list, engine.node("w")};
+    zelph_node       outer             = 0;
+    REQUIRE(zelph_list(engine, outer_elements, 2, &outer) == ZELPH_OK);
+
+    std::vector<zelph_node> outer_read(2);
+    count = outer_read.size();
+    REQUIRE(zelph_list_elements(engine, outer, outer_read.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 2);
+    CHECK(outer_read[0] == list);
+
+    std::vector<zelph_node> inner(3);
+    count = inner.size();
+    REQUIRE(zelph_list_elements(engine, outer_read[0], inner.data(), &count) == ZELPH_OK);
+    REQUIRE(count == 3);
+    CHECK(inner[1] == elements[1]);
+
+    // The empty list is nil, and accessing it returns no elements instead of
+    // failing: "there is nothing in it" is a response, as it is for
+    // zelph_name on an unnamed node.
+    zelph_node empty = 0;
+    REQUIRE(zelph_list(engine, nullptr, 0, &empty) == ZELPH_OK);
+    count = 0;
+    CHECK(zelph_list_elements(engine, empty, nullptr, &count) == ZELPH_OK);
+    CHECK(count == 0);
+
+    // What isn’t a list isn’t half a list. A simple name and a fact both
+    // respond with a status rather than with whatever a walk discovers,
+    // because a caller that stores structures must be able to distinguish
+    // a structure it wrote from a node that simply exists.
+    count = 0;
+    CHECK(zelph_list_elements(engine, engine.node("x"), nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    const zelph_node object = engine.node("mortal");
+    zelph_node       fact   = 0;
+    REQUIRE(zelph_fact(engine, engine.node("Socrates"), engine.node("is"), &object, 1, &fact) == ZELPH_OK);
+    count = 0;
+    CHECK(zelph_list_elements(engine, fact, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    CHECK(zelph_list_elements(engine, 0, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi: a structure is the same node in a fresh engine, and still holds its elements")
+{
+    const auto path = fs::temp_directory_path() / "zelph_capi_structure.bin";
+    fs::remove(path);
+
+    zelph_node saved_list = 0;
+
+    {
+        Engine           engine;
+        const zelph_node elements[2] = {engine.node("alpha"), engine.node("beta")};
+        REQUIRE(zelph_list(engine, elements, 2, &saved_list) == ZELPH_OK);
+
+        // Something has to be said ABOUT the structure, or there is nothing to
+        // save: a list nobody mentions is not part of the graph’s content.
+        const zelph_node object = saved_list;
+        zelph_node       fact   = 0;
+        REQUIRE(zelph_fact(engine, engine.node("pair"), engine.node("is"), &object, 1, &fact) == ZELPH_OK);
+
+        REQUIRE(zelph_save(engine, path.string().c_str()) == ZELPH_OK);
+    }
+
+    {
+        Engine engine;
+        REQUIRE(zelph_load(engine, path.string().c_str()) == ZELPH_OK);
+
+        // Recreating the identical structure in a new engine reaches the node
+        // the file references, without the caller having retained an id. This
+        // is what transforms a saved graph into a store instead of a cache:
+        // the key is the structure itself.
+        const zelph_node elements[2] = {engine.node("alpha"), engine.node("beta")};
+        zelph_node       rebuilt     = 0;
+        REQUIRE(zelph_list(engine, elements, 2, &rebuilt) == ZELPH_OK);
+        CHECK(rebuilt == saved_list);
+
+        std::vector<zelph_node> read(2);
+        size_t                  count = read.size();
+        REQUIRE(zelph_list_elements(engine, saved_list, read.data(), &count) == ZELPH_OK);
+        REQUIRE(count == 2);
+        CHECK(read[0] == elements[0]);
+        CHECK(read[1] == elements[1]);
+
+        // And what was stated regarding it is still stated
+        // regarding it.
+        std::vector<zelph_node> objects(1);
+        count = objects.size();
+        REQUIRE(zelph_targets(engine, engine.node("pair"), engine.node("is"), objects.data(), &count) == ZELPH_OK);
+        REQUIRE(count == 1);
+        CHECK(objects[0] == saved_list);
+    }
+
+    fs::remove(path);
+}
+
 TEST_CASE("capi: a network is wired, compiled, trained and read back through the ABI")
 {
     Engine engine;
@@ -306,6 +485,315 @@ TEST_CASE("capi: a network is wired, compiled, trained and read back through the
     CHECK(count == 2);
     CHECK(all_nodes[0] == o2);
     CHECK(all_scores[0] >= all_scores[1]);
+}
+
+// ---------------------------------------------------------------------------
+// Slot-addressed input: the identical two invocations without the
+// individual-call node lookup.
+//
+// It is an optimisation and nothing else, so what has to be pinned is that it
+// answers what the node-addressed pair answers - not approximately, since the
+// two run the same arithmetic over the same slots. The net below has three
+// inputs of distinct magnitude, so an answer names which slots were summed
+// and a permuted mapping cannot pass by luck.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: slots and nodes are two names for the same input")
+{
+    Engine engine;
+
+    engine.member_of("s1", "SlIn");
+    engine.member_of("s2", "SlIn");
+    engine.member_of("s3", "SlIn");
+    engine.member_of("t1", "SlOut");
+
+    const zelph_node layers[2] = {engine.node("SlIn"), engine.node("SlOut")};
+    zelph_net        net       = -1;
+    int64_t          created   = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.0, 1, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    // The mapping a caller needs to use slots at all, and the only way to
+    // learn it through the ABI.
+    size_t                  count = 0;
+    std::vector<zelph_node> inputs;
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 0, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+    REQUIRE(count == 3);
+    inputs.resize(count);
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 0, inputs.data(), &count) == ZELPH_OK);
+    CHECK(inputs[0] == engine.node("s1"));
+    CHECK(inputs[1] == engine.node("s2"));
+    CHECK(inputs[2] == engine.node("s3"));
+
+    REQUIRE(zelph_nn_layer_nodes(engine, net, 2, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
+
+    // Trained via the node entry point intentionally: a permuted slot
+    // mapping employed during both training and evaluation is
+    // self-consistent and responds to every query accurately. Only a
+    // network trained through one path and queried by the other pins the
+    // mapping itself.
+    const zelph_node target    = engine.node("t1");
+    const double     wanted[3] = {1.0, 10.0, 100.0};
+    for (int epoch = 0; epoch < 400; ++epoch)
+    {
+        for (size_t i = 0; i < 3; ++i)
+        {
+            REQUIRE(zelph_nn_train_nodes(engine, net, &inputs[i], nullptr, 1, &target, &wanted[i], 1, 0.1, nullptr) == ZELPH_OK);
+        }
+    }
+
+    const auto score_by_slots = [&](const std::vector<size_t>& slots, const double* activations)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_slots(engine, net, slots.data(), activations, slots.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    const auto score_by_nodes = [&](const std::vector<zelph_node>& nodes, const double* activations)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_nodes(engine, net, nodes.data(), activations, nodes.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    // Asked by slot, taught by node: each magnitude names the slot it
+    // belongs to, so any permutation of the mapping answers wrongly here.
+    CHECK(score_by_slots({0}, nullptr) == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(score_by_slots({1}, nullptr) == doctest::Approx(10.0).epsilon(0.01));
+    CHECK(score_by_slots({2}, nullptr) == doctest::Approx(100.0).epsilon(0.01));
+
+    // Equal to the last bit, not approximately: both routes add the same
+    // weights in the same sequence. The sets are asymmetric, because a
+    // mapping that simply inverts the layer maps {0, 2} to itself.
+    CHECK(score_by_slots({0, 1}, nullptr) == score_by_nodes({inputs[0], inputs[1]}, nullptr));
+    CHECK(score_by_slots({1, 2}, nullptr) == score_by_nodes({inputs[1], inputs[2]}, nullptr));
+    CHECK(score_by_slots({0, 1, 2}, nullptr) == score_by_nodes({inputs[0], inputs[1], inputs[2]}, nullptr));
+    CHECK(score_by_slots({}, nullptr) == score_by_nodes({}, nullptr));
+
+    // A graded activation reaches the right slot, which a swapped mapping
+    // would get wrong while a multi-hot case over a symmetric set passed.
+    const double graded[2] = {0.5, 0.25};
+    CHECK(score_by_slots({1, 2}, graded) == score_by_nodes({inputs[1], inputs[2]}, graded));
+
+    // The training half reads its input through the same gather, and a
+    // learning rate of 0 reports the loss without moving a weight - so the
+    // two entry points must agree on it for the same sample.
+    double           loss_by_slots = 0;
+    double           loss_by_nodes = 0;
+    const size_t     two_slots[2]  = {0, 2};
+    const zelph_node two_nodes[2]  = {inputs[0], inputs[2]};
+    REQUIRE(zelph_nn_train_slots(engine, net, two_slots, graded, 2, &target, wanted, 1, 0.0, &loss_by_slots) == ZELPH_OK);
+    REQUIRE(zelph_nn_train_nodes(engine, net, two_nodes, graded, 2, &target, wanted, 1, 0.0, &loss_by_nodes) == ZELPH_OK);
+    CHECK(loss_by_slots == loss_by_nodes);
+
+    // And a genuine step through the slot path results in the net being
+    // left where the same step by node results in it. Execute from one
+    // origin point, twice, with the snapshot in between, so the two updates
+    // are compared and not merged.
+    size_t shape_count = 0;
+    CHECK(zelph_nn_snapshot_shape(engine, net, nullptr, &shape_count) == ZELPH_BUFFER_TOO_SMALL);
+    std::vector<size_t> sizes(shape_count, 0);
+    REQUIRE(zelph_nn_snapshot_shape(engine, net, sizes.data(), &shape_count) == ZELPH_OK);
+
+    size_t weight_count = 0;
+    CHECK(zelph_nn_snapshot(engine, net, nullptr, &weight_count) == ZELPH_BUFFER_TOO_SMALL);
+    std::vector<double> start(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, start.data(), &weight_count) == ZELPH_OK);
+
+    REQUIRE(zelph_nn_train_slots(engine, net, two_slots, graded, 2, &target, wanted, 1, 0.05, nullptr) == ZELPH_OK);
+    std::vector<double> after_slots(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, after_slots.data(), &weight_count) == ZELPH_OK);
+
+    REQUIRE(zelph_nn_restore(engine, net, start.data(), start.size(), sizes.data(), sizes.size()) == ZELPH_OK);
+    REQUIRE(zelph_nn_train_nodes(engine, net, two_nodes, graded, 2, &target, wanted, 1, 0.05, nullptr) == ZELPH_OK);
+    std::vector<double> after_nodes(weight_count, 0);
+    REQUIRE(zelph_nn_snapshot(engine, net, after_nodes.data(), &weight_count) == ZELPH_OK);
+
+    CHECK(after_slots != start);       // the step did something
+    CHECK(after_slots == after_nodes); // and it was the same something
+
+    // Order does not matter and a repeat keeps its LAST activation, exactly
+    // as writing into a dense vector would.
+    CHECK(score_by_slots({2, 0}, nullptr) == score_by_slots({0, 2}, nullptr));
+    const double repeated[2] = {1.0, 0.25};
+    CHECK(score_by_slots({2, 2}, repeated) == score_by_slots({2}, &repeated[1]));
+
+    // A slot past the layer is refused rather than read.
+    zelph_node   top   = 0;
+    double       value = 0;
+    size_t       n     = 1;
+    const size_t past  = 3;
+    CHECK(zelph_nn_eval_slots(engine, net, &past, nullptr, 1, 1, &top, &value, &n) == ZELPH_RUNTIME_ERROR);
+    CHECK(zelph_nn_train_slots(engine, net, &past, nullptr, 1, &target, nullptr, 1, 0.1, nullptr) == ZELPH_RUNTIME_ERROR);
+}
+
+// ---------------------------------------------------------------------------
+// The accumulator: the first layer kept between calls.
+//
+// Two properties hold it, and they differ in nature. Setting it and
+// evaluating it must be the from-scratch pass BIT FOR BIT, since both
+// traverse the same code and any deviation would constitute a bug. Updating
+// it must arrive at the same vector as setting it – yet only precisely when
+// the arithmetic is exact, which is why the weights below are small integers
+// and why a second net with awkward ones verifies the inexact scenario
+// separately.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("capi: an accumulator set and evaluated is the from-scratch pass")
+{
+    Engine engine;
+
+    engine.member_of("c1", "AcIn");
+    engine.member_of("c2", "AcIn");
+    engine.member_of("c3", "AcIn");
+    engine.member_of("c4", "AcIn");
+    engine.member_of("d1", "AcHid");
+    engine.member_of("d2", "AcHid");
+    engine.member_of("e1", "AcOut");
+
+    int64_t created = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("AcIn"), engine.node("AcHid"), 0.0, 1, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("AcHid"), engine.node("AcOut"), 0.0, 2, &created) == ZELPH_OK);
+
+    const zelph_node layers[3] = {engine.node("AcIn"), engine.node("AcHid"), engine.node("AcOut")};
+    zelph_net        net       = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    // Powers of two, so that every sum below is exact in binary floating
+    // point and an update can be held to the bit; the inexact case is the
+    // test after this one. Put in through the snapshot, which is the only way
+    // the ABI can name an individual weight - and which therefore also holds
+    // the documented layout, row-major by post-synaptic unit.
+    const double chosen[10] = {1, 4, 16, 64,   // input i to hidden unit 0
+                               2, 8, 32, 128,  // input i to hidden unit 1
+                               1, 1};          // both hidden units to the output
+    const size_t sizes[2]   = {8, 2};
+    REQUIRE(zelph_nn_restore(engine, net, chosen, 10, sizes, 2) == ZELPH_OK);
+
+    size_t width = 0;
+    REQUIRE(zelph_nn_accumulator_size(engine, net, &width) == ZELPH_OK);
+    CHECK(width == 2); // the hidden layer, not the input one
+
+    const auto by_slots = [&](const std::vector<size_t>& slots)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_eval_slots(engine, net, slots.data(), nullptr, slots.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    const auto by_accumulator = [&](const std::vector<double>& acc)
+    {
+        zelph_node top   = 0;
+        double     value = 0;
+        size_t     n     = 1;
+        REQUIRE(zelph_nn_accumulator_eval(engine, net, acc.data(), acc.size(), 1, &top, &value, &n) == ZELPH_OK);
+        return value;
+    };
+
+    std::vector<double> acc(width, 0.0);
+
+    // Set then evaluate, against the same call in one piece. Bit for bit:
+    // both run the same first layer over the same slots in the same order.
+    for (const std::vector<size_t>& slots : {std::vector<size_t>{},
+                                             std::vector<size_t>{0},
+                                             std::vector<size_t>{1, 3},
+                                             std::vector<size_t>{0, 1, 2, 3}})
+    {
+        REQUIRE(zelph_nn_accumulator_set(engine, net, slots.data(), nullptr, slots.size(), acc.data(), acc.size()) == ZELPH_OK);
+        CHECK(by_accumulator(acc) == by_slots(slots));
+    }
+
+    // Moved rather than rebuilt: from {0, 1} to {1, 2, 3} is one removal and
+    // two additions, and with exact weights it lands on the same vector.
+    REQUIRE(zelph_nn_accumulator_set(engine, net, std::vector<size_t>{0, 1}.data(), nullptr, 2, acc.data(), acc.size()) == ZELPH_OK);
+
+    const size_t added[2]  = {2, 3};
+    const size_t removed[1] = {0};
+    REQUIRE(zelph_nn_accumulator_update(engine, net, added, nullptr, 2, removed, nullptr, 1, acc.data(), acc.size()) == ZELPH_OK);
+
+    std::vector<double> fresh(width, 0.0);
+    const size_t        target[3] = {1, 2, 3};
+    REQUIRE(zelph_nn_accumulator_set(engine, net, target, nullptr, 3, fresh.data(), fresh.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+    CHECK(by_accumulator(acc) == by_slots({1, 2, 3}));
+
+    // An empty update is a no-op rather than a reset.
+    REQUIRE(zelph_nn_accumulator_update(engine, net, nullptr, nullptr, 0, nullptr, nullptr, 0, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+
+    // A graded activation goes in and comes out again: removing what was
+    // added with the same weight restores the vector exactly.
+    const double graded = 0.5;
+    const size_t one[1] = {0};
+    REQUIRE(zelph_nn_accumulator_update(engine, net, one, &graded, 1, nullptr, nullptr, 0, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc != fresh);
+    REQUIRE(zelph_nn_accumulator_update(engine, net, nullptr, nullptr, 0, one, &graded, 1, acc.data(), acc.size()) == ZELPH_OK);
+    CHECK(acc == fresh);
+
+    // The buffer length is checked, because the ABI cannot see it otherwise
+    // and the write would go past the end.
+    CHECK(zelph_nn_accumulator_set(engine, net, one, nullptr, 1, acc.data(), width + 1) == ZELPH_RUNTIME_ERROR);
+    CHECK(zelph_nn_accumulator_eval(engine, net, acc.data(), width - 1, 1, nullptr, nullptr, &width) == ZELPH_RUNTIME_ERROR);
+
+    // And so is a slot outside the input layer.
+    const size_t past[1] = {4};
+    CHECK(zelph_nn_accumulator_set(engine, net, past, nullptr, 1, acc.data(), acc.size()) == ZELPH_RUNTIME_ERROR);
+}
+
+TEST_CASE("capi: an updated accumulator drifts from a fresh one, and the drift is small")
+{
+    // The property the test above cannot reveal, because it selects weights
+    // that add exactly. Adding and subtracting rows rounds differently from
+    // summing them once, so an accumulator carried a long way is close rather
+    // than equal - the reason the API says to set it afresh when that matters.
+    Engine engine;
+
+    const char* const inputs[6] = {"f0", "f1", "f2", "f3", "f4", "f5"};
+    for (const char* name : inputs) engine.member_of(name, "DrIn");
+    engine.member_of("g1", "DrHid");
+    engine.member_of("g2", "DrHid");
+    engine.member_of("h1", "DrOut");
+
+    int64_t created = 0;
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("DrIn"), engine.node("DrHid"), 0.37, 11, &created) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, engine.node("DrHid"), engine.node("DrOut"), 0.71, 12, &created) == ZELPH_OK);
+
+    const zelph_node layers[3] = {engine.node("DrIn"), engine.node("DrHid"), engine.node("DrOut")};
+    zelph_net        net       = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    size_t width = 0;
+    REQUIRE(zelph_nn_accumulator_size(engine, net, &width) == ZELPH_OK);
+
+    std::vector<double> carried(width, 0.0);
+    const size_t        start[3] = {0, 1, 2};
+    REQUIRE(zelph_nn_accumulator_set(engine, net, start, nullptr, 3, carried.data(), carried.size()) == ZELPH_OK);
+
+    // Walk it around a cycle of single swaps and come back to where it began.
+    for (int round = 0; round < 200; ++round)
+    {
+        for (size_t slot = 3; slot < 6; ++slot)
+        {
+            const size_t out[1] = {slot - 3};
+            const size_t in[1]  = {slot};
+            REQUIRE(zelph_nn_accumulator_update(engine, net, in, nullptr, 1, out, nullptr, 1, carried.data(), carried.size()) == ZELPH_OK);
+            REQUIRE(zelph_nn_accumulator_update(engine, net, out, nullptr, 1, in, nullptr, 1, carried.data(), carried.size()) == ZELPH_OK);
+        }
+    }
+
+    std::vector<double> fresh(width, 0.0);
+    REQUIRE(zelph_nn_accumulator_set(engine, net, start, nullptr, 3, fresh.data(), fresh.size()) == ZELPH_OK);
+
+    for (size_t j = 0; j < width; ++j)
+    {
+        CHECK(carried[j] == doctest::Approx(fresh[j]).epsilon(1e-12));
+    }
 }
 
 TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")

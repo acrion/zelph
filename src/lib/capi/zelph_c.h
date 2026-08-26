@@ -182,9 +182,32 @@ extern "C"
                                     size_t            object_count,
                                     zelph_node*       out_fact);
 
+    /* The parts of a fact node: its subject, its predicate and its objects –
+       the inverse of zelph_fact. A statement is a node, so a caller that
+       stored one, or received one from a query, can read it back rather than
+       having to remember what it built.
+
+       out_subject and out_predicate can be null when only the objects are
+       desired. No output is generated unless the object buffer is
+       sufficiently large, as throughout this ABI. A node that is not a fact
+       answers ZELPH_INVALID_ARGUMENT. */
+    ZELPH_EXPORT int32_t zelph_fact_parts(zelph_engine* engine,
+                                          zelph_node    fact,
+                                          zelph_node*   out_subject,
+                                          zelph_node*   out_predicate,
+                                          zelph_node*   out_objects,
+                                          size_t*       count);
+
     /* Build a cons list from nodes. The first element becomes the outermost
        cons cell. An empty list is the nil node, as it is in Janet. */
     ZELPH_EXPORT int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
+
+    /* The elements of a cons list, in order - the inverse of zelph_list. The
+       nil node is a list of no elements. A node that is neither nil nor a cons
+       cell is not a list and answers ZELPH_INVALID_ARGUMENT, as does a chain
+       that ends in something other than nil: half a structure is not an
+       answer. */
+    ZELPH_EXPORT int32_t zelph_list_elements(zelph_engine* engine, zelph_node list, zelph_node* out_nodes, size_t* count);
 
     /* The name of a node, or null in *out_name when it has none. `lang` may
        be null for the current language; the lookup falls back to another
@@ -369,6 +392,56 @@ extern "C"
                                              double*           out_scores,
                                              size_t*           count);
 
+    /* The neurons in a single layer of a compiled network, arranged by
+       slot: the node at position i is the neuron referred to by the
+       slot-addressed calls listed below for slot i. Layer 0 serves as the
+       input layer. Adheres to the in/out count convention: query with
+       capacity 0 to determine the size. The Janet binding of the same thing
+       is zelph/nn-nodes. */
+    ZELPH_EXPORT int32_t zelph_nn_layer_nodes(zelph_engine* engine,
+                                              zelph_net     handle,
+                                              size_t        layer,
+                                              zelph_node*   out_nodes,
+                                              size_t*       count);
+
+    /* The identical two invocations with the active input neurons
+       identified by their SLOT in the input layer rather than by their node.
+
+       A node must be retrieved from a hash map on each invocation and a slot
+       does not, and in a compact network, that lookup constitutes the most
+       significant operation during an evaluation: 0.17 of 0.43 microseconds
+       for 34 active inputs of 780. A caller that evaluates the same layer
+       millions of times resolves its features to slots once, at the time of
+       network compilation, and passes slots thereafter. zelph_nn_layer_nodes
+       reports a layer's neurons in slot order, which is the structure such a
+       caller constructs its table from.
+
+       Everything else conforms to the node-addressed pair: a null activation
+       array implies every listed neuron is 1.0, the sequence of the input is
+       irrelevant, and a repeated slot retains its final activation. A slot
+       beyond the input layer is an error instead of a read past the
+       weights. */
+    ZELPH_EXPORT int32_t zelph_nn_eval_slots(zelph_engine* engine,
+                                             zelph_net     handle,
+                                             const size_t* input_slots,
+                                             const double* input_activations,
+                                             size_t        input_count,
+                                             int32_t       top_k,
+                                             zelph_node*   out_nodes,
+                                             double*       out_scores,
+                                             size_t*       count);
+
+    ZELPH_EXPORT int32_t zelph_nn_train_slots(zelph_engine*     engine,
+                                              zelph_net         handle,
+                                              const size_t*     input_slots,
+                                              const double*     input_activations,
+                                              size_t            input_count,
+                                              const zelph_node* target_nodes,
+                                              const double*     target_activations,
+                                              size_t            target_count,
+                                              double            learning_rate,
+                                              double*           out_loss);
+
     /* One SGD step on a single node-addressed sample. Returns the loss
        BEFORE the update in `out_loss`, which may be null. */
     ZELPH_EXPORT int32_t zelph_nn_train_nodes(zelph_engine*     engine,
@@ -382,6 +455,66 @@ extern "C"
                                               double            learning_rate,
                                               double*           out_loss);
 
+    /* --- The first layer, kept between calls ---
+
+       An accumulator is the input layer's pre-activation vector, retained by
+       the caller and shifted by the difference between one active input set
+       and the next rather than being reconstructed from all of them. Where
+       consecutive queries share most of their active inputs - a search over
+       states that change by a few features per move, a fixed context scored
+       against many candidates - that transforms the cost of the first layer
+       from O(active) into O(changed), and what remains is the layers behind
+       it.
+
+       The buffer is zelph_nn_accumulator_size doubles and belongs to the
+       caller, so it incurs no allocation, no handle and no lock to copy: a
+       search retains one per ply and duplicates the parent's on the way down.
+
+       Two points to note. An accumulator holds value only in relation to the
+       weights it was constructed from, thus a training iteration nullifies
+       each of them. And zelph_nn_accumulator_update is NOT bit-identical to
+       zelph_nn_accumulator_set over the same active set: adding and
+       subtracting rows diverge in rounding behaviour from summing them once,
+       and this discrepancy grows across a sequence of updates. Set afresh
+       when that matters; with weights and activations that combine exactly,
+       the two match to the bit. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_size(zelph_engine* engine, zelph_net handle, size_t* out_size);
+
+    /* The initial layer from scratch. A set followed by an eval is
+       zelph_nn_eval_slots to the bit. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_set(zelph_engine* engine,
+                                                  zelph_net     handle,
+                                                  const size_t* slots,
+                                                  const double* activations,
+                                                  size_t        count,
+                                                  double*       accumulator,
+                                                  size_t        accumulator_size);
+
+    /* The same vector shifted instead of being reconstructed: the removed
+       rows are subtracted before the added ones are added. Either list may be
+       empty. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_update(zelph_engine* engine,
+                                                     zelph_net     handle,
+                                                     const size_t* added,
+                                                     const double* added_activations,
+                                                     size_t        added_count,
+                                                     const size_t* removed,
+                                                     const double* removed_activations,
+                                                     size_t        removed_count,
+                                                     double*       accumulator,
+                                                     size_t        accumulator_size);
+
+    /* The layers behind the first, from an accumulator. Sorted and limited by
+       top_k exactly as zelph_nn_eval_nodes is. */
+    ZELPH_EXPORT int32_t zelph_nn_accumulator_eval(zelph_engine* engine,
+                                                   zelph_net     handle,
+                                                   const double* accumulator,
+                                                   size_t        accumulator_size,
+                                                   int32_t       top_k,
+                                                   zelph_node*   out_nodes,
+                                                   double*       out_scores,
+                                                   size_t*       count);
+
     /* Write the compiled net's weights back into the graph's edge-weight
        store, which is what zelph_save then persists. */
     ZELPH_EXPORT int32_t zelph_nn_write_back(zelph_engine* engine, zelph_net handle);
@@ -391,7 +524,10 @@ extern "C"
        zelph_nn_snapshot needs. */
     ZELPH_EXPORT int32_t zelph_nn_snapshot_shape(zelph_engine* engine, zelph_net handle, size_t* out_sizes, size_t* count);
 
-    /* Copy the weights out, matrices concatenated in layer order. */
+    /* Copy the weights out, matrices concatenated in layer order. One matrix
+       is row-major by post-synaptic unit: the weight from input i to unit j
+       of the layer behind it is at j * n_pre + i, where n_pre is the number
+       of neurons in the layer in front. */
     ZELPH_EXPORT int32_t zelph_nn_snapshot(zelph_engine* engine, zelph_net handle, double* out_weights, size_t* count);
 
     /* Put a snapshot back. `sizes` describes how `weights` splits into

@@ -190,8 +190,87 @@ impl Engine {
         Ok(Node(node))
     }
 
+    /// The subject, the predicate and the objects of a fact - the inverse of
+    /// [`fact`](Engine::fact).
+    ///
+    /// A statement is a node here, so one that was stored, or that arrived
+    /// from a query, can be read back instead of being remembered.
+    ///
+    /// The objects return in no defined sequence: a fact’s objects are a
+    /// set, and `(S P a b)` indicates merely that both serve as objects of
+    /// the same statement. In cases where sequence matters, a list is used.
+    pub fn fact_parts(&self, fact: Node) -> Result<(Node, Node, Vec<Node>)> {
+        let mut count: usize = 0;
+
+        // Capacity 0 is the size question; a fact with no objects does not
+        // exist, so the empty response cannot happen here.
+        match check(unsafe {
+            zelph_sys::zelph_fact_parts(
+                self.raw,
+                fact.0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut count,
+            )
+        }) {
+            Err(e) if e.kind() != ErrorKind::BufferTooSmall => return Err(e),
+            _ => {}
+        }
+
+        let mut subject = Node(0);
+        let mut predicate = Node(0);
+        let mut objects: Vec<Node> = vec![Node(0); count];
+
+        check(unsafe {
+            zelph_sys::zelph_fact_parts(
+                self.raw,
+                fact.0,
+                &mut subject.0,
+                &mut predicate.0,
+                objects.as_mut_ptr().cast(),
+                &mut count,
+            )
+        })?;
+
+        objects.truncate(count);
+        Ok((subject, predicate, objects))
+    }
+
+    /// The elements of a cons list, in sequence - the inverse of
+    /// [`list`](Engine::list).
+    ///
+    /// This is what enables a structure to function as a *stored* identifier
+    /// rather than merely as a key: a caller that detects `<a b c>` within a
+    /// graph it loaded can retrieve what it is composed of, without having
+    /// maintained a table alongside the file.
+    ///
+    /// The empty list contains no elements. A node that is not a list
+    /// constitutes an error and is not an empty answer, because half a
+    /// structure is not one.
+    pub fn elements(&self, list: Node) -> Result<Vec<Node>> {
+        let mut count: usize = 0;
+
+        // Capacity 0 is the size question, precisely as it is for `sources`.
+        match check(unsafe {
+            zelph_sys::zelph_list_elements(self.raw, list.0, ptr::null_mut(), &mut count)
+        }) {
+            Ok(()) => return Ok(Vec::new()),
+            Err(e) if e.kind() != ErrorKind::BufferTooSmall => return Err(e),
+            Err(_) => {}
+        }
+
+        let mut nodes: Vec<Node> = vec![Node(0); count];
+        check(unsafe {
+            zelph_sys::zelph_list_elements(self.raw, list.0, nodes.as_mut_ptr().cast(), &mut count)
+        })?;
+
+        nodes.truncate(count);
+        Ok(nodes)
+    }
+
     /// The name of a node, or `None` when it has none - a fact node, for
-    /// instance. Not having a name is an answer, not a failure.
+    /// instance. Lack of a name is an answer, not a failure.
     pub fn name(&self, node: Node) -> Result<Option<String>> {
         let mut text: *mut c_char = ptr::null_mut();
 

@@ -300,6 +300,128 @@ s1 in SOut
         CHECK(any_output_contains(collector, "empty-equal")); });
 }
 
+// ---------------------------------------------------------------------------
+// The input layer’s weight matrix, in both directions.
+//
+// It is kept transposed internally, because a sparse pass reads it by pre
+// unit and the row-major-by-post layout incurs one scattered load per weight.
+// Nothing external observes that: the graph, the snapshot and the write-back
+// all speak the other layout, and the three tests below are what holds the
+// two apart.
+//
+// They require an input matrix that is not its own transpose, which is why
+// the weights are distinct powers of ten and the layer widths differ. Each
+// net the tests above employ is either 2x2 and symmetric or features a single
+// output, and a transposed input layer remains unseen in both. Reading the
+// matrix in reverse in compile() was detected, but only by an approx rule
+// three hundred lines further down, which names the graph rather than the
+// layout when it fails. Delivering the snapshot in the wrong layout was
+// caught by nothing in the suite at all, and it is the one that crosses an
+// API boundary.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Three inputs, two hidden units, one output. The hidden units are the
+    // sums of the powers of ten reaching them, so an output names exactly
+    // which weights were summed: 11 is g1 alone, 1100 is g2 alone, 5 is g3
+    // alone. Reading the matrix the other way round would answer 1001 to
+    // the first of those.
+    constexpr const char* transposed_layout_net = R"(
+g1 in TIn
+g2 in TIn
+g3 in TIn
+k1 in THid
+k2 in THid
+z1 in TOut
+%(zelph/nn-connect "g1" "k1" 1)
+%(zelph/nn-connect "g1" "k2" 10)
+%(zelph/nn-connect "g2" "k1" 100)
+%(zelph/nn-connect "g2" "k2" 1000)
+%(zelph/nn-connect "g3" "k1" 2)
+%(zelph/nn-connect "g3" "k2" 3)
+%(zelph/nn-connect "k1" "z1" 1)
+%(zelph/nn-connect "k2" "z1" 1)
+%(def net (zelph/nn-compile [(zelph/resolve "TIn") (zelph/resolve "THid") (zelph/resolve "TOut")]))
+)";
+}
+
+TEST_CASE("neural: the input layer's weights connect the pairs the graph says they do")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, transposed_layout_net);
+
+        collector.clear();
+        interactive.process(R"(%(string (get (zelph/nn-eval net [1 0 0]) 0) ","
+                                        (get (zelph/nn-eval net [0 1 0]) 0) ","
+                                        (get (zelph/nn-eval net [0 0 1]) 0) ","
+                                        (get (zelph/nn-eval net [1 1 1]) 0)))");
+        CHECK(any_output_contains(collector, "11,1100,5,1116"));
+
+        // The node-addressed pass reads the same matrix by pre unit rather
+        // than by post unit, so it is the one the layout exists for.
+        collector.clear();
+        interactive.process(R"(%(string (get (get (zelph/nn-eval-nodes net ["g1"] 1) 0) 1) ","
+                                        (get (get (zelph/nn-eval-nodes net ["g2"] 1) 0) 1) ","
+                                        (get (get (zelph/nn-eval-nodes net ["g3"] 1) 0) 1) ","
+                                        (get (get (zelph/nn-eval-nodes net ["g1" "g2" "g3"] 1) 0) 1)))");
+        CHECK(any_output_contains(collector, "11,1100,5,1116")); });
+}
+
+TEST_CASE("neural: a snapshot is in the layout its consumers read it in")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, transposed_layout_net);
+
+        // A snapshot consists of raw numbers crossing an API boundary, so
+        // their order is part of the contract rather than an implementation
+        // detail: a matrix is row-major by post unit, element (i, j) at
+        // j * n_pre + i. Aristarch 6 reads a net’s weights this way and
+        // rotates them itself.
+        collector.clear();
+        interactive.process(R"(%(string/join (map string (get (zelph/nn-snapshot net) 0)) ","))");
+        CHECK(any_output_contains(collector, "1,100,2,10,1000,3"));
+
+        // And the way back is the way out, inverted: a net withdrawn from
+        // the snapshot and reattached to it evaluates as it did.
+        process_lines(interactive, R"(
+%(def before (get (zelph/nn-eval net [0 1 0]) 0))
+%(def snap (zelph/nn-snapshot net))
+%(zelph/nn-train-nodes net ["g2"] [["z1" 0]] 1e-6)
+%(def moved (get (zelph/nn-eval net [0 1 0]) 0))
+%(zelph/nn-restore net snap)
+)");
+        collector.clear();
+        interactive.process(R"(%(cond (= before moved) "training-did-not-move-it"
+                                      (not= before (get (zelph/nn-eval net [0 1 0]) 0)) "restore-scrambled-it"
+                                      "restored-exactly"))");
+        CHECK(any_output_contains(collector, "restored-exactly")); });
+}
+
+TEST_CASE("neural: a written-back net compiles to the net that wrote it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, transposed_layout_net);
+
+        // Training first, so that the weights on the way back are not the
+        // ones compile() reads: a write_back that mirrors an unaltered
+        // matrix round-trips regardless of the direction it employs.
+        process_lines(interactive, R"(
+%(for i 0 5 (zelph/nn-train-nodes net ["g1" "g3"] [["z1" 20]] 1e-7))
+%(def trained (get (zelph/nn-eval net [1 1 1]) 0))
+%(zelph/nn-write-back net)
+%(def again (zelph/nn-compile [(zelph/resolve "TIn") (zelph/resolve "THid") (zelph/resolve "TOut")]))
+)");
+        collector.clear();
+        interactive.process(R"(%(if (= trained (get (zelph/nn-eval again [1 1 1]) 0))
+                                  "write-back-round-trips"
+                                  (string "write-back-differs " trained " " (get (zelph/nn-eval again [1 1 1]) 0))))");
+        CHECK(any_output_contains(collector, "write-back-round-trips")); });
+}
+
 TEST_CASE("neural: node-addressed training leaves the same weights as the dense pass")
 {
     run_both_modes([](auto& collector, auto& interactive)

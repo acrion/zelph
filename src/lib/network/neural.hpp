@@ -152,31 +152,163 @@ namespace zelph::network
         // the output layer in neuron index order (unsorted).
         std::vector<std::pair<Node, double>> eval_nodes(const std::vector<std::pair<Node, double>>& input) const;
 
+        // --- Slot-addressed input ---
+        //
+        // The identical two calls with the input neurons identified by their
+        // position in the input layer rather than by their node. A node must
+        // be retrieved from a hash map on each call and a slot does not, and
+        // on a small net that lookup is the most significant single
+        // component remaining: 0.17 of 0.43 microseconds for 34 active
+        // inputs of 780. A caller that evaluates the same layer millions of
+        // times can resolve its features once, when the net is compiled, and
+        // pass slots for ever after - layer_nodes() provides it with the
+        // order.
+        //
+        // `activations` may be null, meaning each specified neuron is 1.0.
+        // Slots beyond the layer are rejected. Order is irrelevant and
+        // duplicates retain their final activation, precisely as in the
+        // node-addressed pair.
+        std::vector<std::pair<Node, double>> eval_slots(const size_t* slots,
+                                                        const double* activations,
+                                                        size_t        count) const;
+
+        double train_slots(const size_t*                               slots,
+                           const double*                               activations,
+                           size_t                                      count,
+                           const std::vector<std::pair<Node, double>>& target,
+                           double                                      learning_rate);
+
+        // --- The first layer, kept between calls ---
+        //
+        // An accumulator is the input layer’s pre-activation vector,
+        // maintained by the caller and shifted by the difference between one
+        // active input set and the next instead of being reconstructed from
+        // all of them. Where consecutive queries share most of their active
+        // inputs - a search over states that change by a few features per
+        // move, a fixed context scored against many candidates - that
+        // transforms the cost of the first layer from O(active) into
+        // O(changed).
+        //
+        // The buffer is `accumulator_size()` doubles and belongs to the
+        // caller, thus incurring no allocation, no handle, and no lock during
+        // copying: a search retains one per ply and duplicates the parent’s
+        // on the path down.
+        //
+        // Two points to understand. An accumulator holds value only in
+        // relation to the weights it was constructed from, thus a training
+        // iteration nullifies each of them. And `accumulator_update` is NOT
+        // bit-identical to `accumulator_set` across the identical active set:
+        // adding and subtracting rows diverges from aggregating them in a
+        // single pass, and that gap grows with each successive update. Set it
+        // afresh when such divergence matters; when weights and activations
+        // combine precisely, both operations match to the bit.
+        size_t accumulator_size() const { return _nodes.at(1).size(); }
+
+        // The first layer from scratch. `set` followed by `eval` is
+        // `eval_slots` to the bit.
+        void accumulator_set(const size_t* slots,
+                             const double* activations,
+                             size_t        count,
+                             double*       accumulator,
+                             size_t        accumulator_size) const;
+
+        // The same vector moved rather than rebuilt: the removed rows are
+        // subtracted before the added ones are added.
+        void accumulator_update(const size_t* added,
+                                const double* added_activations,
+                                size_t        added_count,
+                                const size_t* removed,
+                                const double* removed_activations,
+                                size_t        removed_count,
+                                double*       accumulator,
+                                size_t        accumulator_size) const;
+
+        // The layers behind the first, from an accumulator. Returns
+        // (node, score) pairs for the output layer in neuron index order.
+        std::vector<std::pair<Node, double>> accumulator_eval(const double* accumulator,
+                                                              size_t        accumulator_size) const;
+
         // Membership test, used by the reasoning engine's ≈ evaluation.
         bool has_node(size_t layer, Node n) const { return _index.at(layer).count(n) != 0; }
 
     private:
         NeuralNet() = default;
 
-        // Sorted indices of the active input slots. The node-addressed entry
-        // points know which inputs are non-zero; passing that on lets the
-        // input layer cost O(active) instead of O(width), which is what makes
-        // a wide sparse input layer usable at all. Sorted, so a sparse pass
-        // sums in the same order a dense one does and returns the same value.
-        std::vector<size_t> active_indices(size_t layer, const std::vector<std::pair<Node, double>>& active) const;
+        // The same resolution encode() carries out, in a single pass and
+        // without a dense vector: the slots of the listed neurons and their
+        // activations, ascending by slot and one entry per slot. A repeated
+        // node retains its LAST activation, because that is what writing into
+        // a dense vector achieves. Throws when a node is not a member of the
+        // layer, as encode() does.
+        void gather_active(size_t                                      layer,
+                           const std::vector<std::pair<Node, double>>& active,
+                           std::vector<std::pair<size_t, double>>&     out) const;
+
+        // The same, from slots a caller already holds. Throws when a slot is
+        // outside the input layer - a C caller can pass anything, and an
+        // unchecked index here would be a read past the weight matrix.
+        void gather_slots(const size_t*                           slots,
+                          const double*                           activations,
+                          size_t                                  count,
+                          std::vector<std::pair<size_t, double>>& out) const;
+
+        // Throws unless the buffer the caller provides is one accumulator:
+        // the C ABI passes a raw pointer, and a wrong length here would be a
+        // write past the end of it.
+        void check_accumulator_size(size_t size) const;
+
+        // Layer 0's pre-activations, prior to the activation function. The
+        // accumulator contains exactly this, which is why a set-then-evaluate
+        // is bit for bit the from-scratch pass: both traverse here.
+        void first_layer(const std::vector<std::pair<size_t, double>>& active, double* out) const;
+
+        // Everything following those pre-activations: the activation function
+        // and the dense layers behind it. `cur` arrives bearing layer 0's
+        // output and departs holding the net’s.
+        const std::vector<double>& remaining_layers(std::vector<double>& cur) const;
+
+        // The forward pass over an ascending, duplicate-free active input
+        // list. The result is a per-thread buffer, valid until this thread
+        // evaluates again; the shared lock must be held across both.
+        const std::vector<double>& forward_sparse(const std::vector<std::pair<size_t, double>>& active) const;
+
+        // The output layer paired with its nodes, in neuron index order.
+        std::vector<std::pair<Node, double>> scored_output(const std::vector<double>& out) const;
+
+        // One SGD step from an already gathered input, shared by the
+        // node-addressed and the slot-addressed entry point.
+        double train_gathered(const std::vector<std::pair<size_t, double>>& active,
+                              const std::vector<std::pair<Node, double>>&   target,
+                              double                                        learning_rate);
 
         // Guards _w, the only member that changes after compile(). _nodes,
         // _mask and _index are written once by compile() and read-only
         // afterwards, so they need no protection.
         //
-        // Taken shared by the const entry points (forward, write_back,
-        // weights) and exclusively by the mutating ones (train_step,
-        // set_weights). It is NOT taken by train_nodes or eval_nodes, which
-        // delegate to those - locking at both levels would deadlock.
+        // Taken shared by the const entry points (forward, eval_nodes,
+        // write_back, weights) and exclusively by the mutating ones
+        // (train_step, set_weights). It is NOT taken by train_nodes, which
+        // delegates to train_step - locking at both levels would deadlock.
         mutable std::shared_mutex _mtx;
 
-        Activation                        _activation{Activation::Relu};
-        std::vector<std::vector<Node>>    _nodes;
+        Activation                     _activation{Activation::Relu};
+        std::vector<std::vector<Node>> _nodes;
+
+        // Weight matrix k, and the mask beside it, hold one entry per
+        // (pre, post) pair. Every matrix is stored row-major by post unit,
+        // element (i, j) at j * n_pre + i - EXCEPT matrix 0, which is stored
+        // transposed, element (i, j) at i * n_post + j.
+        //
+        // The input layer is accessed sparsely, and a sparse pass reads it
+        // by pre unit: one active input then contributes one contiguous run
+        // of n_post weights instead of one scattered load out of each of
+        // n_post rows. On a 780x32 net that is 34 rows of 32 against 1088
+        // loads spread over 200 KB, and it is worth about a third of the
+        // cost of an evaluation.
+        //
+        // The layout is internal. weights() transposes matrix 0 back on the
+        // way out and set_weights() transposes it on the way in, so a caller
+        // observes one layout for all of them.
         std::vector<std::vector<double>>  _w;
         std::vector<std::vector<uint8_t>> _mask;
 
