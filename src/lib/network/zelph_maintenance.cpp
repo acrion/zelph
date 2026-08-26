@@ -1078,6 +1078,14 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
     // Read before the locks below: get_rules() takes its own.
     const adjacency_set rules = get_rules();
 
+    // What nobody claimed does not belong in a slice. Read here for the same
+    // reason as the rules: is_asserted_fact would take the pattern and
+    // template-variable locks per candidate, and its fallback walks the
+    // adjacency -- which this function already holds shared, and recursive
+    // shared locking is undefined. get_fact_objects uses the snapshot the same
+    // way, and for the same reason.
+    const auto unasserted = unasserted_snapshot();
+
     if (rules_kept) *rules_kept = rules.size();
 
     ankerl::unordered_dense::set<Node> keep{
@@ -1128,6 +1136,22 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
                 if (rel_left->second.count(p) == 0) continue;
 
+                // A query pattern is a fact of p in every structural sense and
+                // an answer to nothing, so it must not travel. The is_var test
+                // below was meant to keep it out and cannot: a fact ABOUT the
+                // pattern -- the `closure` tag of `(S P279⁺ Q3)`, say -- stands
+                // on both sides of it exactly as a subject does, so it passes
+                // as the non-variable subject the pattern itself does not have.
+                // The effect was a slice whose fact count depended on which
+                // questions had been asked in the session that wrote it: two
+                // real P279 facts and one pattern, reported as three, while
+                // .list-predicate-usage in the same session said two.
+                //
+                // A rule's own patterns are not lost by this. They travel with
+                // the rule, through get_rules above and the structural closure
+                // below, which is what carries a rule whole.
+                if (unasserted && unasserted->count(rel) != 0) continue;
+
                 // rel can also be a fact ABOUT p -- the declaration above, or
                 // "P279 is a transitive relation". Those carry p as their
                 // SUBJECT, which puts it on both sides of rel just like the
@@ -1168,10 +1192,15 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             // derived axioms. Addressed by content hash rather than searched,
             // like the relation-type declaration above: core.IsA's adjacency
             // is most of the graph.
+            bool is_condition_set = false;
             for (const Node tag : {core.Conjunction, core.Negation})
             {
                 const Node tagged = create_hash(core.IsA, nd, {tag});
-                if (exists_unlocked(tagged)) retain(tagged);
+                if (exists_unlocked(tagged))
+                {
+                    retain(tagged);
+                    if (tag == core.Conjunction) is_condition_set = true;
+                }
             }
 
             // ... and the relation-type declaration of every retained node,
@@ -1197,7 +1226,16 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             const Node declaration = create_hash(core.IsA, nd, {core.RelationTypeCategory});
             if (exists_unlocked(declaration)) retain(declaration);
 
-            if (!Impl::is_hash(nd)) continue;
+            // A condition set is expanded although it is not content-addressed:
+            // its adjacency IS the rule's conditions, which is small and wanted,
+            // where a plain node's adjacency is the rest of the graph. Without
+            // this the conditions were reached only by accident -- the loop over
+            // the sliced predicates retained them, because the set stands on
+            // both sides of each of its members and so passed for their subject.
+            // Once that accident was corrected the contradiction rule of
+            // test_predicate_slice lost its conditions and stopped being a rule
+            // at all, which is how the hole showed itself.
+            if (!Impl::is_hash(nd) && !is_condition_set) continue;
 
             const auto left_it = _pImpl->_left.find(nd);
             if (left_it != _pImpl->_left.end())

@@ -223,6 +223,63 @@ Q20 P279 Q30
     fs::remove(file);
 }
 
+// A slice is meant to be a function of the network, not of the session that
+// wrote it. It was not: asking a question builds a pattern, and a pattern of a
+// sliced predicate could be written into the file as though someone had
+// asserted it -- so two people slicing the same network got files of different
+// size depending on what they had typed first.
+TEST_CASE("slice: a question asked before the save does not travel with it")
+{
+    const auto before_file = slice_path("nopattern_before");
+    const auto after_file  = slice_path("nopattern_after");
+
+    // The source session is scoped out before the slice is loaded, and it has to
+    // be: the script engine keeps a process-wide instance pointer (`s_instance`
+    // in script_engine.cpp), which a second live Interactive re-points, and this
+    // test aborted on a corrupted heap until the two stopped overlapping. Every
+    // other test in this file scopes the same way.
+    std::string report;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        build_source(interactive);
+
+        interactive.process(".save-predicates \"" + before_file.string() + "\" P279");
+
+        // An ordinary query pattern was already excluded, by the is_var test on
+        // the subject. The path condition's inner pattern was not: its `closure`
+        // tag fact stands on both sides of it exactly as a subject does, so it
+        // passed for the non-variable subject a pattern does not have.
+        collector.clear();
+        interactive.process("S P279 Q30");
+        interactive.process("T P279⁺ Q30");
+        CHECK(any_output_contains(collector, "closure one-or-more"));
+
+        collector.clear();
+        interactive.process(".save-predicates \"" + after_file.string() + "\" P279");
+
+        for (const auto& event : collector.events())
+            if (event.text.find("Saved ") != std::string::npos) report = event.text;
+    }
+
+    // Same count as before the questions -- and the same one the source reports
+    // for itself, which is the check that says the two readers agree.
+    CHECK(report.find("5 fact(s)") != std::string::npos);
+
+    // And nothing of the path condition reached the file: no pattern under
+    // P279, and no `closure` predicate that the source does not have either.
+    zelph::io::OutputCollector  reloaded;
+    zelph::console::Interactive slice(reloaded.sink());
+    slice.process(".load \"" + after_file.string() + "\"");
+    reloaded.clear();
+    slice.process(".list-predicate-usage");
+    CHECK(any_output_contains(reloaded, "P279\t5"));
+    CHECK_FALSE(any_output_contains(reloaded, "closure"));
+
+    fs::remove(before_file);
+    fs::remove(after_file);
+}
+
 TEST_CASE("slice: every rule travels, including the ones that report contradictions")
 {
     const auto file = slice_path("rulecount");
