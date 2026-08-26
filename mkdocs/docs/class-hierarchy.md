@@ -81,11 +81,57 @@ The adjacency index is built once and then written next to the file, so this hap
 
 Reading the output:
 
-- **`below`** — how many of the 18,933 affected classes sit at or below this one. Removing the wrong `P279` statement here takes that many entries out of the report in one edit.
+- **`below`** — how many of the 18,757 affected classes sit at or below this one. Removing the wrong `P279` statement here takes that many entries out of the report in one edit.
 - **the list** — only the _topmost_ classes in violation. A class whose parent is already in violation is not listed: the mistake is not there, and it disappears by itself once the parent is fixed.
 - **the last line** — the raw count next to the number of places you actually have to look. The gap between 18,757 and 81 is the point of the report.
+- **a `note:` line under it**, when the report cannot speak for every affected class — see [What the report cannot see](#what-the-report-cannot-see). There is none here, which is itself information: all 18,757 are covered by the 81.
 
 The third argument is how many rows to print (default 25). Leave it out to see more.
+
+## What the report cannot see
+
+A class is omitted from the list when a class higher up is already in violation – that is what _topmost_ means, and it is what reduces 18,757 entries to 81. The definition has one gap. If the classes in violation above a class form a `P279` cycle, then every one of them has a superclass in violation, namely its own predecessor in the cycle, so none of them is topmost. Neither the cycle nor anything beneath it shows up in the list, however many rows you print.
+
+The report counts those classes instead of passing over them. Here is the pair Doğan and Patel-Schneider work through in their section 4 – _concrete object_ ([Q4406616](https://www.wikidata.org/wiki/Q4406616)) against _abstract entity_ ([Q7048977](https://www.wikidata.org/wiki/Q7048977)):
+
+```
+zelph-> %(culprits "Q4406616" "Q7048977" 3)
+below	class
+287263	Q27096213 (geographic entity)
+114093	Q46344 (quantum)
+56677	Q135899982
+-- 1147 topmost culprit(s) of 467701 affected class(es); showing 3 --
+   note: 27297 of the 467701 affected class(es) (5.8%) sit below no topmost culprit, so nothing above stands for them
+         -- every affected class above them has an affected superclass of its own, which is what a P279 cycle produces
+-- 3.071 s --
+```
+
+The 1,147 rows cover 440,404 of the 467,701 affected classes, or 94.2 %. The other 27,297 sit under a cycle such as this one:
+
+```
+zelph-> %(class-report "Q340169")
+Class: Q340169 (communications media)
+Subclasses (transitive): 70014
+Direct superclasses: 2
+  P279 -> Q12774177 (means)
+  P279 -> Q104450446 (data carrier)
+```
+
+_communications media_ is a subclass of _data carrier_, which is a subclass of _manifestation_, which is a subclass of _communications media_ again. All three are in violation and all three report the same 70,014 transitive subclasses, because each of them is below the other two.
+
+A cycle defeats the ranking, not the explanation. `culprit-path` answers for such a class exactly as it does for a ranked one:
+
+```
+zelph-> %(culprit-path "Q340169" "Q4406616")
+P279 chain, 5 class(es):
+  Q340169 (communications media)
+  -> Q104450446 (data carrier)
+  -> Q17538423 (manifestation)
+  -> Q223557 (physical object)
+  -> Q4406616 (concrete object)
+```
+
+Breaking one edge of a cycle is therefore worth more than its `below` column would ever have said: it is what puts the classes underneath it within reach of a work list at all.
 
 ## Why is this class in violation?
 
@@ -106,7 +152,7 @@ P279 chain, 4 class(es):
   -> Q215627
 ```
 
-Each arrow is one `P279` statement in Wikidata. _employee_ reaches _organization_ through three of them, and _profession_ through three others. Both chains are what makes it a violation; breaking either one resolves it. Which statement is the wrong one is an editorial judgement — the tool narrows 18,933 classes down to a handful of statements and leaves that judgement to you.
+Each arrow is one `P279` statement in Wikidata. _employee_ reaches _organization_ through three of them, and _profession_ through three others. Both chains are what makes it a violation; breaking either one resolves it. Which statement is the wrong one is an editorial judgement — the tool narrows 18,757 classes down to a handful of statements and leaves that judgement to you.
 
 The shortest chain is reported, because that is the one that can be checked by hand. If a class is reachable along several paths, fixing one may leave the others; re-run `culprits` after an edit to see what is left.
 

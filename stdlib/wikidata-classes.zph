@@ -127,7 +127,8 @@
   "Print the topmost culprits of the disjoint pair (A, B), most consequential
    first. The 'below' column counts how many culprits sit at or below that
    class: removing the offending P279 edge there removes that many entries
-   from the report at once."
+   from the report at once. Affected classes that no topmost culprit reaches
+   are counted separately -- see the note the report prints for them."
   [a-id b-id &opt limit]
   (default limit 25)
   (when (< limit 0)
@@ -143,9 +144,15 @@
                          (zelph/targets c p))))
             all))
 
+  # The same walk that counts a culprit's subtree also records which affected
+  # classes the report refers to at all, which is not all of them: see the
+  # coverage note below.
+  (def covered @{})
   (def rows
     (sorted (map (fn [c]
-                   [(length (in-set (zelph/closure-sources c p true) all-set)) c])
+                   (def below (in-set (zelph/closure-sources c p true) all-set))
+                   (each x below (put covered x true))
+                   [(length below) c])
                  top)
             (fn [x y] (> (get x 0) (get y 0)))))
 
@@ -159,6 +166,24 @@
   (array/push lines
     (string/format "-- %d topmost culprit(s) of %d affected class(es); showing %d --"
                    (length rows) (length all) shown))
+
+  # What the report cannot see, and must therefore say. An affected class that
+  # is not topmost has an affected direct superclass, so walking upwards
+  # through affected classes reaches a topmost one -- unless the walk never
+  # ends, which in a finite graph implies it encounters a cycle of P279 edges
+  # whose members are all affected. No member of such a cycle is topmost, so
+  # neither the cycle nor anything beneath it shows up in this list,
+  # regardless of how large the limit is made. On the pinned 2026-03-09 dump
+  # the pair (Q4406616, Q7048977) has 467 701 affected classes, of which
+  # 27 297 are invisible for exactly this reason -- 5.8 % of a report that
+  # used to look complete.
+  (def unreached (- (length all) (length covered)))
+  (when (pos? unreached)
+    (array/push lines
+      (string/format "   note: %d of the %d affected class(es) (%.1f%%) sit below no topmost culprit, so nothing above stands for them"
+                     unreached (length all) (* 100.0 (/ unreached (length all)))))
+    (array/push lines
+      "         -- every affected class above them has an affected superclass of its own, which is what a P279 cycle produces"))
 
   # One class below the other is a legal input and a suspicious one: the pair
   # is then not disjoint but nested, and everything under the lower class is

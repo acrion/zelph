@@ -363,6 +363,10 @@ Q40 P279 Q50
     CHECK(any_output_contains(collector, "1 Q40"));
     CHECK(any_output_contains(collector, "-- 2 topmost culprit(s) of 4 affected class(es)"));
 
+    // Here every affected class is below one of the two, so the report speaks
+    // for all of them and says nothing about coverage.
+    CHECK_FALSE(any_output_contains(collector, "sit below no topmost culprit"));
+
     // The ranking must put the consequential edit first.
     const std::string table = last_out_text(collector);
     const size_t      q10   = table.find("Q10");
@@ -370,6 +374,51 @@ Q40 P279 Q50
     REQUIRE(q10 != std::string::npos);
     REQUIRE(q40 != std::string::npos);
     CHECK(q10 < q40);
+}
+
+TEST_CASE("wikidata-classes: the report says how many classes it cannot speak for")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    // Q30 and Q50 are the disjoint pair again. Q40 is an ordinary culprit, but
+    // Q10, Q11 and Q12 form a P279 cycle below both, so each of the three has
+    // an affected direct superclass -- its own predecessor in the cycle -- and
+    // none of them qualifies as topmost. Nothing in the ranked list therefore
+    // stands for them, however large the limit is made.
+    //
+    // The concept of "topmost" establishes this as the ONLY method by which an
+    // affected class can exit the report: walking upward from a class that is
+    // not topmost results in encountering an affected superclass at each step,
+    // and within a finite graph, such a walk culminates at a topmost culprit
+    // unless it encounters a previously visited class. A cycle among affected
+    // classes is not merely theoretical -- on the pinned 2026-03-09 dump it
+    // hides 27 297 of the 467 701 classes affected by the (Q4406616,
+    // Q7048977) violation, and a report that fails to mention this appears as
+    // though its 1 147 rows covered all of them.
+    process_lines(interactive, R"(
+.lang wikidata
+Q11 P279 Q10
+Q12 P279 Q11
+Q10 P279 Q12
+Q10 P279 Q30
+Q10 P279 Q50
+Q40 P279 Q30
+Q40 P279 Q50
+)");
+    interactive.process(".import wikidata-classes");
+    collector.clear();
+    interactive.process("%(culprits \"Q30\" \"Q50\")");
+
+    CHECK(any_output_contains(collector, "-- 1 topmost culprit(s) of 4 affected class(es)"));
+    CHECK(any_output_contains(collector, "3 of the 4 affected class(es) (75.0%) sit below no topmost culprit"));
+    CHECK(any_output_contains(collector, "P279 cycle"));
+
+    // The count is about coverage, not about the display limit: showing fewer
+    // rows does not make more classes unreachable.
+    collector.clear();
+    interactive.process("%(culprits \"Q30\" \"Q50\" 0)");
+    CHECK(any_output_contains(collector, "3 of the 4 affected class(es)"));
 }
 
 TEST_CASE("wikidata-classes: a pair that is not a disjoint pair is refused or flagged")
