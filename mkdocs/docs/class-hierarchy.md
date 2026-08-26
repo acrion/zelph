@@ -169,6 +169,37 @@ Direct superclasses: 2
   P279 -> Q852998
 ```
 
+## Asking for what is not there
+
+The report above answers one fixed question. The next question an editor has is usually the negative one – which classes under here are _not_ under there – and that is a condition you can write. Two rules over the direct subclasses of _organization_ ([Q43229](https://www.wikidata.org/wiki/Q43229)), splitting them by whether they also reach _profession_ ([Q215627](https://www.wikidata.org/wiki/Q215627)):
+
+```
+wikidata> .deductions off
+wikidata> (C P279 Q43229, C P279⁺ Q215627) => (C in-violation Q215627)
+ (skipped 9 deductions)
+wikidata> (C P279 Q43229, ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
+ (skipped 815 deductions)
+```
+
+_organization_ has 824 direct subclasses in this file. **Nine of them reach _profession_ as well** – among them _militia_ ([Q153936](https://www.wikidata.org/wiki/Q153936)) and _credit bureau_ ([Q1187145](https://www.wikidata.org/wiki/Q1187145)) – and 815 do not. An organization is not a profession, so those nine are where to look, and the 815 are what says the other question was asked too. `.deductions off` keeps each run to one line; without it every derived fact prints its own.
+
+Two points arise from these being _rules_ rather than a query.
+
+Every answer carries its derivation:
+
+```
+wikidata> .explain (Q153936 in-violation Q215627)
+Q153936 in-violation Q215627
+   ├─ Q153936 P279 Q43229  [axiom]
+   └─ (Q153936 P279 Q215627) closure one-or-more  [closure]
+```
+
+`[axiom]` is a statement that stands in the dump, and it is the one to open on Wikidata. `[closure]` is the chain the engine walked; `%(culprit-path "Q153936" "Q215627")` prints it step by step.
+
+And `in-violation` is an ordinary predicate now, so the next rule can read it – to raise a [contradiction](logic.md#contradiction-detection), to feed a further report, or to be negated in its own turn. A work list is a fact in the graph here, not the end of the pipeline.
+
+One thing to keep in mind at scale: a negated path is tested once per candidate, so anchor the rule on something small, as the `P279` condition does above. Where the question is really the difference of two whole subtrees, the [SPARQL layer](sparql.md)'s `MINUS` computes both closures once and subtracts them.
+
 ## The same thing in SPARQL
 
 If you would rather write the query yourself, the [SPARQL layer](sparql.md) works on this file too and gives the same 81 classes:

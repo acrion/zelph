@@ -268,6 +268,7 @@ namespace zelph::network
 
         void evaluate(RulePos rule, ReasoningContext& ctx, int depth);
         bool is_negated_condition(Node condition, int depth);
+        void refuse_condition(Node condition, const std::string& message);
         bool condition_contains_negation(Node condition, int depth);
 
         // --- Implemented in reasoning_deduce.cpp ---
@@ -338,8 +339,8 @@ namespace zelph::network
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
         void             report_unusable_net(Node net_node, const std::string& why);
-        void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
-        void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth);
+        void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
+        void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
         // --- Implemented in reasoning_seminaive.cpp ---
@@ -432,6 +433,14 @@ namespace zelph::network
         // a misspelled net would then repeat its warning for every line of an
         // import. Once per session is what makes it readable.
         std::set<Node> _nn_reported;
+
+        // Which conditions have already been refused. Same lifetime and same
+        // reason as _nn_reported: a condition is refused for a property of its
+        // own shape, which does not change between two candidate bindings, so
+        // reporting per evaluation buries the message under its own repeats --
+        // ten identical lines for a three-fact network, and one per binding on
+        // anything real.
+        std::set<Node> _refused_conditions;
 
         bool _seminaive{true};
         bool _seminaive_check{false};

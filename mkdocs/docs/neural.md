@@ -144,6 +144,10 @@ The bound pattern components that are members of the input layer are activated (
 - **Guard mode** — the pattern's object is already bound: the condition succeeds iff the object's calibrated score exceeds 0.5. Typical use: _verify_ existing facts.
 - **Generator mode** — the object is an unbound variable: the condition produces one variable binding per output neuron whose calibrated score exceeds 0.5. Typical use: _propose_ new facts.
 
+A third mode is the second one seen from the other side. `¬≈net(S P O)` succeeds exactly when the net fails to confirm the fact – the calibrated score at or below 0.5 – and it is a guard and nothing else: the object must be bound, because a negation binds nothing, and generator mode under `¬` is reported rather than guessed at. It contributes no confidence either. What the net reports is how strongly it believes the fact, and one minus that measures nothing a deduction can carry, so a negated condition filters and leaves the rule’s own confidence alone.
+
+A net that cannot be consulted fails the condition in _both_ readings. "The net does not confirm this" and "there is no net" are different statements, and letting the second satisfy `¬≈` would turn a misspelled net name into a derivation engine: every rule consulting it would start firing on everything. The same holds for an object the output layer does not contain – one the net has no opinion about rather than one it rejects.
+
 ### Calibration: clamp, not sigmoid
 
 Scores are calibrated by clamping to `[0, 1]`. A sigmoid may look like the textbook choice, but it would be wrong here: training uses one-hot targets in `{0, 1}` under squared-error loss, so raw scores concentrate near 0 (negatives) and 1 (positives). A sigmoid would place the decision threshold at raw score 0 — which nearly every score passes after training — whereas clamping puts the boundary at raw 0.5, exactly between the two target values.

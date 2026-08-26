@@ -45,7 +45,12 @@ using namespace zelph::network;
 // transitive_sources ARE the closure engine that `zelph/closure` exposes and
 // that sparql.zph's p+/p* already call -- an indexed closure over the
 // predicate, built once and cached next to the .bin, not a walk per query.
-void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth)
+//
+// `negated` is the condition's `¬` tag, which the caller has to read for us:
+// the dispatch in Reasoning::evaluate returns here before the leaf branch that
+// otherwise handles negation. A negated path condition is a TEST -- "C does
+// not reach T" -- and never a generator, because a negation may not bind.
+void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth, const bool negated)
 {
     // The tag fact: subject is the one-step pattern, the single object says
     // which closure is meant.
@@ -111,6 +116,21 @@ void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, Reas
         return;
     }
 
+    if (negated && (from_free || to_free))
+    {
+        // A negation never binds -- that is the one reading `¬` has. So the
+        // generator mode below is not available under it, and an open end has
+        // no second meaning to fall back on: `¬(C P⁺ T)` with T free would
+        // have to mean "C reaches nothing at all", which is a different
+        // question and is asked by binding T.
+        if (should_log(depth)) log(depth, "closure", "a negated path condition needs BOTH ends bound");
+        refuse_condition(condition,
+                         "a negated path condition needs BOTH ends bound -- \"" + format(step)
+                             + "\" under ¬ is a test (\"does not reach\"), and a negation binds nothing. "
+                               "Bind the open side with a preceding condition.");
+        return;
+    }
+
     if (!from_free && !to_free)
     {
         // --- Reachability test ---
@@ -118,9 +138,9 @@ void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, Reas
         const bool          holds     = reachable.count(to) != 0;
 
         if (should_log(depth))
-            log(depth, "closure", "path test " + format(from) + " " + format(step) + " " + format(to) + (holds ? " HOLDS" : " FAILS"));
+            log(depth, "closure", std::string(negated ? "negated path test " : "path test ") + format(from) + " " + format(step) + " " + format(to) + (holds == negated ? " FAILS" : " HOLDS"));
 
-        if (!holds) return;
+        if (holds == negated) return;
 
         proceed_after_condition(rule, ctx, depth, rule.variables, rule.unequals, rule.confidence);
         return;

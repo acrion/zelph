@@ -109,12 +109,24 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         {
             adjacency_set guard_rels = filter(condition, core.IsA, core.RelationTypeCategory);
 
+            // Whether the condition carries the negation tag has to be known
+            // BEFORE the three guards are dispatched, not in the leaf branch
+            // below. Each of them returns from here, so a negated guard used to
+            // reach its evaluator without the tag and was evaluated positively:
+            // `¬(guard)` meant `(guard)`, and the justification printed the
+            // negated form beside a deduction that contradicted it.
+            const bool guard_negated = guard_rels.size() == 1
+                                    && (*guard_rels.begin() == _nn_pred
+                                        || *guard_rels.begin() == _closure_pred
+                                        || *guard_rels.begin() == core.Unequal)
+                                    && is_negated_condition(condition, depth);
+
             // --- Neural Condition (≈) ---
             // An approx condition IS the tag fact (pattern nn net), so its
             // predicate identifies it -- same detection scheme as != below.
             if (_nn_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _nn_pred)
             {
-                evaluate_neural(condition, rule, ctx, depth);
+                evaluate_neural(condition, rule, ctx, depth, guard_negated);
                 return;
             }
 
@@ -123,12 +135,32 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             // (pattern closure mode), so its predicate identifies it.
             if (_closure_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _closure_pred)
             {
-                evaluate_closure(condition, rule, ctx, depth);
+                evaluate_closure(condition, rule, ctx, depth, guard_negated);
                 return;
             }
 
             if (guard_rels.size() == 1 && *guard_rels.begin() == core.Unequal)
             {
+                // `¬(X != Y)` asks for the two to be the same node, and
+                // writing the SAME VARIABLE twice already says that -- with
+                // the advantage that the unification engine then uses it to
+                // narrow the search instead of testing afterwards. Giving `!=`
+                // a negated reading would mean an equality constraint that the
+                // deferred-guard machinery (contradicts, guards_unresolved)
+                // has no notion of, for a shape nothing gains by. So it is
+                // refused rather than implemented -- but refused out loud,
+                // because it used to be accepted and silently mean `!=`.
+                if (guard_negated)
+                {
+                    if (should_log(depth))
+                        log(depth, "evaluate", "negated != guard refused: " + format(condition));
+
+                    refuse_condition(condition,
+                                     "¬ cannot be applied to \"!=\" -- write the same variable on both sides "
+                                     "to require two terms to be equal.");
+                    return;
+                }
+
                 if (should_log(depth))
                     log(depth, "evaluate", "Processing inequality guard: " + format(condition));
 
@@ -627,6 +659,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             }
         }
     }
+}
+
+// A condition the engine will not evaluate, reported once. The refusals that
+// go through here are all decided by the SHAPE of the condition -- a negation
+// over a guard that has no negated reading, an end that no condition binds --
+// so the verdict is the same for every candidate binding, and repeating it per
+// binding is how a real workload turns one diagnostic into a million.
+void Reasoning::refuse_condition(const Node condition, const std::string& message)
+{
+    if (!_refused_conditions.insert(condition).second) return;
+    out("Error: " + message, true);
 }
 
 bool Reasoning::is_negated_condition(Node condition, int depth)

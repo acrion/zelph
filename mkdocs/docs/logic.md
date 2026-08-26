@@ -583,6 +583,17 @@ Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no me
 
 The [contradiction rule](#contradiction-detection) the message names is what "these two must not hold together" is written as.
 
+**What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
+
+`¬(C P⁺ T)` and `¬≈net(S P O)` are tests: the first succeeds when there is no path, the second when the net does not confirm the fact. Both need every term bound, because a negation binds nothing, and both say so when a term is open.
+
+`¬(X != Y)` is rejected. It asks for the two terms to be the same node, and writing the same variable twice already asks that – with the advantage that the engine then uses it to narrow the search rather than testing afterwards:
+
+```
+zelph> (A prop X, A prop Y, ¬(X != Y)) => (A pair X)
+Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to require two terms to be equal.
+```
+
 #### Stratified Evaluation
 
 A negated condition asks about _absence_ — but absence _when_? During a
@@ -1172,6 +1183,22 @@ zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
 The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](index.md#the-focus-operator).
 
 Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
+
+**Under `¬` the condition asks the same question the other way round:** does this node _not_ reach that one.
+
+```
+zelph> Q1 P279 Q2
+zelph> Q2 P279 Q3
+zelph> Q4 P279 Q9
+zelph> alice member Q1
+zelph> bob member Q4
+zelph> (X member C, ¬(C P279⁺ Q3)) => (X clear-of Q3)
+(bob clear-of Q3) ⇐ {(bob member Q4) (¬((Q4 P279 Q3) closure one-or-more))}
+```
+
+`alice` is excluded since `Q1` reaches `Q3` in two steps. A negated path condition requires **both** ends bound, and it reports it otherwise: the affirmative version accepts one bound endpoint and produces the other, but a negation binds nothing, thus there is nothing for an open endpoint to transform into. "Reaches nothing at all" poses a distinct inquiry, and it is asked by binding the far end.
+
+The cost operates in reverse as well, and it is important to recognize prior to crafting one for a large graph. The positive form walks the closure once from the bound end. The negated form involves a test for each candidate, so a rule whose other conditions leave thousands of candidates incurs one reachability walk for each of them. Where the inquiry is genuinely a set difference over one predicate – every class below A that is not below B – the [SPARQL layer](sparql.md)'s `MINUS` computes the two closures once and subtracts, which is the shape to reach for at that scale.
 
 A result derived through a path condition stays reconstructible. `.explain` marks the walked premise `[closure]` rather than `[axiom]`, because nobody asserted the path — the engine walked it, and there is no fact to expand further:
 

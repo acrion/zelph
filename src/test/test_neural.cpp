@@ -489,6 +489,72 @@ s1 relG o2
         CHECK(any_output_contains(collector, "conf-ok")); });
 }
 
+TEST_CASE("neural: ¬≈ succeeds exactly where the net does not confirm")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s1 in GIn
+o1 in GOut
+o2 in GOut
+%(zelph/nn-connect "s1" "o1" 0.8)
+%(zelph/nn-connect "s1" "o2" 0.2)
+gnet nn-layers <GIn GOut>
+s1 relG o1
+s1 relG o2
+(A relG B, ¬≈gnet(A relG B)) => (A unverified B)
+)");
+        // o2 scores 0.2 and is the one the net does NOT confirm. Until the
+        // guard dispatch learned to read the negation tag, this rule answered
+        // o1 -- the link the net confirms at 0.8 -- with `¬((s1 relG o1) nn
+        // gnet)` written in its justification.
+        CHECK(any_output_starts_with(collector, "( s1 unverified o2 )"));
+        CHECK_FALSE(any_output_starts_with(collector, "( s1 unverified o1 )"));
+
+        // A negated guard filters and contributes nothing: one minus the net's
+        // confidence measures nothing a deduction could carry, so the deduced
+        // fact keeps the branch's own probability rather than 0.8 or 0.2.
+        collector.clear();
+        interactive.process(R"(%(let [f (zelph/fact "s1" "unverified" "o2")] (if (< 0.99 (zelph/weight f "unverified")) "conf-full" "conf-scaled")))");
+        CHECK(any_output_contains(collector, "conf-full")); });
+}
+
+TEST_CASE("neural: a negated ≈ with an unbound object is refused")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+s2 marked yes
+(A marked yes, ¬≈hnet(A relH X)) => (A unsuggested X)
+)");
+        // Generator mode would have to bind X, and a negation binds nothing.
+        // "The net proposes nothing at all for this subject" is a different
+        // question and is not this one.
+        CHECK(any_output_contains(collector, "needs a bound object"));
+        CHECK_FALSE(any_output_starts_with(collector, "( s2 unsuggested")); });
+}
+
+// An unusable net makes the condition fail in BOTH readings. "The net does not
+// confirm this" and "there is no net" are different statements, and letting the
+// second one satisfy `¬≈` would turn a misspelled net name into a derivation
+// engine: every rule consulting it would start firing on everything.
+TEST_CASE("neural: ¬≈ with a missing net derives nothing either")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s3 relQ o3
+(A relQ B, ¬≈ghostnet(A relQ B)) => (A unverifiedQ B)
+)");
+        CHECK_FALSE(any_output_starts_with(collector, "( s3 unverifiedQ")); });
+}
+
 TEST_CASE("neural: approx generator mode proposes bindings above threshold")
 {
     run_both_modes([](auto& collector, auto& interactive)

@@ -139,6 +139,88 @@ TEST_CASE("path condition: both ends free is refused, and says why")
         CHECK_FALSE(any_output_contains(collector, "(a above d)")); });
 }
 
+// A path condition under `¬` asks the same question the other way round: does
+// this node NOT reach that one. The reading follows from the one reading `¬`
+// has -- the condition succeeds when nothing matches, and it never binds.
+TEST_CASE("path condition: under ¬ it succeeds exactly when there is no path")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("y rel d");
+        collector.clear();
+
+        // a reaches d, d reaches nothing. So the negated condition must fail
+        // for the anchor at a and succeed for the one at d.
+        //
+        // Until this was fixed the guard dispatch in Reasoning::evaluate ran
+        // before the negation tag was read, so `¬(S P279⁺ d)` was evaluated as
+        // `(S P279⁺ d)` -- it derived the answer for a, the one case where
+        // there IS a path, and `.explain` printed the walked premise as
+        // `[absent]` beside it.
+        interactive.process("(X rel S, ¬(S P279⁺ d)) => (X clear-of-d S)");
+
+        CHECK(any_output_contains(collector, "(y clear-of-d d)"));
+        CHECK_FALSE(any_output_contains(collector, "(x clear-of-d a)")); });
+}
+
+// The reflexive variant differs from the transitive one exactly on the start
+// node, and that difference has to survive the negation rather than being
+// swallowed by it.
+TEST_CASE("path condition: ¬ over the reflexive variant excludes the start too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("y rel d");
+        collector.clear();
+
+        // (d P279∗ d) holds by zero steps, so the negation fails for d as
+        // well -- where `¬(d P279⁺ d)` succeeded in the test above.
+        interactive.process("(X rel S, ¬(S P279∗ d)) => (X strictly-clear-of-d S)");
+
+        CHECK_FALSE(any_output_contains(collector, "(y strictly-clear-of-d d)"));
+        CHECK_FALSE(any_output_contains(collector, "(x strictly-clear-of-d a)")); });
+}
+
+TEST_CASE("path condition: a negated path with an open end is refused")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        collector.clear();
+
+        // One bound end is enough for the positive condition, which then
+        // GENERATES a binding per node reached. A negation binds nothing, so
+        // there is nothing for the open end to become and no second reading to
+        // fall back on -- "reaches nothing at all" is asked by binding it.
+        interactive.process("(X rel S, ¬(S P279⁺ T)) => (X nowhere T)");
+
+        CHECK(any_output_contains(collector, "needs BOTH ends bound"));
+        CHECK_FALSE(any_output_contains(collector, "(x nowhere")); });
+}
+
+// The refusal is decided by the shape of the condition, so it is the same for
+// every candidate binding. Reporting it per binding turns one diagnostic into
+// one per fact of the anchoring relation -- millions on a Wikidata network.
+TEST_CASE("path condition: a refusal is reported once, not once per binding")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("x rel b");
+        interactive.process("x rel c");
+        interactive.process("x rel d");
+        collector.clear();
+
+        interactive.process("(X rel S, ¬(S P279⁺ T)) => (X nowhere T)");
+
+        size_t refusals = 0;
+        for (const auto& event : collector.events())
+            if (event.text.find("needs BOTH ends bound") != std::string::npos) ++refusals;
+        CHECK(refusals == 1); });
+}
+
 TEST_CASE("path condition: the printed rule re-enters as the same rule")
 {
     run_both_modes([](auto& collector, auto& interactive)

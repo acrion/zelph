@@ -197,6 +197,41 @@ b before c
         CHECK_FALSE(any_output_contains(collector, "c is earliest")); });
 }
 
+TEST_CASE("stratified: ¬ over an inequality guard is refused, not silently dropped")
+{
+    // `!=` is a built-in constraint, not a fact to look up, and it is
+    // dispatched by its predicate before the leaf branch that reads the
+    // negation tag. So `¬(X != Y)` used to reach the guard WITHOUT its tag and
+    // be evaluated as `X != Y`: the rule below derived `alice same-as bob` --
+    // exactly the pairs that are DIFFERENT -- and printed `¬(alice != bob)` in
+    // the justification of it.
+    //
+    // It is refused rather than given a reading, because a negated inequality
+    // is an equality constraint and writing the SAME VARIABLE twice already
+    // says that, with the advantage that unification then uses it to narrow
+    // the search instead of testing afterwards.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+alice member Q1
+bob member Q1
+(X member C, Y member C, ¬(X != Y)) => (X same-as Y)
+)");
+        CHECK(any_output_contains(collector, "¬ cannot be applied to \"!=\""));
+
+        // And the refusal is one line, not one per candidate pair.
+        size_t refusals = 0;
+        for (const auto& event : collector.events())
+            if (event.text.find("¬ cannot be applied") != std::string::npos) ++refusals;
+        CHECK(refusals == 1);
+
+        // The rule derives nothing at all -- asked of the graph rather than of
+        // the output, where the echo of the rule itself mentions the predicate.
+        collector.clear();
+        interactive.process("P same-as Q");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 TEST_CASE("stratified: ranging over a domain is a positive condition")
 {
     // What the second reading of `¬` used to do implicitly is written down

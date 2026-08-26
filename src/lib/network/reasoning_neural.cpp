@@ -136,7 +136,14 @@ const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
 //     with sigmoid(score) > 0.5
 //   - the confidence multiplies into rule.confidence and ends up as
 //     the deduced fact's probability
-void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth)
+//
+// `negated` is the condition's `¬` tag, which the caller reads for us because
+// the dispatch in Reasoning::evaluate returns here before the leaf branch that
+// otherwise handles negation. Under `¬` the condition is a guard and nothing
+// else: it succeeds when the net does NOT confirm the fact, it contributes no
+// confidence (there is no confidence in an absence to multiply in), and
+// generator mode is unavailable because a negation binds nothing.
+void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth, const bool negated)
 {
     // The condition IS the tag fact (pattern nn net): extract both.
     adjacency_set nets;
@@ -147,6 +154,12 @@ void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, Reaso
         return;
     }
 
+    // A net that cannot be consulted makes the condition fail in BOTH
+    // readings, and that is deliberate. "The net does not confirm this" and
+    // "there is no net" are different statements, and letting the second one
+    // satisfy `¬≈` would turn a misspelled net name into a derivation engine:
+    // every rule consulting it would start firing on everything. The
+    // configuration error is reported by compiled_net; the rule stays inert.
     const NeuralNet* net = compiled_net(*nets.begin(), depth);
     if (!net) return; // condition fails; reason already logged
 
@@ -206,6 +219,9 @@ void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, Reaso
     if (!Zelph::Impl::is_var(o))
     {
         // --- Guard mode ---
+        // Same reasoning as for an unusable net: an object the output layer
+        // does not contain is one the net has no opinion about, not one it
+        // rejects, so `¬≈` does not succeed on it either.
         if (!net->has_node(out_layer, o))
         {
             if (should_log(depth)) log(depth, "neural", "bound object " + format(o) + " is not a member of the output layer");
@@ -224,11 +240,28 @@ void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, Reaso
 
         const double conf = calibrate(raw);
         if (should_log(depth))
-            log(depth, "neural", "≈ guard " + format(s) + " " + format(p) + " " + format(o) + " => confidence " + std::to_string(conf));
+            log(depth, "neural", std::string(negated ? "¬≈ guard " : "≈ guard ") + format(s) + " " + format(p) + " " + format(o) + " => confidence " + std::to_string(conf));
 
-        if (conf <= 0.5) return;
-
-        proceed_after_condition(rule, ctx, depth, rule.variables, rule.unequals, rule.confidence * conf);
+        if ((conf > 0.5) != negated)
+        {
+            // The confidence of the branch is left alone under `¬`. What the
+            // net reports is how strongly it believes the fact; one minus that
+            // is not a measure of anything the deduction can carry, so a
+            // negated guard filters and contributes nothing.
+            proceed_after_condition(rule, ctx, depth, rule.variables, rule.unequals, negated ? rule.confidence : rule.confidence * conf);
+        }
+    }
+    else if (negated)
+    {
+        // Generator mode under `¬` would have to bind the open object, and a
+        // negation binds nothing -- the same wall the path condition meets.
+        // "The net proposes nothing at all for this subject" is a different
+        // question, and it is not this one.
+        if (should_log(depth)) log(depth, "neural", "a negated ≈ condition needs a bound object");
+        refuse_condition(condition,
+                         "a negated ≈ condition needs a bound object -- \"≈\" under ¬ is a test "
+                         "(\"the net does not confirm this\"), and a negation binds nothing. "
+                         "Bind the object with a preceding condition.");
     }
     else
     {
