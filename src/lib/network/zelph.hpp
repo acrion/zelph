@@ -618,6 +618,15 @@ namespace zelph::network
         /// per-candidate test cheap.
         void mark_refuted_fact(Node node) const;
 
+        /// The predicate a refutation is marked with. A NAMED node, because
+        /// the criterion in CLAUDE.md under "What must be a CORE node" gives
+        /// that answer: nothing has to reach it without a name lookup.
+        static const char* refuted_fact_name();
+
+        /// Put a node into the refuted index without writing the marking fact,
+        /// for a caller that has just seen or written one.
+        void note_refuted(Node node) const;
+
         /// Does the graph hold ANY refuted fact? One atomic load, so a caller
         /// on a bulk path can decide whether the question is worth asking at
         /// all before it starts asking it per node.

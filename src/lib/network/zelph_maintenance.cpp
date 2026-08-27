@@ -482,14 +482,12 @@ bool Zelph::is_mentioned(const Node node) const
 // nodes take the first IDs at construction, so adding an eleventh would
 // collide with node 11 of every .bin ever written.
 
+constexpr const char* kRefutedFactName = "refuted";
+
 namespace
 {
     constexpr const char* rule_pattern_name = "rule pattern";
 
-    // A NAMED node for the same reason, and the criterion in CLAUDE.md under
-    // "What must be a CORE node" gives the same answer: nothing has to reach
-    // it without a name lookup.
-    constexpr const char* refuted_fact_name = "refuted";
 }
 
 Node Zelph::rule_pattern_predicate(const bool create) const
@@ -519,6 +517,23 @@ bool Zelph::is_refuted_fact(const Node node) const
     return _pImpl->_refuted_facts.count(node) != 0;
 }
 
+const char* Zelph::refuted_fact_name()
+{
+    return kRefutedFactName;
+}
+
+// The index half of a refutation, without the marking fact -- for the two
+// callers that already have one: mark_refuted_fact, which is about to write
+// it, and Zelph::fact, which has just seen one written by hand.
+void Zelph::note_refuted(const Node node) const
+{
+    if (node == 0) return;
+
+    std::unique_lock lock(_pImpl->_refuted_facts_mtx);
+    _pImpl->_refuted_facts.insert(node);
+    _pImpl->_has_refuted_facts.store(true, std::memory_order_release);
+}
+
 void Zelph::mark_refuted_fact(const Node node) const
 {
     if (node == 0) return;
@@ -529,12 +544,12 @@ void Zelph::mark_refuted_fact(const Node node) const
     // the edge, so a loaded file cannot be asked which of its entries were
     // fact probabilities rather than synapse weights.
     auto*      self = const_cast<Zelph*>(this);
-    const Node pred = self->node(refuted_fact_name, "zelph");
-    self->fact(node, core.IsA, {pred});
+    const Node pred = self->node(kRefutedFactName, "zelph");
 
-    std::unique_lock lock(_pImpl->_refuted_facts_mtx);
-    _pImpl->_refuted_facts.insert(node);
-    _pImpl->_has_refuted_facts.store(true, std::memory_order_release);
+    // The index is maintained by Zelph::fact when it sees this marking, so
+    // the two paths -- written here and written by hand -- agree by
+    // construction rather than by both remembering to do it.
+    self->fact(node, core.IsA, {pred});
 }
 
 bool Zelph::has_refuted_facts() const
@@ -559,7 +574,7 @@ void Zelph::rebuild_refuted_index() const
     _pImpl->_has_refuted_facts.store(false, std::memory_order_release);
 
     auto*      self = const_cast<Zelph*>(this);
-    const Node pred = self->get_node(refuted_fact_name, "zelph");
+    const Node pred = self->get_node(kRefutedFactName, "zelph");
     if (pred == 0) return;
 
     for (const Node subject : get_sources(core.IsA, pred, true))

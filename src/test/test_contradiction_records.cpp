@@ -240,6 +240,55 @@ x q y
 // record is the one thing that can break that promise from the inside: it is
 // the set of the facts that matched, reached by expanding any ONE of them, and
 // expanding it in turn reaches the others -- whatever predicate they belong to.
+// The index is a CACHE of the marking facts, and a cache has to agree with
+// what it caches whichever way round the graph was built. rebuild_refuted_index
+// reads the markings back on load, so one written BY HAND has to reach the
+// index when it is written, or the same network answers differently before and
+// after a save and a load -- which is the one thing a round trip may never do.
+//
+// Whether writing an engine marking by hand SHOULD mean anything is a separate,
+// open question (`(myrel ~ ->) is odd` is the same shape). This test does not
+// answer it. It pins that the answer is the same on both sides of the file.
+TEST_CASE("refuted marking: a hand-written one means the same before and after a round trip")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_refuted_by_hand.bin";
+
+    const auto answers_for_p = [](zelph::io::OutputCollector&  collector,
+                                  zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process("S p O");
+        return collect_answers(collector);
+    };
+
+    std::vector<std::string> before;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+c p d
+*(a p b) ~ refuted
+)");
+        before = answers_for_p(collector, interactive);
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    const std::vector<std::string> after = answers_for_p(collector, interactive);
+
+    CHECK(before == after);
+
+    // And the marking is honoured, not ignored: `c p d` answers, `a p b` does
+    // not.
+    CHECK(after.size() == 1);
+    CHECK(after.front().find("c p d") != std::string::npos);
+
+    std::filesystem::remove(file);
+}
+
 TEST_CASE("contradiction record: it does not travel with a predicate slice")
 {
     const auto file = std::filesystem::temp_directory_path() / "zelph_contradiction_slice.bin";

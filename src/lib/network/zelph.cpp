@@ -825,6 +825,28 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         // clear left that window open. See invalidate_fact_structures_for.
         invalidate_fact_structures_for(subject, predicate, objects, answer.relation());
 
+        // The refuted index is a CACHE of the marking facts, and a cache has
+        // to agree with what it caches whichever way round the graph was
+        // built. rebuild_refuted_index reads the markings back on load, so a
+        // marking asserted BY HAND -- `*(a p b) ~ refuted` -- has to reach the
+        // index here, or the same network answers `S p O` with `a p b` in the
+        // session that wrote it and without it after a save and a load.
+        //
+        // Whether writing an engine marking by hand SHOULD mean anything is
+        // the open question `(myrel ~ ->) is odd` belongs to; this is not that
+        // question. Whatever it means, it has to mean the same before and
+        // after a round trip.
+        //
+        // Costs two comparisons, and only on the IsA path.
+        if (predicate == core.IsA && objects.size() == 1)
+        {
+            if (const Node refuted = get_node(refuted_fact_name(), "zelph");
+                refuted != 0 && *objects.begin() == refuted)
+            {
+                note_refuted(subject);
+            }
+        }
+
         // Maintain the template-variable store from the ACTUAL triple
         // (see Impl's _template_vars). Data facts -- the overwhelming
         // majority -- cost three store misses and allocate nothing.
