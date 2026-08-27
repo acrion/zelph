@@ -537,6 +537,11 @@ void Zelph::mark_refuted_fact(const Node node) const
     _pImpl->_has_refuted_facts.store(true, std::memory_order_release);
 }
 
+bool Zelph::has_refuted_facts() const
+{
+    return _pImpl->_has_refuted_facts.load(std::memory_order_acquire);
+}
+
 void Zelph::forget_refuted(const adjacency_set& gone) const
 {
     if (!_pImpl->_has_refuted_facts.load(std::memory_order_acquire)) return;
@@ -1175,8 +1180,48 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
         std::vector<Node> pending;
 
-        const auto retain = [&keep, &pending](const Node nd)
+        // A contradiction record does NOT travel with a slice, and it is the
+        // one thing the structural closure has to be told about. The record is
+        // the refuted set of the facts that matched, so it is reached by
+        // expanding any ONE of them -- and expanding it in turn drags in the
+        // others, whatever predicate they belong to. A slice of `p` then held
+        // `x q y` and answered `S q O` with it, which is exactly the promise
+        // the slice makes and breaks: the facts of the named predicates, and
+        // nothing else.
+        //
+        // Nothing is lost by leaving it behind. A record is derived from data
+        // the slice either kept -- in which case its own first run finds the
+        // contradiction and records it again -- or did not keep, in which case
+        // the contradiction is not a property of the slice at all.
+        // The marking fact goes with it. Keeping the record out of `keep`
+        // while its `~ refuted` fact stays in is not half a record: the saver
+        // writes the EDGES of what it keeps, so the loader rebuilds the set
+        // node from them -- and with it the members of every predicate.
+        // Read UNLOCKED, like exists_unlocked above: this function holds both
+        // adjacency locks shared, and get_left would take one again --
+        // recursive shared locking is undefined. It also copies the whole set,
+        // which is the wrong thing to do once per retained node.
+        //
+        // The whole test is behind one atomic load, so a graph that refutes
+        // nothing -- which is every graph without a contradiction rule, and
+        // every one built before records existed -- pays that and no more.
+        const bool any_refuted = has_refuted_facts();
+
+        const auto refuted_or_its_marking = [this, any_refuted](const Node nd)
         {
+            if (!any_refuted) return false;
+            if (is_refuted_fact(nd)) return true;
+
+            const auto it = _pImpl->_left.find(nd);
+            if (it == _pImpl->_left.end()) return false;
+            for (const Node candidate : it->second)
+                if (is_refuted_fact(candidate)) return true;
+            return false;
+        };
+
+        const auto retain = [&keep, &pending, &refuted_or_its_marking](const Node nd)
+        {
+            if (refuted_or_its_marking(nd)) return;
             if (keep.insert(nd).second) pending.push_back(nd);
         };
 

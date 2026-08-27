@@ -236,6 +236,54 @@ x q y
     CHECK(contradiction_lines(collector) == 0);
 }
 
+// A slice promises the facts of the named predicates and nothing else. The
+// record is the one thing that can break that promise from the inside: it is
+// the set of the facts that matched, reached by expanding any ONE of them, and
+// expanding it in turn reaches the others -- whatever predicate they belong to.
+TEST_CASE("contradiction record: it does not travel with a predicate slice")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_contradiction_slice.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+x p y
+x q y
+(A p B, A q B) => !
+)");
+        REQUIRE(contradiction_lines(collector) == 1);
+        interactive.process(".save-predicates \"" + file.string() + "\" p");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    collector.clear();
+
+    // The q fact is not in the slice, and neither is the record about it. The
+    // marking fact has to stay out with it: the saver writes the EDGES of what
+    // it keeps, so a kept marking fact rebuilds the set -- and the set rebuilds
+    // its members.
+    interactive.process("S q O");
+    CHECK(collect_answers(collector).empty());
+
+    collector.clear();
+    interactive.process("S ~ refuted");
+    CHECK(collect_answers(collector).empty());
+
+    // What the slice DOES keep is the fact of the named predicate and the rule.
+    collector.clear();
+    interactive.process("S p O");
+    CHECK(answers_contain(collector, "x p y"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "=> !"));
+
+    std::filesystem::remove(file);
+}
+
 TEST_CASE("contradiction record: the switch is honoured in both directions")
 {
     zelph::io::OutputCollector  collector;

@@ -618,6 +618,11 @@ namespace zelph::network
         /// per-candidate test cheap.
         void mark_refuted_fact(Node node) const;
 
+        /// Does the graph hold ANY refuted fact? One atomic load, so a caller
+        /// on a bulk path can decide whether the question is worth asking at
+        /// all before it starts asking it per node.
+        bool has_refuted_facts() const;
+
         /// Drop these nodes from the index, because they are being removed.
         /// A contradiction record is content-addressed, so a stale entry would
         /// survive the removal of the very facts it is about and silence the
