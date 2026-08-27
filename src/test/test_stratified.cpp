@@ -256,6 +256,50 @@ c p d
         CHECK_THROWS(interactive.process("a p b")); });
 }
 
+// The reading `¬(F)` got on its own line does not extend below the top level,
+// and until it was refused there, the operator was not reported but DROPPED:
+// the sugar builds its operand with `zelph/fact` and tags the result, so a
+// statement that denies a fact left the graph claiming it. The residue was a
+// negation tag on a node no rule negates, which `.node` then reported as
+// "Negated by a rule: yes".
+TEST_CASE("negation: ¬ inside a plain statement is refused, not silently dropped")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Object position, subject position, and one level further down --
+        // the operator is dropped at whatever depth it sits, so the guard has
+        // to ask the whole statement rather than its direct arguments.
+        CHECK_THROWS(interactive.process("x q (¬(a p b))"));
+        CHECK_THROWS(interactive.process("(¬(a p b)) q x"));
+        CHECK_THROWS(interactive.process("x q (y r (¬(a p b)))"));
+
+        // The assertion that matters is this one, not the throws above: the
+        // damage was caused by the operand being BUILT, which happens before
+        // any guard placed further in can fire. Nothing of `a p b` may be in
+        // the graph.
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+
+        // And the reading it does have remains untouched, in both places it
+        // holds: on its own line, and as a rule condition.
+        collector.clear();
+        interactive.process("¬(a p b)");
+        CHECK(any_output_contains(collector, "¬(a p b)"));
+
+        process_lines(interactive, R"(
+m q n
+(M q N, ¬(M p N)) => (M r N)
+)");
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(answers_contain(collector, "m r n")); });
+}
+
 TEST_CASE("negation: a pattern is looked up, not asserted, when a command resolves it")
 {
     run_both_modes([](auto& collector, auto& interactive)

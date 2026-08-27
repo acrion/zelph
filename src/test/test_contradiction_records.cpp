@@ -289,6 +289,50 @@ c p d
     std::filesystem::remove(file);
 }
 
+// `¬` is a statement spelling, so it reads as one only where the node IS the
+// statement. The marking fact printed itself as "(¬(a p b)) ~ refuted", and
+// there the prefix is the OTHER operator -- negation as failure -- which a
+// plain statement has no reading for: pasting that answer back added a negation
+// tag nobody had written, and `.node` reported "Negated by a rule: yes" for it.
+// The predicate of the marking fact already says what the prefix was saying
+// twice, so inside the term it goes.
+TEST_CASE("refuted marking: the printed marking is the marking that was written")
+{
+    const auto refuted_answers = [](const char* line)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(line);
+        collector.clear();
+        interactive.process("S ~ refuted");
+        return collect_answers(collector);
+    };
+
+    const std::vector<std::string> printed = refuted_answers("(a p b) ~ refuted");
+    REQUIRE(printed.size() == 1);
+    CHECK(printed.front().find("(a p b) ~ refuted") != std::string::npos);
+
+    // The round trip is the assertion: what came back has to name the same
+    // marking, and only that one -- a second answer would be the negation tag
+    // the old spelling brought with it.
+    CHECK(refuted_answers(printed.front().c_str()) == printed);
+
+    // Standing alone the node still prints as the claim it is. That is the
+    // direction the prefix was introduced for, and dropping it there would
+    // re-enter as the opposite of what the graph holds.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("¬(a p b)");
+    collector.clear();
+    interactive.process(".explain (a p b)");
+    CHECK(any_output_contains(collector, "¬(a p b)"));
+
+    collector.clear();
+    interactive.process(".node a p b");
+    CHECK(any_output_contains(collector, "Refuted (claimed not to hold): yes"));
+    CHECK_FALSE(any_output_contains(collector, "Negated by a rule"));
+}
+
 TEST_CASE("contradiction record: it does not travel with a predicate slice")
 {
     const auto file = std::filesystem::temp_directory_path() / "zelph_contradiction_slice.bin";

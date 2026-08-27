@@ -85,9 +85,10 @@ namespace zelph
         // downstream can take it back.
         /// `resolving_pattern` says the code denotes a node to LOOK UP rather
         /// than a statement to assert -- what every command that takes a
-        /// printed fact pattern needs. Without it a pattern the graph holds as
-        /// known-wrong cannot be addressed at all, because building it is an
-        /// assertion and Zelph::fact refuses to contradict the graph.
+        /// printed fact pattern needs, including the destructive ones. Without
+        /// it a pattern the graph holds as known-wrong cannot be addressed at
+        /// all, because building it is an assertion and Zelph::fact refuses to
+        /// contradict the graph.
         network::Node evaluate_expression(const std::string& janet_code, bool quiet = false, bool resolving_pattern = false);
 
         // Inject arguments into the script environment (for script files with args)

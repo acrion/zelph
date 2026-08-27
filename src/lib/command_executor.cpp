@@ -3154,6 +3154,19 @@ private:
         // used to insert that very fact. The construction therefore runs
         // inside a scratch cluster which is dropped afterwards, so a
         // pattern the graph did not already contain leaves no trace.
+        //
+        // The cluster keeps the assertion from SURVIVING; it cannot keep it
+        // from being refused. `Zelph::fact` will not claim a fact the graph
+        // holds as known-wrong, so ".prune-facts (a p b)" answered "fact():
+        // this fact is known to be wrong" for a refuted fact instead of saying
+        // anything about pruning -- the same failure f60f05d fixed for .node
+        // and .explain, on the one command family its own comment names and
+        // did not reach.
+        //
+        // A pattern with VARIABLES is still built, and must be: it is what
+        // unification matches against, so it needs its edges and not merely
+        // the id of a triple. That is why the flag answers only for a fact the
+        // graph holds -- see the note in `janet_cfun_zelph_fact`.
         static const std::string scratch  = "__prune";
         const std::string        previous = _n->active_cluster_name();
         _n->set_active_cluster(scratch);
@@ -3161,7 +3174,7 @@ private:
         network::Node pattern_fact = 0;
         try
         {
-            pattern_fact = _script_engine->evaluate_expression(janet_code, /*quiet*/ true);
+            pattern_fact = _script_engine->evaluate_expression(janet_code, /*quiet*/ true, /*resolving_pattern*/ true);
         }
         catch (...)
         {
@@ -3290,11 +3303,33 @@ private:
                 _n->out("Pruned " + what + " matching facts and 0 nodes (a pattern without variables binds nothing to delete).", true);
 
             if (exists) _n->diagnostic("Consider running .cleanup.", true);
+
+            // is_asserted_fact has three ways of saying no, and the hint named
+            // only the first of them -- so a REFUTED fact was reported as a
+            // rule's own pattern, which is a diagnosis of the wrong mechanism
+            // and sends the reader to look for a rule that is not there. Each
+            // reason gets its own sentence, because each has a different next
+            // step: a pattern belongs to a rule, a refutation is a claim in
+            // its own right, and a pattern with variables in its closure was
+            // never a statement about anything.
             if (present && !exists)
-                _n->diagnostic("That statement exists only as a rule's own pattern, not as data -- "
-                               "the prune commands remove claims. Use .node to get its ID and .remove "
-                               "to delete graph structure.",
-                               true);
+            {
+                if (_n->is_refuted_fact(pattern_fact))
+                    _n->diagnostic("That statement is held as REFUTED -- the graph claims it does not "
+                                   "hold, so there is no claim of it to remove. Use .node to get its ID "
+                                   "and .remove to delete the node itself.",
+                                   true);
+                else if (_n->is_rule_pattern(pattern_fact))
+                    _n->diagnostic("That statement exists only as a rule's own pattern, not as data -- "
+                                   "the prune commands remove claims. Use .node to get its ID and .remove "
+                                   "to delete graph structure.",
+                                   true);
+                else
+                    _n->diagnostic("That statement carries variables, so nobody claimed it -- the prune "
+                                   "commands remove claims. Use .node to get its ID and .remove to delete "
+                                   "graph structure.",
+                                   true);
+            }
             if (!present) explain_collection_literal({cmd.begin() + static_cast<long>(pattern_first), cmd.end()});
             return;
         }

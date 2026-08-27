@@ -592,6 +592,15 @@ Error in line "a p b": fact(): this fact is known to be wrong
 
 This is the mechanism zelph uses for a negative claim: a fact carries a probability, and one below 0.5 makes it known-wrong. The claim survives `.save` and `.load`, and it prints as what it is – the echo of `¬(a p b)` is `¬(a p b)`, not `a p b`.
 
+That reading belongs to the line, not to the prefix, so it does not extend to a statement that merely _contains_ a pattern. There `¬` is refused:
+
+```
+zelph> x mentions (¬(a p b))
+Error in line "x mentions (¬(a p b))": "¬" is a condition operator and has no meaning inside a plain statement: it succeeds when a pattern is ABSENT, which only a rule condition can ask. On its own line "¬(a p b)" says that the fact does not hold.
+```
+
+The marking a refutation writes is printed without the prefix for the same reason – `(a p b) ~ refuted` – since the predicate is already saying it, and a `¬` inside the subject would be interpreted as the condition operator when the line is re-entered.
+
 A rule derives what holds, so a negated _consequence_ still has no reading and is refused:
 
 ```

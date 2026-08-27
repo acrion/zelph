@@ -1163,14 +1163,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // rule's conjunction set. Everywhere else the tag is reported BESIDE the
     // term; see the property line of `.node` and the axiom label of
     // `.explain`.
-    if (refuted
+    if ((refuted && parent == 0)
         || (is_negation && parent != 0
             && (z->parse_relation(parent) == z->core.Causes
                 || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known())))
     {
-        // A refutation needs no such parent test: it is not a tag on somebody
-        // else's pattern but the claim this node stands for, wherever it is
-        // printed.
+        // A refutation is the claim this node stands for rather than a tag on
+        // somebody else's pattern, so it needs no test for WHICH parent -- but
+        // it needs the same test for whether there is one. `¬` is a statement
+        // spelling and reads as one only where the node IS the statement: on
+        // an answer line, in a `.explain` step, in the echo of the line that
+        // wrote it. Inside a composed term it is a different operator -- the
+        // negation-as-failure prefix, which a plain statement refuses -- so
+        // the marking fact printed itself as "(¬(a p b)) ~ refuted", and that
+        // line came back carrying a negation tag nobody had written. It prints
+        // "(a p b) ~ refuted" now, where the predicate already says it.
         result = "¬(" + result + ")";
     }
     else if (scheme_render && !children_ok)

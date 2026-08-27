@@ -85,6 +85,32 @@ static bool is_negation_ast(Janet node)
     return false;
 }
 
+// Does a `¬` stand anywhere inside this AST? is_negation_ast asks whether an
+// argument IS one; a plain statement has to ask whether one is buried in it,
+// because the operator is dropped at whatever depth it sits: "x q (¬(a p b))"
+// and "x q (y r (¬(a p b)))" both build the operand with zelph/fact and then
+// tag it, so both assert the very fact the "¬" denies.
+//
+// Asked of the SYNTAX for the same reason is_negation_ast is, and the walk
+// is over children rather than over the known tag names on purpose: a value
+// form added to the grammar later must not open the hole again by not being
+// listed.
+static bool contains_negation_ast(Janet node)
+{
+    const Janet* data;
+    int32_t      len;
+    if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+
+    if (janet_checktype(data[0], JANET_KEYWORD)
+        && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "negation")
+        return true;
+
+    for (int32_t i = 1; i < len; ++i)
+        if (contains_negation_ast(data[i])) return true;
+
+    return false;
+}
+
 // The same question for the neural condition. `≈` is written as a prefix on a
 // value, so the AST names it directly.
 static bool is_approx_ast(Janet node)
@@ -138,8 +164,8 @@ public:
     // ¬(a p b) became writable, every command that addresses a pattern by
     // printing it back answered "Unknown node" for exactly the facts a user
     // has most reason to look at. Under this flag the pattern is LOOKED UP
-    // instead of asserted; a pattern the graph does not hold still denotes its
-    // node, because the id is the hash of the triple.
+    // instead of asserted -- exactly, and only where the graph holds it; see
+    // the note at the lookup itself for why both halves of that matter.
     bool _resolving_pattern = false;
 
     // Save/restore around a nested evaluation (an .import inside a block, a
@@ -2453,15 +2479,33 @@ public:
         }
 
         // Resolving a printed pattern is not claiming it: look the fact up,
-        // and fall back on the hash of the triple, which is the node's id
-        // whether or not the graph holds it. Only when neither answers -- a
-        // pattern carrying variables, whose components are fresh nodes -- does
-        // the construction below run, and then there is nothing to contradict.
+        // and answer with the node the graph HAS. Only when the graph has none
+        // -- a pattern carrying variables, or a ground one nobody entered --
+        // does the construction below run, and then there is nothing to
+        // contradict; the scratch cluster the caller holds rolls it back.
+        //
+        // Asked as is_known, not for the id check_fact hands back either way.
+        // That id is the hash of the triple and is meaningful for a fact the
+        // graph does NOT hold -- it is what lets .node say "Unknown node"
+        // rather than invent one -- but it comes with no edges under it, and a
+        // pattern is more than an id to anything that has to MATCH with it:
+        // answering with it gave the prune commands a bare number for
+        // "(S p O)", which unification then printed as "??" and matched
+        // nothing. A caller that wants the id of an absent pattern still gets
+        // it, from the construction below, which produces the same hash inside
+        // the scratch cluster the caller holds.
+        //
+        // Exactly the fact that was asked for, too. A WIDER one -- "a p b c"
+        // when "a p b" was named -- is what unification matches, and the proof
+        // search asks for it in those terms itself (resolve_pattern's
+        // `containing` flag); a command that names a pattern must not silently
+        // resolve to a fact carrying an object it was not told about, least of
+        // all a destructive one.
         if (s_instance->_resolving_pattern)
         {
-            network::Node found = s_instance->_n->check_fact(s, p, objs).relation();
-            if (found == 0) found = network::containing_fact(s_instance->_n, s, p, objs);
-            if (found != 0)
+            const network::Answer known = s_instance->_n->check_fact(s, p, objs);
+
+            if (const network::Node found = known.is_known() ? known.relation() : network::Node{0}; found != 0)
             {
                 Janet res = zelph_wrap_node(found);
                 if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
@@ -3611,6 +3655,31 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                             "a rule cannot assert what a network believes. Consult the net in a "
                             "condition and derive an ordinary fact from it.");
                 }
+            }
+            else
+            {
+                // Outside a rule there is no condition slot, so `¬` has no
+                // reading below the top level either -- and it was not
+                // reported, it was DROPPED. The sugar builds its operand with
+                // `zelph/fact` and tags the result, so a statement that denies
+                // a fact came away claiming it.
+                //
+                // Same shape as the consequence slot, and as `¬(F)` on its own
+                // line before df49661 gave that one a reading. The residue is
+                // the same too: a negation tag on a node no rule negates,
+                // which `.node` then reports as "Negated by a rule: yes".
+                //
+                // The whole statement is asked, predicate included: the guard
+                // must sit ahead of `build_smart_call`, because by the time
+                // `zelph/negate` receives its argument the fact underneath it
+                // has been asserted.
+                for (const Janet& arg : fact_args)
+                    if (contains_negation_ast(arg))
+                        throw std::runtime_error(
+                            "\"¬\" is a condition operator and has no meaning inside a plain "
+                            "statement: it succeeds when a pattern is ABSENT, which only a rule "
+                            "condition can ask. On its own line \"¬(a p b)\" says that the fact "
+                            "does not hold.");
             }
 
             // A path marker standing alone is refused too, but not here: only

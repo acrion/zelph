@@ -727,6 +727,37 @@ x r y
     }
 }
 
+// A refuted fact is the SECOND way is_asserted_fact says no, and the hint knew
+// only the first: it reported "exists only as a rule's own pattern" about a
+// statement no rule mentions, which names the wrong mechanism and sends the
+// reader looking for a rule that is not there. What the command DOES is right
+// either way -- the prune commands remove claims, and a refutation is the claim
+// that the fact does not hold, so there is no positive claim of it to take.
+//
+// Whether the commands should extend to a refuted fact at all is a separate,
+// undecided question; this pins only that the reason given is the true one.
+TEST_CASE("pruning: a refuted fact is not reported as a rule's pattern")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+¬(a p b)
+c q d
+)");
+    collector.clear();
+    interactive.process(".prune-facts (a p b)");
+    CHECK(any_output_contains(collector, "Pruned 0"));
+    CHECK(any_event_contains(collector, "REFUTED"));
+    CHECK_FALSE(any_event_contains(collector, "only as a rule's own pattern"));
+
+    // The control, so the hint is read as being about the refutation and not
+    // about the command: an ordinary fact beside it prunes and says nothing.
+    collector.clear();
+    interactive.process(".prune-facts (c q d)");
+    CHECK(any_output_contains(collector, "Pruned 1"));
+    CHECK_FALSE(any_event_contains(collector, "REFUTED"));
+}
+
 // ---------------------------------------------------------------------------
 // .prune-nodes <variable> (<conditions>) -- a conjunction plus the one thing
 // a conjunction cannot say on its own: which of its variables names the
