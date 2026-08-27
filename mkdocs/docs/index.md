@@ -520,6 +520,11 @@ repeatable query idiom. The operand is evaluated exactly once and used as both
 subject and object, so both sides are guaranteed to be the _same_ node — even
 when the operand has side effects (a focus `*`, nested fact creation).
 
+In the predicate position, it also carries a
+[path marker](logic.md#transitive-path-conditions): `:pred⁺ X` is `(X pred⁺ X)`
+and inquires whether `X` reaches itself, which is the manner in which a cycle
+is detected.
+
 > The term _self-fact_ is zelph's own: graph-theoretically a loop, relationally
 > a point on the diagonal of the predicate — the classic way to encode unary
 > predicates over a binary-relation substrate. For the logic-side perspective,

@@ -3357,6 +3357,28 @@ public:
             }
             if (pred.empty()) return "nil";
 
+            // The marker is a suffix on the PREDICATE token, and this is a
+            // predicate position, so ":P⁺ X" is the self-path "(X P⁺ X)" --
+            // the reachability of a node from itself, which is a cycle test.
+            // Splitting it off here is what keeps the two spellings one thing:
+            // the sugar took its token literally, so ":P279⁺ x" built a
+            // predicate NAMED "P279⁺" and derived nothing, while "x P279⁺ x"
+            // was read as a path.
+            //
+            // Emitted exactly as build_smart_call emits it, guard included and
+            // for the same reason -- the guard has to run before the one-step
+            // fact under the marker is built. What differs is that the operand
+            // is bound ONCE and stands at both ends, which is the whole of
+            // what the self-fact sugar promises; it also makes the guard's
+            // question the right one, since a concrete operand is a ground
+            // path and a variable is the question the engine answers.
+            std::string base;
+            std::string mode;
+            if (split_path_marker(pred, base, mode))
+                return "(let [$sf " + transform_arg(data[2])
+                     + "] (do (zelph/path-guard $sf $sf) (zelph/path (zelph/fact $sf \""
+                     + string::escape_atom(base) + "\" $sf) \"" + mode + "\")))";
+
             const std::string pred_code = string::is_var(pred)
                                             ? "'" + pred
                                             : "\"" + string::replace_all_copy(pred, "\"", "\\\"") + "\"";

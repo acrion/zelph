@@ -1242,6 +1242,23 @@ The operator is **not a reserved character**. It is read only as a trailing mark
 
 Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
 
+**A marker on a [self-fact](index.md#the-self-fact-prefix) inquires if a node reaches itself**, since `:pred X` is `(X pred X)` and predicate position is where the marker is read. That is a cycle test, and it needs nothing beyond what is already here – one condition to bind the node, and the path condition to ask:
+
+```
+zelph> Q1 ~ class
+zelph> Q2 ~ class
+zelph> Q5 ~ class
+zelph> Q1 P279 Q2
+zelph> Q2 P279 Q1
+zelph> Q5 P279 Q6
+zelph> (C ~ class, :P279⁺ C) => (C "sits in a cycle" C)
+((C ~ class), ((:P279 C) closure one-or-more)) => (C "sits in a cycle" C)
+(Q1 "sits in a cycle" Q1) ⇐ {(Q1 ~ class) ((:P279 Q1) closure one-or-more)}
+(Q2 "sits in a cycle" Q2) ⇐ {(Q2 ~ class) ((:P279 Q2) closure one-or-more)}
+```
+
+`Q5` is excluded: it has a superclass, but no path back to itself. With `∗` every node qualifies instead, since zero steps is a path.
+
 **Under `¬` the condition asks the same question the other way round:** does this node _not_ reach that one.
 
 ```

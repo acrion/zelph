@@ -358,6 +358,86 @@ TEST_CASE("path condition: the printed rule re-enters as the same rule")
         CHECK(any_output_contains(collector, "(x above d)")); });
 }
 
+namespace
+{
+    // a and b form a two-cycle, c is not in one. All three are classes, so a
+    // rule can bind an end without saying which node it is interested in.
+    constexpr const char* kCycle =
+        "a ~ cls\nb ~ cls\nc ~ cls\na P279 b\nb P279 a\nc P279 d\n";
+} // namespace
+
+// ":pred X" is the self-fact "(X pred X)", and a marker on the predicate token
+// is a marker there like anywhere else -- so ":P⁺ X" asks whether X reaches
+// ITSELF, which is a cycle test. The sugar used to take its token literally,
+// which is the one position where a marker in predicate position was not read
+// as one: ":P279⁺ x" built a predicate NAMED "P279⁺" and derived nothing.
+//
+// Pinned as an EQUIVALENCE rather than by its answers alone. The two spellings
+// are one statement or they are two, and the second is how they drift apart
+// again -- a later change to either has to move both.
+TEST_CASE("path condition: :P⁺ X is the self-path (X P⁺ X)")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto in_cycle = [&](const char* rule)
+        {
+            interactive.process(".new");
+            feed(interactive, kCycle);
+            interactive.process(rule);
+            collector.clear();
+            interactive.process("S in-cycle O");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::sort(answers.begin(), answers.end());
+            return answers;
+        };
+
+        const auto sugared = in_cycle("(X ~ cls, :P279⁺ X) => (X in-cycle X)");
+        const auto spelled = in_cycle("(X ~ cls, X P279⁺ X) => (X in-cycle X)");
+
+        CHECK(sugared == spelled);
+
+        // And it is the cycle that decides, not the class membership: a and b
+        // reach themselves through each other, c does not reach itself at all.
+        // Asserted as the whole answer set, because a substring test for "c"
+        // matches the predicate name itself.
+        CHECK(sugared == std::vector<std::string>{":in-cycle a", ":in-cycle b"}); });
+}
+
+TEST_CASE("path condition: the reflexive self-path holds for every node")
+{
+    // Zero steps is a path, so ∗ says yes even for c, which has no P279 edge
+    // back to itself. That difference from ⁺ is the whole of what the two
+    // markers are, and it has to survive the sugar.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kCycle);
+        interactive.process("(X ~ cls, :P279∗ X) => (X reaches-self X)");
+        collector.clear();
+
+        interactive.process("S reaches-self O");
+        CHECK(collect_answers(collector).size() == 3); });
+}
+
+TEST_CASE("path condition: a ground self-path outside a rule is refused")
+{
+    // The same ruling as for "a P279⁺ d": with the end concrete there is
+    // nothing to ask, and the guard has to fire before the one-step fact is
+    // built. What the refusal is worth is that no node named "P279⁺" is left
+    // behind -- that node is what the literal reading used to create.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kCycle);
+    collector.clear();
+
+    CHECK_THROWS(interactive.process(":P279⁺ a"));
+
+    collector.clear();
+    CHECK_THROWS(interactive.process(".node \"P279⁺\""));
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
 // The marker earns its place by NOT being reserved: it is read only as a
 // trailing marker in predicate position, and only when a name is left over.
 TEST_CASE("path condition: the marker stays an ordinary character elsewhere")
