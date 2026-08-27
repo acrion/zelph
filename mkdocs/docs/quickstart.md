@@ -273,6 +273,7 @@ Giving a node a name that another node already holds in that language **merges t
 - `.anchors [on|off]` – Show or set anchor-based candidate lookups in unification (default: on)
 - `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
 - `.fact-stores [on|off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
+- `.contradiction-records [on|off]` – Show or disable writing each contradiction into the graph (memory vs. repeated reports)
 
 #### Logging & Profiling
 
