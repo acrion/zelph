@@ -621,6 +621,17 @@ Answer: (b P279 d) closure one-or-more
 Answer: (c P279 d) closure one-or-more
 ```
 
+Writing `¬` in front makes no difference to that. `¬(F)` denies a fact, and neither of these two is one – there is no claim of reachability, or of what a net believes, for a line to deny:
+
+```
+zelph> ¬(a P279⁺ d)
+Error in line "¬(a P279⁺ d)": "⁺" and "∗" are condition operators, and a "¬" in front does not change that: reachability is what the engine WALKS, so there is no claim of it to deny. Use the path condition in a rule, under "¬" if what you want is the absence of a path.
+zelph> ¬≈net(a p b)
+Error in line "¬≈net(a p b)": "≈" is a condition operator, and a "¬" in front does not change that: it asks what a network believes, which a rule condition can read and a statement can neither claim nor deny. Use it in a rule condition, under "¬" for the case the net does not confirm.
+```
+
+Under `¬` in a rule _condition_ both are ordinary tests, which is the next section.
+
 **What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
 
 `¬(C P⁺ T)` and `¬≈net(S P O)` are tests: the first succeeds when there is no path, the second when the net does not confirm the fact. Both need every term bound, because a negation binds nothing, and both say so when a term is open.

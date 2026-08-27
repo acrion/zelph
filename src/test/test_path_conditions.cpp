@@ -246,6 +246,35 @@ TEST_CASE("path condition: a ground path outside a rule is refused")
     CHECK(collect_answers(collector).empty());
 }
 
+// A `¬` in front is not a way past that refusal, and it used to be one. A
+// negated line is routed through zelph/refute, while the path sugar is keyed on
+// zelph/fact -- so the marker was never split off the predicate token and
+// "¬(a P279⁺ d)" built a fact whose predicate is a node NAMED "P279⁺". An
+// invented predicate, marked refuted, out of a line about reachability, with no
+// message of any kind; the same line without the "¬" was refused throughout.
+TEST_CASE("path condition: a ground path under a negation is refused too")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("¬(a P279⁺ d)"));
+    CHECK_THROWS(interactive.process("¬(a P279∗ d)"));
+
+    // What the throw is worth is this: the marker is still a marker and not
+    // part of a name. A node called "P279⁺" is what the old path left behind.
+    collector.clear();
+    CHECK_THROWS(interactive.process(".node \"P279⁺\""));
+
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+    collector.clear();
+    interactive.process("X ~ refuted");
+    CHECK(collect_answers(collector).empty());
+}
+
 // The same shape with a variable in it is a QUESTION, and answering it is the
 // feature. The refusal above is decided when the ends are resolved, not by the
 // syntax, which is why it cannot live in the parser.

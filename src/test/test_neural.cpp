@@ -692,6 +692,31 @@ knet nn-layers <KIn KOut>
     CHECK(any_output_contains(collector, "No rules found"));
 }
 
+// A plain "≈net(a p b)" is refused and says why. Under a "¬" the same line
+// reached the message for a negation with no fact under it -- "so it needs one
+// -- write ¬(a p b)" -- about a line that had given one. A diagnosis of the
+// wrong operator sends the reader to fix what is not broken.
+TEST_CASE("neural: a bare ≈ under a negation names ≈ as the problem")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    process_lines(interactive, R"(
+s5 in KIn
+o5 in KOut
+knet nn-layers <KIn KOut>
+)");
+    collector.clear();
+
+    CHECK_THROWS_WITH_AS(interactive.process("¬≈knet(a relK b)"),
+                         doctest::Contains("\"≈\" is a condition operator"),
+                         std::runtime_error);
+
+    collector.clear();
+    interactive.process("S relK O");
+    CHECK(collect_answers(collector).empty());
+}
+
 TEST_CASE("neural: a negated ≈ with an unbound object is refused")
 {
     run_both_modes([](auto& collector, auto& interactive)

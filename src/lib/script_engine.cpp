@@ -3590,6 +3590,31 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                 // probability argument Zelph::fact has always had.
                 if (val_type == "negation" && val_len >= 2)
                 {
+                    // The reading below is for a FACT, and the other two
+                    // condition operators are not one. They are refused when
+                    // they stand alone, and a `¬` in front used to get past
+                    // every one of those refusals, because a negated line is
+                    // routed through zelph/refute and the path sugar is keyed
+                    // on zelph/fact. "¬(a p⁺ b)" therefore built a fact whose
+                    // predicate is a node NAMED "p⁺" -- an invented predicate,
+                    // marked refuted, from a line about reachability -- while
+                    // "a p⁺ b" was refused as it should be. `≈` failed the
+                    // other way: it reached the message below and was told it
+                    // needs a fact, which it had.
+                    if (Impl::is_path_ast(val_data[1]))
+                        throw std::runtime_error(
+                            "\"⁺\" and \"∗\" are condition operators, and a \"¬\" in front does not "
+                            "change that: reachability is what the engine WALKS, so there is no "
+                            "claim of it to deny. Use the path condition in a rule, under \"¬\" if "
+                            "what you want is the absence of a path.");
+
+                    if (is_approx_ast(val_data[1]))
+                        throw std::runtime_error(
+                            "\"≈\" is a condition operator, and a \"¬\" in front does not change "
+                            "that: it asks what a network believes, which a rule condition can read "
+                            "and a statement can neither claim nor deny. Use it in a rule "
+                            "condition, under \"¬\" for the case the net does not confirm.");
+
                     const Janet* inner_data;
                     int32_t      inner_len;
                     if (janet_indexed_view(val_data[1], &inner_data, &inner_len)
