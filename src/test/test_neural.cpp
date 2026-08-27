@@ -717,6 +717,38 @@ knet nn-layers <KIn KOut>
     CHECK(collect_answers(collector).empty());
 }
 
+// The refusal of a bare `≈` says a statement cannot claim what a network
+// believes. One level down it did exactly that: "x q (≈knet(a relK b))" was
+// accepted, and "S relK O" then answered `a relK b` -- the sugar builds its
+// operand with zelph/fact before tagging it, so asking the net asserted the
+// fact. Same shape as `¬` one argument over, and the same fix: the whole
+// statement is walked before any of it is built.
+TEST_CASE("neural: ≈ inside a plain statement is refused, not silently built")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    process_lines(interactive, R"(
+s6 in KIn
+o6 in KOut
+knet nn-layers <KIn KOut>
+)");
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("x q (≈knet(a relK b))"));
+    CHECK_THROWS(interactive.process("x q (y r (≈knet(a relK b)))"));
+
+    // The assertion that matters: the operand must not appear in the graph.
+    // A throw after the fact was built would offer no assistance whatsoever.
+    collector.clear();
+    interactive.process("S relK O");
+    CHECK(collect_answers(collector).empty());
+
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(collect_answers(collector).empty());
+}
+
 TEST_CASE("neural: a negated ≈ with an unbound object is refused")
 {
     run_both_modes([](auto& collector, auto& interactive)

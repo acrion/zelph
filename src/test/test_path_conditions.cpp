@@ -275,6 +275,39 @@ TEST_CASE("path condition: a ground path under a negation is refused too")
     CHECK(collect_answers(collector).empty());
 }
 
+// A path marker one argument DOWN is refused whether or not its ends are
+// bound, and that is the difference from the shape above. Alone on a line the
+// ends decide -- ground asserts and is refused, free is a question and answers
+// one -- but inside a statement there is no question to ask: the marker hung a
+// closure tag off a fact where nothing ever walks one, and the ground form
+// reached the runtime guard only by luck of both ends being concrete. The
+// three lines below are, in order: both ends bound, one end free, and one
+// level further down.
+TEST_CASE("path condition: a path marker inside a plain statement is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("x q (a P279⁺ d)"));
+    CHECK_THROWS(interactive.process("x q (S P279⁺ d)"));
+    CHECK_THROWS(interactive.process("x q (y r (a P279⁺ d))"));
+
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(collect_answers(collector).empty());
+
+    // And the question the walk must NOT reach: its positions are the
+    // statement's own, not a nested argument.
+    collector.clear();
+    interactive.process("S P279⁺ d");
+    CHECK_FALSE(collect_answers(collector).empty());
+}
+
 // The same shape with a variable in it is a QUESTION, and answering it is the
 // feature. The refusal above is decided when the ends are resolved, not by the
 // syntax, which is why it cannot live in the parser.

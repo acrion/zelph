@@ -85,32 +85,6 @@ static bool is_negation_ast(Janet node)
     return false;
 }
 
-// Does a `¬` stand anywhere inside this AST? is_negation_ast asks whether an
-// argument IS one; a plain statement has to ask whether one is buried in it,
-// because the operator is dropped at whatever depth it sits: "x q (¬(a p b))"
-// and "x q (y r (¬(a p b)))" both build the operand with zelph/fact and then
-// tag it, so both assert the very fact the "¬" denies.
-//
-// Asked of the SYNTAX for the same reason is_negation_ast is, and the walk
-// is over children rather than over the known tag names on purpose: a value
-// form added to the grammar later must not open the hole again by not being
-// listed.
-static bool contains_negation_ast(Janet node)
-{
-    const Janet* data;
-    int32_t      len;
-    if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
-
-    if (janet_checktype(data[0], JANET_KEYWORD)
-        && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "negation")
-        return true;
-
-    for (int32_t i = 1; i < len; ++i)
-        if (contains_negation_ast(data[i])) return true;
-
-    return false;
-}
-
 // The same question for the neural condition. `≈` is written as a prefix on a
 // value, so the AST names it directly.
 static bool is_approx_ast(Janet node)
@@ -3083,6 +3057,48 @@ public:
         return atom_text(data[2], token) && split_path_marker(token, base, mode);
     }
 
+    enum class NestedOp
+    {
+        None,
+        Negation,
+        Approx,
+        Path
+    };
+
+    // Which condition operator, if any, stands INSIDE this argument? A plain
+    // statement has no condition slot, so none of the three has a reading
+    // below its top level -- and none of them was REPORTED there, each was
+    // quietly built. `¬` was dropped and its operand asserted;
+    // "x q (≈net(a p b))" then answered `a p b` to "S p O", which is the one
+    // thing the refusal of a bare `≈` says a statement cannot do; and a path
+    // marker hung a closure tag off a fact where nothing ever walks one.
+    //
+    // Asked of the SYNTAX, and the walk descends through CHILDREN rather than
+    // through a list of the value forms that may carry one: a form added to
+    // the grammar later must not reopen the hole by not being listed. The
+    // statement's own top-level positions are atoms, so a path QUESTION --
+    // "S P279⁺ b", which is legitimate and answers one -- is not reached.
+    static NestedOp nested_condition_op(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return NestedOp::None;
+
+        if (janet_checktype(data[0], JANET_KEYWORD))
+        {
+            const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+            if (type == "negation") return NestedOp::Negation;
+            if (type == "approx") return NestedOp::Approx;
+        }
+
+        if (is_path_ast(node)) return NestedOp::Path;
+
+        for (int32_t i = 1; i < len; ++i)
+            if (const NestedOp inner = nested_condition_op(data[i]); inner != NestedOp::None) return inner;
+
+        return NestedOp::None;
+    }
+
     std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
     {
         if (args.empty()) return "nil";
@@ -3697,21 +3713,41 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                 // The whole statement is asked, predicate included: the guard
                 // must sit ahead of `build_smart_call`, because by the time
                 // `zelph/negate` receives its argument the fact underneath it
-                // has been asserted.
+                // has been asserted. Its two siblings are asked here for the
+                // same reason and by the same walk -- see nested_condition_op
+                // for what each of them did instead of being reported.
                 for (const Janet& arg : fact_args)
-                    if (contains_negation_ast(arg))
+                {
+                    switch (Impl::nested_condition_op(arg))
+                    {
+                    case Impl::NestedOp::Negation:
                         throw std::runtime_error(
                             "\"¬\" is a condition operator and has no meaning inside a plain "
                             "statement: it succeeds when a pattern is ABSENT, which only a rule "
                             "condition can ask. On its own line \"¬(a p b)\" says that the fact "
                             "does not hold.");
+                    case Impl::NestedOp::Approx:
+                        throw std::runtime_error(
+                            "\"≈\" is a condition operator and has no meaning inside a plain "
+                            "statement: it asks what a network believes, which a rule condition "
+                            "can read and a statement cannot claim. Use it in a rule condition.");
+                    case Impl::NestedOp::Path:
+                        throw std::runtime_error(
+                            "\"⁺\" and \"∗\" are condition operators and have no meaning inside a "
+                            "plain statement: reachability is what the engine WALKS. On its own "
+                            "line \"S p⁺ b\" is a question and answers one; inside a rule it is a "
+                            "condition.");
+                    case Impl::NestedOp::None:
+                        break;
+                    }
+                }
             }
 
-            // A path marker standing alone is refused too, but not here: only
-            // the GROUND form asserts anything, and whether the ends are
-            // variables is decided when they are resolved, not by the syntax.
-            // "S P279⁺ Q3" is a legitimate question and answers one. See
-            // janet_cfun_zelph_path.
+            // A path marker standing ALONE is not refused here: whether its
+            // ends are variables is decided when they are resolved, not by the
+            // syntax, and "S P279⁺ Q3" is a legitimate question. The walk above
+            // does not reach that shape -- its positions are atoms, not nested
+            // arguments. See janet_cfun_zelph_path_guard for the ground case.
 
             const std::string call = _pImpl->build_smart_call("zelph/fact", fact_args);
 

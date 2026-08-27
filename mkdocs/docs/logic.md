@@ -630,6 +630,15 @@ zelph> ¬≈net(a p b)
 Error in line "¬≈net(a p b)": "≈" is a condition operator, and a "¬" in front does not change that: it asks what a network believes, which a rule condition can read and a statement can neither claim nor deny. Use it in a rule condition, under "¬" for the case the net does not confirm.
 ```
 
+Nor does putting them one argument down. A plain statement has no condition slot at any depth, so all three operators are refused inside one:
+
+```
+zelph> x mentions (≈net(a p b))
+Error in line "x mentions (≈net(a p b))": "≈" is a condition operator and has no meaning inside a plain statement: it asks what a network believes, which a rule condition can read and a statement cannot claim. Use it in a rule condition.
+zelph> x mentions (a P279⁺ d)
+Error in line "x mentions (a P279⁺ d)": "⁺" and "∗" are condition operators and have no meaning inside a plain statement: reachability is what the engine WALKS. On its own line "S p⁺ b" is a question and answers one; inside a rule it is a condition.
+```
+
 Under `¬` in a rule _condition_ both are ordinary tests, which is the next section.
 
 **What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
