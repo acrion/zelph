@@ -378,6 +378,59 @@ z p w
     fs::remove(file);
 }
 
+// A predicate is a NODE, and a fact is a node, so a fact can be a predicate.
+// `.list-predicate-usage` lists `a p b` among the predicates and `S (a p b) O`
+// answers its facts -- so naming one here has to work, or the listing shows a
+// slice that cannot be cut. The parenthesised form is what the renderer prints
+// and what `.explain` and `.node` already take.
+TEST_CASE("slice: a composite predicate can be named the way it is printed")
+{
+    const auto file = slice_path("composite");
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+x (a p b) y
+z (a p b) w
+m rel n
+)");
+        collector.clear();
+        interactive.process(".save-predicates \"" + file.string() + "\" (a p b)");
+        CHECK(any_event_contains(collector, "2 fact(s)"));
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+
+    collector.clear();
+    interactive.process("S (a p b) O");
+    const std::vector<std::string> answers = collect_answers(collector);
+    CHECK(answers.size() == 2);
+
+    // And nothing of the predicate that was not named.
+    collector.clear();
+    interactive.process("S rel O");
+    CHECK(collect_answers(collector).empty());
+
+    fs::remove(file);
+}
+
+TEST_CASE("slice: an unbalanced or unknown composite predicate is refused")
+{
+    const auto file = slice_path("composite_bad");
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    build_source(interactive);
+
+    CHECK_THROWS(interactive.process(".save-predicates \"" + file.string() + "\" (a p"));
+    CHECK_THROWS(interactive.process(".save-predicates \"" + file.string() + "\" (no such fact)"));
+    CHECK_FALSE(fs::exists(file));
+}
+
 TEST_CASE("slice: rejects a predicate the network does not know")
 {
     const auto file = slice_path("unknown");

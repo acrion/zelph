@@ -3521,9 +3521,59 @@ private:
         if (!file.ends_with(".bin"))
             throw std::runtime_error("Command .save-predicates: filename must end with '.bin'");
 
+        // A predicate is a NODE, and a fact is a node, so a fact can be a
+        // predicate -- `.list-predicate-usage` lists `a p b` among the
+        // predicates and `S (a p b) O` answers its facts. Naming one here has
+        // to work too, or the listing shows a slice you cannot cut. The
+        // parenthesised form is what the renderer prints and what `.explain`,
+        // `.node` and the prune commands already take; the tokenizer splits it
+        // on whitespace, so the run from "(" to its closing ")" is regrouped
+        // and resolved as one pattern.
         std::vector<network::Node> predicates;
         for (size_t i = 2; i < cmd.size(); ++i)
         {
+            if (!cmd[i].empty() && cmd[i].front() == '(')
+            {
+                int    depth = 0;
+                size_t end   = i;
+                for (; end < cmd.size(); ++end)
+                {
+                    for (const char c : cmd[end])
+                    {
+                        if (c == '(')
+                            ++depth;
+                        else if (c == ')')
+                            --depth;
+                    }
+                    if (depth <= 0) break;
+                }
+
+                if (depth != 0 || end >= cmd.size())
+                    throw std::runtime_error("Command .save-predicates: unbalanced parentheses in the predicate pattern");
+
+                const std::vector<std::string> group(cmd.begin() + static_cast<long>(i), cmd.begin() + static_cast<long>(end) + 1);
+
+                // The offset has to travel with the group. pattern_code reads
+                // the ORIGINAL tokens out of _sources to recover what the
+                // tokenizer quoted, indexing them by `first + i` -- and
+                // resolve_node_or_fact hardcodes first = 1, which is right for
+                // a command whose pattern starts immediately after its name
+                // and wrong here, where the file path stands between them. It
+                // built a pattern out of the path and the first two tokens.
+                const network::Node nd = resolve_explain_pattern(group, i);
+                if (nd == 0 || !_n->exists(nd))
+                {
+                    std::string shown;
+                    for (const auto& token : group)
+                        shown += (shown.empty() ? "" : " ") + token;
+                    throw std::runtime_error("Command .save-predicates: '" + shown
+                                             + "' denotes no node of this network");
+                }
+                predicates.push_back(nd);
+                i = end;
+                continue;
+            }
+
             const network::Node nd = resolve_node(cmd[i], _n->lang());
             if (nd == 0)
                 throw std::runtime_error("Command .save-predicates: unknown predicate '" + cmd[i]
