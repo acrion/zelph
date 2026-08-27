@@ -590,7 +590,7 @@ zelph> a p b
 Error in line "a p b": fact(): this fact is known to be wrong
 ```
 
-This reaches a mechanism zelph has had all along: a fact carries a probability, and one below 0.5 makes it known-wrong. What was missing was a way to write it. The claim survives `.save` and `.load`, and it prints as what it is – the echo of `¬(a p b)` is `¬(a p b)`, not `a p b`.
+This is the mechanism zelph uses for a negative claim: a fact carries a probability, and one below 0.5 makes it known-wrong. The claim survives `.save` and `.load`, and it prints as what it is – the echo of `¬(a p b)` is `¬(a p b)`, not `a p b`.
 
 A rule derives what holds, so a negated _consequence_ still has no reading and is refused:
 

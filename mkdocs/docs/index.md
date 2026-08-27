@@ -691,7 +691,7 @@ A contradiction is **reported, not enforced**. The facts that triggered it stay 
 
 What _is_ written is the contradiction itself: the set of the facts that matched, entered as **refuted** – "these statements do not hold together". Nothing is retracted by it. Every member stays asserted and keeps answering queries, including the conjunctive one; the set is the only node created, and a condition that matched no fact, such as an `!=` guard, contributes nothing to it.
 
-That record is what makes a contradiction reported **once**. A set constant is defined by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact remains silent the second time because the graph holds it. Prior to the record’s existence, there was nothing to suppress: `!` does not generate its own fact, so an announcement came back on every later input line. Two consequences worth knowing: the record ceases when the facts it pertains to are removed, so a contradiction becomes a new discovery if those facts return; and it is indexed on those facts rather than on the rule, so two rules contradicting on the same statements report only once between them.
+That record is what makes a contradiction reported **once**. A set constant is defined by its members, so the same contradiction always yields the same node, and the next run finds it already present – the same way a derived fact remains silent on the second occurrence because the graph holds it. Two consequences worth knowing: the record ceases when the facts it pertains to are removed, so a contradiction emerges as a new discovery if those facts return; and it is indexed upon those facts rather than upon the rule, so two rules contradicting on the same statements report only once between them.
 
 `.contradiction-records off` turns the record off, and the repetition with it. The cost it trades away is one set node per distinct contradiction, which is six figures on a Wikidata-scale audit.
 
@@ -895,12 +895,11 @@ While a cluster is active, every node created is recorded in it: entities, relat
 
 The [neural network demo](neural.md) uses a cluster so that the entire experiment — layers, synapses, rules, and all deductions — can be removed with a single command, leaving the loaded dump untouched.
 
-A second use was **silencing a contradiction you introduced on purpose**, and
-it is no longer needed: a contradiction is written into the graph and
-announced once, not on every later input line (see
-[Contradiction Detection](logic.md#contradiction-detection)). What a cluster is
-still the right tool for is taking the whole demonstration back out — the
-facts, the rule and the record together:
+A second use is taking a demonstration back out of the graph whole – the
+facts, the rule and the record together. A contradiction provoked on purpose
+is announced once (see
+[Contradiction Detection](logic.md#contradiction-detection)), and dropping the
+cluster removes what caused it:
 
 ```
 .cluster demo
@@ -989,8 +988,8 @@ Content of `/tmp/derivations.jsonl` (one line, wrapped here for reading):
 
 #### Converting the export
 
-`dev_scripts/zelph-derivations.py` is the reference converter and reproduces
-what zelph used to write itself:
+`dev_scripts/zelph-derivations.py` is the reference converter, and the two
+formats it writes are what the reports on zelph.org are built from:
 
 ```bash
 # The MkDocs tree behind the reports on https://zelph.org: one page per
@@ -1010,9 +1009,8 @@ data. Long numeric identifiers (`Q123456789`) are expensive for standard
 tokenizers, which split them into many sub-tokens; because every identifier
 arrives in the export as a discrete token rather than as a substring of a
 sentence, substituting a compact encoding for it is a dictionary lookup and
-not a parse. zelph itself no longer ships such an encoding — that was an
-experiment, and it is exactly the kind of decision that belongs to the
-consumer of the data.
+not a parse. zelph ships no such encoding: which one fits is exactly the kind
+of decision that belongs to the consumer of the data.
 
 ## Example Script
 
@@ -1176,11 +1174,10 @@ for why re-importing a module after `.load` is both necessary and free.
 ### Rules Say Themselves Only Once
 
 Facts are hash-consed: the node _is_ its structure, so asserting the same
-fact twice does nothing. Rules used to be the exception. A rule contains
-variables, variables are allocated fresh for each statement, and a node
-built from fresh variables is a fresh node — so entering the same rule
-twice gave you two rules deriving the same consequences at twice the
-unification cost.
+fact twice does nothing. A rule requires one additional step. It includes
+variables, variables are allocated fresh for each statement, and a node built
+from fresh variables is a fresh node – thus, entering the same rule twice would
+yield two rules deriving the same consequences at twice the unification cost.
 
 zelph therefore recognises a rule it already has. A `... => ...` statement
 is compared against the existing rules **up to a renaming of its
@@ -1241,7 +1238,7 @@ in the [Internals](internals/performance.md) section.
 
 Current focus areas include:
 
-- **Graph-based arithmetic and symbolic mathematics**: no longer a proof of concept. A complete stack is in the standard library, every layer of it ordinary zelph rules: positional arithmetic over interchangeable digit substrates — one of which derives its entire digit level from a single NAND axiom — then signed integers, multivariate polynomial normal forms over ℤ, a terminating term simplifier, symbolic differentiation, and a compiler that decides polynomial identities by node identity. It proves Euler's four-square identity in a fifth of a second, and reproduces the July-2026 counterexample to the [Jacobian conjecture](math/tutorial-jacobian.md) — nine symbolic partial derivatives and a 3×3 determinant over ℤ — in under two. Every answer carries a reconstructible proof down to the digit tables. See [Mathematics](math/index.md); the comparison with [Lean](https://lean-lang.org) still holds, except that here the foundation is a graph-native, homoiconic representation rather than a type theory.
+- **Graph-based arithmetic and symbolic mathematics**: not a proof of concept but a complete stack is in the standard library, every layer of it ordinary zelph rules: positional arithmetic over interchangeable digit substrates — one of which derives its entire digit level from a single NAND axiom — then signed integers, multivariate polynomial normal forms over ℤ, a terminating term simplifier, symbolic differentiation, and a compiler that decides polynomial identities by node identity. It proves Euler's four-square identity in a fifth of a second, and reproduces the July-2026 counterexample to the [Jacobian conjecture](math/tutorial-jacobian.md) — nine symbolic partial derivatives and a 3×3 determinant over ℤ — in under two. Every answer carries a reconstructible proof down to the digit tables. See [Mathematics](math/index.md); the comparison with [Lean](https://lean-lang.org) still holds, except that here the foundation is a graph-native, homoiconic representation rather than a type theory.
 - **Transitive reasoning and Wikidata integration**: A [second Wikimedia Rapid Fund project](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Transitive_Reasoning,_Qualifier_Support,_and_SPARQL-Subset_Integration_(ID:_23759260)>) delivered transitive reasoning over Wikidata's subclass hierarchy ([native closures with a cached adjacency index](sparql.md#performance-and-the-adjacency-index)), [qualifier support](qualifiers.md), and [SPARQL-subset integration](sparql.md) in release 0.9.6 — capabilities that also serve as building blocks for more general symbolic computation. The next direction it opens up is qualifier-dependent property-constraint checking.
 - **Neural networks in the graph**: Since 0.9.7, zelph embeds a neural substrate directly in the semantic network — weighted edges as synapses, layers as ordinary sets, and rule conditions that consult trained networks via the `≈` operator. See [Neural Networks in the Graph](neural.md).
 - **Potential Wikidata integration**: Exploring pathways for integration with the Wikidata ecosystem, e.g. the [WikiProject Ontology](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology).

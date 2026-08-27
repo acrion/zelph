@@ -175,7 +175,7 @@ export const DEMO_GROUPS = [
         label: "Provoke a contradiction",
         requires: ["2.4", "2.13"],
         command: ".cluster demo\n:isprime &9\n.cluster-drop demo",
-        info: `Asserts a falsehood. The constraint rule fires, the contradictory fact is detected. To prevent that this contradiction is shown after each future step, we activate a cluster for this demo fact and drop it afterwards (alternatively, it is also possible to use <code>.prune-facts X isprime X</code>). Detection rather than prevention is the design: it is what makes auditing huge, inconsistent real-world datasets feasible.`,
+        info: `Asserts a falsehood. The constraint rule fires and the contradiction is detected, once. The demo fact lives in a cluster that is dropped again in the same step, so the false claim does not travel on into the SPARQL and neural groups below &mdash; without that, <code>SELECT ?n WHERE { ?n isprime ?n . }</code> would report 9 as prime (<code>.prune-facts X isprime X</code> does the same job). Detection rather than prevention is the design: it is what makes auditing huge, inconsistent real-world datasets feasible.`,
       },
     ],
   },

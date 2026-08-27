@@ -54,7 +54,7 @@ A slice is a network in its own right, not an extract, so three things come alon
 
 What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing.
 
-Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones you would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retained used to reach them, and the slice silently stopped reporting contradictions its source reports. A rule whose conditions name a predicate you left out is carried intact, prints in full, and simply never matches. `.save-predicates` says how many went into the file:
+Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones a reachability rule would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retains ever reaches them. A rule whose conditions name a predicate you left out is carried intact, prints in full, and simply never matches. `.save-predicates` says how many went into the file:
 
 ```
 Saved 8 fact(s) of 1 predicate(s) and 1 rule(s) to leaf-slice.bin

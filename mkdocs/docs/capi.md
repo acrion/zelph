@@ -83,8 +83,8 @@ Two points to grasp. An accumulator holds value only in relation to the weights 
 
 ### The hidden-layer activation
 
-`ZELPH_ACTIVATION_RELU` is `max(0, x)` and is what every net compiled before this option
-existed was trained with. `ZELPH_ACTIVATION_LEAKY_RELU` is `max(0.01 x, x)`.
+`ZELPH_ACTIVATION_RELU` is `max(0, x)` and is the default, the value `0` of the enum.
+`ZELPH_ACTIVATION_LEAKY_RELU` is `max(0.01 x, x)`.
 
 The difference is not a matter of taste. **With a plain ReLU, a hidden layer whose every unit
 is negative for every input has an output of exactly 0 and a gradient of exactly 0.** No

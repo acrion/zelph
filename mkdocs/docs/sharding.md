@@ -267,10 +267,9 @@ and takes the first hit:
 
 Only step 4 touches the network, and it announces itself
 (`Shard left-0 has no local copy; fetching …`). `shard-root=` is therefore
-needed only when the shards were moved away from their manifest, and a purely
-local artifact never reaches the network — earlier versions went straight to
-step 4 whenever `shard-root=` was absent and downloaded files that were lying
-next to the manifest they had just read.
+needed only when the shards were moved away from their manifest: a purely
+local artifact never reaches the network, whether or not the selector is
+given.
 
 The `.bin` named in `source.binPath` follows the same rule: if a file of that
 name exists next to the manifest or one directory above it (the layout of the
