@@ -3769,7 +3769,7 @@ private:
         network::Node target = 0;
         try
         {
-            target = _script_engine->evaluate_expression(code, /*quiet*/ true);
+            target = _script_engine->evaluate_expression(code, /*quiet*/ true, /*resolving_pattern*/ true);
         }
         catch (...)
         {

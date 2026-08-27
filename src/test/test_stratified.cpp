@@ -239,10 +239,41 @@ c p d
         interactive.process("¬(x q y)");
         CHECK(any_output_contains(collector, "¬(x q y)"));
 
+        // And a command can still ADDRESS it by printing it back. Every
+        // command that takes a fact pattern resolves it by generating the same
+        // code a statement generates, which runs through zelph/fact -- so the
+        // moment a fact could be refuted, ".node" and ".explain" answered
+        // "Unknown node" for exactly the facts a user has most reason to look
+        // at. They look the pattern UP now instead of asserting it.
+        collector.clear();
+        interactive.process(".node a p b");
+        CHECK(any_output_contains(collector, "Refuted (claimed not to hold): yes"));
+        CHECK(any_output_contains(collector, "¬(a p b)"));
+
         // And the graph refuses to claim both. Zelph::fact has always had this
         // guard; nothing could reach it before, because no spelling created a
         // fact below probability 0.5.
         CHECK_THROWS(interactive.process("a p b")); });
+}
+
+TEST_CASE("negation: a pattern is looked up, not asserted, when a command resolves it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "c p d\n");
+        collector.clear();
+
+        // The other half of the same property, and the one that says the
+        // lookup did not quietly become a second way to assert: naming a
+        // pattern the graph does NOT hold still denotes its node -- the id is
+        // the hash of the triple -- and must not put it into the graph.
+        interactive.process(".explain (e p f)");
+        CHECK(any_output_contains(collector, "not asserted"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "c p d"));
+        CHECK_FALSE(any_output_contains(collector, "e p f")); });
 }
 
 TEST_CASE("negation: a refutation survives a save and a load")

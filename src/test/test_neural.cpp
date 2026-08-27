@@ -645,6 +645,34 @@ s1 relG o2
 // assert. It reached the consequence slot unchecked and would have written its
 // tag fact -- and the one-step fact underneath it -- into the graph as a claim
 // nobody made.
+// The worst of the three, because it was silent. A line of one top-level token
+// looks unfinished to the accumulator, so `≈net(a p b)` was buffered and
+// SWALLOWED THE NEXT LINE -- a script containing one ran a statement nobody
+// wrote. `¬` was already exempt there (its lead byte is listed); `≈` is three
+// bytes whose first one `≡`, `⁺` and `∗` share, so it is tested whole.
+TEST_CASE("neural: ≈ in a plain statement is refused and does not swallow the next line")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    process_lines(interactive, R"(
+s5 in MIn
+o5 in MOut
+mnet nn-layers <MIn MOut>
+)");
+    collector.clear();
+
+    CHECK_THROWS(interactive.process("≈mnet(a relM b)"));
+
+    // The line after it is a statement in its own right, not a continuation.
+    collector.clear();
+    interactive.process("x relM y");
+    collector.clear();
+    interactive.process("S relM O");
+    CHECK(answers_contain(collector, "x relM y"));
+    CHECK_FALSE(any_output_contains(collector, "a relM b"));
+}
+
 TEST_CASE("neural: ≈ as a rule consequence is refused")
 {
     zelph::io::OutputCollector  collector;

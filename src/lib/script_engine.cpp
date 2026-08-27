@@ -127,6 +127,21 @@ public:
     // absence of one of those contexts.
     bool _in_janet_block = false;
 
+    // Set while a command RESOLVES a printed pattern to the node it denotes --
+    // ".explain (a p b)", ".prune-facts (a p b)", ".node a p b". The code is
+    // generated the same way a statement's is, so it runs through zelph/fact,
+    // which is the assertion API; the scratch cluster around it is what has
+    // always kept the assertion from surviving.
+    //
+    // That was enough until a fact could be REFUTED. Zelph::fact refuses to
+    // claim a fact the graph holds as known-wrong -- rightly -- so the moment
+    // ¬(a p b) became writable, every command that addresses a pattern by
+    // printing it back answered "Unknown node" for exactly the facts a user
+    // has most reason to look at. Under this flag the pattern is LOOKED UP
+    // instead of asserted; a pattern the graph does not hold still denotes its
+    // node, because the id is the hash of the triple.
+    bool _resolving_pattern = false;
+
     // Save/restore around a nested evaluation (an .import inside a block, a
     // keyword handler): a plain assignment would leak the inner context.
     struct BlockScope
@@ -2437,6 +2452,23 @@ public:
             return res;
         }
 
+        // Resolving a printed pattern is not claiming it: look the fact up,
+        // and fall back on the hash of the triple, which is the node's id
+        // whether or not the graph holds it. Only when neither answers -- a
+        // pattern carrying variables, whose components are fresh nodes -- does
+        // the construction below run, and then there is nothing to contradict.
+        if (s_instance->_resolving_pattern)
+        {
+            network::Node found = s_instance->_n->check_fact(s, p, objs).relation();
+            if (found == 0) found = network::containing_fact(s_instance->_n, s, p, objs);
+            if (found != 0)
+            {
+                Janet res = zelph_wrap_node(found);
+                if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/fact", argc, argv, false, res);
+                return res;
+            }
+        }
+
         network::Node f = s_instance->_n->fact(s, p, objs);
 
         // The tag is what MAKES a container a rule's condition set, so this is
@@ -3489,6 +3521,21 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                 if (val_type == "nested")
                     return ""; // Syntax error: (fact) at top level is not a valid statement
 
+                // A statement of fewer than three values is incomplete, and an
+                // empty result is how this function says so -- the REPL then
+                // buffers the line and waits for the rest of it. That reading
+                // is right for "a p" and wrong for "≈net(a p b)", which is not
+                // the beginning of anything: `≈` asks what a network believes,
+                // which a condition may read and a line cannot assert. The
+                // symptom was silence, and the next line being swallowed with
+                // it. Its two siblings are refused a few lines below and in
+                // zelph/path-guard; this is the same refusal.
+                if (val_type == "approx")
+                    throw std::runtime_error(
+                        "\"≈\" is a condition operator and has no meaning in a plain statement: "
+                        "it asks what a network believes, which a rule condition can read and a "
+                        "statement cannot claim. Use it in a rule condition.");
+
                 // `¬(F)` on its own line is the one condition operator that
                 // has a reading outside a condition, and it is not the one it
                 // used to get. The sugar builds its operand with zelph/fact
@@ -3755,8 +3802,10 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
 }
 
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
-network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, const bool quiet)
+network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, const bool quiet, const bool resolving_pattern)
 {
+    Impl::BlockScope resolving(_pImpl->_resolving_pattern, resolving_pattern);
+
     if (_pImpl->_scoped_vars_preloaded)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
@@ -4063,8 +4112,22 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         {
             char c = code[first_char_idx];
             // '$' admits a lone inline-keyword island ($( ... )) as a
-            // complete statement -- the calculator idiom.
+            // complete statement -- the calculator idiom. '\xC2' is the first
+            // byte of "¬", which leads a complete statement of its own.
             if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || c == '\xC2' || c == '$'))
+            {
+                return true;
+            }
+
+            // "≈net(a p b)" is one top-level token too, and it is not the
+            // beginning of anything: `≈` is a condition operator, and the
+            // transform refuses it in a plain statement. Without this the line
+            // was never handed to the transform at all -- it looked unfinished,
+            // so it was buffered and SWALLOWED THE NEXT LINE, and a script
+            // containing one silently ran a statement nobody wrote. Tested on
+            // the whole three-byte sequence rather than the lead byte, which
+            // "≡", "⁺" and "∗" share.
+            if (top_tokens == 1 && code.compare(first_char_idx, 3, "≈") == 0)
             {
                 return true;
             }
