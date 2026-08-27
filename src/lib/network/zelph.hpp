@@ -618,6 +618,12 @@ namespace zelph::network
         /// per-candidate test cheap.
         void mark_refuted_fact(Node node) const;
 
+        /// Drop these nodes from the index, because they are being removed.
+        /// A contradiction record is content-addressed, so a stale entry would
+        /// survive the removal of the very facts it is about and silence the
+        /// report when they come back.
+        void forget_refuted(const adjacency_set& gone) const;
+
         /// Rebuild that index from the graph, for the same reason
         /// rebuild_rule_pattern_index exists.
         void rebuild_refuted_index() const;

@@ -171,12 +171,46 @@ namespace zelph::network
         // collapse the way it collapses a repeated deduction. Reporting
         // each arrival made the number of violations depend on the
         // evaluation strategy -- 10 semi-naive, 6 classic, 3 real -- and
-        // that number is the headline of the Wikidata work. Repeats are
-        // therefore dropped here.
+        // that number is the headline of the Wikidata work.
         //
-        // Costs one 64-bit hash per DISTINCT contradiction, which is
-        // strictly less than the report each of them produces anyway.
+        // Repeats used to be dropped by a per-run hash set, which is why a
+        // contradiction came back on every later input line: the set was
+        // cleared at the start of each run, and unlike a derived fact there
+        // was nothing in the GRAPH to make the second run quiet. There is
+        // now -- see record_contradiction.
         void report_contradiction(const contradiction_error& error);
+
+        // Write the contradiction into the graph, and answer whether it was
+        // already there. The record is the refuted set of the facts that
+        // MATCHED: "these statements do not hold together". Nothing is
+        // retracted -- each of them stays asserted and keeps answering
+        // queries -- and nothing is created but the set node, because every
+        // member is a fact the unification just matched.
+        //
+        // A set constant is content-addressed and order-independent, so the
+        // same contradiction yields the same node however it was reached.
+        // That is where the quiet second run comes from, and it is why the
+        // record is keyed on the FACTS rather than on (rule, bindings): two
+        // rules contradicting on the same statements make the same claim, and
+        // they report once between them.
+        //
+        // Members that matched no fact -- a `!=` guard, a negation, an `≈` or
+        // a path condition -- contribute nothing. Instantiating them would
+        // ASSERT them (instantiate_fact ends in Zelph::fact), so a `!=`
+        // condition would enter `(bright != dark)` as a claim of the core
+        // `!=` predicate that nobody made.
+        //
+        // Called BEFORE the output lock is taken: Zelph::fact takes the
+        // network locks, and deduce establishes network-then-output as the
+        // order (see "// _mtx_network released" in reasoning_deduce.cpp).
+        bool record_contradiction(const contradiction_error& error);
+
+        // One set node per DISTINCT contradiction, which is a memory cost that
+        // grows with the data: the P361/P527 asymmetry rule finds 355 073 of
+        // them on the medium Wikidata artifact. Switchable, like every other
+        // acceleration that trades memory away -- see `.fact-stores`.
+        void record_contradictions(bool on) { _record_contradictions = on; }
+        bool record_contradictions() const { return _record_contradictions; }
 
         // Prune mode: record what the matched CONDITION denotes under these
         // bindings. Called from every terminal site of evaluate(), which is
@@ -366,9 +400,10 @@ namespace zelph::network
         std::mutex                               _mtx_network;
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
-        // Instantiations already reported this run, see
-        // first_contradiction_report. Guarded by _mtx_output; cleared by run().
-        std::unordered_set<uint64_t>             _reported_contradictions;
+        // Whether a contradiction is written into the graph. See
+        // record_contradiction for what it costs and why it can be switched
+        // off; the per-run hash set that used to sit here is gone with it.
+        bool                                     _record_contradictions{true};
         std::unique_ptr<concurrency::ThreadPool> _pool;
         std::string                              _export_file;
         bool                                     _prune_mode{false};

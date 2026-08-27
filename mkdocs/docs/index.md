@@ -687,9 +687,17 @@ zelph>
 
 This rule states that if X is opposite of Y and X ≠ Y, then an entity A cannot be both an instance of X and an instance of Y, as this would be a contradiction. The `X != Y` guard is essential here: without it, a reflexive fact like `bright "is opposite of" bright` could cause a spurious contradiction when `yellow ~ bright` is entered, because `X` and `Y` would both bind to `bright` (see [Inequality Constraints](logic.md#inequality-constraints) for a detailed discussion).
 
-A contradiction is **reported, not enforced**. The facts that triggered it stay in the graph — zelph is built to audit inconsistent real-world data, and deleting the evidence would defeat that. Nothing is written for the contradiction either: `!` is the one consequence that materialises no fact, which is also why a contradiction rule is always safe in the [deferred stratum](logic.md#stratified-evaluation) (it can derive nothing that another rule could then negate).
+A contradiction is **reported, not enforced**. The facts that triggered it stay in the graph – zelph is built to audit inconsistent real-world data, and deleting the evidence would defeat that.
 
-What you get instead is a report — on the console, and in the [derivation export](#exporting-derivations) as a record with `"kind":"contradiction"` and the premises that produced it. Each distinct rule instantiation is reported **once**, however many derivation paths reach it, so the count is a count of violations rather than of discoveries.
+What _is_ written is the contradiction itself: the set of the facts that matched, entered as **refuted** – "these statements do not hold together". Nothing is retracted by it. Every member stays asserted and keeps answering queries, including the conjunctive one; the set is the only node created, and a condition that matched no fact, such as an `!=` guard, contributes nothing to it.
+
+That record is what makes a contradiction reported **once**. A set constant is defined by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact remains silent the second time because the graph holds it. Prior to the record’s existence, there was nothing to suppress: `!` does not generate its own fact, so an announcement came back on every later input line. Two consequences worth knowing: the record ceases when the facts it pertains to are removed, so a contradiction becomes a new discovery if those facts return; and it is indexed on those facts rather than on the rule, so two rules contradicting on the same statements report only once between them.
+
+`.contradiction-records off` turns the record off, and the repetition with it. The cost it trades away is one set node per distinct contradiction, which is six figures on a Wikidata-scale audit.
+
+What you get on top is a report – on the console, and in the [derivation export](#exporting-derivations) as a record with `"kind":"contradiction"` and the premises that produced it. The export is written on every run that meets the contradiction, whether or not the console line was printed, so a second `.run-export` does not return an empty file.
+
+`!` remains the one consequence that derives no fact, which is why a contradiction rule is always safe in the [deferred stratum](logic.md#stratified-evaluation): it can derive nothing that another rule could then negate. The refuted set is a record ABOUT the match, not a derivation from it.
 
 ### Internal Representation of facts
 
@@ -887,14 +895,12 @@ While a cluster is active, every node created is recorded in it: entities, relat
 
 The [neural network demo](neural.md) uses a cluster so that the entire experiment — layers, synapses, rules, and all deductions — can be removed with a single command, leaving the loaded dump untouched.
 
-A second, less obvious use is **silencing a contradiction you introduced on
-purpose**. With auto-run on, every input line starts a fresh reasoning run
-that re-derives everything, and a contradiction is announced on each of
-them — a derived fact stays quiet the second time because the fact already
-exists, but `!` materialises nothing there could be a second time of. So a
-demonstration contradiction keeps reappearing after every later, unrelated
-line. Wrapping it in a cluster and dropping the cluster removes the facts
-that caused it, and with them the repeated announcement:
+A second use was **silencing a contradiction you introduced on purpose**, and
+it is no longer needed: a contradiction is written into the graph and
+announced once, not on every later input line (see
+[Contradiction Detection](logic.md#contradiction-detection)). What a cluster is
+still the right tool for is taking the whole demonstration back out — the
+facts, the rule and the record together:
 
 ```
 .cluster demo
@@ -903,7 +909,8 @@ that caused it, and with them the repeated announcement:
 ```
 
 (`.prune-facts` on the offending fact does the same job when a cluster is
-too coarse.)
+too coarse. Either way the record goes with the facts it is about, so the
+same contradiction is a fresh finding if they ever return.)
 
 ### Exporting Derivations
 

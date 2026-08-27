@@ -138,9 +138,13 @@ TEST_CASE("ontology: a violation is reported once per instantiation, not once pe
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, ontology);
+
+        // Measured where the violations are FOUND. The collector is not
+        // cleared first, and the ontology up to here produces no `!` line of
+        // its own, so every one of them comes from the statement below. This
+        // used to be asserted of a LATER run, which only worked because the
+        // report repeated on every one of them.
         interactive.process("rex instanceof rock");
-        collector.clear();
-        interactive.run(true, false, false);
 
         CHECK(has_contradiction(collector));
 
@@ -153,7 +157,14 @@ TEST_CASE("ontology: a violation is reported once per instantiation, not once pe
 
         // No line repeats: one report per instantiation.
         CHECK(distinct.size() == contradiction_lines(collector));
-        CHECK(distinct.size() >= 4); });
+        CHECK(distinct.size() >= 4);
+
+        // And the next run says nothing about them, because the graph holds
+        // them now. That is the whole point of the record: a contradiction is
+        // reported once, not once per later input line.
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK_FALSE(has_contradiction(collector)); });
 }
 
 TEST_CASE("ontology: the evaluation strategy does not change the violation count")
@@ -168,9 +179,10 @@ TEST_CASE("ontology: the evaluation strategy does not change the violation count
         zelph::console::Interactive interactive(collector.sink());
         interactive.process(strategy);
         process_lines(interactive, ontology);
-        interactive.process("rex instanceof rock");
         collector.clear();
-        interactive.run(true, false, false);
+        // Counted at the moment of discovery, for the reason given in the
+        // test above.
+        interactive.process("rex instanceof rock");
         return contradiction_lines(collector);
     };
 

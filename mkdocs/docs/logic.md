@@ -1255,6 +1255,10 @@ When a contradiction is detected during fact assertion, the contradictory fact i
 Instead, a record of the contradiction is stored, making it visible in reports.
 This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), where thousands of constraint violations in the knowledge graph are detected automatically.
 
+The record is a fact in the graph, and it says what a contradiction says: the set of the statements that matched, entered as **refuted** – these do not hold together. None of them is retracted; each stays asserted and keeps answering queries, and the set is the only node created.
+
+That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](index.md#exporting-derivations) and in `.help .contradiction-records`.
+
 ### Wikidata at Scale
 
 <a href="#" onclick="jumpTo(1143); return false;">🎬 Watch this section</a>

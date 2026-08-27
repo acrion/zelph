@@ -71,6 +71,7 @@ add_executable(zelph_tests
     test_node_display.cpp
     test_numbers.cpp
     test_intervals.cpp
+    test_contradiction_records.cpp
     test_ontology.cpp
     test_path_conditions.cpp
     test_output.cpp

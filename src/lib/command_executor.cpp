@@ -397,6 +397,8 @@ private:
         { cmd_semi_naive(c); };
         _command_map[".fact-stores"] = [this](auto& c)
         { cmd_fact_stores(c); };
+        _command_map[".contradiction-records"] = [this](auto& c)
+        { cmd_contradiction_records(c); };
         _command_map[".cluster"] = [this](auto& c)
         { cmd_cluster(c); };
         _command_map[".cluster-drop"] = [this](auto& c)
@@ -1666,6 +1668,7 @@ private:
             "  .anchors [on|off]                         – Show or set anchor-based candidate lookups in unification (default: on)",
             "  .semi-naive [on|off|check]                – Show or set the fixpoint evaluation strategy (default: on)",
             "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
+            "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
             "",
             "Logging & Profiling",
             "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
@@ -2246,6 +2249,21 @@ private:
                             "          for tests and debugging; the test suite always enables it.\n"
                             "Single-pass runs (.run-once) and queries are unaffected by this setting."},
 
+            {".contradiction-records", ".contradiction-records [on|off]\n"
+                                       "Shows or disables writing each detected contradiction into the graph.\n"
+                                       "A contradiction is recorded as the refuted SET of the facts that\n"
+                                       "matched -- \"these statements do not hold together\". Nothing is\n"
+                                       "retracted: every one of them stays asserted and keeps answering\n"
+                                       "queries. The record is what makes a contradiction reported ONCE\n"
+                                       "instead of again on every later reasoning run, the same way a\n"
+                                       "derived fact is quiet the second time because the graph holds it.\n"
+                                       "  (no argument) – show the current state\n"
+                                       "  off – report every contradiction on every run, and add nothing to\n"
+                                       "        the graph. One set node per DISTINCT contradiction is the\n"
+                                       "        cost; on a Wikidata-scale audit that is six figures.\n"
+                                       "  on  – the default\n"
+                                       "See also: .run-export, which records every contradiction a run\n"
+                                       "encounters whether or not the line was printed."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"
                              "structure store (exact triple per created fact node) and the\n"
@@ -3672,6 +3690,24 @@ private:
             throw std::runtime_error(".fact-stores on: the stores cannot be re-armed once disabled, "
                                      "because absence of an entry is meaningful while a store is "
                                      "authoritative. Use .new to start with a fresh engine and stores enabled again.");
+    }
+
+    void cmd_contradiction_records(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() == 1)
+        {
+            _n->out(std::string("Contradiction records: ") + (_n->record_contradictions() ? "on" : "off"), true);
+            return;
+        }
+        if (cmd.size() != 2 || (cmd[1] != "on" && cmd[1] != "off"))
+            throw std::runtime_error("Usage: .contradiction-records [on|off]");
+
+        // Re-armable, unlike .fact-stores: absence of a record is not
+        // meaningful here. Switching back on simply means the contradictions
+        // found from now on are written down, and the ones found while it was
+        // off are reported again the next time they are found.
+        _n->record_contradictions(cmd[1] == "on");
+        _n->out(std::string("Contradiction records: ") + cmd[1], true);
     }
 
     void cmd_cluster(const std::vector<std::string>& cmd)

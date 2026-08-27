@@ -289,6 +289,19 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
 // relation-type memo that implies. The serial half of a removal.
 void Zelph::remove_doomed(const adjacency_set& doomed, adjacency_set* const deferred_names) const
 {
+    // A refuted node that is being removed must leave the index with its
+    // marking fact, and this is the one index where a stale entry is not
+    // merely wasteful. A contradiction record is a SET CONSTANT, so it is
+    // content-addressed: remove one of the facts it is about, enter that fact
+    // again, and the record comes back with the SAME id. A stale entry then
+    // says "already known" about a contradiction whose record the graph no
+    // longer holds, and the report never returns.
+    //
+    // _rule_patterns beside it does not need this: a removed pattern is gone
+    // and nothing asks about it again, because a pattern is not re-created by
+    // re-entering data.
+    forget_refuted(doomed);
+
     // What this removal can make stale in the structure cache, collected
     // WHILE THE EDGES STILL EXIST. The counterpart of
     // invalidate_fact_structures_for on the creation side, and it rests on the
@@ -522,6 +535,16 @@ void Zelph::mark_refuted_fact(const Node node) const
     std::unique_lock lock(_pImpl->_refuted_facts_mtx);
     _pImpl->_refuted_facts.insert(node);
     _pImpl->_has_refuted_facts.store(true, std::memory_order_release);
+}
+
+void Zelph::forget_refuted(const adjacency_set& gone) const
+{
+    if (!_pImpl->_has_refuted_facts.load(std::memory_order_acquire)) return;
+
+    std::unique_lock lock(_pImpl->_refuted_facts_mtx);
+    for (const Node nd : gone)
+        _pImpl->_refuted_facts.erase(nd);
+    _pImpl->_has_refuted_facts.store(!_pImpl->_refuted_facts.empty(), std::memory_order_release);
 }
 
 void Zelph::rebuild_refuted_index() const

@@ -515,9 +515,15 @@ t1 rhs $( a^2 + 2*a*b + b^2 )
 t2 lhs $( (a+b)*(a+b) )
 t2 rhs $( a^2 + b^2 )
 )");
+        // Reported when it is FOUND. It used to be asserted of a later run
+        // instead, which worked only because the report repeated on every one
+        // of them -- the behaviour the graph-side record replaces.
+        CHECK(has_contradiction(collector));
+
+        // And a later run does not say it again: the graph holds the record.
         collector.clear();
         interactive.run(true, false, false);
-        CHECK(has_contradiction(collector));
+        CHECK_FALSE(has_contradiction(collector));
     }
 }
 

@@ -58,19 +58,71 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
+bool Reasoning::record_contradiction(const contradiction_error& error)
+{
+    if (!_record_contradictions) return false;
+
+    const Node       condition = error.get_fact();
+    const Variables& variables = error.get_variables();
+
+    // The members of the condition set, found the way render_premises finds
+    // them -- and the way node_to_string finds them when it prints "{...}".
+    std::unordered_set<Node> matched;
+    for (const Node rel : get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    element = parse_fact(rel, objs, 0);
+        if (element == 0 || objs.count(condition) != 1) continue;
+
+        // A condition that matched no FACT contributes nothing: a guard
+        // filtered, a negation succeeded on absence. Instantiating one would
+        // assert it -- see the note on this function.
+        if (is_negated_condition(element, 0)) continue;
+        const Node element_predicate = parse_relation(element);
+        if (element_predicate == core.Unequal
+            || (_nn_pred != 0 && element_predicate == _nn_pred)
+            || (_closure_pred != 0 && element_predicate == _closure_pred))
+            continue;
+
+        std::vector<Node> history;
+        const Node        instance = instantiate_fact(this, element, variables, 0, history);
+        if (instance == 0) return false; // cannot name this one; report it as new
+        matched.insert(instance);
+    }
+
+    // A rule whose conditions are ALL guards or negations leaves nothing to
+    // point at. Rare, and the honest answer is to keep reporting it rather
+    // than to invent a record.
+    if (matched.empty()) return false;
+
+    const Node record = set(matched);
+    if (record == 0) return false;
+
+    if (is_refuted_fact(record)) return true;
+
+    mark_refuted_fact(record);
+    return false;
+}
+
 void Reasoning::report_contradiction(const contradiction_error& error)
 {
+    // Before the output lock, never under it: this takes the network locks,
+    // and deduce establishes network-then-output as the order.
+    const bool already_known = record_contradiction(error);
+
     std::lock_guard<std::mutex> lock(_mtx_output);
 
-    // The instantiation IS the condition pattern plus the bindings that
-    // satisfied it. Variables is an ordered map, so the fold below is
-    // deterministic without sorting anything, and it reuses the engine's
-    // own mixing function rather than inventing a second one.
-    uint64_t h = error.get_fact();
-    for (const auto& [var, value] : error.get_variables())
-        h = Impl::create_hash(Impl::create_hash(h, var), value);
-
-    if (!_reported_contradictions.insert(h).second) return;
+    // A contradiction the graph already holds is not a new finding, and
+    // saying so again on every later input line is what this replaces. The
+    // export is the exception: it is a record of the run, so a second run
+    // must not hand back an empty file.
+    if (already_known)
+    {
+        if (_export_derivations)
+            _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
+        return;
+    }
 
     _contradiction = true;
     ++_total_contradictions;
@@ -190,7 +242,6 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
-    _reported_contradictions.clear();
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 
