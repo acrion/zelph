@@ -157,6 +157,42 @@ public:
         const bool _saved;
     };
 
+    // `janet_dostring` prints the stack trace itself, through `janet_eprintf`,
+    // BEFORE it hands the error status back, so there is no catch downstream
+    // that can decide about it. The `:err` dyn is where that printing goes,
+    // and it is pointed at a buffer of ours ONCE, at init: every trace lands
+    // there and the caller decides what becomes of it.
+    //
+    // Pointing it there on each call was the first shape and it must not come
+    // back. A fiber's env IS its dyn table (`janet_dobytes` sets `fiber->env`
+    // to the module environment), so `janet_setdyn` writes into whichever of
+    // the two is current -- and reading it back with `janet_dyn` on the
+    // statement path segfaulted inside `janet_table_get`, while a fresh
+    // `janet_buffer` per call corrupted the heap within a few thousand
+    // statements. One buffer, set once, touches no VM state after init.
+    JanetBuffer* _err_sink = nullptr;
+
+    // What Janet wrote about the call that just failed, and an empty sink
+    // afterwards. Returns nothing when the sink was never installed, which is
+    // the honest answer: then the trace went to stderr as it always did.
+    std::string take_err_trace() const
+    {
+        if (_err_sink == nullptr) return {};
+        std::string text(reinterpret_cast<const char*>(_err_sink->data), static_cast<size_t>(_err_sink->count));
+        _err_sink->count = 0;
+        return text;
+    }
+
+    // The default, and what every Janet entry point that is not deciding for
+    // itself has to call: the sink is one buffer for the whole engine, so a
+    // trace left standing in it is prepended to whatever fails next. Passing
+    // it on is also what these callers did before there was a sink.
+    void flush_err_trace() const
+    {
+        const std::string trace = take_err_trace();
+        if (!trace.empty()) std::fputs(trace.c_str(), stderr);
+    }
+
     // A registered syntax keyword. Two kinds share this entry, the
     // registration API (zelph/register-keyword) and the handler protocol
     // (text in, :incomplete veto, result out):
@@ -485,6 +521,7 @@ public:
                 janet_gcunroot(entry.handler);
             _keyword_handlers.clear();
             janet_gcunroot(_zelph_peg);
+            if (_err_sink != nullptr) janet_gcunroot(janet_wrap_buffer(_err_sink));
             janet_deinit();
         }
     }
@@ -494,6 +531,9 @@ public:
         _main_thread_id = std::this_thread::get_id();
         janet_init();
         _janet_env = janet_core_env(nullptr);
+        _err_sink  = janet_buffer(256);
+        janet_gcroot(janet_wrap_buffer(_err_sink));
+        janet_setdyn("err", janet_wrap_buffer(_err_sink));
         register_zelph_functions();
         setup_module_paths();
         setup_script_runner();
@@ -719,6 +759,7 @@ public:
         )janet";
         Janet       out;
         janet_dostring(_janet_env, code, "module-paths", &out);
+        flush_err_trace();
     }
 
     void setup_script_runner() const
@@ -750,6 +791,7 @@ public:
 
         Janet out;
         int   status = janet_dostring(_janet_env, code, "script-runner", &out);
+        flush_err_trace();
         if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
     }
 
@@ -902,9 +944,11 @@ public:
 
         Janet out;
         int   status = janet_dostring(_janet_env, peg_setup.c_str(), "setup", &out);
+        flush_err_trace();
         if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
 
         janet_dostring(_janet_env, "(def zelph-peg (peg/compile zelph-grammar))", "init", &out);
+        flush_err_trace();
         _zelph_peg = out;
         janet_gcroot(_zelph_peg);
     }
@@ -922,6 +966,7 @@ public:
 
         Janet out;
         janet_dostring(_janet_env, code, "default-numbers", &out);
+        flush_err_trace();
     }
 
     static std::string format_janet(Janet j)
@@ -3812,6 +3857,22 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, code.c_str(), "zelph-script", &out);
 
+    // A zelph statement is compiled to Janet, so Janet's frames name code the
+    // user never wrote -- "in <cfunction>", "in thunk [zelph-script] on line 1,
+    // column 32". They came out AHEAD of the handler's own report, so every
+    // refusal the engine words carefully reached the user twice with two lines
+    // of internals between the copies, and the second copy was the readable
+    // one. The message is not lost by dropping them: it travels with the value
+    // and is what "Error in line ..." prints.
+    //
+    // A user's own Janet block keeps its frames, and the difference is exactly
+    // whose code they name -- "in f [zelph-script] on line 1, column 13" is
+    // the function they wrote. The cost of drawing the line here is an inline
+    // keyword island inside a statement: an error the handler raises keeps its
+    // message and loses its frames.
+    const std::string trace = _pImpl->take_err_trace();
+    if (!is_zelph_ast && !trace.empty()) std::fputs(trace.c_str(), stderr);
+
     if (status != JANET_SIGNAL_OK)
     {
         // Throw a C++ exception so the error propagates correctly through import
@@ -3928,6 +3989,8 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
     }
 #endif
 
+    _pImpl->flush_err_trace();
+
     // Extract the error text BEFORE unrooting the fiber: 'out' is only
     // reachable through the rooted fiber (last_value).
     std::string err;
@@ -3963,29 +4026,15 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, c
     else
         _pImpl->_scoped_variables.clear();
 
-    // janet_dostring prints the stack trace itself, through janet_eprintf,
-    // BEFORE it hands the error status back. Redirecting the :err dyn to a
-    // buffer is the only way to keep a speculative evaluation silent; the
-    // buffer is discarded, the error still travels via the exception below.
-    struct ErrRedirect
-    {
-        explicit ErrRedirect(const bool on)
-            : _on(on)
-        {
-            if (!_on) return;
-            _saved = janet_dyn("err");
-            janet_setdyn("err", janet_wrap_buffer(janet_buffer(256)));
-        }
-        ~ErrRedirect()
-        {
-            if (_on) janet_setdyn("err", _saved);
-        }
-        const bool _on;
-        Janet      _saved{};
-    } err_redirect(quiet);
-
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);
+
+    // A speculative evaluation yields a normal outcome that the caller
+    // handles, so its trace is dropped; anything else is code the caller is
+    // not silencing.
+    const std::string trace = _pImpl->take_err_trace();
+    if (!quiet && !trace.empty()) std::fputs(trace.c_str(), stderr);
+
     if (status != JANET_SIGNAL_OK)
     {
         std::string err = "Janet error";

@@ -29,7 +29,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 #include "network/zelph.hpp"
 
+#include <array>
+#include <cstdio>
+#include <filesystem>
+#include <functional>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 using namespace zelph::test;
@@ -660,4 +665,103 @@ TEST_CASE("listing: a value listing does not fill a cache it never reads")
             if (graph->try_get_fact_structures_cached(fact, out)) ++cached;
         }
         CHECK(cached == 0); });
+}
+
+// ---------------------------------------------------------------------------
+// What Janet prints on its own account, which is not what the engine reports.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // janet_dostring emits its stack trace via janet_eprintf, directly into
+    // the process's stderr -- it never passes through the OutputCollector, so
+    // the whole of what these two cases are about remains unseen by every
+    // other assertion in this suite. Retrieving the descriptor is the only
+    // means to observe it. The saved one is restored prior to any read
+    // operation, so a failure here does not silence the rest of the run.
+    std::string capture_stderr(const std::function<void()>& body)
+    {
+        const auto path = std::filesystem::temp_directory_path() / "zelph_stderr_capture.txt";
+
+        std::FILE* sink = std::fopen(path.string().c_str(), "w+");
+        REQUIRE(sink != nullptr);
+
+        std::fflush(stderr);
+        const int saved = dup(fileno(stderr));
+        dup2(fileno(sink), fileno(stderr));
+
+        try
+        {
+            body();
+        }
+        catch (const std::exception&)
+        {
+            // A refused statement throws; the trace is what is under test.
+        }
+
+        std::fflush(stderr);
+        dup2(saved, fileno(stderr));
+        close(saved);
+
+        std::rewind(sink);
+        std::string           text;
+        std::array<char, 512> buf{};
+        while (const size_t n = std::fread(buf.data(), 1, buf.size(), sink))
+            text.append(buf.data(), n);
+        std::fclose(sink);
+        std::filesystem::remove(path);
+        return text;
+    }
+} // namespace
+
+// A zelph statement is compiled to Janet, so Janet's frames name code the user
+// never wrote. They came out AHEAD of the engine's own report, so a refusal
+// the engine words carefully reached the user twice -- once raw, with
+// "in <cfunction>" and "in thunk [zelph-script] on line 1, column 32" between
+// the copies, and once readable. The documentation shows only the readable
+// one, which is the version this makes true.
+TEST_CASE("output: a refused statement reports once, without Janet's frames")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    std::string       reported;
+    const std::string err = capture_stderr([&]
+                                           {
+        try
+        {
+            interactive.process("a P279⁺ d");
+        }
+        catch (const std::exception& e)
+        {
+            reported = e.what();
+        } });
+
+    // Nothing of Janet's own is left. In the REPL these frames stood between
+    // two copies of the message; here they would be all there is, because the
+    // harness carries the report on the exception rather than on stderr.
+    CHECK(err.find("in thunk [zelph-script]") == std::string::npos);
+    CHECK(err.find("<cfunction>") == std::string::npos);
+    CHECK(err.empty());
+
+    // And the report itself remains unaltered: suppressing the trace must not
+    // cost the message, which travels with the value, not with the printing.
+    CHECK(reported.find("condition operators") != std::string::npos);
+}
+
+// The line is drawn at whose code the frames belong to. In a user's own Janet
+// block they are theirs -- the function they wrote, at the column they wrote
+// it -- so suppressing them there would take away the only thing that says
+// where the error is.
+TEST_CASE("output: a Janet block keeps the frames of the code it ran")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process("%(defn boom [x] (* x nil))");
+
+    const std::string err = capture_stderr([&]
+                                           { interactive.process("%(boom 3)"); });
+
+    CHECK(err.find("in boom [zelph-script]") != std::string::npos);
 }
