@@ -1,6 +1,23 @@
 .load /home/stefan/zelph/wikidata-20251222-all.bin
 .lang zelph
 
+# Written before the transitive path condition existed, which is why the class
+# chains below are unrolled by hand -- and capped at length 3, so a violation
+# inherited over four or more P279 steps is not in the report. The one-line
+# form that supersedes all of it is
+#
+#   (K P279⁺ e1, K P279⁺ e2) => !
+#
+# and it is complete to any depth. Kept as it stands because the numbers taken
+# with it are recorded against it.
+#
+# Name lookup is strictly per language, with no fallback: under `.lang zelph`
+# the bare string "P279" below binds a FRESH zelph node rather than Wikidata's
+# property, so every rule in this file matched nothing and the script reported
+# a clean graph. The e1/e2 aliases were always correct; the predicate needed
+# the same treatment.
+.name P279 wikidata P279
+
 # Top 1: concrete object vs abstract entity (93% of the total culprits)
 #.name e1 wikidata Q4406616
 #.name e2 wikidata Q7048977

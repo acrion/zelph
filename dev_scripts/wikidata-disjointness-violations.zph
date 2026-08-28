@@ -1,4 +1,28 @@
 .lang wikidata
 
-(*{(C "P2738" S) (S "P11260" A) (S "P11260" B) (K "P279" A) (K "P279" B)} ~ conjunction) => !
-(*{(C "P2738" S) (S "P11260" A) (S "P11260" B) (X "P31" A)  (X "P31" B)}  ~ conjunction) => !
+# Disjointness violations, read from Wikidata's own definitions.
+#
+# Wikidata states class disjointness as a `disjoint union of` (P2738) statement
+# whose members sit in `list item` (P11260) qualifiers. Those live in the
+# STATEMENT layer, which `.wikidata-qualifiers` adds on top of an already
+# loaded network, so the predicates are the prefixed node names `p:P2738` and
+# `pq:P11260` -- not the bare IDs. A rule written with the bare names matches
+# nothing at all and reports a clean graph:
+#
+#   .load wikidata-20260309-all-pruned-small.bin
+#   .wikidata-qualifiers wikidata-20260309-all.json.bz2 P11260
+#   .import dev_scripts/wikidata-disjointness-violations
+#   .run
+#
+# The A != B guard is what makes the rule say what it means. Without it both
+# variables bind to the SAME list member, the two class conditions collapse
+# into one, and every class below any listed member is reported as a violation
+# -- a report that looks thorough and is noise. The SPARQL form of this query
+# has always carried the guard, as FILTER(str(?disj1) < str(?disj2)).
+#
+# A and B range over the members of one list, in both orders, so each violation
+# arrives twice. The premise SET is the same both times, and a contradiction is
+# recorded per set, so it is reported once.
+
+(*{(C "p:P2738" S) (S "pq:P11260" A) (S "pq:P11260" B) (A != B) (K P279 A) (K P279 B)} ~ conjunction) => !
+(*{(C "p:P2738" S) (S "pq:P11260" A) (S "pq:P11260" B) (A != B) (X P31 A)  (X P31 B)}  ~ conjunction) => !
