@@ -3144,6 +3144,67 @@ public:
         return NestedOp::None;
     }
 
+    // The same question for a RULE, where the answer is not "nowhere" but "only
+    // at the top of a condition". A rule has the slots these operators exist
+    // for, and they were checked at the top of one and nowhere else -- so a
+    // marker one argument down was built and never read: "(x q (¬(a p b))) =>
+    // (c r d)" printed back as "(x q (a p b)) => (c r d)", the operator gone
+    // from a rule that now means something else, and "(x q (a P279⁺ d))" tagged
+    // a fact no closure is ever walked for. The consequence slot had the checks
+    // but only the shallow ones, so the same thing one argument in derived the
+    // pattern the operator denied.
+    //
+    // `in_condition` says which slot this node stands in, because that is the
+    // whole of what decides. A condition may BE an operator, so the operator
+    // layers are peeled here and the fact under them is what gets walked; an
+    // argument and a consequence may not, so anything found there is reported.
+    // A nested "=>" is a rule again -- that is a rule GENERATOR, whose inner
+    // rule has its own slots and its own right to a `¬`.
+    static NestedOp misplaced_condition_op(Janet node, const bool in_condition)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return NestedOp::None;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return NestedOp::None;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        const bool        slot = (type == "nested" || type == "condition");
+
+        // A rule, no matter where it stands: its own condition and
+        // consequence slots open again.
+        if (slot && len > 3 && is_atom(data[2], "=>"))
+        {
+            if (const NestedOp op = misplaced_condition_op(data[1], true); op != NestedOp::None) return op;
+            for (int32_t i = 3; i < len; ++i)
+                if (const NestedOp op = misplaced_condition_op(data[i], false); op != NestedOp::None) return op;
+            return NestedOp::None;
+        }
+
+        if (!in_condition) return nested_condition_op(node);
+
+        if (type == "conjunction")
+        {
+            for (int32_t i = 1; i < len; ++i)
+                if (const NestedOp op = misplaced_condition_op(data[i], true); op != NestedOp::None) return op;
+            return NestedOp::None;
+        }
+
+        // The layers a condition is permitted to wear, peeled one at a time
+        // so that the legitimate stack -- "¬≈net(...)", "¬(C P⁺ T)" --
+        // survives.
+        if (type == "negation" && len >= 2) return misplaced_condition_op(data[1], true);
+        if (type == "approx" && len >= 3) return misplaced_condition_op(data[2], true);
+        if (slot && len == 2) return misplaced_condition_op(data[1], true); // plain grouping
+
+        // The condition itself, finally. Its own predicate may carry a path
+        // marker; its arguments may carry nothing.
+        if (slot)
+            for (int32_t i = 1; i < len; ++i)
+                if (const NestedOp op = nested_condition_op(data[i]); op != NestedOp::None) return op;
+
+        return NestedOp::None;
+    }
+
     std::string build_smart_call(const std::string& func_name, const std::vector<Janet>& args) const
     {
         if (args.empty()) return "nil";
@@ -3762,6 +3823,42 @@ std::string ScriptEngine::parse_zelph_to_janet(const std::string& input) const
                             "\"≈\" is a condition operator and has no meaning as a consequence: "
                             "a rule cannot assert what a network believes. Consult the net in a "
                             "condition and derive an ordinary fact from it.");
+                }
+
+                // The three above ask about the top of a slot, which is where
+                // an operator belongs and therefore the only place anyone
+                // thought to look. One argument further in it was neither read
+                // nor reported: the rule was built without it and printed back
+                // without it. Both slots are walked now -- a condition keeps
+                // its own operator layers, everything under them and the whole
+                // of a consequence keeps none. A nested "=>" opens its slots
+                // again, so a rule generator's inner rule is untouched.
+                for (std::size_t i = 0; i < fact_args.size(); ++i)
+                {
+                    if (i == 1) continue; // the arrow
+
+                    switch (Impl::misplaced_condition_op(fact_args[i], i == 0))
+                    {
+                    case Impl::NestedOp::Negation:
+                        throw std::runtime_error(
+                            "\"¬\" applies to a whole condition, not to something inside one: the "
+                            "tag it writes is read where the condition is, and nowhere below it. "
+                            "Write it in front of the condition -- \"(A q B, ¬(A p B)) => ...\".");
+                    case Impl::NestedOp::Approx:
+                        throw std::runtime_error(
+                            "\"≈\" applies to a whole condition, not to something inside one: it "
+                            "asks what a network believes about the condition, and nothing reads "
+                            "it below that. Write it as the condition -- "
+                            "\"(X rel S, ≈net(S p O)) => ...\".");
+                    case Impl::NestedOp::Path:
+                        throw std::runtime_error(
+                            "\"⁺\" and \"∗\" mark the predicate of a CONDITION, not of a fact "
+                            "inside one: the closure is walked for the condition itself, and a "
+                            "marker below it tags a fact nothing ever walks. Write the path as "
+                            "its own condition.");
+                    case Impl::NestedOp::None:
+                        break;
+                    }
                 }
             }
             else

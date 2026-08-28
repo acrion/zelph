@@ -438,6 +438,63 @@ TEST_CASE("path condition: a ground self-path outside a rule is refused")
     CHECK(collect_answers(collector).empty());
 }
 
+// A condition operator has slots in a RULE, and the checks stood at the top of
+// them and nowhere else. One argument in, a marker was built and never read:
+// the rule came back printed WITHOUT it -- "(x q (¬(a p b))) => (c r d)" listed
+// itself as "(x q (a p b)) => (c r d)" -- and a path marker there tagged a fact
+// no closure is ever walked for. The consequence slot had the checks but only
+// the shallow ones, so the same shape one argument in derived the pattern the
+// operator denied.
+TEST_CASE("path condition: an operator inside a rule's condition is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    collector.clear();
+
+    // Condition, conjunction member, and consequence, for each of the three
+    // operators that have a slot to be misplaced in.
+    CHECK_THROWS(interactive.process("(x q (a P279⁺ d)) => (c r d)"));
+    CHECK_THROWS(interactive.process("(x q (¬(a P279 d))) => (c r d)"));
+    CHECK_THROWS(interactive.process("(X q (¬(a P279 d)), X rel Y) => (Y ok Y)"));
+    CHECK_THROWS(interactive.process("(A rel B) => (x q (¬(a P279 d)))"));
+    CHECK_THROWS(interactive.process("(A rel B) => (x q (a P279⁺ d))"));
+
+    // The assertion that matters, as ever: nothing of it was built. A rule the
+    // parser accepted and then meant differently is what this replaces.
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
+// Where they DO belong, and every layer they are allowed to wear. A condition
+// may be a negation, a neural condition, a path, or a negation of either of
+// those; and an inner rule is a rule, so a generator's condition keeps its own
+// right to a "¬".
+TEST_CASE("path condition: the slots an operator does belong in still take it")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    interactive.process("y rel d");
+    collector.clear();
+
+    interactive.process("(S P279⁺ T) => (S above T)");
+    interactive.process("(X rel S, ¬(S P279⁺ d)) => (X clear-of S)");
+    interactive.process("(X rel S, ¬(S P279∗ d)) => (X strictly-clear-of S)");
+    interactive.process("(P lifts Q) => ((X P Y, ¬(X Q Y)) => (X flagged Y))");
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "=> (S above T)"));
+    CHECK(any_output_contains(collector, "=> (X clear-of S)"));
+    CHECK(any_output_contains(collector, "=> (X strictly-clear-of S)"));
+    CHECK(any_output_contains(collector, "=> (X flagged Y)"));
+}
+
 // The marker earns its place by NOT being reserved: it is read only as a
 // trailing marker in predicate position, and only when a name is left over.
 TEST_CASE("path condition: the marker stays an ordinary character elsewhere")

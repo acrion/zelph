@@ -641,6 +641,17 @@ Error in line "x mentions (a P279⁺ d)": "⁺" and "∗" are condition operator
 
 Under `¬` in a rule _condition_ both are ordinary tests, which is the next section.
 
+Inside a rule the three do have slots – but the slot is a whole condition, and an operator one argument further in is read by nothing. It is refused there too, in a condition and in a consequence alike:
+
+```
+zelph> (x q (¬(a p b))) => (c r d)
+Error in line "(x q (¬(a p b))) => (c r d)": "¬" applies to a whole condition, not to something inside one: the tag it writes is read where the condition is, and nowhere below it. Write it in front of the condition -- "(A q B, ¬(A p B)) => ...".
+zelph> (A p B) => (x q (a P279⁺ d))
+Error in line "(A p B) => (x q (a P279⁺ d))": "⁺" and "∗" mark the predicate of a CONDITION, not of a fact inside one: the closure is walked for the condition itself, and a marker below it tags a fact nothing ever walks. Write the path as its own condition.
+```
+
+An inner rule is a rule, so a [rule generator](rule-generators.md) writing `(P lifts Q) => ((X P Y, ¬(X Q Y)) => (X flagged Y))` is untouched by this: the `¬` there stands at the top of the inner rule’s own condition.
+
 **What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
 
 `¬(C P⁺ T)` and `¬≈net(S P O)` are tests: the first succeeds when there is no path, the second when the net does not confirm the fact. Both need every term bound, because a negation binds nothing, and both say so when a term is open.
