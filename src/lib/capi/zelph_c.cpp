@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/adjacency_set.hpp"
 #include "network/neural.hpp"
 #include "network/answer.hpp"
+#include "network/fact_structure.hpp"
 #include "network/reasoning.hpp"
 
 #include <algorithm>
@@ -918,7 +919,26 @@ int32_t zelph_exists(zelph_engine*     engine,
             set.insert(objects[i]);
         }
 
-        *out_exists = engine->interactive.graph()->check_fact(subject, predicate, set).is_correct() ? 1 : 0;
+        // The same question zelph/exists answers, and it has to be answered
+        // the same way: a fact carrying FURTHER objects satisfies this one,
+        // because that is what unification matches. The exact hash alone said
+        // "no" to a triple the engine's own rules fire on -- ask about
+        // "a p b" while the graph holds "a p b c" and a rule with exactly
+        // that condition derives from it, so the ABI contradicted the engine
+        // it speaks for. The Janet side was corrected for this; the C side is
+        // the other reader of it.
+        //
+        // is_asserted_fact is the second half, and the one a caller cannot
+        // reach through this header alone: a network LOADED here carries the
+        // rule-pattern and refutation markings it was saved with, and neither
+        // is a claim. "Does this fact exist" means "did anyone claim it".
+        const zelph::network::Zelph* const graph = engine->interactive.graph();
+
+        zelph::network::Node found = graph->check_fact(subject, predicate, set).relation();
+        if (!graph->check_fact(subject, predicate, set).is_known())
+            found = zelph::network::containing_fact(graph, subject, predicate, set);
+
+        *out_exists = (found != 0 && graph->check_fact(found).is_correct() && graph->is_asserted_fact(found)) ? 1 : 0;
         return succeed(); });
 }
 

@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "capi/zelph_c.h"
 
+#include "test_helpers.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -1480,4 +1482,103 @@ TEST_CASE("capi: the activation is checked and the default is the old behaviour"
     count = 1;
     REQUIRE(zelph_nn_eval_nodes(engine, leaky, &i1, nullptr, 1, 1, &top, &b, &count) == ZELPH_OK);
     CHECK(a == doctest::Approx(b));
+}
+
+// Two implementations of one question have to agree, and this one did not.
+// "Does this fact exist" is answered on the Janet side by check_fact, then by
+// a fact carrying FURTHER objects, then by asking whether anyone CLAIMED what
+// was found. The C side asked only the first, so it said "no" about a triple
+// the engine's own rules fire on -- an ABI contradicting the engine it speaks
+// for, which is worse than either answer alone.
+TEST_CASE("capi: existence is the question the engine answers, not the exact hash")
+{
+    Engine engine;
+
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node b = engine.node("b");
+    const zelph_node c = engine.node("c");
+
+    // One fact with two objects -- not two facts. "a p b" is a different node
+    // and does not exist; the question is whether it HOLDS.
+    const zelph_node objects[2] = {b, c};
+    zelph_node       wide       = 0;
+    REQUIRE(zelph_fact(engine, a, p, objects, 2, &wide) == ZELPH_OK);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    // And the control that says the answer is the engine's rather than a
+    // convenient one: a rule with exactly that condition derives from it.
+    zelph_node       cond  = 0;
+    zelph_node       cons  = 0;
+    zelph_node       rule  = 0;
+    const zelph_node fired = engine.node("fired");
+    REQUIRE(zelph_fact(engine, a, p, &b, 1, &cond) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, a, fired, &b, 1, &cons) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, &cond, 1, &cons, 1, &rule) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    int32_t derived = -1;
+    REQUIRE(zelph_exists(engine, a, fired, &b, 1, &derived) == ZELPH_OK);
+    CHECK(derived == exists);
+
+    // A fact nobody entered is still absent: the containment reading widens
+    // what counts as holding, it does not stop asking.
+    const zelph_node d      = engine.node("d");
+    int32_t          absent = -1;
+    REQUIRE(zelph_exists(engine, a, p, &d, 1, &absent) == ZELPH_OK);
+    CHECK(absent == 0);
+}
+
+// The one case in this file that builds its fixture with the REPL, and the
+// reason is the point of the case: a rule-pattern marking and a refutation
+// cannot be made from the C side at all -- they ride on the parser -- while a
+// caller reaches them the moment it loads a network somebody else saved. So
+// the data is written outside and every assertion is made through the header,
+// which is what the rest of this file is protecting.
+//
+// The script engine keeps a process-wide instance, and two live ones corrupt
+// the heap. The REPL engine is scoped OUT before the C one is made.
+TEST_CASE("capi: a loaded network's unclaimed facts are not reported as existing")
+{
+    const auto file = fs::temp_directory_path() / "zelph_capi_unclaimed.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        zelph::test::process_lines(interactive, R"(
+c q d
+(a p b) => (x r y)
+¬(e p f)
+)");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+
+    const zelph_node p = engine.node("p");
+    const zelph_node q = engine.node("q");
+
+    const zelph_node b = engine.node("b");
+    const zelph_node d = engine.node("d");
+    const zelph_node f = engine.node("f");
+
+    // The rule's own condition: present as structure, claimed by nobody.
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, engine.node("a"), p, &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    // Refuted: the graph claims the opposite of it.
+    REQUIRE(zelph_exists(engine, engine.node("e"), p, &f, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    // And an ordinary fact from the same file still answers, so the two above
+    // are about the markings and not about the load.
+    REQUIRE(zelph_exists(engine, engine.node("c"), q, &d, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    fs::remove(file);
 }

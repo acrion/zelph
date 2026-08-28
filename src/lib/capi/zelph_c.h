@@ -263,7 +263,15 @@ extern "C"
        "no defender remains" expressible. */
     ZELPH_EXPORT int32_t zelph_negate(zelph_engine* engine, zelph_node pattern, zelph_node* out_node);
 
-    /* Does this fact exist? Creates nothing. */
+    /* Was this fact CLAIMED -- asserted or derived? Creates nothing.
+
+       The question the engine's own rules answer, so the answer is theirs: a
+       fact carrying further objects satisfies this one (asking about "a p b"
+       says yes while the graph holds "a p b c", because that is what a rule
+       with exactly that condition fires on), and a fact the graph holds
+       without anyone claiming it -- a rule's own pattern, a refutation, both
+       of which arrive with a loaded network -- says no. The Janet binding
+       zelph/exists answers the same, in the same words. */
     ZELPH_EXPORT int32_t zelph_exists(zelph_engine*     engine,
                                       zelph_node        subject,
                                       zelph_node        predicate,

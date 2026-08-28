@@ -202,7 +202,7 @@ The graph is not only a store, and this is the surface a program needs to use ru
 | `zelph_set(engine, elements, count, out_node)` | A set constant: identified by its members, so the same elements always yield the same node |
 | `zelph_collection(engine, elements, count, out_node)` | A container with an identity of its own: two calls with the same elements yield two different nodes |
 | `zelph_negate(engine, pattern, out_node)` | Mark a pattern as negation as failure - evaluated against the saturated positive fact base, never against in-flight state |
-| `zelph_exists(engine, s, p, objects, n, out_exists)` | Does this fact exist? Creates nothing |
+| `zelph_exists(engine, s, p, objects, n, out_exists)` | Was this fact *claimed* – asserted or derived? Creates nothing. A fact carrying further objects satisfies it, exactly as a rule condition does; a rule’s own pattern and a refuted fact do not |
 | `zelph_targets(engine, subject, predicate, out_nodes, count)` | The mirror of `zelph_sources` |
 | `zelph_rule(engine, conditions, n, consequences, m, out)` | When every condition holds, deduce every consequence. Returns the condition set |
 | `zelph_run` / `zelph_run_once` / `zelph_run_delta` | Forward chaining: to a fixed point, one pass, or seeded by what was created since the previous run |
