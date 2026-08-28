@@ -48,7 +48,7 @@ The exact memory requirement depends on the Wikidata dump, the enabled rules, an
 Running inference on Wikidata data is computationally intensive but highly optimised:
 
 - **Parallel processing:** both data import and the unification/reasoning engine are multi-threaded and can utilise all available CPU cores.
-- **Performance:** a complete inference pass on the full dataset takes approximately 2.5 hours on high-end hardware (for example, an Intel Core i9 with 24 cores), although this depends strongly on available RAM and on the specific rules being applied.
+- **Performance:** the figure quoted here used to be "approximately 2.5 hours for a complete inference pass on the full dataset". That measurement was taken in December 2025, on a different dump and a different engine, and it has not been repeated since; it is withdrawn rather than restated, because a timing whose file and version are unknown cannot be checked. What is current, and measured on the published 2026-03-09 artifacts: six contradiction rules across three violation families run together over `wikidata-20260309-all-pruned-small.bin` (26.5 million nodes) in under a minute, and the class-hierarchy queries of [Working on the Wikidata Class Hierarchy](class-hierarchy.md) answer in milliseconds to seconds. A pass over the full network is a different order of magnitude and depends strongly on available RAM and on the rules applied.
 - **Workflow:** users can run targeted scripts to find specific classes of contradictions (see additional Wikidata sections on [zelph.org](https://zelph.org/wikidata) for examples such as split-order violations).
 
 ## Wikidata Integration Script

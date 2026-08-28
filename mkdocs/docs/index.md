@@ -918,9 +918,9 @@ same contradiction is a fresh finding if they ever return.)
 
 ### Exporting Derivations
 
-`.run-export <file>` performs full inference like `.run` and writes every
-derived fact and every contradiction to `<file>` — one JSON object per line
-(JSON Lines):
+`.run-export <file>` performs full inference like `.run` and writes what THAT
+run derives, plus every contradiction it meets, to `<file>` — one JSON object
+per line (JSON Lines):
 
 ```json
 {"kind":"deduction","conclusion":[SEG,...],"premises":[[SEG,...],...]}
@@ -949,6 +949,23 @@ format:
   `⇐ {(a p b) (b p c)}`, because that set is what the rule's subject is.
   The export hands over its elements, so no one has to take braces apart
   again.
+
+Two more, which decide how the file may be counted:
+
+- **A derivation the graph already holds is not re-derived, so it is not
+  written.** Deductions are hash-consed: a fact that exists produces no
+  deduction to export. Over a saturated network — one that a `.run` has
+  already completed — the deduction side of the file is therefore EMPTY, and
+  the command still exits as if it had worked. Export from the run that does
+  the deriving, or start from `.new`. The same property means only the FIRST
+  derivation of a fact is ever written: a second rule reaching the same
+  conclusion adds no record, so the file holds one justification per fact and
+  not all of them — the same limit `.help .explain` states for the proof tree.
+- **Contradictions are the deliberate exception, and they repeat.** A
+  contradiction is written every time a run meets it, so that a second
+  `.run-export` does not hand back an empty file — which means the same
+  violation can occupy several lines. Counting violations therefore means
+  deduplicating on the premise set, order-independently, not counting lines.
 
 A contradiction record carries one more field when the engine **refused** to
 build the deduced fact — a shape it cannot represent — rather than finding the
