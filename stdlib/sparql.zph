@@ -1204,15 +1204,29 @@
 # ============================================================
 # 11. Top-level handler + keyword registration
 # ============================================================
+# EXISTS covers FILTER EXISTS and FILTER NOT EXISTS in one entry, because the
+# scan is per word and NOT EXISTS contains it. Both used to pass the list and
+# then fail the grammar -- FILTER EXISTS with a syntax error, FILTER NOT EXISTS
+# by parsing into a FILTER the evaluator could not satisfy, so the query
+# answered "No results." for a question MINUS answers correctly. A silently
+# empty answer is the one failure mode a query engine must not have.
 (def unsupported-keywords
-  ["BIND" "VALUES" "SERVICE" "CONSTRUCT" "DESCRIBE" "GRAPH" "HAVING"])
+  ["BIND" "VALUES" "SERVICE" "CONSTRUCT" "ASK" "DESCRIBE" "EXISTS" "GRAPH" "HAVING"])
 
+# What may NOT sit next to an unsupported keyword for it to count as one.
+# Letters, digits, _ and - are the obvious half. The other half is the three
+# characters that introduce a name in SPARQL: `?` and `$` start a variable and
+# `:` ends a prefix, so `?exists`, `$graph` and `wd:ASK` are names that merely
+# contain a keyword. Without them the scan reads those as the keyword and
+# refuses a query that uses none of the constructs -- which matters more since
+# EXISTS joined the list, `?exists` being an ordinary thing to call a variable.
 (defn word-char? [s i]
   (if (or (< i 0) (>= i (length s)))
     false
     (do
       (def c (get s i))
-      (or (<= 65 c 90) (<= 48 c 57) (= c 95) (= c 45)))))
+      (or (<= 65 c 90) (<= 48 c 57) (= c 95) (= c 45)
+          (= c 63) (= c 36) (= c 58)))))
 
 (defn check-unsupported [text]
   (def upper (string/ascii-upper text))

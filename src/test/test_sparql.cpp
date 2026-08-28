@@ -1004,6 +1004,82 @@ TEST_CASE("sparql: unsupported feature is rejected with an error")
         CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
 }
 
+// FILTER NOT EXISTS used to be the one construct that answered WRONGLY rather
+// than refusing: it is listed as out of scope in the script's own header, was
+// missing from the rejection list, and then parsed into a FILTER the evaluator
+// could not satisfy -- so the query printed "No results." for a question the
+// MINUS spelling of the same thing answers correctly. An empty answer that
+// looks like a real one is the failure mode a query engine must not have, and
+// it is worse here than a refusal: a Wikidata report built on it reads as
+// "nothing found".
+TEST_CASE("sparql: FILTER NOT EXISTS is refused rather than answered emptily")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . FILTER NOT EXISTS { ?x wdt:P31 wd:Q999 } }");
+        CHECK_THROWS_AS(interactive.process(""), std::runtime_error);
+
+        // The affirmative form was already refused, by the grammar rather than
+        // by the list; it is refused by the list now, with a message that names
+        // the construct.
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . FILTER EXISTS { ?x wdt:P31 wd:Q999 } }");
+        CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
+}
+
+// The question FILTER NOT EXISTS asks IS answerable here -- MINUS carries it,
+// with the correlated semantics the script documents. This pins that refusing
+// the one spelling does not take the capability away.
+// The keyword scan is a word search over the raw text, so a NAME that contains
+// an unsupported keyword must not read as one. `?` and `$` open a variable and
+// `:` closes a prefix; without those three in the boundary set, `?exists` is
+// refused as EXISTS and `wd:ASK` as ASK, and the query uses neither construct.
+TEST_CASE("sparql: a variable whose name contains a keyword is not a keyword")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?exists WHERE { ?exists wdt:P279 wd:Q5 . MINUS { ?exists wdt:P31 wd:Q999 } }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+TEST_CASE("sparql: MINUS answers what FILTER NOT EXISTS was silently dropping")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . MINUS { ?x wdt:P31 wd:Q999 } }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
 TEST_CASE("sparql: syntax error in a complete block is rejected with an error")
 {
     run_both_modes([](auto& collector, auto& interactive)
