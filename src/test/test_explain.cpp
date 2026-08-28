@@ -301,6 +301,48 @@ TEST_CASE("pruning: a quoted name without spaces reaches the pattern")
         CHECK_FALSE(any_output_contains(collector, "x>y")); });
 }
 
+// The search stops at the first justification it can rebuild, which is a
+// deliberate cost decision -- and it used to be invisible, so a tree over a
+// fact reached two ways read as THE derivation of it. That is a stronger claim
+// than the engine makes, and it is the one an auditability argument rests on.
+// A second verified instantiation is now looked for at the root and named.
+TEST_CASE("explain: a fact reached two ways says so")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X p Y) => (X target Y)
+(X q Y) => (X target Y)
+a p b
+a q b
+)");
+        interactive.run(false, false, false);
+
+        collector.clear();
+        interactive.process(".explain (a target b) 0");
+        CHECK(any_output_contains(collector, "one of several justifications"));
+        // The one it does show is still a complete, checkable derivation.
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}
+
+// The counterpart: one derivation must not grow the annotation, or it says
+// nothing. The premise here is reachable by exactly one rule.
+TEST_CASE("explain: a fact reached one way is not annotated")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X p Y) => (X target Y)
+a p b
+)");
+        interactive.run(false, false, false);
+
+        collector.clear();
+        interactive.process(".explain (a target b) 0");
+        CHECK(any_output_contains(collector, "a p b"));
+        CHECK_FALSE(any_output_contains(collector, "one of several justifications")); });
+}
+
 TEST_CASE("explain: a rejected reading of the argument stays silent")
 {
     // cmd_explain TRIES readings of its argument; a failing one is a

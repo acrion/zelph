@@ -382,6 +382,15 @@ namespace zelph::network
                             }
                             if (!ok) continue;
 
+                            if (proof->status == ProofNode::Status::Derived)
+                            {
+                                // A second verified instantiation. Nothing more
+                                // to build: the fact is reached in more than one
+                                // way, and saying so is the whole point.
+                                proof->more_justifications = true;
+                                break;
+                            }
+
                             proof->status   = ProofNode::Status::Derived;
                             proof->rule     = rule;
                             proof->walked   = std::move(walked);
@@ -389,13 +398,22 @@ namespace zelph::network
                             proof->bindings = bindings;
                             for (const Node premise : premises)
                                 proof->premises.push_back(reconstruct(ctx, premise, depth + 1));
-                            break; // one justification per fact
+
+                            // Only the ROOT keeps looking. That scan costs one
+                            // more pass over the rules for one fact and recurses
+                            // into nothing, because the premises are already
+                            // built; doing it at every level would turn a linear
+                            // walk into a quadratic one, for an annotation the
+                            // deeper nodes do not carry anyway.
+                            if (depth != 0) break;
                         }
 
-                        if (proof->status == ProofNode::Status::Derived || neural) break;
+                        if (proof->more_justifications) break;
+                        if ((proof->status == ProofNode::Status::Derived && depth != 0) || neural) break;
                     }
 
-                    if (proof->status == ProofNode::Status::Derived) break;
+                    if (proof->more_justifications) break;
+                    if (proof->status == ProofNode::Status::Derived && depth != 0) break;
                 }
             }
 

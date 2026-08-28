@@ -1861,8 +1861,10 @@ private:
                          "a fact derived only through one is reported as 'no derivation\n"
                          "found'. The forward direction is unaffected -- the deduction\n"
                          "line names the tag fact (pattern nn net) as its premise.\n"
-                         "max-depth defaults to 3; 0 means unlimited. If several\n"
-                         "justifications exist, one is shown. Term islands work inside\n"
+                         "max-depth defaults to 3 levels below the fact; 0 means\n"
+                         "unlimited. The search stops at the first justification it\n"
+                         "can rebuild; when a second one exists, the root line says\n"
+                         "'[one of several justifications]'. Term islands work inside\n"
                          "the pattern: .explain $( x*x ) diffby x = D is invalid, but\n"
                          ".explain ($( x*x ) diffby x) = (x + x) resolves as usual.\n"
                          "A collection literal @{...} is the one printed form that cannot\n"
@@ -4197,7 +4199,11 @@ private:
         }
         printed.insert(p->fact);
 
-        out += branch + line + "\n";
+        // Only the root carries this, and only when a second instantiation was
+        // verified. Without it the tree reads as THE derivation of the fact,
+        // which is a stronger claim than the search makes: it stops at the
+        // first justification it can rebuild.
+        out += branch + line + (p->more_justifications ? "  [one of several justifications]\n" : "\n");
 
         const std::size_t total = p->premises.size() + p->walked.size() + p->absent.size();
         std::size_t       index = 0;
