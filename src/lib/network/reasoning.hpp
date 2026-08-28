@@ -121,6 +121,14 @@ namespace zelph::network
         // actually tested.
         std::vector<Node>                       walked;
 
+        // Whether the search found a SECOND verified instantiation for this
+        // fact. Only the first is reconstructed -- following every one of them
+        // would multiply the work at each level and answer a question nobody
+        // asked. What the flag buys is that the one shown no longer passes for
+        // the only one there is, which is the difference between "the evidence"
+        // and "some evidence". Set at the root only; see reconstruct().
+        bool                                    more_justifications = false;
+
         // The instantiation that justifies this step (Derived only). The
         // positive premises are already ground nodes, but a NAF condition
         // usually has no node -- absence is why it holds -- so `absent`
@@ -225,6 +233,7 @@ namespace zelph::network
         // contradiction, in the same form node_to_string produces for any
         // other name, so console and export read it the same way.
         std::string contradiction_symbol() const;
+        std::string known_contradiction_note() const;
 
         // The premises of one rule instantiation, rendered individually.
         // The printed line shows the condition SET -- "{(a p b) (b p c)}" --
@@ -400,6 +409,13 @@ namespace zelph::network
         std::mutex                               _mtx_network;
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
+        // Contradictions the graph ALREADY held when this run met them. They
+        // are deliberately not announced again (see report_contradiction), but
+        // a run that reports nothing and counts nothing is indistinguishable
+        // from a clean graph -- and after a .load of a network that was saved
+        // after a run, that is every contradiction in it. Counting them is
+        // what keeps the summary honest without bringing the lines back.
+        std::atomic<int>                         _total_known_contradictions{0};
         // Whether a contradiction is written into the graph. See
         // record_contradiction for what it costs and why it can be switched
         // off; the per-run hash set that used to sit here is gone with it.

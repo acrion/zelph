@@ -119,6 +119,7 @@ void Reasoning::report_contradiction(const contradiction_error& error)
     // must not hand back an empty file.
     if (already_known)
     {
+        ++_total_known_contradictions;
         if (_export_derivations)
             _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
         return;
@@ -144,6 +145,17 @@ void Reasoning::report_contradiction(const contradiction_error& error)
 
     if (_export_derivations)
         _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
+}
+
+// What a run met but did not announce. Empty when there is nothing to say, so
+// the ordinary summary is unchanged; a network loaded from a file that was
+// saved after a run is the case this exists for, because there every
+// contradiction is already recorded and the bare count reads as "clean".
+std::string Reasoning::known_contradiction_note() const
+{
+    const int known = _total_known_contradictions;
+    if (known <= 0) return {};
+    return " (" + std::to_string(known) + " already recorded in this network)";
 }
 
 std::string Reasoning::contradiction_symbol() const
@@ -242,6 +254,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
+    _total_known_contradictions = 0;
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 
@@ -362,7 +375,8 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     if (!silent)
         diagnostic_stream() << "Reasoning complete. Total unification matches processed: " << _total_matches
-                            << ". Total contradictions found: " << _total_contradictions << "." << std::endl;
+                            << ". Total contradictions found: " << _total_contradictions
+                            << known_contradiction_note() << "." << std::endl;
 
     if (_skipped > 0) diagnostic(" (skipped " + std::to_string(_skipped) + " deductions)", true);
 
@@ -378,7 +392,8 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     if (!silent)
         diagnostic_stream() << "Reasoning summary: " << _total_matches << " matches processed, "
-                            << _total_contradictions << " contradictions found." << std::endl;
+                            << _total_contradictions << " contradictions found"
+                            << known_contradiction_note() << "." << std::endl;
     if (_pool && !silent)
     {
         diagnostic_stream() << "Parallel unifications activated for " << _prof.parallel_relation_count()
@@ -410,7 +425,8 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     if (!silent)
         diagnostic_stream() << "Reasoning complete in " << watch.format() << " – "
                             << _total_matches << " matches processed, "
-                            << _total_contradictions << " contradictions found." << std::endl;
+                            << _total_contradictions << " contradictions found"
+                            << known_contradiction_note() << "." << std::endl;
 
     if (seminaive_violations > 0)
     {

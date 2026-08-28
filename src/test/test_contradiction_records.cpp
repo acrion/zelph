@@ -236,6 +236,79 @@ x q y
     CHECK(contradiction_lines(collector) == 0);
 }
 
+// The quiet second run is the design, and the test above pins it. What the
+// design did NOT account for is the same silence after a .load: the record is a
+// fact, so a network saved after a run carries every contradiction it found,
+// and the next run over that file meets all of them as already known. No line,
+// no count, and a summary reading "0 contradictions found" over data that
+// contradicts itself in a hundred places. That is not "quiet", it is wrong --
+// and it lands exactly on the reproducibility recipe, where someone downloads a
+// published network and runs the rules over it.
+//
+// The lines stay away, because a contradiction the graph holds is not a new
+// finding. The COUNT is what has to speak.
+// The counterpart of the case below: the run that FINDS a contradiction says
+// nothing about already-known ones, so an ordinary first run is unchanged.
+TEST_CASE("contradiction record: the run that finds one adds no note")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".auto-run"); // off, so the explicit run is the finder
+    process_lines(interactive, R"(
+x p y
+x q y
+(A p B, A q B) => !
+)");
+    REQUIRE(contradiction_lines(collector) == 0);
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(contradiction_lines(collector) == 1);
+    CHECK(any_event_contains(collector, "1 contradictions found."));
+    CHECK_FALSE(any_event_contains(collector, "already recorded"));
+}
+
+TEST_CASE("contradiction record: a run says what it met but did not announce")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_contradiction_known_count.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+x p y
+x q y
+(A p B, A q B) => !
+)");
+        REQUIRE(contradiction_lines(collector) == 1);
+
+        // Auto-run already found it while the lines went in, so this run meets
+        // the same contradiction as an already-known one: no line, and the
+        // count says why it is silent instead of reading as a clean graph.
+        collector.clear();
+        interactive.run(false, false, false);
+        CHECK(contradiction_lines(collector) == 0);
+        CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    // The case this exists for. A published network saved after a run carries
+    // its records, so every contradiction in it is already known on the very
+    // first run over the file -- and the summary used to read "0 contradictions
+    // found." over data that contradicts itself in as many places as it does.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    interactive.process(".auto-run"); // a load disables it
+    collector.clear();
+
+    interactive.run(false, false, false);
+
+    CHECK(contradiction_lines(collector) == 0); // the lines stay away, by design
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+}
+
 // A slice promises the facts of the named predicates and nothing else. The
 // record is the one thing that can break that promise from the inside: it is
 // the set of the facts that matched, reached by expanding any ONE of them, and
