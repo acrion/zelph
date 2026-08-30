@@ -1636,7 +1636,7 @@ private:
             "  .run-once                                 – Run a single inference pass",
             "  .run-delta                                – Run inference seeded only by the facts added since the last run",
 #ifndef __EMSCRIPTEN__
-            "  .run-export <file>                        – Run inference and write all derivations to a JSON Lines file (see .help .run-export)",
+            "  .run-export <file>                        – Run inference and write what that run derives to a JSON Lines file (see .help .run-export)",
 #endif
             "  .auto-run                                 – Toggle automatic execution of .run after each input; takes no argument (default: on)",
             "  .deductions [all|focus|off]               – Set the deduction printing mode (default: focus)",
@@ -1873,8 +1873,8 @@ private:
                          "the argument-less form, which takes the last answer's node."},
 #ifndef __EMSCRIPTEN__
             {".run-export", ".run-export <file>\n"
-                            "Performs full inference and writes every derived fact and contradiction to\n"
-                            "<file> as JSON Lines -- one object per line:\n"
+                            "Performs full inference and writes what THAT run derives, plus every\n"
+                            "contradiction it meets, to <file> as JSON Lines -- one object per line:\n"
                             "    {\"kind\":\"deduction\",\"conclusion\":[SEG,...],\"premises\":[[SEG,...],...]}\n"
                             "A SEG is either a JSON string (literal text of the rendering), the object\n"
                             "{\"core\":\"<name>\"} for a node of zelph's own vocabulary (!, ~, =>, in, ...),\n"
@@ -1889,7 +1889,15 @@ private:
                             "reports zelph used to write directly; --format text gives one flat line\n"
                             "per derivation, the starting point for tokenizer-friendly training data.\n"
                             "Deduction printing is off during the run: rendering to the console dominates\n"
-                            "the cost, and the file is the point."},
+                            "the cost, and the file is the point.\n"
+                            "A derivation the graph ALREADY holds is not re-derived, so it is not\n"
+                            "written: over a saturated network the deduction side of the file is empty\n"
+                            "and the command still exits as if it had worked. Export from the run that\n"
+                            "does the deriving, or start from .new. The same property means only the\n"
+                            "FIRST derivation of a fact is written -- one justification per fact, not\n"
+                            "all of them. Contradictions are the exception and repeat, so that a second\n"
+                            "run does not hand back an empty file: count them by deduplicating on the\n"
+                            "premise set, not by counting lines."},
 #endif
             {".list-rules", ".list-rules\n"
                             "Lists all currently defined inference rules in readable format.\n"
@@ -2481,6 +2489,20 @@ private:
         {
             _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
             _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') exists, assigned name '" + name_in_target_lang + "' in '" + target_lang + "'.", true);
+        }
+        else if (node_in_current_lang == node_in_target_lang)
+        {
+            // The alias is already in place, which is what running the same
+            // script a second time looks like: a .name line that established
+            // the alias once resolves to the SAME node from both sides now.
+            // The merge branch below then announced "are different nodes =>
+            // Merging them" about one node merging with itself -- a script
+            // re-imported into a live session reported a structural repair
+            // that never happened. The same mistake the same-language branch
+            // above already answers for a plain rename.
+            _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') is already the node named '"
+                        + name_in_target_lang + "' in '" + target_lang + "'.",
+                    true);
         }
         else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false))
         {

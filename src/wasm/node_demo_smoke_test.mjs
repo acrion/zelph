@@ -50,7 +50,7 @@ if (!modulePath) {
 }
 
 // Buttons that reach for data this repository does not ship.
-const SKIP = /wikidata|\.load\s|sparql/i;
+const SKIP = /wikidata|\.load\s/i;
 
 const demos = await import(
   pathToFileURL(path.resolve("src/wasm/web/demos.js")).href

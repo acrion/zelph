@@ -557,6 +557,14 @@ bool Zelph::has_refuted_facts() const
     return _pImpl->_has_refuted_facts.load(std::memory_order_acquire);
 }
 
+std::vector<Node> Zelph::refuted_facts_snapshot() const
+{
+    if (!_pImpl->_has_refuted_facts.load(std::memory_order_acquire)) return {};
+
+    std::shared_lock lock(_pImpl->_refuted_facts_mtx);
+    return {_pImpl->_refuted_facts.begin(), _pImpl->_refuted_facts.end()};
+}
+
 void Zelph::forget_refuted(const adjacency_set& gone) const
 {
     if (!_pImpl->_has_refuted_facts.load(std::memory_order_acquire)) return;

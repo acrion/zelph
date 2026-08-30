@@ -1228,8 +1228,79 @@
       (or (<= 65 c 90) (<= 48 c 57) (= c 95) (= c 45)
           (= c 63) (= c 36) (= c 58)))))
 
+# The index of the closing `>` of an IRI reference starting at `i`, or nil when
+# what stands there is not one. SPARQL's own rule: an IRI reference holds no
+# whitespace and none of `<>"{}|^\` and a backtick, so `FILTER(?a < ?b)` fails
+# it on the space and stays a comparison.
+(defn iri-ref-end [s i]
+  (def n (length s))
+  (var j (+ i 1))
+  (var result nil)
+  (while (and (< j n) (nil? result))
+    (def c (get s j))
+    (cond
+      (= c 62) (set result j)
+      (or (<= c 32) (= c 60) (= c 34) (= c 123) (= c 125)
+          (= c 124) (= c 94) (= c 96) (= c 92)) (set j n)
+      (++ j)))
+  result)
+
+# The query text with everything that is not SPARQL syntax blanked out.
+#
+# The keyword scan below is a word search over the raw text, so any part of a
+# query that carries ARBITRARY text must not be read as syntax. Three do: a
+# string literal, a `#` comment, and an IRI reference. `ask`, `exists` and
+# `graph` are ordinary English words, and the scan uppercases before it looks,
+# so `?x rdfs:label "ask the community"` was refused as an ASK query -- a
+# refusal naming a construct the query does not use, for a query that answers
+# correctly once the word is changed. `<http://example.org/exists>` was refused
+# the same way, and `# ask about this` in a comment likewise.
+#
+# Blanked rather than removed, so the word boundaries around what is left are
+# the ones the text really has: a literal between two keywords must not let
+# them touch.
+(defn mask-non-syntax [text]
+  (def n (length text))
+  (def out (buffer/new n))
+  (var i 0)
+  (while (< i n)
+    (def c (get text i))
+    (cond
+      # A string literal, single- or double-quoted. A backslash escapes the
+      # next byte, the closing quote included.
+      (or (= c 34) (= c 39))
+      (do
+        (def opener c) # not `quote`, which names a Janet special form
+        (buffer/push-byte out 32)
+        (++ i)
+        (var closed false)
+        (while (and (< i n) (not closed))
+          (def d (get text i))
+          (buffer/push-byte out 32)
+          (++ i)
+          (cond
+            (= d 92) (when (< i n) (buffer/push-byte out 32) (++ i))
+            (= d opener) (set closed true))))
+
+      # A comment, to the end of the line. The newline itself is kept, so the
+      # text still has its line structure.
+      (= c 35)
+      (while (and (< i n) (not= (get text i) 10))
+        (buffer/push-byte out 32)
+        (++ i))
+
+      (and (= c 60) (iri-ref-end text i))
+      (do
+        (def stop (iri-ref-end text i))
+        (while (<= i stop)
+          (buffer/push-byte out 32)
+          (++ i)))
+
+      (do (buffer/push-byte out c) (++ i))))
+  (string out))
+
 (defn check-unsupported [text]
-  (def upper (string/ascii-upper text))
+  (def upper (string/ascii-upper (mask-non-syntax text)))
   (each kw unsupported-keywords
     (var pos (string/find kw upper))
     (while (not (nil? pos))
@@ -1245,15 +1316,23 @@
    queries (e.g. between the PREFIX prologue and SELECT) are harmless. Two
    consecutive blank lines force dispatch.
    Incomplete while: no SELECT seen yet (prologue phase), no opening brace
-   yet, or braces unbalanced. Braces inside string literals or comments are
-   not excluded - acceptable for the supported query class."
+   yet, or braces unbalanced.
+   Read from the MASKED text, so a brace inside a string literal, a comment or
+   an IRI does not count. It used to, and the consequence was worse than a
+   wrong answer: a query carrying `\"}\"` in a literal never balanced, so it was
+   never dispatched at all and the REPL went on swallowing every following
+   line. What ends such a session is the two-blank-line escape, which is also
+   why an unterminated literal here is survivable: masking blanks the rest of
+   the text, the query stays incomplete, and the second blank line forces it
+   out."
   [text]
-  (def upper (string/ascii-upper text))
+  (def masked (mask-non-syntax text))
+  (def upper (string/ascii-upper masked))
   (or (nil? (string/find "SELECT" upper))
-      (nil? (string/find "{" text))
+      (nil? (string/find "{" masked))
       (do
         (var depth 0)
-        (each b text
+        (each b masked
           (case b
             123 (++ depth)    # {
             125 (-- depth)))  # }

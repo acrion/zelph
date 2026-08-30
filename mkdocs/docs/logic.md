@@ -1316,6 +1316,8 @@ The record is a fact in the graph, and it says what a contradiction says: the se
 
 That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](index.md#exporting-derivations) and in `.help .contradiction-records`.
 
+Silence differs from a clean graph, thus the summary of a run says which of the two applies. A network that already holds records reports them next to the count of what this run found: `0 contradictions found (1 already recorded in this network)`. The number is extracted from the graph rather than counted as the run meets them, so it counts contradictions and not the rule instantiations that reach them – a symmetric rule matches the same pair twice and still reports one. A network you downloaded therefore states what it holds on the very first run over it.
+
 ### Wikidata at Scale
 
 <a href="#" onclick="jumpTo(1143); return false;">🎬 Watch this section</a>

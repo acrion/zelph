@@ -33,7 +33,7 @@ The order of the first two lines does not matter, and both work on a
 and registers the `sparql` keyword, so importing it neither needs nor touches
 the graph.
 
-Blank lines _inside_ a pasted query (for example between the `PREFIX` prologue and the `SELECT`) are harmless: the handler only executes once the query is structurally complete (a `SELECT` has been seen and all braces are balanced). Two consecutive blank lines force execution, which is useful to surface a syntax error in an incomplete paste.
+Blank lines _inside_ a pasted query (for example between the `PREFIX` prologue and the `SELECT`) are harmless: the handler only executes once the query is structurally complete – a `SELECT` has been seen and all braces are balanced, counting only the braces that are syntax, not those inside a string literal, a comment or an IRI. Two consecutive blank lines force execution, which is useful to surface a syntax error in an incomplete paste.
 
 The end of the input does the same, so the query needs no terminating blank
 line when zelph is driven non-interactively:
@@ -57,7 +57,7 @@ Results are printed as tab-separated rows. For nodes that carry names, both the 
 | Variables in predicate position | e.g. `wd:Q1 ?p ?o`                                                                                |
 | Property paths                  | One-or-more `+`, zero-or-more `*`, and sequences with `/` (e.g. `wdt:P31/wdt:P279*`)              |
 | `OPTIONAL`                      | Evaluated correlated with the outer pattern                                                       |
-| `MINUS`                         | Evaluated correlated (i.e. `FILTER NOT EXISTS` semantics — identical for the typical query class) |
+| `MINUS`                         | Evaluated correlated. `FILTER NOT EXISTS` is refused, so write that question as `MINUS`           |
 | `UNION`                         | Any number of branches                                                                            |
 | `FILTER`                        | Single comparisons (`= != < > <= >=`) over variables, literals, numbers; `str()` and `lang()`     |
 | Subqueries                      | Including nested subqueries                                                                       |
@@ -66,7 +66,7 @@ Results are printed as tab-separated rows. For nodes that carry names, both the 
 | `LIMIT`                         |                                                                                                   |
 | `PREFIX`                        | Custom prefixes expand to full IRIs                                                               |
 
-Not supported (rejected with an error): `BIND`, `VALUES`, `SERVICE`, `CONSTRUCT`, `DESCRIBE`, `GRAPH`, `HAVING`. A property path with `*` where **both** ends are unbound is also rejected, since it would trivially relate every node to itself.
+Not supported (rejected with an error): `BIND`, `VALUES`, `SERVICE`, `CONSTRUCT`, `ASK`, `DESCRIBE`, `GRAPH`, `HAVING`, and `EXISTS` in both of its forms, `FILTER EXISTS` and `FILTER NOT EXISTS`. Write the latter as `MINUS`, which answers the same question. The scan that rejects them is a word search over the query text, so it skips string literals, comments and IRIs: a variable called `?exists` or a label containing the word "ask" is a name, not a construct. A property path with `*` where **both** ends are unbound is also rejected, since it would trivially relate every node to itself.
 
 A note on `lang()`: zelph models labels through its language system rather than as `rdfs:label` triples, so `lang()` always yields the empty string. The common label idiom `OPTIONAL { ?x rdfs:label ?l . FILTER (lang(?l) = "en") }` is accepted and the rows survive; labels appear in the output automatically via zelph's name system instead.
 

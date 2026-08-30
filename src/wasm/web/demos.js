@@ -109,21 +109,21 @@ export const DEMO_GROUPS = [
         requires: ["2.1"],
         command:
           '%(loop [n :range [2 21]]  (def num (zelph/number (string n)))  (zelph/fact num "testprime" num))',
-        info: `Runs the full primality test for every number from 2 to 20 in a single reasoning run &mdash; each test cascading through division, multiplication, subtraction and comparison. The derived facts (<code>isprime</code>, <code>hasdivisor</code>, comparisons, …) become the shared dataset for the query, SPARQL and neural-network groups below. This is also a taste of the Janet scripting layer: a three-line loop generating facts programmatically.`,
+        info: `Runs the full primality test for every number from 2 to 20 in a single reasoning run &mdash; each test cascading through division, multiplication, subtraction and comparison. The derived facts (<code>isprime</code>, <code>hasdivisor</code>, comparisons, …) become the shared dataset for the query, SPARQL and neural-network groups below. This is also a taste of the Janet scripting layer: one line of Janet, generating the facts programmatically.`,
       },
       {
         id: "2.5",
         label: "List primes",
         requires: ["2.4"],
         command: "(:testprime X) = prime",
-        info: `All numbers the scan proved prime &mdash; as a plain query against derived facts.`,
+        info: `Every number proved prime so far &mdash; as a plain query against derived facts. The batch contributes those up to 19; 53 is still in the list from <em>Test a prime</em>, because nothing here is ever taken back.`,
       },
       {
         id: "2.6",
         label: "List composites",
         requires: ["2.4"],
         command: "(:testprime X) = composite",
-        info: `All numbers the scan disproved. Note that 0 and 1 appear in neither list: they receive no verdict at all &mdash; partiality by absence, the same principle that makes division by zero simply derive nothing.`,
+        info: `Every number disproved so far, 42 among them from <em>Test a composite</em>. Note that 0 and 1 appear in neither list, and asking after them directly returns no verdict either: partiality by absence, the same principle that makes division by zero simply derive nothing.`,
       },
       {
         id: "2.7",
@@ -241,7 +241,7 @@ export const DEMO_GROUPS = [
         requires: ["4.2"],
         command:
           '%(each score (nn/predict-names divnet [(zelph/number "12") (zelph/resolve "hasdivisor")] 3) (pp score))',
-        info: `The net's raw scores for the number 12. With one-hot targets, the outputs approximate P(divisor | number): 12 has two recorded divisors (2 and 3), so the mass splits roughly 50/50 &mdash; hovering right at the 0.5 decision threshold. This explains what the rules below will and won't accept.`,
+        info: `The net's raw scores for the number 12. With one-hot targets, the outputs approximate P(divisor | number): 12 has two recorded divisors (2 and 3), and the mass splits between them &mdash; 0.625 against 0.375, with everything else at zero. Only one of the two clears the 0.5 decision threshold, and that is what the rules below will and won't accept.`,
       },
       {
         id: "4.4",
@@ -288,7 +288,7 @@ export const DEMO_GROUPS = [
         label: "Show the proof",
         requires: ["5.3"],
         command: ".explain 2",
-        info: `Reconstructs the justification of the previous answer. Nothing is recorded during inference &mdash; after quiescence every derived fact has a rule instantiation whose conditions are all present, and a backward search finds one. Both branches end at the same normal form <code>(x poly &lt;… &gt;)</code>, whose coefficient list 1,&nbsp;0,&nbsp;&minus;1 &mdash; least significant first &mdash; is 1&nbsp;&minus;&nbsp;x². The only leaf marked <code>[axiom]</code> is what you typed; <code>.explain &lt;pattern&gt; 0</code> goes all the way down to the digit tables.`,
+        info: `Reconstructs the justification of the previous answer. Nothing is recorded during inference &mdash; after quiescence every derived fact has a rule instantiation whose conditions are all present, and a backward search finds one. Both branches end at the same normal form <code>(x poly &lt;… &gt;)</code>, whose coefficient list 1,&nbsp;0,&nbsp;&minus;1 &mdash; least significant first &mdash; is 1&nbsp;&minus;&nbsp;x². <code>.explain &lt;pattern&gt; 0</code> goes all the way down to the digit tables.<br><br>The statement you typed is marked <code>[asserted; no derivation found]</code> rather than <code>[axiom]</code>, and the culprit is the transitivity rule from group 2: its consequence <code>(A R C)</code> has a <em>variable</em> predicate, so it unifies with every fact there is, and the search can no longer say that nothing derives this one. Without that rule in the graph the same button prints <code>[axiom]</code>. That is the price of quantifying over predicates, and this is where you can see it charged.`,
       },
       {
         id: "5.5",
@@ -412,7 +412,7 @@ export const DEMO_GROUPS = [
         label: "The Jacobian determinant",
         requiresReset: true,
         command: ".import examples/math/jacobian",
-        info: `Runs the shipped example script. It states the 3×3 Jacobian as a fact <code>&lt;G1 G2 G3&gt; jac3 &lt;a b c&gt;</code>, and rules do the rest: nine rules request the partial derivatives, one assembles the first-row cofactor expansion exactly as a linear algebra text writes it, and two compile the result to a polynomial normal form. This is the heaviest computation in the playground &mdash; symbolic differentiation produces large unsimplified terms, and the determinant multiplies three of them together.<br><br>The button types <code>.new</code> first, so this runs on an empty network and the other demos start over. Nothing here depends on them &mdash; the script imports <code>math</code> itself &mdash; and reasoning cost grows with what is already in the graph: every fact left over from the other demos is one more candidate every rule has to consider. On a graph carrying the whole playground this run takes more time and derives exactly the same answer.<br><br>Reading the output: the script sets <code>.deductions off</code>, so the thousands of intermediate facts stay silent and only the run summary appears. <em>Matches processed</em> counts rule-condition bindings the engine completed &mdash; roughly 50&nbsp;000 here; <em>skipped deductions</em> counts consequences that turned out to be already present, which hash-consing makes a no-op. The single <code>Reasoning iteration …</code> line is a once-per-second heartbeat, not data: its number differs from run to run and means nothing. The determinant itself is now a fact in the graph &mdash; ask for it next.`,
+        info: `Runs the shipped example script. It states the 3×3 Jacobian as a fact <code>&lt;G1 G2 G3&gt; jac3 &lt;a b c&gt;</code>, and rules do the rest: nine rules request the partial derivatives, one assembles the first-row cofactor expansion exactly as a linear algebra text writes it, and two compile the result to a polynomial normal form. This is the heaviest computation in the playground &mdash; symbolic differentiation produces large unsimplified terms, and the determinant multiplies three of them together.<br><br>The button types <code>.new</code> first, so this runs on an empty network and the other demos start over. Nothing here depends on them &mdash; the script imports <code>math</code> itself &mdash; and reasoning cost grows with what is already in the graph: every fact left over from the other demos is one more candidate every rule has to consider. On a graph carrying the whole playground this run takes more time and derives exactly the same answer.<br><br>Reading the output: the script sets <code>.deductions off</code>, so the thousands of intermediate facts stay silent and only the run summary appears. <em>Matches processed</em> counts rule-condition bindings the engine completed &mdash; roughly 50&nbsp;000 here; <em>skipped deductions</em> counts consequences that turned out to be already present, which hash-consing makes a no-op. The <code>Reasoning iteration …</code> lines are a once-per-second heartbeat, not data: how many of them appear depends on how long the run takes, and their numbers differ from run to run. The determinant itself is now a fact in the graph &mdash; ask for it next.`,
       },
       {
         id: "7.5",

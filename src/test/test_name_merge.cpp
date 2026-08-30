@@ -394,6 +394,51 @@ c q d
         CHECK(answers_contain(collector, "c q d")); });
 }
 
+// Not a merge at all, and the point is that the command must not say it is.
+//
+// The cross-language `.name` is how a script binds its own vocabulary to
+// imported entities -- `.name e1 wikidata Q4406616` in the disjointness dev
+// scripts. Running such a script a SECOND time in a live session is ordinary:
+// the alias is then already in place, so both names resolve to the same node.
+// The merge branch answered that with "... are different nodes => Merging
+// them", reporting a structural repair of one node with itself -- and a merge
+// is precisely the operation these tests exist for, so a false report of one
+// is the worst wrong answer this command has.
+TEST_CASE("name merge: a cross-language alias set twice is not a merge")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q30 P279 Q10
+)");
+        interactive.process(".lang zelph");
+
+        collector.clear();
+        interactive.process(".name e1 wikidata Q10");
+        CHECK(any_event_contains(collector, "exists, assigned name"));
+
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(".name e1 wikidata Q10");
+        CHECK(any_event_contains(collector, "is already the node named"));
+        CHECK_FALSE(any_event_contains(collector, "Merging them"));
+        CHECK_FALSE(any_event_contains(collector, "different nodes"));
+
+        // Nothing happened to the graph, and the alias still resolves -- the
+        // second call has to be a no-op, not a quieter version of the merge.
+        CHECK(node_count(collector, interactive) == before);
+
+        // And the alias does what it is for: a query written in zelph names
+        // reaches the imported fact. The aliased node prints under both of its
+        // names, which is why the expected line is not "Q30 P279 Q10".
+        collector.clear();
+        interactive.process(".name P279 wikidata P279");
+        interactive.process("S \"P279\" e1");
+        CHECK(answers_contain(collector, "Q30 P279 \"Q10 - e1\"")); });
+}
+
 TEST_CASE("name merge: a repair of cluster knowledge still rolls back")
 {
     // The control at the other end, and the reason the membership is

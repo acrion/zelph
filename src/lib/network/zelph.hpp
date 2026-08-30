@@ -632,6 +632,13 @@ namespace zelph::network
         /// all before it starts asking it per node.
         bool has_refuted_facts() const;
 
+        /// The refuted nodes as they stand, copied out under the index lock.
+        /// A caller that has to ASK something about each of them needs the
+        /// copy: every such question reads the graph, and a graph writer takes
+        /// the index lock while holding the network (Zelph::fact ->
+        /// note_refuted), so answering under the index lock inverts that order.
+        std::vector<Node> refuted_facts_snapshot() const;
+
         /// Drop these nodes from the index, because they are being removed.
         /// A contradiction record is content-addressed, so a stale entry would
         /// survive the removal of the very facts it is about and silence the

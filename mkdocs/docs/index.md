@@ -1328,7 +1328,7 @@ The mathematical stack will keep growing, and which way it grows should depend o
 - **Beyond a single polynomial ring.** Ideal membership and Gröbner bases are the obvious next layer above the existing normal forms, and Buchberger's algorithm is a fixpoint computation — an unusually good match for forward chaining. Modular arithmetic and finite fields would be cheaper and would open number theory.
 - **Rationals, and with them division.** The quotient rule is missing from differentiation for exactly one reason: there is no field to divide in yet.
 - **One-shot normalisation.** Rewriting is single-pass per request today. Equality saturation in the e-graph style is, at heart, forward chaining over equalities — the natural experiment, and one the current design deliberately left room for.
-- **Proofs that leave the system.** `.explain` already reconstructs a full justification from the saturated graph. Exporting it in a form another proof checker accepts would turn zelph's answers into externally verifiable ones.
+- **Proofs that leave the system.** `.explain` already reconstructs a complete justification from the saturated graph – one of them, and it says so when there are several. Exporting it in a form another proof checker accepts would turn zelph's answers into externally verifiable ones.
 
 If one of these matters to your work — or if the interesting direction is one not listed here — that is precisely the feedback that would shape the roadmap. Issues and discussions are on [GitHub](https://github.com/acrion/zelph).
 

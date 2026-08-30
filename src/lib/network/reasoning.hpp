@@ -235,6 +235,15 @@ namespace zelph::network
         std::string contradiction_symbol() const;
         std::string known_contradiction_note() const;
 
+        // The contradiction records the graph holds. They are the refuted
+        // nodes that are SET constants: record_contradiction marks exactly
+        // those -- set(matched) over the facts that matched -- while an
+        // ordinary refutation, `¬(a p b)`, marks the relation node of a fact,
+        // which never hashes back to its own members. A rule with a SINGLE
+        // condition has no condition set to point at and is therefore not
+        // recorded at all; it is announced on every run and counted there.
+        std::size_t count_contradiction_records() const;
+
         // The premises of one rule instantiation, rendered individually.
         // The printed line shows the condition SET -- "{(a p b) (b p c)}" --
         // because that is what the rule's subject IS; a consumer of the
@@ -409,13 +418,19 @@ namespace zelph::network
         std::mutex                               _mtx_network;
         std::atomic<int>                         _total_matches{0};
         std::atomic<int>                         _total_contradictions{0};
-        // Contradictions the graph ALREADY held when this run met them. They
-        // are deliberately not announced again (see report_contradiction), but
-        // a run that reports nothing and counts nothing is indistinguishable
+        // How many contradiction records the graph HELD when this run began.
+        // A run that reports nothing and says nothing else is indistinguishable
         // from a clean graph -- and after a .load of a network that was saved
-        // after a run, that is every contradiction in it. Counting them is
-        // what keeps the summary honest without bringing the lines back.
-        std::atomic<int>                         _total_known_contradictions{0};
+        // after a run, that is every contradiction in it, because the record is
+        // a fact and travels with the file.
+        //
+        // Read from the graph rather than counted as the run meets them: a
+        // record is content-addressed, so ONE contradiction is one record
+        // however many rule instantiations reach it. A symmetric rule such as
+        // (A p B, B p A) => ! matches twice over the same pair and would
+        // otherwise report two. Read at the START, so a contradiction this run
+        // announces is not also counted as one that was already there.
+        std::size_t                              _records_at_run_start{0};
         // Whether a contradiction is written into the graph. See
         // record_contradiction for what it costs and why it can be switched
         // off; the per-run hash set that used to sit here is gone with it.

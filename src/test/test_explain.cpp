@@ -343,6 +343,45 @@ a p b
         CHECK_FALSE(any_output_contains(collector, "one of several justifications")); });
 }
 
+// Only the ROOT is scanned for a second justification, and that is a cost
+// decision: looking at every level would turn a linear walk into a quadratic
+// one. It is invisible in the two tests above, because there the fact reached
+// twice IS the root -- so this is the case that pins it, and it is the one a
+// later change would break silently.
+//
+// The same fact, in both positions, on one graph. `a mid b` is reached through
+// p and through q, so as the root of its own tree it says so. Standing as the
+// premise of `a target b` -- whose own derivation is unique -- it carries no
+// annotation, because nothing looked. Asking both of ONE graph is what makes
+// this a statement about the position rather than about the fact: a change that
+// starts annotating deeper nodes makes the second half fail, and a change that
+// stops annotating at all makes the first half fail.
+TEST_CASE("explain: the annotation is the root's, not the premise's")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X p Y) => (X mid Y)
+(X q Y) => (X mid Y)
+(X mid Y) => (X target Y)
+a p b
+a q b
+)");
+        interactive.run(false, false, false);
+
+        collector.clear();
+        interactive.process(".explain (a mid b) 0");
+        REQUIRE(any_output_contains(collector, "one of several justifications"));
+
+        collector.clear();
+        interactive.process(".explain (a target b) 0");
+        // The premise is in the tree and expanded -- so the annotation's
+        // absence is about where it stands, not about the tree stopping short.
+        CHECK(any_output_contains(collector, "a mid b"));
+        CHECK(any_output_contains(collector, "[axiom]"));
+        CHECK_FALSE(any_output_contains(collector, "one of several justifications")); });
+}
+
 TEST_CASE("explain: a rejected reading of the argument stays silent")
 {
     // cmd_explain TRIES readings of its argument; a failing one is a

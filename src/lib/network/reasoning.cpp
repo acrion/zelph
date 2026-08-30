@@ -119,7 +119,6 @@ void Reasoning::report_contradiction(const contradiction_error& error)
     // must not hand back an empty file.
     if (already_known)
     {
-        ++_total_known_contradictions;
         if (_export_derivations)
             _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
         return;
@@ -147,15 +146,25 @@ void Reasoning::report_contradiction(const contradiction_error& error)
         _export->add("contradiction", contradiction_symbol(), render_premises(error.get_fact(), error.get_variables(), error.get_parent()), string::unmark_identifiers(error.get_reason()));
 }
 
-// What a run met but did not announce. Empty when there is nothing to say, so
-// the ordinary summary is unchanged; a network loaded from a file that was
-// saved after a run is the case this exists for, because there every
-// contradiction is already recorded and the bare count reads as "clean".
+std::size_t Reasoning::count_contradiction_records() const
+{
+    std::size_t count = 0;
+
+    for (const Node nd : refuted_facts_snapshot())
+        if (is_set_constant(nd)) ++count;
+
+    return count;
+}
+
+// What the graph already held when this run began. Empty when there is nothing
+// to say, so the ordinary summary is unchanged; a network loaded from a file
+// that was saved after a run is the case this exists for, because there every
+// contradiction is already recorded, none of them is announced again, and the
+// bare count reads as "clean".
 std::string Reasoning::known_contradiction_note() const
 {
-    const int known = _total_known_contradictions;
-    if (known <= 0) return {};
-    return " (" + std::to_string(known) + " already recorded in this network)";
+    if (_records_at_run_start == 0) return {};
+    return " (" + std::to_string(_records_at_run_start) + " already recorded in this network)";
 }
 
 std::string Reasoning::contradiction_symbol() const
@@ -254,7 +263,10 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
-    _total_known_contradictions = 0;
+    // Only the summary reads this, and only a non-silent run prints one --
+    // which matters, because auto-run calls this per input line and the count
+    // is a pass over the whole refuted index.
+    _records_at_run_start = silent ? 0 : count_contradiction_records();
     // Start the banner clock here, so the first one is due a second in.
     _progress_last        = std::chrono::steady_clock::now();
 

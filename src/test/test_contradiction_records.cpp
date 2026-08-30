@@ -309,6 +309,129 @@ x q y
     CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
 }
 
+// The number says how many contradictions the NETWORK holds, so it has to be
+// read off the graph rather than counted as the run meets them. A symmetric
+// rule is the case that separates the two: (A p B, B p A) => ! matches the
+// pair in both directions, so a run MEETS the contradiction twice -- but a
+// record is content-addressed and both instantiations reach the same set node,
+// so the graph holds one. Counting encounters reported two, which is the one
+// thing this note must not do: it is the number a Wikidata report would carry,
+// and an inflated violation count reads as an unusable tool.
+//
+// The same property is what the export documentation tells its readers -- count
+// violations by deduplicating on the premise set, not by counting lines.
+TEST_CASE("contradiction record: a contradiction met twice is one record")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+x p y
+y p x
+(A p B, B p A) => !
+)");
+    REQUIRE(contradiction_lines(collector) == 1); // announced once, as ever
+
+    collector.clear();
+    interactive.run(false, false, false);
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+    CHECK_FALSE(any_event_contains(collector, "2 already recorded"));
+}
+
+// A contradiction record is a refuted SET constant; `¬(a p b)` refutes the
+// relation node of an ordinary fact. Both live in the same refuted index, so
+// the count has to tell them apart -- otherwise every hand-written refutation
+// in a published network would be reported as a contradiction it never was.
+TEST_CASE("contradiction record: a refutation written by hand is not one")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+¬(a p b)
+¬(c p d)
+x p y
+y p x
+(A p B, B p A) => !
+)");
+    REQUIRE(contradiction_lines(collector) == 1);
+
+    collector.clear();
+    interactive.run(false, false, false);
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+    CHECK_FALSE(any_event_contains(collector, "3 already recorded"));
+}
+
+// Read at the START of the run, not at its end: a contradiction this run
+// announces is a finding of THIS run and must not also appear as one that was
+// already there. The two numbers then add up to what the graph holds
+// afterwards, which is what makes the sentence readable at all.
+TEST_CASE("contradiction record: what this run found is not also 'already recorded'")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+x p y
+y p x
+(A p B, B p A) => !
+)");
+    REQUIRE(contradiction_lines(collector) == 1);
+
+    interactive.process(".auto-run"); // off, so the run below is the finder
+    process_lines(interactive, R"(
+u p v
+v p u
+)");
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(contradiction_lines(collector) == 1); // the new pair, announced
+    CHECK(any_event_contains(collector, "1 contradictions found (1 already recorded in this network)."));
+}
+
+// A rule with a SINGLE condition has no condition set to point at, so
+// record_contradiction has nothing to record and returns "new" every time.
+// That is why it is announced on every run -- and why it must not appear in
+// the count either: the note is about what the graph HOLDS, and it holds
+// nothing here. Pinning it keeps the sentence exact rather than approximately
+// true.
+TEST_CASE("contradiction record: a single-condition rule leaves nothing to count")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+x p y
+(A p B) => !
+)");
+    REQUIRE(contradiction_lines(collector) == 1);
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(contradiction_lines(collector) == 1); // announced again, no record
+    CHECK(any_event_contains(collector, "1 contradictions found."));
+    CHECK_FALSE(any_event_contains(collector, "already recorded"));
+}
+
+// With the records off there is nothing in the graph to read, so the note has
+// to stay away entirely -- and the contradiction comes back on every run, which
+// is what the switch is for. A note appearing here would describe a network
+// that was asked not to hold any.
+TEST_CASE("contradiction record: with records off the note stays away")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".contradiction-records off");
+    process_lines(interactive, R"(
+x p y
+y p x
+(A p B, B p A) => !
+)");
+    REQUIRE(contradiction_lines(collector) >= 1);
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(contradiction_lines(collector) >= 1);
+    CHECK_FALSE(any_event_contains(collector, "already recorded"));
+}
+
 // A slice promises the facts of the named predicates and nothing else. The
 // record is the one thing that can break that promise from the inside: it is
 // the set of the facts that matched, reached by expanding any ONE of them, and

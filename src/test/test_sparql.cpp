@@ -1062,6 +1062,91 @@ Q2 P279 Q5
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
+// The keyword scan is a word search over the query text, and `ask`, `exists`
+// and `graph` are ordinary English words. A label is arbitrary text, so a query
+// filtering on one carried them into the scan: the query below answers
+// correctly with any other literal and was refused as an ASK query with this
+// one -- a refusal naming a construct it does not use. The literal is blanked
+// before the scan now, and so are `#` comments and IRI references, which carry
+// arbitrary text for the same reason.
+TEST_CASE("sparql: a keyword inside a string literal is not a keyword")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q1 P1476 "ask the community"
+Q2 P279 Q5
+Q2 P1476 "it exists already"
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . ?x wdt:P1476 \"ask the community\" }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --"));
+
+        // A second keyword, and a single-quoted literal: the same masking has
+        // to cover both quotings the grammar accepts.
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . ?x wdt:P1476 'it exists already' }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: a keyword inside a comment or an IRI is not a keyword")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("# ask whether it exists, and describe the graph");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 2 result(s) --"));
+
+        // An IRI reference is arbitrary text between < and >, and a property
+        // path segment named "exists" is an ordinary thing to publish.
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x <http://www.wikidata.org/prop/direct/exists> wd:Q5 }");
+        interactive.process("");
+        CHECK_FALSE(any_output_contains(collector, "not supported by this subset")); });
+}
+
+// The masking must not eat a comparison. `<` opens an IRI reference only when
+// no whitespace stands before the closing `>`, which is the grammar's own rule
+// -- without it `FILTER(?a < ?b)` would swallow everything up to the next `>`,
+// and an unsupported keyword hiding in between would stop being seen.
+TEST_CASE("sparql: a less-than in a FILTER does not open an IRI")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        // The BIND stands where the swallowed region would have ended, so this
+        // is red exactly when the comparison was read as an IRI.
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . FILTER(?a < ?b) BIND(1 AS ?y) }");
+        CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
+}
+
 TEST_CASE("sparql: MINUS answers what FILTER NOT EXISTS was silently dropping")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -1128,6 +1213,78 @@ TEST_CASE("sparql: blank lines inside a pasted query do not terminate the block"
 
         CHECK(any_output_contains(collector, "Q1"));
         CHECK(any_output_contains(collector, "Q2"));
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+// The completeness check counts braces, and it used to count the ones inside a
+// string literal too. The consequence is worse than a wrong answer: the query
+// below never balances, so it is never dispatched -- the block stays open and
+// the REPL goes on swallowing whatever is typed next, dot-commands included,
+// until two blank lines force it out with a syntax error. The literal is masked
+// before the count now, exactly as it is for the keyword scan.
+TEST_CASE("sparql: a brace inside a literal does not hold the query open")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q1 P1476 "a } brace"
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . ?x wdt:P1476 \"a } brace\" }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --"));
+
+        // And the block really is closed: the next line is read as a line
+        // again, not swallowed into a query that never ends.
+        collector.clear();
+        interactive.process("S \"P1476\" O");
+        CHECK(any_output_contains(collector, "a } brace")); });
+}
+
+TEST_CASE("sparql: a brace inside a comment does not hold the query open")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+Q2 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("# the closing } of the pattern below");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+// The counterpart, and the one that keeps the masking honest: a query that is
+// genuinely unbalanced must still be held open. Masking removes braces, so a
+// mistake in it shows up here as a query dispatched too early -- which answers
+// a question the user has not finished asking.
+TEST_CASE("sparql: an unbalanced query is still held open")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . # a } inside a comment");
+        interactive.process(""); // still unbalanced: no dispatch, no error
+        CHECK_FALSE(any_output_contains(collector, "result(s)"));
+
+        interactive.process("}");
+        interactive.process("");
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
