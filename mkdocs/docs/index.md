@@ -38,6 +38,26 @@ Development of zelph is supported by the Wikimedia Community Fund, through two R
 
 The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
 
+### Use of generative AI
+
+zelph was written by hand from 2012 until the middle of 2026. Since then a
+substantial part of new code is produced with the help of a large language
+model, working from the existing codebase under the author's direction. The
+architecture, the design decisions and the acceptance of every change remain
+his, and every line is reviewed before it enters the repository.
+
+From release 1.0.0 onwards, a commit that adds or changes code carries a
+provenance record in its message body: the model, what the commit does, the
+instructions it was given, and what was chosen, arranged or reworked. The
+format is new and will change as the practice settles.
+
+Commits made after release 0.9.9 were produced the same way but carry no such
+record, because the practice did not exist yet.
+
+Development is funded in part by the NLnet Foundation, whose [policy on
+generative AI](https://nlnet.nl/foundation/policies/generativeAI/) asks for
+this disclosure.
+
 ### Components
 
 The zelph ecosystem includes:
@@ -396,7 +416,7 @@ zelph supports two input modes that both create cons lists:
 2. **Compact Lists (continuous characters):** `<abc>`
    - **Syntax:** No spaces inside the brackets.
    - **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
-   - **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
+   - **Construction detail:** Before building the cons list, the character sequence is **reversed**.
      So `"abc"` becomes the element vector `["c","b","a"]`, yielding: - `Cell3 = "a" cons nil` - `Cell2 = "b" cons Cell3` - `Cell1 = "c" cons Cell2`
 
 This reversal is **not** "numeric logic" — it is simply the definition of the compact syntax and is useful for many right-to-left processing rules (including, but not limited to, arithmetic scripts).
