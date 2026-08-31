@@ -43,9 +43,17 @@ Be aware of scale: a selective import like `P11260` adds only a few thousand fac
 
 ## Prebuilt Databases
 
-You do not need to run the import yourself. Qualifier-extended `.bin` files are published alongside the regular ones on [Hugging Face](https://huggingface.co/datasets/acrion/zelph) — currently `wikidata-20260309-all-P11260.bin`, which contains the full network plus the _list item_ qualifiers needed for disjointness analysis (see below).
+You do not need to run the import yourself for the case above. One prebuilt database on [Hugging Face](https://huggingface.co/datasets/acrion/zelph) carries the statement layer:
 
-If you need a database with a different set of qualifiers for your work, open an issue on [GitHub](https://github.com/acrion/zelph/issues) — I am happy to run the import and publish additional variants on request.
+| File | What it adds |
+| --- | --- |
+| `wikidata-20260309-all-P11260.bin` | the full 2026-03-09 network plus the _list item_ qualifiers that disjointness analysis reads |
+
+It is the full network, so it wants the machine the full network wants – 221.7 GiB resident – and it holds 1,476 statement nodes and 5,079 qualifier facts on top of the 983 million nodes it started from. Which is the point of a selective import: the statement layer that answers one question costs almost nothing, while a complete one would materialize hundreds of millions of nodes.
+
+Every other `.bin` on that dataset carries direct triples only.
+
+If you need a different set of qualifiers, open an issue on [GitHub](https://github.com/acrion/zelph/issues): running the import and publishing the result is a matter of asking. Building it yourself takes roughly two hours of streaming over the compressed dump, along with half an hour to save the result.
 
 ## Use Case: Disjointness Violations
 

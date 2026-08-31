@@ -211,6 +211,13 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     z->diagnostic_stream() << indent << "[DEBUG node_to_string] ENTRY node=" << node << " parent=" << parent << std::endl;
 #endif
 
+    // Whether this call renders the node the CALLER requested, or one accessed
+    // from within another node's rendering. Only the recursion can say that a
+    // node stands inside a statement, and a rule's condition set is written in
+    // the surface syntax "(A, B) => C" exactly there -- see as_rule_conditions
+    // below.
+    const bool rendered_as_top = !history;
+
     if (!history) history = std::make_shared<std::unordered_set<network::Node>>();
 
     // Helper to resolve variables
@@ -703,7 +710,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // Only as a rule's subject: elsewhere the node is a container being
         // dumped (`.node`) or the premise set of a justification, and a comma
         // list would claim a statement that is not being made.
-        const bool as_rule_conditions = is_conjunction && parent != 0
+        //
+        // "Inside the rule" is what `rendered_as_top` decides, and the parent
+        // alone cannot: a justification is printed by handing the renderer the
+        // condition set with the rule that fired as context, which looks from
+        // here exactly like the set being reached from inside that rule. The
+        // two evaluation strategies then disagreed on one line -- the same
+        // deduction printed "<= {(a p b) (b p c)}" when the classic pass found
+        // it and "<= ((a p b), (b p c))" when a seeded iteration did, because
+        // only the seeded path keeps the rule node as the parent.
+        const bool as_rule_conditions = is_conjunction && !rendered_as_top && parent != 0
                                      && z->parse_relation(parent) == z->core.Causes;
 
         const bool bare_brace = z->is_set_constant(resolved) || is_conjunction;

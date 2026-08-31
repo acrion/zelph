@@ -13,8 +13,10 @@ Currently, I offer the following Wikidata variants:
 | File                                      | Variant                                                        |       Nodes | File Size | RAM Usage | Name Entries (`wikidata` / `en`) | Load Time |
 | ----------------------------------------- | -------------------------------------------------------------- | ----------: | --------: | --------: | -------------------------------: | --------: |
 | `wikidata-20260309-all.bin`               | Current full Wikidata dump, a 1:1 port of the JSON dump        | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
+| `wikidata-20260309-all-P11260.bin`        | The same, plus the _list item_ qualifier layer                 | 983,435,690 |    82 GiB | 221.7 GiB |         119,232,787 / 83,261,799 |         — |
 | `wikidata-20260309-all-pruned-medium.bin` | Pruned, **keeps people**                                       | 114,477,445 |   9.0 GiB |  25.9 GiB |          21,015,182 / 14,668,496 |    2m 08s |
 | `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   6.0 GiB |            7,106,526 / 4,316,673 |       25s |
+| `wikidata-20260309-all-pruned-small-P279.bin` | The `P279` slice of `-small`: the class hierarchy alone     |   2,005,552 |  0.21 GiB |   0.6 GiB |              890,779 /   775,631 |     2.2s |
 | `wikidata-20171227.bin`                   | Historic full Wikidata dump from 2017                          | 203,190,311 |    18 GiB |  44.6 GiB |          42,187,613 / 27,960,315 |    3m 20s |
 | `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.4 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
 
@@ -30,7 +32,13 @@ name tables rather than mapped from the file.
   leaves room to work on a 16 GiB machine; on 8 GiB it fits, though not with
   much to spare.
 * **`-medium`** (25.9 GiB) is the same network with **people** still in it, and
-  wants 32 Gi-GB.
+  wants 32 GiB of memory.
+* **`-small-P279`** (0.6 GiB) is not a network to work in but an answer to one
+  question: it holds every `P279` statement of `-small` and nothing else, so it
+  answers the class-hierarchy questions of
+  [Working on the Wikidata Class Hierarchy](class-hierarchy.md) identically, on
+  any machine, in two seconds. See
+  [Publishing a Predicate Slice](publishing-slices.md) for how it was cut.
 * The **full** file is the faithful port of the Wikidata dump and needs a
   machine built for it – 223.7 GiB resident. It is the right choice when you
   need everything, and the wrong one for anything else.
@@ -66,7 +74,7 @@ This loads the entire network into memory. Afterwards, you can execute queries, 
 
 Tip: if you work with the full JSON file, zelph automatically creates a `.bin` cache file during the first import to speed up future runs.
 
-In addition, **qualifier-extended variants** are available (currently `wikidata-20260309-all-P11260.bin`, containing the statement/qualifier layer needed for disjointness analysis). See [Wikidata Qualifiers](qualifiers.md) for details; additional qualifier sets are available on request.
+The files above carry direct triples only, with one exception. A network **featuring the statement and qualifier layer** – what disjointness analysis reads – is what `wikidata-20260309-all-P11260.bin` is: the full dump combined with the _list item_ qualifiers of the _disjoint union of_ statements; see [Wikidata Qualifiers](qualifiers.md). Any other qualifier set is constructed using the `.wikidata-qualifiers` command from the JSON dump, and a published variant for it is a matter of asking: open an issue on [GitHub](https://github.com/acrion/zelph/issues).
 
 ## Partial Loading
 
@@ -269,7 +277,7 @@ When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them au
 Manifests can also be loaded directly from Hugging Face:
 
 ```
-zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3/manifest.json
+zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json meta-only
 ```
 
 ### Route Selectors
@@ -309,14 +317,18 @@ Observed performance for selective chunk access (on the v3 proof artifact):
 | Remote HF routed partial load    | ~5.5s  |
 | Sequential fallback (same data)  | ~21s   |
 
-Loading directly from Hugging Face:
+The manifests in that repository name the source `.bin` by the path it had on
+the machine that built them, so they are a demonstration of the format rather
+than something to load as it stands.
+
+The artifacts to load are those published under
+[acrion/zelph](https://huggingface.co/datasets/acrion/zelph), which carry the
+manifest, the shards and the offset index side by side –
+see [Sharded Networks](sharding.md#hosting-on-hugging-face):
 
 ```
-zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3/manifest.json left=0
-zelph> .load-partial hf://datasets/chbwa/zelph-sharded/20260309-v3-route/manifest.json route-node=7009581169707405312
+zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json left=0
 ```
-
-We are working on publishing pre-sharded versions of the full available `.bin` files along with ready-to-use manifest files. The long-term goal is to enable partial loading of Wikidata networks directly from the cloud without downloading entire multi-gigabyte files first.
 
 ### Integration with External Tools
 

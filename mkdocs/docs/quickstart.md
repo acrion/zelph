@@ -69,10 +69,14 @@ statement line is appended to them:
 ```
 zelph> (a p b)
 zelph> c q d
-zelph> S P O
+zelph> S c O
 Answer: (a p b) c q
 Answer: (a p b) c d
 ```
+
+The query requests the predicate `c` since that is precisely what the two lines
+built: the term `(a p b)` became the subject of a statement having the
+predicate `c` and objects `q` and `d`.
 
 At end of input an unfinished statement is reported (`Input ends inside an
 unfinished statement: (a p b)`), and a `.`-command typed while one is pending

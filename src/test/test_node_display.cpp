@@ -880,7 +880,37 @@ TEST_CASE("display: a rule prints its conditions in the surface syntax")
 
         collector.clear();
         interactive.process("S mypred O");
-        CHECK(any_output_contains(collector, "mypred whatever")); });
+        CHECK(any_output_contains(collector, "mypred whatever"));
+
+        // The justification keeps the brace form whichever strategy found the
+        // deduction. The premise set is handed to the renderer WITH the rule
+        // that fired as its parent, which from inside the renderer looks
+        // exactly like the set standing inside that rule -- so a deduction
+        // found by a seeded iteration printed the rule's own surface syntax
+        // for a statement nobody is making. Only the seeded path keeps the
+        // rule node as the parent; the classic pass descends into the
+        // conjunction and loses it, which is why the two strategies disagreed
+        // on this one line.
+        //
+        // The CONSUMING rule is defined first, so the classic first pass
+        // cannot complete the chain and the delta path is the one that does
+        // (see the note at the top of test_seminaive.cpp). The producing
+        // fact is entered LAST for the same reason: auto-run means every
+        // line is a run of its own, so with (d k e) first the derived
+        // (d h e) is already there when (e i f) arrives and the classic
+        // pass gets the deduction. The member order inside the braces
+        // follows the node ids, so the assertion asks for the notation
+        // rather than for one of the two spellings. It stands last in this
+        // test case because it creates nodes, and the ids they take decide
+        // that order for the checks above.
+        collector.clear();
+        interactive.process("(X h Y, Y i Z) => (X j Z)");
+        interactive.process("(X k Y) => (X h Y)");
+        interactive.process("e i f");
+        interactive.process("d k e");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "(d j f) ⇐ {("));
+        CHECK_FALSE(any_output_contains(collector, "(d j f) ⇐ ((")); });
 }
 
 TEST_CASE("display: the rule-pattern marking is never printed in place of its node")

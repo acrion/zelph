@@ -147,22 +147,22 @@ Answer: ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
 zelph> .explain 3
 ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
    ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   ├─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  │  ├─ :needstopoly ((x - &1) * (x + &1))  … [depth limit -- use '.explain <pattern> 0' for the full proof]
-   │  │  ├─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
-   │  │  ├─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)  … [depth limit …]
-   │  │  └─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)  … [depth limit …]
-   │  └─ :topoly ((x - &1) * (x + &1))
-   │     └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   └─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-      ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-      │  ├─ :needstopoly $( x ^ &2 - &1 )  … [depth limit …]
-      │  ├─ &1 aspoly (pos zint &1)  … [depth limit …]
-      │  ├─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)  … [depth limit …]
-      │  └─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
-      └─ :topoly $( x ^ &2 - &1 )
-         └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
+   ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │  ├─ :topoly $( x ^ &2 - &1 )
+   │  │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
+   │  └─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │     ├─ :needstopoly $( x ^ &2 - &1 )  … [depth limit -- use '.explain <pattern> 0' for the full proof]
+   │     ├─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+   │     ├─ &1 aspoly (pos zint &1)  … [depth limit …]
+   │     └─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+   └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+      ├─ :topoly ((x - &1) * (x + &1))
+      │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
+      └─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+         ├─ :needstopoly ((x - &1) * (x + &1))  … [depth limit …]
+         ├─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)  … [depth limit …]
+         ├─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)  … [depth limit …]
+         └─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
 ```
 
 Three things are worth noticing.

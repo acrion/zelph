@@ -84,14 +84,21 @@ Nothing above is a black box, and you do not have to take the verdict on
 trust. `.explain` reconstructs the justification from the saturated graph:
 
 ```
+zelph> ? $( x^2-1 ) ≡ $( (x-1)*(x+1) )
+Answer: ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
 zelph> .explain 3
 ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
    ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   ├─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │  ├─ :topoly $( x ^ &2 - &1 )
+   │  │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
+   │  └─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
    …
-   └─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
 ```
+
+(The input to `.explain` is the depth to print; absent a fact, it explains the
+last answer. `.explain 0` prints the tree in full, down to the digit tables.)
 
 Read the normal form: `(x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)`
 is the coefficient list −1, 0, 1 of the polynomial in `x` — that is

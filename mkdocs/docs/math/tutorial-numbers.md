@@ -195,13 +195,15 @@ zelph> .import decimal-arithmetic
 zelph> (N ~ answer) => (N + &1)
 zelph> &41 ~ answer
 (&41 + &1) ⇐ (&41 ~ answer)
-zelph> .run
+((&41 + &1) = &42) ⇐ {(((&41 add &1) ci 0) sum &42) (&41 + &1)}
 zelph> ? &41 + &1
 Answer: (&41 + &1) = &42
 ```
 
 The rule asserted an addition *fact*; the arithmetic module noticed and
-derived its result. Nothing distinguishes this from a rule concluding that
+derived its result. (The carry states between those two lines are printed as
+well, and how many of them the focus filter lets through varies from run to
+run – the reasoner is parallel.) Nothing distinguishes this from a rule concluding that
 Berlin is in Europe — the same unifier, the same fixpoint loop. That is the
 property the whole mathematics stack is built on, and the next tutorial
 uses it directly: a symbolic simplifier that folds numeric constants

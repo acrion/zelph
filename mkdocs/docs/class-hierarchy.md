@@ -163,7 +163,7 @@ A single class, if you want its immediate surroundings:
 ```
 zelph-> %(class-report "Q703534")
 Class: Q703534 (employee)
-Subclasses (transitive): 14633
+Subclasses (transitive): 14497
 Direct superclasses: 2
   P279 -> Q327055
   P279 -> Q852998
@@ -174,12 +174,27 @@ Direct superclasses: 2
 The report above answers one fixed question. The next question an editor has is usually the negative one – which classes under here are _not_ under there – and that is a condition you can write. Two rules over the direct subclasses of _organization_ ([Q43229](https://www.wikidata.org/wiki/Q43229)), splitting them by whether they also reach _profession_ ([Q215627](https://www.wikidata.org/wiki/Q215627)):
 
 ```
+zelph-> .lang wikidata
+wikidata-> .auto-run
+Auto-run is now enabled.
 wikidata> .deductions off
+Deduction printing mode: off
 wikidata> (C P279 Q43229, C P279⁺ Q215627) => (C in-violation Q215627)
+(((C P279 Q215627) closure one-or-more), (C P279 Q43229)) => (C in-violation Q215627)
  (skipped 9 deductions)
 wikidata> (C P279 Q43229, ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
+((C P279 Q43229), ¬((C P279 Q215627) closure one-or-more)) => (C sound-under Q43229)
  (skipped 815 deductions)
 ```
+
+The `.auto-run` is not optional here: `.load` switches inference off, because
+running it after every line of a bulk import would be ruinous, and it says so
+when it does. The `-` in the `zelph->` prompt is the reminder. A rule entered
+while inference is off is stored and does nothing until it is switched back on
+(or `.run` is typed).
+
+The echo shows what the `⁺` stands for as sugar: the condition is the ordinary
+fact `(C P279 Q215627) closure one-or-more`.
 
 _organization_ has 824 direct subclasses in this file. **Nine of them reach _profession_ as well** – among them _militia_ ([Q153936](https://www.wikidata.org/wiki/Q153936)) and _credit bureau_ ([Q1187145](https://www.wikidata.org/wiki/Q1187145)) – and 815 do not. An organization is not a profession, so those nine are where to look, and the 815 are what says the other question was asked too. `.deductions off` keeps each run to one line; without it every derived fact prints its own.
 

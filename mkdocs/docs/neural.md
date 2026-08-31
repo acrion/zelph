@@ -58,7 +58,7 @@ The low-level API:
 
 ## Layers Are Sets, Neurons Are Nodes
 
-A _layer_ is simply a node, and its neurons are the subjects of ordinary `(neuron in layer)` membership facts — the same `in` (PartOf) relation used for [sets](index.md#braces-sets):
+A _layer_ is simply a node, and its neurons are the subjects of ordinary `(neuron in layer)` membership facts — the same `in` (PartOf) relation used for [sets](index.md#braces-set-constants-and-collections):
 
 ```
 x1 in Lin
@@ -298,10 +298,16 @@ The following is a complete, unaltered session log of `stdlib/examples/neural/nn
 > default, anchors only to statements you entered manually, and an imported
 > script adds no anchors (see `.help .deductions`), so without that initial
 > line the identical run displays `(skipped 142 deductions)` instead.
+>
+> The training is seeded, so the counts and the loss come out identical on
+> every run and on every machine – that is what makes the figures quotable. The
+> five rows printed under each of the two totals are a **sample** of the 99 and
+> the 42, and which five they are depends on the run: the reasoner is parallel,
+> and a set has no first element.
 
 ```text
 $ zelph < demo.zph
-zelph 1.0.0-dev
+zelph 1.0.0
 -- REPL mode - type .help for commands, .quit to exit --
 
 zelph> Deduction printing mode: all

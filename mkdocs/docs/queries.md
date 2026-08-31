@@ -9,11 +9,11 @@ Queries are statements that contain variables (single uppercase letters) but no 
 ## Key Features
 
 - **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query.
-- **Multi-Conditions (Conjunctions)**: Use comma conjunctions inside parentheses, e.g. `(cond1, cond2)`, or the explicit form `(*{(cond1) (cond2)} ~ conjunction)`.
+- **Multi-Conditions (Conjunctions)**: Write the conditions as a comma list, e.g. `cond1, cond2`, or use the explicit form `*{(cond1) (cond2)} ~ conjunction`. Note that neither carries outer parentheses: `(cond1, cond2)` on a line by itself is a *term*, i.e. the beginning of a statement, and awaits the rest of it – see [Basic Usage](quickstart.md#basic-usage).
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
 - **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).
-- **Output**: Matches are printed with bound values. No matches: Just the query echoed.
-- **Limitations**: No multi-line queries.
+- **Output**: Matches are printed with bound values. If no matches: only the query is echoed. The order of the answers is not specified – with parallel unification (the default, see `.parallel`) it can differ between two runs of the same query; see [Deduction Output Modes](index.md#deduction-output-modes).
+- **Limitations**: A query is a statement, so it may span several lines, but each answer is one line and there is no paging.
 
 ## General Queries
 
@@ -61,7 +61,7 @@ Combine for intersections.
   Answer: {(Berlin "is capital of" Germany) (Berlin "is located in" Europe)}
   ```
 
-  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](index.md#syntax-sugar-for-conditions). The fully explicit form is `(*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction)`.
+  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](index.md#syntax-sugar-for-conditions). The fully explicit form is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`, which answers identically.
 
 ## Wikidata-Specific Queries
 
@@ -79,10 +79,10 @@ For Wikidata, switch to `.lang wikidata` after loading a dump (`.load path/to/du
 
 Combine for targeted searches.
 
-- Fossil taxa in genus rank: `(*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)`  
+- Fossil taxa in genus rank: `X P31 Q23038290, X P105 Q34740`  
   Output: Matches like Brontosaurus/Apatosaurus.
 
-- Synonyms with parent taxon: `(*{(X P460 Q14326) (X P171 Q2544161)} ~ conjunction)` (Apatosaurus synonyms in Diplodocidae)  
+- Synonyms with parent taxon: `X P460 Q14326, X P171 Q2544161` (Apatosaurus synonyms in Diplodocidae)  
   Output:
   ```
   {(X P171 Q2544161) (X P460 Q14326)}

@@ -258,7 +258,7 @@ This enables a class of rules that are difficult or impossible to express in sta
 zelph> (R is symmetric, X R Y) => (Y R X)
 zelph> friend is symmetric
 zelph> alice friend bob
-( bob   friend   alice ) ⇐ ...
+(bob friend alice) ⇐ {(alice friend bob) (friend is symmetric)}
 ```
 
 A single rule declares the semantics of symmetry for _any_ relation.
@@ -270,7 +270,7 @@ Declaring `friend is symmetric` is a fact about the predicate `friend`; the rule
 zelph> (R "is opposite of" S, X R Y) => (Y S X)
 zelph> "has part" "is opposite of" "is part of"
 zelph> chimpanzee "has part" hand
-( hand   is part of   chimpanzee ) ⇐ ...
+(hand "is part of" chimpanzee) ⇐ {("has part" "is opposite of" "is part of") (chimpanzee "has part" hand)}
 ```
 
 Declaring that `"has part"` is opposite of `"is part of"` causes every `has part` fact to automatically generate its inverse.
@@ -380,20 +380,31 @@ zelph's unification engine matches patterns against **arbitrarily nested** struc
 This is essential for reasoning about statements-about-statements — a natural consequence of zelph's graph topology where fact nodes can themselves appear as subjects or objects of other facts.
 
 ```
+zelph> .deductions all
+Deduction printing mode: all
 zelph> ((A + B) = C) => (test A B)
 zelph> (4 + 5) = 9
-( test   4   5 ) ⇐ ...
+(test 4 5) ⇐ ((4 + 5) = 9)
 ```
 
 The rule's condition pattern `((A + B) = C)` requires a fact whose _subject_ is itself a fact matching `(A + B)`.
 The engine recursively walks the graph topology, binding `A = 4`, `B = 5`, `C = 9`.
 
+`.deductions all` is necessary here because the derived fact pertains to
+`test`, a node not referenced in the typed statement, so the default `focus`
+mode counts it instead of printing it – see [Deduction Output
+Modes](index.md#deduction-output-modes). (In `test A B` the variables occupy
+predicate and object position: the derived statement is `test`, related to `5`
+through the predicate `4`.)
+
 This extends to arbitrary depth:
 
 ```
+zelph> .deductions all
+Deduction printing mode: all
 zelph> (subj pred (obj is (subj2 A (b test C)))) => (success A C)
 zelph> subj pred (obj is (subj2 a_val (b test c_val)))
-( success   a_val   c_val ) ⇐ ...
+(success a_val c_val) ⇐ (subj pred (obj is (subj2 a_val (b test c_val))))
 ```
 
 Deep unification also works within conjunction conditions, enabling rules that combine structural decomposition with multi-condition reasoning:
@@ -404,7 +415,7 @@ zelph> (4 + 5) = 9
 zelph> (*{ ((A + B) = C) (B followed-by D) (C followed-by E) } ~ conjunction) => ((A + D) = E)
 zelph> 5 followed-by 42
 zelph> 9 followed-by 43
-(( 4   +   42 )  =   43 ) ⇐ ...
+((4 + 42) = 43) ⇐ {((4 + 5) = 9) (5 followed-by 42) (9 followed-by 43)}
 ```
 
 This rule decomposes the nested equation `(A + B) = C`, uses the bound values to look up successor relationships, and assembles a new equation — all in a single inference step.
@@ -446,21 +457,31 @@ See [Angle Brackets: Lists](index.md#angle-brackets-lists) for details on the li
 ```
 zelph> alice parent_of bob charlie
 zelph> (A parent_of B) => (B child_of A)
-( bob   child_of   alice ) ⇐ ...
-( charlie   child_of   alice ) ⇐ ...
+(bob child_of alice) ⇐ (alice parent_of bob)
+(charlie child_of alice) ⇐ (alice parent_of charlie)
 ```
 
 The rule matches each object independently. Whether `bob` or `charlie` was written first is irrelevant — both are equally "objects of" the `parent_of` fact.
 
 This distinction becomes critical in more complex rules. Consider a naïve attempt at function composition using multiple objects:
 
-```
-zelph> (F maps A B, G maps B C) => ((G compose F) maps A C)
-zelph> f maps 1 2
-zelph> g maps 2 3
-```
+    (F maps A B, G maps B C) => ((G compose F) maps A C)
+    f maps 1 2
+    g maps 2 3
 
-This produces not only `(g compose f) maps 1 3` but also `(f compose g) maps 1 3` and further spurious compositions — because the engine cannot distinguish "domain" from "codomain" when both are unordered objects of the same fact.
+The engine cannot distinguish "domain" from "codomain" here, because both are
+unordered objects of the same fact: `f maps 1 2` matches `F maps A B` with
+`A = 1, B = 2` and equally with `A = 2, B = 1`. So the rule derives not only
+`(g compose f) maps 1 3` but also `(f compose g) maps 1 3`, and each of those
+is itself a `maps` fact whose subject is a composite the rule has just built –
+which feeds the rule again, with `((f compose g) compose g)`, then
+`(((f compose g) compose g) compose (g compose f))`, and so on. The terms grow
+without bound and there is no fixed point to reach.
+
+**Do not type this one in.** It is here as the mistake to recognize, not as an
+example to run: three lines are enough to make the engine derive until the
+session is ended from outside, since a run in progress cannot be stopped from
+the prompt.
 
 **Example — Function composition with lists:**
 
@@ -472,7 +493,7 @@ The correct approach uses **ordered lists** to encode the domain–codomain rela
 zelph> (F maps <A B>, G maps <B C>) => ((G compose F) maps <A C>)
 zelph> f maps <item1 item2>
 zelph> g maps <item2 item3>
-(( g   compose   f )  maps  < item1   item3 >) ⇐ ...
+((g compose f) maps <item1 item3>) ⇐ {(g maps <item2 item3>) (f maps <item1 item2>)}
 ```
 
 The list `<A B>` is a cons-list with a defined structure: `A` is the first element (car) and `B` is the rest (cdr).
@@ -499,7 +520,7 @@ zelph> (A is yellow, ¬(A is green)) => (A "is not" green)
 zelph> plant is green
 zelph> plant is yellow
 zelph> plant2 is yellow
-( plant2   is not   green ) ⇐ ...
+(plant2 "is not" green) ⇐ {(plant2 is yellow) (¬(plant2 is green))}
 ```
 
 `plant` is both yellow and green, so `¬(plant is green)` fails and the rule does not fire for `plant`.
@@ -518,7 +539,7 @@ zelph> elem3 partoflist mylist
 zelph> elem4 partoflist mylist
 zelph> elem5 partoflist mylist
 zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
-( elem5   is last of   mylist ) ⇐ ...
+(elem5 "is last of" mylist) ⇐ {(elem5 partoflist mylist) (¬(elem5 --> X))}
 ```
 
 The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->` link — identifying the last element purely declaratively.
@@ -613,9 +634,13 @@ The [contradiction rule](#contradiction-detection) the message names is what "th
 The other two condition operators have no reading outside a condition at all, and say so. `≈` asks what a network believes and `⁺` / `∗` ask what the engine can walk to; neither is something a line can assert. A path marker whose two ends are both concrete is refused, while the same shape with a variable in it is an ordinary question:
 
 ```
+zelph> a P279 b
+zelph> b P279 c
+zelph> c P279 d
 zelph> a P279⁺ d
 Error in line "a P279⁺ d": "⁺" and "∗" are condition operators: reachability is what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b"), or use the path condition in a rule.
 zelph> S P279⁺ d
+(S P279 d) closure one-or-more
 Answer: (a P279 d) closure one-or-more
 Answer: (b P279 d) closure one-or-more
 Answer: (c P279 d) closure one-or-more
@@ -658,8 +683,14 @@ An inner rule is a rule, so a [rule generator](rule-generators.md) writing `(P l
 
 `¬(X != Y)` is rejected. It asks for the two terms to be the same node, and writing the same variable twice already asks that – with the advantage that the engine then uses it to narrow the search rather than testing afterwards:
 
+The refusal comes when the rule is evaluated, not when it is read: `!=` is a
+guard the engine runs, so what is rejected is the negation of that execution,
+and until a fact reaches the rule there is nothing to run.
+
 ```
 zelph> (A prop X, A prop Y, ¬(X != Y)) => (A pair X)
+((A prop Y), ¬(X != Y), (A prop X)) => (A pair X)
+zelph> a prop v1
 Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to require two terms to be equal.
 ```
 
@@ -735,11 +766,14 @@ With only one value `v`, the binding `X = v, Y = v` is blocked by `!=`, so the r
 
 ```
 zelph> a prop v1
+(a has_pair v v1) ⇐ {(a prop v) (v1 != v) (a prop v1)}
 zelph> a prop v2
-( a   has_pair   v1   v2 ) ⇐ ...
+(a has_pair v v2) ⇐ {(a prop v2) (v != v2) (a prop v)}
+(a has_pair v1 v2) ⇐ {(a prop v2) (v1 != v2) (a prop v1)}
 ```
 
-Once distinct values exist, the rule fires for the distinct pairings.
+Once distinct values exist, the rule fires for the distinct pairings – for
+every one of them, `v` included, since it too differs from the new values.
 
 **Practical use case — detecting functional-property violations** (a pattern from Wikidata ontology work):
 
@@ -748,7 +782,7 @@ zelph> (P is functional, A P X, A P Y, X != Y) => !
 zelph> date_of_birth is functional
 zelph> alice date_of_birth 1990
 zelph> alice date_of_birth 1991
- !  ⇐ ...
+! ⇐ {(alice date_of_birth 1990) (alice date_of_birth 1991) (date_of_birth is functional) (1991 != 1990)}
 Found one or more contradictions!
 ```
 
@@ -826,8 +860,9 @@ zelph> b prop w
 zelph> a prop v1
 zelph> a prop v2
 zelph> (A prop X, A prop Y, X != Y) => (A ~ several)
+(a ~ several) ⇐ {(v2 != v1) (a prop v1) (a prop v2)}
 zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
-( w ~ sole ) ⇐ ...
+(w ~ sole) ⇐ {(¬(b ~ several)) (b prop w)}
 ```
 
 Note the order: **the facts come before the rules.** Negation is evaluated per run against the
@@ -985,13 +1020,18 @@ The simplest possible addition rule uses a successor table:
 zelph> <0> followed-by <1>
 zelph> <1> followed-by <2>
 zelph> <2> followed-by <3>
-zelph> ...
-
 zelph> (A followed-by B) => ((<1> + A) = B)
+((<1> + <0>) = <1>) ⇐ (<0> followed-by <1>)
+((<1> + <2>) = <3>) ⇐ (<2> followed-by <3>)
+((:+ <1>) = <2>) ⇐ (<1> followed-by <2>)
 ```
 
 This states: if `A` is followed by `B` in the number succession, then `1 + A = B`.
-The engine derives `(<1> + <0>) = <1>`, `(<1> + <1>) = <2>`, etc.
+The engine derives one sum per successor fact, and it derives them in whatever
+order the run reaches them. `(<1> + <1>) = <2>` is among them: subject and
+object of the sum coincide there, so it is printed with the
+[self-fact prefix](index.md#the-self-fact-prefix) as `(:+ <1>) = <2>`, which
+re-enters as the same fact.
 
 The key point: `followed-by` is a user-defined relation. zelph has no arithmetic kernel. The rule works because the graph contains the corresponding facts.
 
@@ -1136,8 +1176,10 @@ value. The results are ordinary **relational facts** — `N < M`, `N > M`,
     (R is transitive, A R B, B R C) => (A R C)
     > is transitive
     &30 cmp &20
+    (&30 > &20) ⇐ {((&30 lcmp &20) res gt) (&30 cmp &20)}
     &20 cmp &10
-    (&30 > &10) ⇐ ...
+    (&20 > &10) ⇐ {((&20 lcmp &10) res gt) (&20 cmp &10)}
+    (&30 > &10) ⇐ {(&30 > &20) (> is transitive) (&20 > &10)}
 
 Computed order and declared knowledge feed the same inference engine.
 
@@ -1304,7 +1346,7 @@ zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
 zelph> bright "is opposite of" dark
 zelph> yellow ~ bright
 zelph> yellow ~ dark
- !  ⇐ ...
+! ⇐ {(bright "is opposite of" dark) (yellow ~ bright) (bright != dark) (yellow ~ dark)}
 Found one or more contradictions!
 ```
 

@@ -107,11 +107,15 @@ The first line defines a general transitivity rule using variables — it fires 
 zelph will automatically deduce facts like:
 
 ```
-( Wolf member of Carnivora )   ⇐ {( Canidae member of Carnivora ) ( member of is transitive ) ( Wolf member of Canidae )}
-( Wolf member of Mammalia )    ⇐ {( Carnivora member of Mammalia ) ( member of is transitive ) ( Wolf member of Carnivora )}
-( Cobra member of Reptilia )   ⇐ {( Squamata member of Reptilia ) ( member of is transitive ) ( Cobra member of Squamata )}
-...
+(Wolf "member of" Carnivora) ⇐ {(Wolf "member of" Canidae) ("member of" is transitive) (Canidae "member of" Carnivora)}
+(Wolf "member of" Mammalia) ⇐ {(Wolf "member of" Canidae) ("member of" is transitive) (Canidae "member of" Mammalia)}
+(Cobra "member of" Reptilia) ⇐ {(Cobra "member of" Squamata) ("member of" is transitive) (Squamata "member of" Reptilia)}
 ```
+
+Seventeen of them, and to observe them you must run `.deductions all` first:
+the facts they relate to emerged from an imported script, which contributes no
+anchor to the default `focus` mode, thus it outputs `(skipped 17 deductions)`
+instead – refer to [Deduction Output Modes](index.md#deduction-output-modes).
 
 You can also add contradiction rules to validate the data. For example, to detect if a species is mistakenly assigned to two different families:
 

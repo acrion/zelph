@@ -15,23 +15,36 @@ They expose the identical user interface:
 
 ```
 zelph> .import decimal-arithmetic
-zelph> (&128 + &53) = X
-((&128  +  &53)  =  &181) ⇐ ...
-zelph> &42 cmp &9
-(&42  >  &9) ⇐ ...
-zelph> (&105 - &98) = X
-((&105  -  &98)  =  &7) ⇐ ...
-zelph> (&12 * &34) = X
-((&12  *  &34)  =  &408) ⇐ ...
-zelph> (&17 / &5) = X
-((&17 / &5) = &3) ⇐ ...
-zelph> (&17 mod &5) = X
-((&17 mod &5) = &2 ⇐ ...
-zelph> (&3 ^ &4) = X
-((&3 ^ &4) = &81) ⇐ ...
+zelph> ? &128 + &53
+Answer: (&128 + &53) = &181
+zelph> ? &42 cmp &9
+Answer: (&42 cmp &9) = gt
+zelph> ? &105 - &98
+Answer: (&105 - &98) = &7
+zelph> ? &12 * &34
+Answer: (&12 * &34) = &408
+zelph> ? &17 / &5
+Answer: (&17 / &5) = &3
+zelph> ? &17 mod &5
+Answer: (&17 mod &5) = &2
+zelph> ? &3 ^ &4
+Answer: (&3 ^ &4) = &81
 ```
 
-Every result arrives with its derivation (`⇐`). A computation in zelph is not a black box returning a value — it is a set of ordinary facts, each carrying the conditions that produced it.
+The [`?` prefix](../quickstart.md#two-statement-prefixes) is what keeps that
+transcript to seven lines: it asserts the request, runs the inference quietly
+and asks for the result. Written as a plain statement and a query, the same
+computation prints every step it took – and the last of them carries its
+derivation:
+
+```
+zelph> .import decimal-arithmetic
+zelph> (&128 + &53) = X
+ (skipped 6 deductions)
+((&128 + &53) = &181) ⇐ {(((&128 add &53) ci 0) sum &181) (&128 + &53)}
+```
+
+A computation in zelph is not a black box returning a value – it is a set of ordinary facts, each carrying the conditions that produced it. Comparison additionally leaves the relational facts behind: `&42 cmp &9` derives `&42 > &9`, which is what makes computed order usable by [meta-rules](#the-four-operations).
 
 ## Numbers Are Graph Structure
 
@@ -77,9 +90,14 @@ The internal state facts — `((<A> add <B>) ci C)` and friends — are themselv
 zelph> (R is transitive, A R B, B R C) => (A R C)
 zelph> > is transitive
 zelph> &30 cmp &20
+(&30 > &20) ⇐ {((&30 lcmp &20) res gt) (&30 cmp &20)}
 zelph> &20 cmp &10
-( &30  >  &10 ) ⇐ ...
+(&20 > &10) ⇐ {((&20 lcmp &10) res gt) (&20 cmp &10)}
+(&30 > &10) ⇐ {(&30 > &20) (> is transitive) (&20 > &10)}
 ```
+
+(Each `cmp` prints the states of its own recursion as well; only the lines
+that matter here are shown.)
 
 The derived `&30 > &10` was never computed digit-wise; it follows from the transitivity meta-rule applied to two computed facts. Computation and reasoning are literally the same operation.
 
@@ -144,8 +162,8 @@ Queries are always evaluated; once the result fact exists, they answer from the 
 Because numbers are lists, there is no word size:
 
 ```
-zelph> (&3495734893 * &92348793847) = X
-((&3495734893  *  &92348793847)  =  &322826900977421603371) ⇐ ...
+zelph> ? &3495734893 * &92348793847
+Answer: (&3495734893 * &92348793847) = &322826900977421603371
 ```
 
 That is an exact 21-digit result. For comparison, asking the embedded Janet runtime — a full scripting language — for the same product yields `3.22826900977422e+20`, a double-precision approximation. The reasoning engine is more precise than the programming language living in the same binary, because structural numbers have no width limit.

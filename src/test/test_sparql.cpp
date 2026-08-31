@@ -1037,6 +1037,58 @@ Q2 P279 Q5
         CHECK_THROWS_AS(interactive.process(""), std::runtime_error); });
 }
 
+// ASK, CONSTRUCT and DESCRIBE are query FORMS, and the completeness check
+// asked for a SELECT -- which none of them is ever going to contain. So the
+// block stayed :incomplete, went on swallowing whatever was typed next, and
+// eventually reported "Keyword block for 'sparql' is incomplete": a diagnosis
+// of the wrong thing, naming neither the construct nor the reason, while the
+// documentation said these are "rejected with an error". They are complete the
+// moment they are recognizable now, and the refusal names them.
+TEST_CASE("sparql: a query form the subset does not have is refused by name")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+)");
+        collector.clear();
+
+        // The FIRST blank line dispatches -- before the fix this one returned
+        // :incomplete and the next line entered the query instead of the graph.
+        interactive.process("sparql");
+        interactive.process("ASK { ?x wdt:P279 wd:Q5 }");
+        CHECK_THROWS_WITH_AS(interactive.process(""),
+                             doctest::Contains("not supported by this subset: ASK"),
+                             std::runtime_error);
+
+        // A form without braces at all was the worse case: nothing could ever
+        // balance, so only the two-blank-line escape ended the block.
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("DESCRIBE ?x");
+        CHECK_THROWS_WITH_AS(interactive.process(""),
+                             doctest::Contains("not supported by this subset: DESCRIBE"),
+                             std::runtime_error);
+
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("CONSTRUCT { ?x wdt:P279 wd:Q5 } WHERE { ?x wdt:P279 wd:Q5 }");
+        CHECK_THROWS_WITH_AS(interactive.process(""),
+                             doctest::Contains("not supported by this subset: CONSTRUCT"),
+                             std::runtime_error);
+
+        // ... and the word search that decides this reads the MASKED text, so
+        // a literal carrying one of the three is a literal. This is the same
+        // property the keyword scan has, asked of the completeness check.
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 \"ask me to describe it\" . }");
+        interactive.process("");
+        CHECK_FALSE(any_output_contains(collector, "not supported by this subset")); });
+}
+
 // The question FILTER NOT EXISTS asks IS answerable here -- MINUS carries it,
 // with the correlated semantics the script documents. This pins that refusing
 // the one spelling does not take the capability away.

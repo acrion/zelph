@@ -89,10 +89,13 @@ The statement-layer names exist in a network once qualifiers have been imported 
 Transitive property paths (`+`, `*`) are evaluated by a native closure engine in the zelph core. The first time a closure runs over a given predicate, zelph builds an adjacency index over all relation nodes of that predicate and saves it next to the loaded `.bin` file as `<file>.bin.pidx.<id>` (where `<id>` is the internal node ID of the predicate):
 
 ```
-Building adjacency index over 1193229 relation nodes (24 thread(s))...
-Adjacency index ready: 1117131 edges.
-Saved adjacency index to /path/to/file.bin.pidx.322 (1117131 edges).
+Building adjacency index over 1114758 relation nodes (24 thread(s))...
+Adjacency index ready: 1114757 edges.
+Saved adjacency index to /path/to/file.bin.pidx.322 (1114757 edges).
 ```
+
+(the numbers are from the `P279` slice of the pruned dump, see
+[The Wikidata Class Hierarchy](class-hierarchy.md))
 
 This is a one-time cost per predicate and file. All subsequent queries that traverse the same predicate — in the same session or a later one — reuse the index and skip the build step entirely. On the full Wikidata network, the effect is substantial.
 
@@ -114,7 +117,7 @@ Every evaluation phase that takes longer than 1 ms then prints a line with its d
 
 The following is an unedited session running one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
 
-The [pruned](binaries.md) database answers the same query with 81 culprits in 0.32 s cold (its P279 index covers 1,117,131 edges instead of 5,166,316) and 0.15 s warm — useful if you want to reproduce this on a machine without 256 GB of RAM.
+The identical query identifies 81 culprits in the [pruned](binaries.md) database, whose `P279` index spans 1,114,757 edges rather than 5,166,316 – and on the `P279` slice cut from it, which amounts to a few hundred megabytes and needs 0.6 GiB of memory. That is the way to reproduce this without 256 GB of RAM; [The Wikidata Class Hierarchy](class-hierarchy.md) walks through it.
 
 ```
 ❯ build-release/bin/zelph

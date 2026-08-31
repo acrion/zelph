@@ -24,7 +24,7 @@ Click on a section to jump to the corresponding part of the video:
 - <a href="#" onclick="jumpTo(146);">Rules in zelph</a>: How rules are defined and used.
 - <a href="#" onclick="jumpTo(481);">The Inference Engine</a>: Details on the reasoning process.
 - <a href="#" onclick="jumpTo(547);">Question: Quotation Marks?</a> Addressing common syntax questions.
-- <a href="#" onclick="jumpTo(637);">No Edge Labels, but Nodes ⇒ Meta Reasoning About Predicates. In Wikidata terms: No difference between Q- und P-items</a>: Unique approach to relations.
+- <a href="#" onclick="jumpTo(637);">No Edge Labels, but Nodes ⇒ Meta Reasoning About Predicates. In Wikidata terms: No difference between Q- and P-items</a>: Unique approach to relations.
 - <a href="#" onclick="jumpTo(781);">Working with Wikidata</a>: Integration with Wikidata data.
 - <a href="#" onclick="jumpTo(970);">The Pruned Wikidata Version</a>: Optimized versions for efficiency.
 - <a href="#" onclick="jumpTo(1067);">The Synergy: zelph and Wikidata</a>: Benefits of combining both.

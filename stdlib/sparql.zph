@@ -1299,6 +1299,23 @@
       (do (buffer/push-byte out c) (++ i))))
   (string out))
 
+# True when kw stands in upper as a whole word, by the same neighbour rule
+# check-unsupported applies.
+(defn whole-word? [upper kw]
+  (var pos (string/find kw upper))
+  (var found false)
+  (while (and (not found) (not (nil? pos)))
+    (when (and (not (word-char? upper (dec pos)))
+               (not (word-char? upper (+ pos (length kw)))))
+      (set found true))
+    (set pos (string/find kw upper (inc pos))))
+  found)
+
+# The query forms this subset lacks. They decide completeness (see
+# sparql-incomplete?) as well as being refused, because a query that can only
+# be refused is finished the moment it is recognizable.
+(def other-query-forms ["ASK" "CONSTRUCT" "DESCRIBE"])
+
 (defn check-unsupported [text]
   (def upper (string/ascii-upper (mask-non-syntax text)))
   (each kw unsupported-keywords
@@ -1316,7 +1333,9 @@
    queries (e.g. between the PREFIX prologue and SELECT) are harmless. Two
    consecutive blank lines force dispatch.
    Incomplete while: no SELECT seen yet (prologue phase), no opening brace
-   yet, or braces unbalanced.
+   yet, or braces unbalanced. A query form this subset does not have (ASK,
+   CONSTRUCT, DESCRIBE) is COMPLETE at once, so that it is refused by name
+   instead of waiting for a SELECT that cannot come.
    Read from the MASKED text, so a brace inside a string literal, a comment or
    an IRI does not count. It used to, and the consequence was worse than a
    wrong answer: a query carrying `\"}\"` in a literal never balanced, so it was
@@ -1328,15 +1347,23 @@
   [text]
   (def masked (mask-non-syntax text))
   (def upper (string/ascii-upper masked))
-  (or (nil? (string/find "SELECT" upper))
-      (nil? (string/find "{" masked))
-      (do
-        (var depth 0)
-        (each b masked
-          (case b
-            123 (++ depth)    # {
-            125 (-- depth)))  # }
-        (not= depth 0))))
+  (if (some |(whole-word? upper $) other-query-forms)
+    # ASK, CONSTRUCT and DESCRIBE are query FORMS, so no SELECT is ever going
+    # to arrive and the block would accumulate until the two-blank-line
+    # escape -- swallowing whatever was typed next and then reporting an
+    # incomplete block, which names neither the construct nor the reason.
+    # Complete here means "there is nothing left to wait for"; the refusal
+    # that follows names ASK.
+    false
+    (or (nil? (string/find "SELECT" upper))
+        (nil? (string/find "{" masked))
+        (do
+          (var depth 0)
+          (each b masked
+            (case b
+              123 (++ depth)    # {
+              125 (-- depth)))  # }
+          (not= depth 0)))))
 
 (defn sparql-handler [text]
   (if (sparql-incomplete? text)

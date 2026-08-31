@@ -31,12 +31,14 @@ nonzero.
 A Janet input helper is provided for signed literals:
 
 ```
+zelph> .import integer-arithmetic
 zelph> %(print (zelph/int "-0"))
 pos zint &0
 ```
 
-`zelph/int` delegates the magnitude to `zelph/number`, so a `-0` literal
-canonicalises. It is input convenience only — the same node can be built
+`zelph/int` is defined by the module, not by the engine, thus the import is
+responsible for placing it there. It delegates the magnitude to `zelph/number`,
+so a `-0` literal canonicalises. It is input convenience only — the same node can be built
 with `zelph/fact` or typed verbosely.
 
 ## Operations

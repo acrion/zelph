@@ -182,6 +182,42 @@ TEST_CASE("output: concurrent stream flushes are serialized")
     CHECK(collector.events().size() == static_cast<size_t>(threads) * lines);
 }
 
+TEST_CASE("help: the syntax examples are written in the notation the engine prints")
+{
+    // ".help" showed a query answer as "Answer:  peter   is father of   paul"
+    // and a deduction as an "Answer:" line of the same padded shape -- output
+    // the engine has never produced. A deduction is not an answer, it carries
+    // no "Answer:" prefix, its fact stands in parentheses and a predicate with
+    // spaces is quoted, which is what makes the line re-enterable. The help is
+    // the first thing a new user reads, so a reader who typed the example
+    // beside the text saw two different notations for one system.
+    //
+    // The examples are executed here, and what the engine prints is asserted
+    // to appear in the help text -- so the two cannot drift apart again.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("peter \"is father of\" paul");
+        collector.clear();
+        interactive.process("_who \"is father of\" paul");
+        CHECK(answers_contain(collector, "peter \"is father of\" paul"));
+
+        process_lines(interactive, R"(
+Berlin "is capital of" Germany
+Germany "is located in" Europe
+)");
+        collector.clear();
+        interactive.process("(X \"is capital of\" Y, Y \"is located in\" Z) => (X \"is located in\" Z)");
+        CHECK(any_output_contains(collector, "(Berlin \"is located in\" Europe) ⇐ {"));
+
+        collector.clear();
+        interactive.process(".help");
+        CHECK(any_output_contains(collector, "Answer: peter \"is father of\" paul"));
+        CHECK(any_output_contains(collector, "(Berlin \"is located in\" Europe)"));
+        CHECK(any_output_contains(collector, "⇐ {(Germany \"is located in\" Europe)"));
+        // ... and the shape it used to claim is gone.
+        CHECK_FALSE(any_output_contains(collector, "Answer: Berlin")); });
+}
+
 TEST_CASE("commands: an argument a command does not take is an error")
 {
     // Most commands already reject surplus arguments; the ones that did not

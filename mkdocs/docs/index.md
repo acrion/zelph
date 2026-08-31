@@ -192,6 +192,9 @@ condition is the set in the data, so quantifying over its members works.
 
 ```
 zelph> (X in {red green blue}) => (X is-a-colour yes)
+(green is-a-colour yes) ⇐ (green in {red green blue})
+(red is-a-colour yes) ⇐ (red in {red green blue})
+(blue is-a-colour yes) ⇐ (blue in {red green blue})
 zelph> S is-a-colour yes
 Answer: green is-a-colour yes
 Answer: blue is-a-colour yes
@@ -250,10 +253,15 @@ named by every fact it derives, and it grows as the run proceeds:
 zelph> alice reported bug1
 zelph> bob reported bug2
 zelph> (X reported Y) => (Y in @{X})
+(X reported Y) => (Y in @{Y X})
 zelph> S in O
 Answer: bug1 in @{bug1 bug2}
 Answer: bug2 in @{bug1 bug2}
 ```
+
+(The two deductions are printed as well; which of them comes first varies with
+the run, and so does the order of the answers – see
+[Querying](queries.md#key-features).)
 
 The rule and the facts it derives name **one and the same** container, so what
 counts as its members depends on which of the two you are looking at. Inside
@@ -303,9 +311,14 @@ collection:
 ```
 zelph> a p b
 zelph> (X p Y) => (X in {Y})
+(X p Y) => (X in @{Y X})
+(a in @{a}) ⇐ (a p b)
 zelph> S in O
 Answer: a in @{a}
 ```
+
+The echo responds to the question the section asks: what was typed as `{Y}`
+reappears as `@{Y X}`, a collection.
 
 This is also what keeps the engine's own conjunction form working, whose
 members are condition patterns and therefore never ground — see
@@ -532,13 +545,21 @@ is detected.
 > [Unary Predicates and Self-Facts](logic.md#unary-predicates-and-self-facts).
 
 ```
+zelph> .deductions off
+Deduction printing mode: off
 zelph> .import decimal-arithmetic
 zelph> .import primes
 zelph> :testprime &13
+ (skipped 328 deductions)
 zelph> (:testprime &13) = X
 Answer: (:testprime &13) = prime
 zelph> (:isprime N, N hasdivisor D) => !
+((:isprime N), (N hasdivisor D)) => !
 ```
+
+`.deductions off` is what keeps this transcript short: the primality test is a
+computation, and the 328 derivations it takes are printed line by line in the
+default mode (see [Deduction Output Modes](#deduction-output-modes)).
 
 A lone `:pred` on a line is an incomplete statement; the operand may follow on
 the next line, so multi-line input works as usual. A variable token as
@@ -877,6 +898,14 @@ its subject, or one of its objects. Anchors accumulate over the session, so
 a rule entered later still surfaces conclusions about earlier inputs.
 Imported scripts (`.import`) do not contribute anchors — a loaded arithmetic
 library stays silent about its internals.
+
+**What is printed is deterministic; the order in which it appears is not.**
+The reasoner is parallel (`.parallel`), so two runs of the same input derive
+the same facts and answer the same queries, but the deduction lines, the
+answers of one query, and the bindings of two variables that could be
+exchanged may come out in a different order – and a `(skipped N deductions)`
+line may fall in a different place. Transcripts in this documentation are real
+runs; read them as one of the possible orders.
 
 The filter affects printing only: **all facts are derived and stored
 regardless of the mode**, and query answers, contradictions and warnings are
@@ -1254,7 +1283,7 @@ specific implementation, but an alternative is already active.
 
 ## Project Status
 
-The project is currently in beta phase. The core functionality has been rigorously tested against the full Wikidata dataset and is operational.
+The core functionality has undergone rigorous testing against the full Wikidata dataset and is operational.
 Comprehensive automated tests are run with every commit, see https://github.com/acrion/zelph/blob/main/src/test/CMakeLists.txt. Contributor-facing documentation of the engine's internal performance architecture — and of the measurement methodology used to develop it — lives
 in the [Internals](internals/performance.md) section.
 
