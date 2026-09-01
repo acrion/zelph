@@ -938,7 +938,6 @@ void Zelph::set_edge_weight(const Node from, const Node to, const double weight)
     _pImpl->set_edge_weight(from, to, weight);
 }
 
-
 void Zelph::set_fact_creation_observer(FactCreationObserver observer)
 {
     _on_fact_created = std::move(observer);
@@ -1482,7 +1481,6 @@ Zelph::LangNodeView Zelph::get_lang_nodes_view(const std::string& lang) const
     }
     return LangNodeView(it->second);
 }
-
 
 // Extracts the components (subject, predicate, objects) from a relation node.
 Zelph::FactComponents Zelph::extract_fact_components(Node relation) const

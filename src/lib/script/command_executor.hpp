@@ -68,7 +68,7 @@ namespace zelph::console
          * @param line_processor Callback to process a raw line (used for .import recursion).
          */
         CommandExecutor(zelph::network::Reasoning* reasoning,
-                        zelph::ScriptEngine*        script_engine,
+                        zelph::ScriptEngine*       script_engine,
                         std::shared_ptr<ReplState> repl_state,
                         LineProcessor              line_processor);
 

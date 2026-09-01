@@ -25,9 +25,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "interactive.hpp"
 
-#include "script/command_executor.hpp"
 #include "network/reasoning.hpp"
 #include "repl_state.hpp"
+#include "script/command_executor.hpp"
 #include "script/script_engine.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"

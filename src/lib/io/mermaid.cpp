@@ -1209,10 +1209,10 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     // Build clone node definitions and styles
     for (auto& [key, cid] : clone_in_sg)
     {
-        network::Node nd        = key.first;
-        std::string   raw_label = z->get_name_hex(nd, false, max_neighbors);
-        const std::string label = html_escape(string::unmark_identifiers(raw_label));
-        clone_node_defs[cid] = cid + "(\"" + label + "\")";
+        network::Node     nd        = key.first;
+        std::string       raw_label = z->get_name_hex(nd, false, max_neighbors);
+        const std::string label     = html_escape(string::unmark_identifiers(raw_label));
+        clone_node_defs[cid]        = cid + "(\"" + label + "\")";
 
         // Clone nodes get a distinctive style (same base color but clone stroke)
         style_defs.push_back("    style " + cid + " fill:" + col_clone + ",stroke:" + clone_stroke
@@ -1335,8 +1335,8 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
         std::string subj_id = resolve_id_in_sg(info.subject, r);
         std::string obj_id  = resolve_id_in_sg(info.object, r);
 
-        std::string raw_pred_label = z->get_name_hex(info.predicate, false, max_neighbors);
-        const std::string pred_label = html_escape(string::unmark_identifiers(raw_pred_label));
+        std::string       raw_pred_label = z->get_name_hex(info.predicate, false, max_neighbors);
+        const std::string pred_label     = html_escape(string::unmark_identifiers(raw_pred_label));
 
         mermaid << "    " << subj_id << " -->|\"" << pred_label << "\"| " << obj_id << std::endl;
 

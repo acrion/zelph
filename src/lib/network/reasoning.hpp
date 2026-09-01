@@ -96,15 +96,15 @@ namespace zelph::network
     {
         enum class Status
         {
-            Derived,   // justified by `rule` via `premises` and `absent`
-            Axiom,     // asserted, and no rule consequence unifies: an input fact
-            Unfounded,  // asserted, rule consequences unify, but no acyclic
-                        // instantiation verifies against the CURRENT graph
-                        // (e.g. a NAF premise that has since become true)
+            Derived,     // justified by `rule` via `premises` and `absent`
+            Axiom,       // asserted, and no rule consequence unifies: an input fact
+            Unfounded,   // asserted, rule consequences unify, but no acyclic
+                         // instantiation verifies against the CURRENT graph
+                         // (e.g. a NAF premise that has since become true)
             RulePattern, // the node exists only because a rule was written
-                        // with this statement as a ground pattern -- nobody
-                        // claimed it, so there is nothing to justify
-            Truncated  // not expanded: depth limit reached
+                         // with this statement as a ground pattern -- nobody
+                         // claimed it, so there is nothing to justify
+            Truncated    // not expanded: depth limit reached
         };
 
         Node                                    fact   = 0;
@@ -119,7 +119,7 @@ namespace zelph::network
         // walk, not a statement anybody claimed, so there is no node to
         // point at. `bindings` turns the pattern into the path that was
         // actually tested.
-        std::vector<Node>                       walked;
+        std::vector<Node> walked;
 
         // Whether the search found a SECOND verified instantiation for this
         // fact. Only the first is reconstructed -- following every one of them
@@ -127,7 +127,7 @@ namespace zelph::network
         // asked. What the flag buys is that the one shown no longer passes for
         // the only one there is, which is the difference between "the evidence"
         // and "some evidence". Set at the root only; see reconstruct().
-        bool                                    more_justifications = false;
+        bool more_justifications = false;
 
         // The instantiation that justifies this step (Derived only). The
         // positive premises are already ground nodes, but a NAF condition
@@ -308,13 +308,13 @@ namespace zelph::network
         // thousands of iterations per second, and printing one line each
         // buries whatever the user actually asked to see. With logging on
         // they ARE the data, so every one is kept.
-        bool                               progress_due();
+        bool progress_due();
 
-        bool                               resolve_guard_side(Node item, const Variables& variables, Node& out) const;
-        bool                               contradicts(const Variables& variables, const Variables& unequals) const;
-        bool                               guards_unresolved(const Variables& variables, const Variables& unequals) const;
-        bool                               guard_side_unbound(Node item, const Variables& variables) const;
-        void                               end_input_capture();
+        bool resolve_guard_side(Node item, const Variables& variables, Node& out) const;
+        bool contradicts(const Variables& variables, const Variables& unequals) const;
+        bool guards_unresolved(const Variables& variables, const Variables& unequals) const;
+        bool guard_side_unbound(Node item, const Variables& variables) const;
+        void end_input_capture();
 
         // --- Implemented in reasoning_evaluate.cpp ---
 
@@ -406,18 +406,18 @@ namespace zelph::network
 
         // --- Members ---
 
-        std::atomic<bool>                        _done{false};
-        std::unique_ptr<io::DerivationExport>    _export;
-        std::atomic<uint64_t>                    _running{0};
-        bool                                     _print_deductions{true};
-        bool                                     _export_derivations{false};
-        std::atomic<bool>                        _contradiction{false};
-        chrono::StopWatch                        _stop_watch;
-        std::atomic<size_t>                      _skipped{0};
-        std::mutex                               _mtx_output;
-        std::mutex                               _mtx_network;
-        std::atomic<int>                         _total_matches{0};
-        std::atomic<int>                         _total_contradictions{0};
+        std::atomic<bool>                     _done{false};
+        std::unique_ptr<io::DerivationExport> _export;
+        std::atomic<uint64_t>                 _running{0};
+        bool                                  _print_deductions{true};
+        bool                                  _export_derivations{false};
+        std::atomic<bool>                     _contradiction{false};
+        chrono::StopWatch                     _stop_watch;
+        std::atomic<size_t>                   _skipped{0};
+        std::mutex                            _mtx_output;
+        std::mutex                            _mtx_network;
+        std::atomic<int>                      _total_matches{0};
+        std::atomic<int>                      _total_contradictions{0};
         // How many contradiction records the graph HELD when this run began.
         // A run that reports nothing and says nothing else is indistinguishable
         // from a clean graph -- and after a .load of a network that was saved
@@ -430,7 +430,7 @@ namespace zelph::network
         // (A p B, B p A) => ! matches twice over the same pair and would
         // otherwise report two. Read at the START, so a contradiction this run
         // announces is not also counted as one that was already there.
-        std::size_t                              _records_at_run_start{0};
+        std::size_t _records_at_run_start{0};
         // Whether a contradiction is written into the graph. See
         // record_contradiction for what it costs and why it can be switched
         // off; the per-run hash set that used to sit here is gone with it.
@@ -466,22 +466,22 @@ namespace zelph::network
         // in progress (those facts are bulk knowledge, not an increment), and
         // once the record has outgrown its cap. Seeding then falls back to a
         // classic pass, so an invalid record costs time, never correctness.
-        bool                               _delta_valid{false};
+        bool _delta_valid{false};
         // A recorded entry is 16 bytes, so this caps the record at ~16 MB.
         // Anything that adds a million facts between two runs is a bulk load,
         // for which a classic pass is the right answer anyway.
-        static constexpr size_t            _max_delta_entries{1'000'000};
+        static constexpr size_t _max_delta_entries{1'000'000};
         // Rule count observed at the end of the last run. A changed rule set
         // invalidates delta seeding -- a new rule has to see the old facts --
         // so an incremental request falls back to a classic pass.
-        size_t                             _rules_at_last_run{0};
+        size_t _rules_at_last_run{0};
 
         // --- Neural (≈) support ---
         // Rate limit for the iteration banners; see progress_due().
-        std::chrono::steady_clock::time_point       _progress_last{};
+        std::chrono::steady_clock::time_point _progress_last{};
 
-        Node                                       _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
-        Node                                       _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
+        Node _nn_pred{0};        // node named "nn" in lang "zelph", 0 = feature inactive
+        Node _nn_layers_pred{0}; // node named "nn-layers" in lang "zelph"
 
         // --- Transitive path conditions (P⁺ / P∗) ---
         // Named nodes in language "zelph", cached exactly like _nn_pred: a

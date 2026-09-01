@@ -200,7 +200,7 @@ namespace zelph::console
         _n->out_stream() << "------------------------" << std::endl;
     }
 
-    void CommandExecutor::Impl::generate_and_print_mermaid_link(network::Node                            nd, int                                      depth, int                                      max_neighbors, const std::unordered_set<network::Node>& exclude_nodes, bool                                     dark_theme, bool                                     horizontal_layout, bool                                     use_subgraphs) const
+    void CommandExecutor::Impl::generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors, const std::unordered_set<network::Node>& exclude_nodes, bool dark_theme, bool horizontal_layout, bool use_subgraphs) const
     {
         std::filesystem::path temp_dir  = std::filesystem::temp_directory_path();
         std::string           hex_name  = _n->get_name_hex(nd, false, max_neighbors);

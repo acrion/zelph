@@ -239,9 +239,9 @@ TEST_CASE("capi: a fact reads back as its subject, its predicate and its objects
 {
     Engine engine;
 
-    const zelph_node socrates    = engine.node("Socrates");
-    const zelph_node is          = engine.node("is");
-    const zelph_node objects[2]  = {engine.node("mortal"), engine.node("greek")};
+    const zelph_node socrates   = engine.node("Socrates");
+    const zelph_node is         = engine.node("is");
+    const zelph_node objects[2] = {engine.node("mortal"), engine.node("greek")};
 
     zelph_node fact = 0;
     REQUIRE(zelph_fact(engine, socrates, is, objects, 2, &fact) == ZELPH_OK);
@@ -464,14 +464,14 @@ TEST_CASE("capi: a network is wired, compiled, trained and read back through the
 
     // A null activation array means every listed input is 1.0, so passing
     // the activations explicitly must change nothing.
-    const double one = 1.0;
+    const double one            = 1.0;
     double       explicit_score = 0;
     count                       = 1;
     REQUIRE(zelph_nn_eval_nodes(engine, net, &i2, &one, 1, 1, &top, &explicit_score, &count) == ZELPH_OK);
     CHECK(explicit_score == doctest::Approx(score));
 
     // Graded activation scales the (linear) response.
-    const double half = 0.5;
+    const double half       = 0.5;
     double       half_score = 0;
     count                   = 1;
     REQUIRE(zelph_nn_eval_nodes(engine, net, &i2, &half, 1, 1, &top, &half_score, &count) == ZELPH_OK);
@@ -670,10 +670,15 @@ TEST_CASE("capi: an accumulator set and evaluated is the from-scratch pass")
     // test after this one. Put in through the snapshot, which is the only way
     // the ABI can name an individual weight - and which therefore also holds
     // the documented layout, row-major by post-synaptic unit.
+    // clang-format off
+    // Four weights per row, and each comment is assigned to the row above it.
+    // One entry per line is how the formatter interprets this, and it puts
+    // every comment next to a number it does not describe.
     const double chosen[10] = {1, 4, 16, 64,   // input i to hidden unit 0
                                2, 8, 32, 128,  // input i to hidden unit 1
                                1, 1};          // both hidden units to the output
-    const size_t sizes[2]   = {8, 2};
+    // clang-format on
+    const size_t sizes[2] = {8, 2};
     REQUIRE(zelph_nn_restore(engine, net, chosen, 10, sizes, 2) == ZELPH_OK);
 
     size_t width = 0;
@@ -715,7 +720,7 @@ TEST_CASE("capi: an accumulator set and evaluated is the from-scratch pass")
     // two additions, and with exact weights it lands on the same vector.
     REQUIRE(zelph_nn_accumulator_set(engine, net, std::vector<size_t>{0, 1}.data(), nullptr, 2, acc.data(), acc.size()) == ZELPH_OK);
 
-    const size_t added[2]  = {2, 3};
+    const size_t added[2]   = {2, 3};
     const size_t removed[1] = {0};
     REQUIRE(zelph_nn_accumulator_update(engine, net, added, nullptr, 2, removed, nullptr, 1, acc.data(), acc.size()) == ZELPH_OK);
 
@@ -757,7 +762,8 @@ TEST_CASE("capi: an updated accumulator drifts from a fresh one, and the drift i
     Engine engine;
 
     const char* const inputs[6] = {"f0", "f1", "f2", "f3", "f4", "f5"};
-    for (const char* name : inputs) engine.member_of(name, "DrIn");
+    for (const char* name : inputs)
+        engine.member_of(name, "DrIn");
     engine.member_of("g1", "DrHid");
     engine.member_of("g2", "DrHid");
     engine.member_of("h1", "DrOut");
@@ -804,11 +810,11 @@ TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")
 
     engine.member_of("i1", "In");
     engine.member_of("o1", "Out");
-    const zelph_node in         = engine.node("In");
-    const zelph_node out        = engine.node("Out");
-    const zelph_node layers[2]  = {in, out};
-    const zelph_node i1         = engine.node("i1");
-    const zelph_node o1         = engine.node("o1");
+    const zelph_node in        = engine.node("In");
+    const zelph_node out       = engine.node("Out");
+    const zelph_node layers[2] = {in, out};
+    const zelph_node i1        = engine.node("i1");
+    const zelph_node o1        = engine.node("o1");
 
     REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.1, 7, nullptr) == ZELPH_OK);
     zelph_net net = -1;
@@ -827,9 +833,9 @@ TEST_CASE("capi: a snapshot restores exactly the weights it was taken from")
     std::vector<double> before(weight_count, 0);
     REQUIRE(zelph_nn_snapshot(engine, net, before.data(), &weight_count) == ZELPH_OK);
 
-    double score_before = 0;
-    zelph_node top      = 0;
-    size_t     count    = 1;
+    double     score_before = 0;
+    zelph_node top          = 0;
+    size_t     count        = 1;
     REQUIRE(zelph_nn_eval_nodes(engine, net, &i1, nullptr, 1, 1, &top, &score_before, &count) == ZELPH_OK);
 
     for (int epoch = 0; epoch < 20; ++epoch)
@@ -1051,7 +1057,7 @@ TEST_CASE("capi: a rule derives what forward chaining makes of it")
     REQUIRE(zelph_variable(engine, "X", &again) == ZELPH_OK);
     CHECK(again == x);
 
-    zelph_node condition = 0;
+    zelph_node condition   = 0;
     zelph_node consequence = 0;
     REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
     REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
@@ -1170,13 +1176,13 @@ TEST_CASE("capi: sets, collections and the directional relations")
 {
     Engine engine;
 
-    const zelph_node a = engine.node("a");
-    const zelph_node b = engine.node("b");
+    const zelph_node a           = engine.node("a");
+    const zelph_node b           = engine.node("b");
     const zelph_node elements[2] = {a, b};
 
     // A set constant is identified by its members, so the same elements
     // always yield the same node ...
-    zelph_node first = 0;
+    zelph_node first  = 0;
     zelph_node second = 0;
     REQUIRE(zelph_set(engine, elements, 2, &first) == ZELPH_OK);
     REQUIRE(zelph_set(engine, elements, 2, &second) == ZELPH_OK);
@@ -1223,9 +1229,9 @@ TEST_CASE("capi: a delta run costs the addition rather than the graph")
 
     zelph_node x = 0;
     REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
-    zelph_node condition = 0;
+    zelph_node condition   = 0;
     zelph_node consequence = 0;
-    zelph_node rule = 0;
+    zelph_node rule        = 0;
     REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
     REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
     REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
@@ -1269,11 +1275,20 @@ TEST_CASE("capi: an embedder can silence the narration by channel")
         auto* c = static_cast<Counts*>(user);
         switch (channel)
         {
-        case ZELPH_CHANNEL_OUT: c->out++; break;
-        case ZELPH_CHANNEL_ERROR: c->error++; break;
-        case ZELPH_CHANNEL_DIAGNOSTIC: c->diagnostic++; break;
-        case ZELPH_CHANNEL_PROMPT: c->prompt++; break;
-        default: break;
+        case ZELPH_CHANNEL_OUT:
+            c->out++;
+            break;
+        case ZELPH_CHANNEL_ERROR:
+            c->error++;
+            break;
+        case ZELPH_CHANNEL_DIAGNOSTIC:
+            c->diagnostic++;
+            break;
+        case ZELPH_CHANNEL_PROMPT:
+            c->prompt++;
+            break;
+        default:
+            break;
         }
     };
 
@@ -1392,7 +1407,8 @@ TEST_CASE("capi: a leaky hidden layer can recover from being all-negative")
     // Drive the single hidden unit firmly negative: with i1 -> h1 negative and
     // i1 the only active input, the unit is off for every input this net can
     // see.
-    auto put_the_unit_off = [&]() {
+    auto put_the_unit_off = [&]()
+    {
         zelph_net net = -1;
         REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
         // A snapshot is the only way in: set the weight directly rather than
@@ -1413,7 +1429,8 @@ TEST_CASE("capi: a leaky hidden layer can recover from being all-negative")
 
     // Returns what the net says before and after 500 steps of being asked
     // for +1.
-    auto train_and_report = [&](int32_t activation) -> std::pair<double, double> {
+    auto train_and_report = [&](int32_t activation) -> std::pair<double, double>
+    {
         put_the_unit_off();
 
         zelph_net net = -1;
@@ -1469,12 +1486,12 @@ TEST_CASE("capi: the activation is checked and the default is the old behaviour"
     // is linear whatever the activation says.
     REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.5, 3, nullptr) == ZELPH_OK);
 
-    zelph_net relu = -1;
+    zelph_net relu  = -1;
     zelph_net leaky = -1;
     REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &relu) == ZELPH_OK);
     REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_LEAKY_RELU, &leaky) == ZELPH_OK);
 
-    const zelph_node i1 = engine.node("i1");
+    const zelph_node i1  = engine.node("i1");
     zelph_node       top = 0;
     double           a = 0, b = 0;
     size_t           count = 1;

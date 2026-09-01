@@ -33,8 +33,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstdint>
 #include <memory>
-#include <utility>
 #include <shared_mutex>
+#include <utility>
 #include <vector>
 
 namespace zelph::network
@@ -125,7 +125,7 @@ namespace zelph::network
         // thread trains, and a reference into _w would be a race the caller
         // cannot guard against. See the threading note on this class.
         std::vector<std::vector<double>> weights() const;
-        void                                    set_weights(const std::vector<std::vector<double>>& w);
+        void                             set_weights(const std::vector<std::vector<double>>& w);
 
         // --- Node-addressed access (graph-driven training) ---
         //

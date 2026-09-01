@@ -272,7 +272,7 @@ namespace zelph
         network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
         if (!net) janet_panicf("zelph/nn-snapshot: invalid network handle");
 
-        const auto& w    = net->weights();
+        const auto& w     = net->weights();
         JanetArray* outer = janet_array(static_cast<int32_t>(w.size()));
         for (const auto& matrix : w)
         {

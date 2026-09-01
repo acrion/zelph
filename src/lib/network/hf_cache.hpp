@@ -63,7 +63,7 @@ namespace zelph::network::detail::hf_cache
         return has_identity(a) && has_identity(b);
     }
 
-    inline ReuseDecision decide_manifest(const bool body_exists,
+    inline ReuseDecision decide_manifest(const bool                           body_exists,
                                          const std::optional<RemoteMetadata>& cached,
                                          const std::optional<RemoteMetadata>& observed)
     {
@@ -85,9 +85,9 @@ namespace zelph::network::detail::hf_cache
         return ReuseDecision::refetch;
     }
 
-    inline ReuseDecision decide_object(const bool body_exists,
+    inline ReuseDecision decide_object(const bool                           body_exists,
                                        const std::optional<RemoteMetadata>& cached,
-                                       const ObjectCoordinates& requested)
+                                       const ObjectCoordinates&             requested)
     {
         if (!body_exists || !cached)
         {
@@ -160,8 +160,8 @@ namespace zelph::network::detail::hf_cache
         }
 
         RemoteMetadata metadata;
-        std::string version;
-        std::string line;
+        std::string    version;
+        std::string    line;
         while (std::getline(in, line))
         {
             const auto equals = line.find('=');
@@ -171,19 +171,35 @@ namespace zelph::network::detail::hf_cache
             }
             const auto key   = line.substr(0, equals);
             const auto value = line.substr(equals + 1);
-            if (key == "version") version = value;
-            else if (key == "source_uri") metadata.source_uri = unescape_field(value);
-            else if (key == "revision") metadata.revision = unescape_field(value);
-            else if (key == "etag") metadata.etag = unescape_field(value);
+            if (key == "version")
+                version = value;
+            else if (key == "source_uri")
+                metadata.source_uri = unescape_field(value);
+            else if (key == "revision")
+                metadata.revision = unescape_field(value);
+            else if (key == "etag")
+                metadata.etag = unescape_field(value);
             else if (key == "content_length")
             {
-                try { metadata.content_length = std::stoull(value); }
-                catch (...) { return std::nullopt; }
+                try
+                {
+                    metadata.content_length = std::stoull(value);
+                }
+                catch (...)
+                {
+                    return std::nullopt;
+                }
             }
             else if (key == "retrieved_at")
             {
-                try { metadata.retrieved_at = std::stoll(value); }
-                catch (...) { return std::nullopt; }
+                try
+                {
+                    metadata.retrieved_at = std::stoll(value);
+                }
+                catch (...)
+                {
+                    return std::nullopt;
+                }
             }
         }
         if (version != cache_version || metadata.source_uri.empty())

@@ -115,15 +115,14 @@ namespace zelph::io
         };
     }
 
-
     // Cap'n Proto and kj report through kj::Exception, whose what() carries a
     // C++ source location and a hex stack trace. Neither means anything to
     // someone who typed a file name, and the two failures they cover here --
     // the file is not a zelph .bin at all, or it stops in the middle -- are
     // exactly what such a person needs told.
     [[noreturn]] void rethrow_bin_error(const std::string&   command,
-                                               const std::string&   filename,
-                                               const kj::Exception& e)
+                                        const std::string&   filename,
+                                        const kj::Exception& e)
     {
         const std::string detail(e.getDescription().cStr());
         throw std::runtime_error(

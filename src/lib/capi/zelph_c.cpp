@@ -27,17 +27,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "interactive.hpp"
 #include "network/adjacency_set.hpp"
-#include "network/neural.hpp"
 #include "network/answer.hpp"
 #include "network/fact_structure.hpp"
+#include "network/neural.hpp"
 #include "network/reasoning.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
-#include <memory>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -67,7 +67,7 @@ struct zelph_engine
     // Guards the handle table only. The nets themselves are internally
     // synchronised (see NeuralNet), so a lookup taken shared is all an
     // evaluating thread needs.
-    mutable std::shared_mutex                              nets_mutex;
+    mutable std::shared_mutex                               nets_mutex;
     std::vector<std::unique_ptr<zelph::network::NeuralNet>> nets;
 
     zelph_engine(const zelph_engine&)            = delete;

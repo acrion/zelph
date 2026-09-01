@@ -117,47 +117,47 @@ namespace zelph::network
         // --- Implemented in zelph_persistence.cpp ---
 
 #ifndef __EMSCRIPTEN__
-        std::string pidx_path(const Node predicate) const;
-        bool try_load_pidx(const Node predicate, std::vector<IndexPair>& out) const;
-        void try_save_pidx(const Node predicate, const std::vector<IndexPair>& pairs) const;
-        static void validate_chunk_selector(const detail::chunk_selector& selection, uint32_t chunkCount, const char* label);
-        void clear_loaded_state();
-        void loadSmallData(const ZelphImpl::Reader& impl);
-        void loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection = nullptr, const detail::chunk_selector* rightSelection = nullptr);
-        void loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection = nullptr);
-        void loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection = nullptr);
-        void loadLeftRightChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection, const char* which_name, uint32_t section_count);
-        void loadNameOfNodeChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
-        void loadNodeOfNameChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
-        void loadFromManifest(const std::string& manifest_path, const Zelph::BinChunkSelection& selection, const std::string& shard_root, const std::string& bin_path_hint, const bool skip_payload);
-        void saveToFile(const std::string& filename, const ankerl::unordered_dense::set<Node>* const keep = nullptr) const;
+        std::string        pidx_path(const Node predicate) const;
+        bool               try_load_pidx(const Node predicate, std::vector<IndexPair>& out) const;
+        void               try_save_pidx(const Node predicate, const std::vector<IndexPair>& pairs) const;
+        static void        validate_chunk_selector(const detail::chunk_selector& selection, uint32_t chunkCount, const char* label);
+        void               clear_loaded_state();
+        void               loadSmallData(const ZelphImpl::Reader& impl);
+        void               loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection = nullptr, const detail::chunk_selector* rightSelection = nullptr);
+        void               loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection = nullptr);
+        void               loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection = nullptr);
+        void               loadLeftRightChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection, const char* which_name, uint32_t section_count);
+        void               loadNameOfNodeChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
+        void               loadNodeOfNameChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
+        void               loadFromManifest(const std::string& manifest_path, const Zelph::BinChunkSelection& selection, const std::string& shard_root, const std::string& bin_path_hint, const bool skip_payload);
+        void               saveToFile(const std::string& filename, const ankerl::unordered_dense::set<Node>* const keep = nullptr) const;
         static std::string read_error_text(const std::string& filename, const kj::Exception& e, const bool state_discarded);
-        void loadFromFile(const std::string& filename);
-        void loadFromFile(const std::string& filename, const Zelph::BinChunkSelection& selection, const bool skip_payload);
+        void               loadFromFile(const std::string& filename);
+        void               loadFromFile(const std::string& filename, const Zelph::BinChunkSelection& selection, const bool skip_payload);
 #endif // __EMSCRIPTEN__
 
         // --- Implemented in zelph_names.cpp ---
 
-        void transfer_names_locked(const Node from, const Node into);
-        void transfer_names(const Node from, const Node into);
-        void assign_name_locked(const Node node, const std::string& name, const std::string& lang);
-        void remove_name_locked(const Node node, const std::string& lang);
+        void   transfer_names_locked(const Node from, const Node into);
+        void   transfer_names(const Node from, const Node into);
+        void   assign_name_locked(const Node node, const std::string& name, const std::string& lang);
+        void   remove_name_locked(const Node node, const std::string& lang);
         size_t cleanup_dangling_names();
-        void remove_names_of(const adjacency_set& dead);
-        void remove_node_names(Node nd);
+        void   remove_names_of(const adjacency_set& dead);
+        void   remove_node_names(Node nd);
 
         // --- Implemented in zelph_index.cpp ---
 
-        static adjacency_set fact_objects_of(const adjacency_set& rel_left, const adjacency_set& rel_right);
-        static bool is_fact_subject(const Node rel, const Node predicate, const Node cand, const adjacency_set& rel_left, const adjacency_set& rel_right, const adjacency_set& objects);
-        static unsigned int index_build_threads();
-        std::vector<IndexPair> extract_predicate_pairs(const Node predicate, const adjacency_set* skip) const;
+        static adjacency_set                         fact_objects_of(const adjacency_set& rel_left, const adjacency_set& rel_right);
+        static bool                                  is_fact_subject(const Node rel, const Node predicate, const Node cand, const adjacency_set& rel_left, const adjacency_set& rel_right, const adjacency_set& objects);
+        static unsigned int                          index_build_threads();
+        std::vector<IndexPair>                       extract_predicate_pairs(const Node predicate, const adjacency_set* skip) const;
         static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw);
-        std::shared_ptr<const PredicateIndex> predicate_index(const Node predicate, const adjacency_set* skip) const;
-        bool try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const;
-        void invalidate_predicate_index() const noexcept;
-        void invalidate_relation_type_set() const;
-        bool try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result) const;
+        std::shared_ptr<const PredicateIndex>        predicate_index(const Node predicate, const adjacency_set* skip) const;
+        bool                                         try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const;
+        void                                         invalidate_predicate_index() const noexcept;
+        void                                         invalidate_relation_type_set() const;
+        bool                                         try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result) const;
 
         void emit(io::OutputChannel channel, const std::string& text, bool newline = true) const
         {
@@ -225,13 +225,13 @@ namespace zelph::network
         // the number of rules with ground patterns -- it does not grow with
         // the graph, so the memory budget does not apply and there is
         // nothing to switch off.
-        mutable std::shared_mutex                                                           _rule_patterns_mtx;
-        std::unordered_set<Node>                                                            _rule_patterns;
+        mutable std::shared_mutex _rule_patterns_mtx;
+        std::unordered_set<Node>  _rule_patterns;
         // Read before the mutex on both hot paths -- the per-candidate test in
         // unification and the per-known-fact revocation in deduce. A graph
         // whose rules all carry variables, which includes every bulk import,
         // never marks anything and therefore never takes a lock at all.
-        std::atomic<bool>                                                                   _has_rule_patterns{false};
+        std::atomic<bool> _has_rule_patterns{false};
 
         // Facts the graph holds as known-WRONG, which is what `¬(F)` says
         // outside a rule condition. Structurally they are ordinary facts --

@@ -421,8 +421,8 @@ namespace zelph::network
 
             if (proof->status != ProofNode::Status::Derived)
                 proof->status = ctx.z->is_rule_pattern(fact) ? ProofNode::Status::RulePattern
-                              : any_rule_unified      ? ProofNode::Status::Unfounded
-                                                      : ProofNode::Status::Axiom;
+                              : any_rule_unified             ? ProofNode::Status::Unfounded
+                                                             : ProofNode::Status::Axiom;
 
             // Memoize only path-independent results: Derived (a found proof
             // stays a proof) and Axiom (no rule consequence unifies -- a

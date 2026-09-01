@@ -440,7 +440,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 
         // All instantiation and fact creation happens under one lock to
         // prevent races where parallel threads create the same node.
-        Node          source  = 0;
+        Node          source = 0;
         adjacency_set targets;
         Node          d       = 0;
         bool          wrong   = false;
@@ -450,7 +450,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         // filter has no subject to match it against -- and suppressing the
         // one deduction that changes what the engine will do next is the
         // wrong default. It prints whenever deductions print at all.
-        const bool    is_rule = rel == core.Causes;
+        const bool is_rule = rel == core.Causes;
 
         if (is_rule)
         {

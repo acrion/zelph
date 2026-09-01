@@ -29,7 +29,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "repl_state.hpp"
 #include "script/command_executor_impl.hpp"
 #include "script/script_engine.hpp"
-#include "script/script_engine.hpp"
 #include "string/string_utils.hpp"
 
 #ifndef __EMSCRIPTEN__
@@ -60,7 +59,7 @@ static const std::map<std::string, std::string> command_aliases = {
 
 namespace zelph::console
 {
-    CommandExecutor::Impl::Impl(network::Reasoning*            n, ScriptEngine*                  se, std::shared_ptr<ReplState>     rs, CommandExecutor::LineProcessor lp) : _n(n) , _script_engine(se) , _repl_state(std::move(rs)) , _process_line_callback(std::move(lp))
+    CommandExecutor::Impl::Impl(network::Reasoning* n, ScriptEngine* se, std::shared_ptr<ReplState> rs, CommandExecutor::LineProcessor lp) : _n(n), _script_engine(se), _repl_state(std::move(rs)), _process_line_callback(std::move(lp))
     {
         register_commands();
     }

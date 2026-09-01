@@ -251,10 +251,8 @@ namespace zelph::network
             const bool   _previous;
         };
 
-
-
-        void         store_fact_structures_cached(Node fact, FactStructurePtr value) const;
-        void         invalidate_fact_structures_cache() const noexcept;
+        void store_fact_structures_cached(Node fact, FactStructurePtr value) const;
+        void invalidate_fact_structures_cache() const noexcept;
 
         /// Is `fact` the relation-type declaration of a predicate -- `p ~ ->`?
         /// Every path that REMOVES facts has to ask, because that one fact is
@@ -263,15 +261,15 @@ namespace zelph::network
         /// relation-type set, so removing it and leaving the set alone made
         /// the session and a reload of its own `.save` disagree about whether
         /// a rule exists.
-        bool         is_relation_type_declaration(Node fact) const;
+        bool is_relation_type_declaration(Node fact) const;
 
         /// Drop exactly these nodes from the fact-structure cache, leaving the
         /// rest of it alone. The targeted counterpart of the wholesale clear
         /// above, for a caller that can name what its change made stale --
         /// see invalidate_fact_structures_for (creation) and remove_node
         /// (removal), which are the two that can.
-        void         erase_fact_structures(const std::vector<Node>& nodes) const noexcept;
-        void         invalidate_fact_structures_for(Node subject, Node predicate, const adjacency_set& objects, Node relation) const;
+        void erase_fact_structures(const std::vector<Node>& nodes) const noexcept;
+        void invalidate_fact_structures_for(Node subject, Node predicate, const adjacency_set& objects, Node relation) const;
 
         // Memoized set of declared relation types -- one shared_ptr read
         // per fact-structure reconstruction instead of a check_fact probe
@@ -488,18 +486,18 @@ namespace zelph::network
 
         // --- Implemented in zelph_names.cpp (name management) ---
 
-        void                     set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
-        Node                     set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang);
-        std::string              get_name(const Node node, std::string lang = "", const bool fallback = false) const;
-        std::string              get_formatted_name(Node node, const std::string& lang) const;
-        bool                     has_name(Node node, const std::string& lang) const;
-        void                     remove_name(Node node, std::string lang = "");
-        void                     unset_name(Node node, std::string lang = "");
-        Node                     get_node(const std::string& name, std::string lang = "") const;
-        void                     register_core_node(Node n, const std::string& name);
-        Node                     get_core_node(const std::string& name) const;
-        std::string              get_core_name(Node n) const;
-        std::string              get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
+        void        set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
+        Node        set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang);
+        std::string get_name(const Node node, std::string lang = "", const bool fallback = false) const;
+        std::string get_formatted_name(Node node, const std::string& lang) const;
+        bool        has_name(Node node, const std::string& lang) const;
+        void        remove_name(Node node, std::string lang = "");
+        void        unset_name(Node node, std::string lang = "");
+        Node        get_node(const std::string& name, std::string lang = "") const;
+        void        register_core_node(Node n, const std::string& name);
+        Node        get_core_node(const std::string& name) const;
+        std::string get_core_name(Node n) const;
+        std::string get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
         // A node rendered for a HUMAN -- diagnostics, log lines, error
         // messages. The identifier markers node_to_string works with are
         // resolved here, so they stay an internal of the renderer instead
@@ -577,32 +575,32 @@ namespace zelph::network
 
         /// The predicate that marks a pattern, or 0 when no graph has ever
         /// needed it (`create` false).
-        Node          rule_pattern_predicate(bool create) const;
+        Node rule_pattern_predicate(bool create) const;
 
         /// Mark the ground condition and consequence patterns of `rule` that
         /// appear in `created`. Everything else -- patterns with variables,
         /// nodes that already existed, the predicate declarations the
         /// construction emitted -- is left alone.
-        void          mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
+        void mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
 
         /// Re-mark patterns whose marking a dropped cluster revoked. A node
         /// the drop removed is skipped, so this is safe to call with whatever
         /// the cluster recorded.
-        void          restore_rule_patterns(const std::vector<Node>& patterns) const;
+        void restore_rule_patterns(const std::vector<Node>& patterns) const;
 
         /// Was this fact node built as a rule pattern and never claimed?
         /// One hash probe, and a single empty() test in the graphs -- the
         /// overwhelming majority -- whose rules all carry variables.
-        bool          is_rule_pattern(Node node) const;
+        bool is_rule_pattern(Node node) const;
 
         /// Revoke the mark: the statement has been asserted or derived.
         /// Returns whether there was one.
-        bool          unmark_rule_pattern(Node node) const;
+        bool unmark_rule_pattern(Node node) const;
 
         /// Rebuild the in-memory index from the graph. A binary load restores
         /// the marking facts without going through fact(), so the index has
         /// to be read back off the marker's extent afterwards.
-        void          rebuild_rule_pattern_index() const;
+        void rebuild_rule_pattern_index() const;
 
         /// Does the graph hold this fact as known-WRONG? That is what `¬(F)`
         /// says outside a rule condition, and the set is what keeps such a
@@ -689,9 +687,9 @@ namespace zelph::network
         /// False when there is no conflict; throws when the two cannot merge.
         bool resolve_name_conflict_locked(Node node, const std::string& name, const std::string& lang, Node& from, Node& into, bool& conflict_is_core) const;
 
-        void          remove_rules() const;
-        size_t        rule_count() const;
-        void          save_to_file(const std::string& filename) const;
+        void   remove_rules() const;
+        size_t rule_count() const;
+        void   save_to_file(const std::string& filename) const;
 
         /// Write a network containing only the facts of the given predicates,
         /// the nodes they connect and the names of those nodes. Returns the
@@ -699,24 +697,24 @@ namespace zelph::network
         /// travel with them for the result to be a usable network.
         // rules_kept, if given, receives how many rules the slice happens to
         // contain -- see the definition for why that is not a fixed answer.
-        size_t        save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept = nullptr) const;
-        void          load_from_file(const std::string& filename) const;
-        void          load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
-        void          load_from_manifest(const std::string&       manifest_path,
-                                         const BinChunkSelection& selection,
-                                         const std::string&       shard_root        = "",
-                                         const std::string&       bin_path_override = "",
-                                         bool                     skip_payload      = false) const;
+        size_t save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept = nullptr) const;
+        void   load_from_file(const std::string& filename) const;
+        void   load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
+        void   load_from_manifest(const std::string&       manifest_path,
+                                  const BinChunkSelection& selection,
+                                  const std::string&       shard_root        = "",
+                                  const std::string&       bin_path_override = "",
+                                  bool                     skip_payload      = false) const;
 
         void                                        set_active_cluster(const std::string& name) const;
         void                                        deactivate_cluster() const;
         std::string                                 active_cluster_name() const;
         std::vector<std::pair<std::string, size_t>> list_clusters() const;
         /// The nodes a cluster has recorded, i.e. which of them are NEW.
-        std::vector<Node>                           cluster_nodes(const std::string& name) const;
-        size_t                                      drop_cluster(const std::string& name) const;
-        size_t                                      drop_scratch_cluster(const std::string& name) const;
-        bool                                        merge_cluster(const std::string& from, const std::string& to) const;
+        std::vector<Node> cluster_nodes(const std::string& name) const;
+        size_t            drop_cluster(const std::string& name) const;
+        size_t            drop_scratch_cluster(const std::string& name) const;
+        bool              merge_cluster(const std::string& from, const std::string& to) const;
 
         // --- Members ---
 

@@ -246,11 +246,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     const size_t rule_count = _pImpl->get_left(core.Causes).size();
     const bool   seed_only  = incremental
-                        && _seminaive
-                        && !suppress_repetition
-                        && delta_valid
-                        && !rules_changed
-                        && rule_count == _rules_at_last_run;
+                           && _seminaive
+                           && !suppress_repetition
+                           && delta_valid
+                           && !rules_changed
+                           && rule_count == _rules_at_last_run;
 
     if (incremental && !seed_only && !silent)
         diagnostic("Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.");
@@ -269,7 +269,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     // is a pass over the whole refuted index.
     _records_at_run_start = silent ? 0 : count_contradiction_records();
     // Start the banner clock here, so the first one is due a second in.
-    _progress_last        = std::chrono::steady_clock::now();
+    _progress_last = std::chrono::steady_clock::now();
 
     if (_export_derivations)
     {

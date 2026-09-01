@@ -1188,8 +1188,7 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
     if (rules_kept) *rules_kept = rules.size();
 
     ankerl::unordered_dense::set<Node> keep{
-        core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction,
-        core.Cons, core.Nil, core.PartOf, core.Conjunction, core.Negation};
+        core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction, core.Cons, core.Nil, core.PartOf, core.Conjunction, core.Negation};
 
     size_t facts = 0;
 
@@ -1248,8 +1247,10 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             if (keep.insert(nd).second) pending.push_back(nd);
         };
 
-        for (const Node p : predicates) retain(p);
-        for (const Node rule : rules) retain(rule);
+        for (const Node p : predicates)
+            retain(p);
+        for (const Node rule : rules)
+            retain(rule);
 
         // The declarations that make the predicates usable, including the
         // core ones (a freshly constructed network re-creates those, but a
@@ -1298,8 +1299,7 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
                 // way the index builder does it: a fact OF p has a subject
                 // that is not p and stands on both sides of rel.
                 const bool is_fact_of_p =
-                    std::any_of(rel_left->second.begin(), rel_left->second.end(),
-                                [&](const Node candidate)
+                    std::any_of(rel_left->second.begin(), rel_left->second.end(), [&](const Node candidate)
                                 { return candidate != p
                                       && !Impl::is_var(candidate)
                                       && rel_right->second.count(candidate) == 1; });
@@ -1307,8 +1307,10 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
                 retain(rel);
                 ++facts;
-                for (const Node nd : rel_left->second) retain(nd);
-                for (const Node nd : rel_right->second) retain(nd);
+                for (const Node nd : rel_left->second)
+                    retain(nd);
+                for (const Node nd : rel_right->second)
+                    retain(nd);
             }
         }
 
@@ -1379,13 +1381,15 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             const auto left_it = _pImpl->_left.find(nd);
             if (left_it != _pImpl->_left.end())
             {
-                for (const Node participant : left_it->second) retain(participant);
+                for (const Node participant : left_it->second)
+                    retain(participant);
             }
 
             const auto right_it = _pImpl->_right.find(nd);
             if (right_it != _pImpl->_right.end())
             {
-                for (const Node participant : right_it->second) retain(participant);
+                for (const Node participant : right_it->second)
+                    retain(participant);
             }
         }
     }

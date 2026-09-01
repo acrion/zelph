@@ -374,7 +374,6 @@ q p r
         CHECK(collect_answers(collector).size() == 2); });
 }
 
-
 TEST_CASE("sets: a printed collection literal says why it cannot be pasted back")
 {
     // The round trip that CANNOT hold, and the one place it matters most: a

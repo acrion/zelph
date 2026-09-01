@@ -253,7 +253,7 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph&             z,
         throw std::runtime_error("NeuralNet::compile: need at least an input and an output layer");
     }
 
-    auto nn = std::unique_ptr<NeuralNet>(new NeuralNet());
+    auto nn         = std::unique_ptr<NeuralNet>(new NeuralNet());
     nn->_activation = activation;
     nn->_nodes.reserve(layers.size());
 

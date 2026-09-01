@@ -28,8 +28,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "interactive.hpp"
-#include "string/node_to_string.hpp"
 #include "io/output.hpp"
+#include "string/node_to_string.hpp"
 
 #include <algorithm>
 #include <ranges>

@@ -61,8 +61,8 @@ namespace zelph::console
         // keyword block, a multi-line statement or a Janet block would
         // otherwise discard it without a word -- and "printf ... | zelph" is
         // how zelph gets verified.
-        void               finish_input() const;
-        void               process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
+        void finish_input() const;
+        void process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
 
         // The graph this REPL drives, for a caller that embeds zelph rather
         // than typing at it. Non-owning, and NOT stable across .new, which

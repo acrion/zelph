@@ -31,8 +31,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
-#include <functional>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <shared_mutex>
@@ -1019,7 +1019,7 @@ namespace zelph::network
 #ifdef NDEBUG
     private:
 #endif
-        static constexpr Node shift_inc = 5;
+        static constexpr Node shift_inc           = 5;
         static constexpr Node mark_hash           = 0x4000000000000000ull;
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;

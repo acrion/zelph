@@ -158,11 +158,10 @@ namespace zelph
                                                                                          "consequences: one or more fact nodes to deduce.\n"
                                                                                          "Returns the condition set node.");
 
-        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)janet_cfun_zelph_dedup_rule),
-                  "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
-                  "If the graph already holds a rule that is the same up to renaming of its variables, "
-                  "the newly built one is rolled back and the existing node returned instead. "
-                  "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
+        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)janet_cfun_zelph_dedup_rule), "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
+                                                                                                     "If the graph already holds a rule that is the same up to renaming of its variables, "
+                                                                                                     "the newly built one is rolled back and the existing node returned instead. "
+                                                                                                     "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)janet_cfun_zelph_car), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)janet_cfun_zelph_cdr), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");

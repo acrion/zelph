@@ -57,10 +57,10 @@ namespace
 
         std::ofstream out(path, std::ios::binary);
         out << "[\n"
-            << item("Q1", "B\\u00fcdner") << ",\n"                     // BMP escape
-            << item("Q3", "The \\\"Chirping\\\" Crickets") << ",\n"    // escaped quote
-            << item("Q4", "clef \\ud834\\udd1e sign") << ",\n"         // surrogate pair
-            << item("Q5", "back\\\\slash") << "\n"                     // escaped backslash
+            << item("Q1", "B\\u00fcdner") << ",\n"                  // BMP escape
+            << item("Q3", "The \\\"Chirping\\\" Crickets") << ",\n" // escaped quote
+            << item("Q4", "clef \\ud834\\udd1e sign") << ",\n"      // surrogate pair
+            << item("Q5", "back\\\\slash") << "\n"                  // escaped backslash
             << "]\n";
         return path;
     }

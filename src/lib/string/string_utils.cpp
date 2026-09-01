@@ -110,20 +110,36 @@ namespace zelph::string
 
                 switch (esc)
                 {
-                    case '"': result.push_back('"'); break;
-                    case '\\': result.push_back('\\'); break;
-                    case '/': result.push_back('/'); break;
-                    case 'b': result.push_back('\b'); break;
-                    case 'f': result.push_back('\f'); break;
-                    case 'n': result.push_back('\n'); break;
-                    case 'r': result.push_back('\r'); break;
-                    case 't': result.push_back('\t'); break;
-                    default:
-                        // Not a JSON escape -- keep both characters, so that
-                        // text which merely contains a backslash survives.
-                        result.push_back(input[i]);
-                        result.push_back(esc);
-                        break;
+                case '"':
+                    result.push_back('"');
+                    break;
+                case '\\':
+                    result.push_back('\\');
+                    break;
+                case '/':
+                    result.push_back('/');
+                    break;
+                case 'b':
+                    result.push_back('\b');
+                    break;
+                case 'f':
+                    result.push_back('\f');
+                    break;
+                case 'n':
+                    result.push_back('\n');
+                    break;
+                case 'r':
+                    result.push_back('\r');
+                    break;
+                case 't':
+                    result.push_back('\t');
+                    break;
+                default:
+                    // Not a JSON escape -- keep both characters, so that
+                    // text which merely contains a backslash survives.
+                    result.push_back(input[i]);
+                    result.push_back(esc);
+                    break;
                 }
                 ++i;
             }
@@ -377,7 +393,7 @@ namespace zelph::string
     {
         std::vector<QuotedToken> tokens;
         QuotedToken              current;
-        std::string              segment;   // the current quoted run
+        std::string              segment; // the current quoted run
         bool                     in_quotes = false;
         bool                     escape    = false;
 

@@ -301,7 +301,10 @@ namespace zelph::network
 
                     return match_multiset(std::vector<Node>(fa.objects.begin(), fa.objects.end()),
                                           std::vector<Node>(fb.objects.begin(), fb.objects.end()),
-                                          ab, ba, depth + 1, Role::Term);
+                                          ab,
+                                          ba,
+                                          depth + 1,
+                                          Role::Term);
                 }
                 }
             }
@@ -382,6 +385,9 @@ namespace zelph::network
 
         return m.match_multiset(std::vector<Node>(fa.objects.begin(), fa.objects.end()),
                                 std::vector<Node>(fb.objects.begin(), fb.objects.end()),
-                                ab, ba, 0, Role::Term);
+                                ab,
+                                ba,
+                                0,
+                                Role::Term);
     }
 }

@@ -39,13 +39,13 @@ namespace zelph::network
 namespace zelph::io
 {
     ZELPH_EXPORT void gen_mermaid_html(const network::Zelph* const              z,
-                          network::Node                            start,
-                          std::string                              file_name,
-                          int                                      max_depth,
-                          int                                      max_neighbors,
-                          const std::unordered_set<network::Node>& exclude_nodes,
-                          bool                                     dark_theme,
-                          bool                                     horizontal_layout,
-                          bool                                     use_subgraphs,
-                          size_t                                   min_mermaid_nodes = 10);
+                                       network::Node                            start,
+                                       std::string                              file_name,
+                                       int                                      max_depth,
+                                       int                                      max_neighbors,
+                                       const std::unordered_set<network::Node>& exclude_nodes,
+                                       bool                                     dark_theme,
+                                       bool                                     horizontal_layout,
+                                       bool                                     use_subgraphs,
+                                       size_t                                   min_mermaid_nodes = 10);
 }

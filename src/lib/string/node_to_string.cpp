@@ -572,7 +572,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                     // ambiguous.
                     const std::string printed = string::unmark_identifiers(content);
                     const bool        compact = printed.size() > 1
-                                      && printed.find_first_of(" \t\r\n>") == std::string::npos;
+                                             && printed.find_first_of(" \t\r\n>") == std::string::npos;
 
                     result = compact ? "< " + content + " >" : "<" + content + ">";
                 }

@@ -254,8 +254,8 @@ namespace zelph
         if (!s_instance) return janet_wrap_nil();
         cluster_preamble(argc, argv, "zelph/clusters");
 
-        const auto     listed = s_instance->_n->list_clusters();
-        JanetArray*    out    = janet_array(static_cast<int32_t>(listed.size()));
+        const auto  listed = s_instance->_n->list_clusters();
+        JanetArray* out    = janet_array(static_cast<int32_t>(listed.size()));
         for (const auto& [name, count] : listed)
         {
             Janet pair[2] = {janet_cstringv(name.c_str()),

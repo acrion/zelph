@@ -788,9 +788,9 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         {
             if (nameOfNodeSelectionPtr != nullptr && nameOfNodeSelection.count(ref.chunk_index) != 1) continue;
 
-            const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
-            const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
-            const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
+            const bool        is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
+            const uint64_t    source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
+            const uint64_t    read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
             const std::string source_file =
                 chunk_source_path(ref, is_sharded_ref, source_offset, "nameOfNode-" + std::to_string(ref.chunk_index));
 
@@ -819,9 +819,9 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         {
             if (nodeOfNameSelectionPtr != nullptr && nodeOfNameSelection.count(ref.chunk_index) != 1) continue;
 
-            const bool     is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
-            const uint64_t source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
-            const uint64_t read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
+            const bool        is_sharded_ref   = (manifest_description.is_v2 || manifest_description.is_v3) && !ref.object_path.empty();
+            const uint64_t    source_offset    = is_sharded_ref ? 0 : (ref.has_source_offset ? ref.source_offset : 0);
+            const uint64_t    read_chunk_start = is_sharded_ref ? 0 : (header_is_remote ? 0 : source_offset);
             const std::string source_file =
                 chunk_source_path(ref, is_sharded_ref, source_offset, "nodeOfName-" + std::to_string(ref.chunk_index));
 
