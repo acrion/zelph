@@ -32,6 +32,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 #include <janetconf.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph;

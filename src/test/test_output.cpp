@@ -31,11 +31,27 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <array>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <functional>
+#include <ostream>
+#include <stdexcept>
+#include <string>
 #include <thread>
-#include <unistd.h>
 #include <vector>
+
+// Last on purpose: the Windows branch gives the POSIX names to the underscored
+// ones, and a macro called `close` ahead of <filesystem> would rewrite the
+// standard library's own declarations.
+#ifdef _WIN32
+    #include <io.h> // for _dup, _dup2, _close, _fileno
+    #define dup    _dup
+    #define dup2   _dup2
+    #define close  _close
+    #define fileno _fileno
+#else
+    #include <unistd.h> // for dup, dup2, close, fileno
+#endif
 
 using namespace zelph::test;
 

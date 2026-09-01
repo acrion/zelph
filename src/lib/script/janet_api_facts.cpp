@@ -32,6 +32,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>

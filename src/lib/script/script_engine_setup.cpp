@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 
 #include <string>
+#include <thread>
 
 namespace zelph
 {

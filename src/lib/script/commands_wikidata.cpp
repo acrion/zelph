@@ -31,8 +31,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include "wikidata/wikidata.hpp"
 #endif
 
+#include <cstddef>
 #include <filesystem>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 using namespace zelph;

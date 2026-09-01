@@ -30,7 +30,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/script_engine.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <exception>
+#include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 using namespace zelph;

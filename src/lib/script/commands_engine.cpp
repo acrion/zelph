@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 #include "script/script_engine.hpp"
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 

@@ -30,6 +30,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph_impl.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <mutex>
+#include <ostream>
+#include <shared_mutex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace
 {

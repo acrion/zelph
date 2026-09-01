@@ -28,9 +28,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure.hpp"
 #include "zelph_impl.hpp"
 
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 using namespace zelph::network;

@@ -30,6 +30,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cwctype>
+#include <exception>
+#include <stdexcept>
 #include <string>
 #include <vector>
 

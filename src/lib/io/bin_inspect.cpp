@@ -31,10 +31,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <capnp/serialize-packed.h>
 #include <kj/io.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <ios>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace zelph::io
 {

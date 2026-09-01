@@ -25,9 +25,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace zelph::network;

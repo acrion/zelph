@@ -27,7 +27,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string/node_to_string.hpp"
 
+#include <cstdint>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace zelph::script
 {

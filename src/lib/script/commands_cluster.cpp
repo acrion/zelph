@@ -28,6 +28,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <stdexcept>
 #include <string>
 #include <vector>
 

@@ -42,6 +42,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <kj/io.h>
 #endif
 
+#include <map>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph;

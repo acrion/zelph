@@ -35,10 +35,17 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cwctype>
 #include <filesystem>
 #include <iomanip>
+#include <ios>
 #include <map>
+#include <ostream>
+#include <stdexcept>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #define DEFAULT_EXCLUDE_NODES {_n->core.RelationTypeCategory, _n->core.IsA}

@@ -41,12 +41,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <kj/io.h>
 
     #include <algorithm>
+    #include <atomic>
+    #include <cstdint>
     #include <cstdio>
     #include <cstring>
+    #include <exception>
     #include <filesystem>
+    #include <memory>
     #include <mutex>
+    #include <ostream>
+    #include <shared_mutex>
     #include <stdexcept>
     #include <string>
+    #include <string_view>
+    #include <unordered_map>
+    #include <utility>
     #include <vector>
 #endif
 

@@ -32,9 +32,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace zelph::network;
