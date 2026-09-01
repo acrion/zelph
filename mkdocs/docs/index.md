@@ -1,21 +1,39 @@
-## Introduction
+## A rule is a fact
 
-zelph is an innovative semantic network system that allows inference rules to be defined within the network itself.
-This project provides a powerful foundation for knowledge representation and automated reasoning, with a special focus on efficiency and logical inference capabilities.
-With dedicated import functions and specialized semantic scripts (like [stdlib/examples/wikidata/wikidata.zph](https://github.com/acrion/zelph/blob/main/stdlib/examples/wikidata/wikidata.zph)),
-zelph offers powerful analysis capabilities for the complete Wikidata knowledge graph while remaining adaptable for any semantic domain.
+zelph is a semantic network in which rules reside within the network. A rule is not a script adjacent to the graph, and it is not a query written against it: it is a statement of the same shape as the statements it reasons about, stored beside them.
 
-For an in-depth exploration of zelph's reasoning capabilities, including deep unification, negation, inequality constraints, and semantic arithmetic, see [Logic and Computation](logic.md).
+Four lines are the entire concept:
 
-### Try It Live 🕹️
+```
+zelph> "is part of" ~ "transitive relation"
+zelph> (R ~ "transitive relation", X R Y, Y R Z) => (X R Z)
+zelph> Canada "is part of" "American continent"
+zelph> "American continent" "is part of" "Earth's surface"
+(Canada "is part of" "Earth's surface") ⇐ {(Canada "is part of" "American continent") ("is part of" ~ "transitive relation") ("American continent" "is part of" "Earth's surface")}
+```
 
-<p>
-  <strong><a href="play/" target="_blank">Open the zelph playground</a></strong> —
-  the complete reasoning engine compiled to WebAssembly, running entirely in your
-  browser. Nothing is installed and nothing is sent to a server. Guided demos cover
-  rule-based big-number arithmetic, a primality test via negation as failure,
-  SPARQL over derived facts, and neural networks inside the graph.
-</p>
+Read the rule once more: it never mentions `is part of`. It quantifies over the relation itself, and what makes it apply here is the first line – an ordinary fact, of the kind any dataset can carry. Wikidata carries exactly this one, so this single rule covers every relation that Wikidata declares transitive, and nobody has to write anything for any of them.
+
+The last line is the derivation: the conclusion, and the three statements it rests on. zelph says what it used.
+
+### Try it before you believe it
+
+The whole engine is compiled to WebAssembly. [Open the playground](play/) and type those four lines yourself – nothing is installed, and nothing leaves your browser. The guided demos go further: arithmetic on large numbers that is derived from rules rather than built into the engine, a primality test by negation as failure, SPARQL over derived facts, and neural networks inside the graph.
+
+### What it is for
+
+Wikidata includes over 113 million entries, and nobody can manually verify whether they comply with the constraints that Wikidata itself defines. zelph reads those constraints from the dump and turns them into rules. Typed out small, so the shape is visible:
+
+```
+wikidata> (I P569 Y, I P571 Z) => !
+wikidata> Q42 P569 Q1900
+wikidata> Q42 P571 Q1900
+! ⇐ {(Q42 P569 Q1900) (Q42 P571 Q1900)}
+```
+
+An entity here possesses a date of birth and, at the same time, an inception – a date set aside for what is founded or created rather than born. What emerges is not a score and not a list of suspects: it is the two statements that cannot both be right, which is what anyone needs in order to decide which of them is the mistake. Six rules of this kind run over a 26.5-million-node slice of the dump in under a minute.
+
+For the reasoning behind all of this – deep unification, negation, inequality constraints, semantic arithmetic – see [Logic and Computation](logic.md). For zelph on Wikidata, see [zelph and Wikidata](wikidata.md).
 
 ### Video: Logic and Computation
 

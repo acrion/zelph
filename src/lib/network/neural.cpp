@@ -25,13 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "neural.hpp"
 
-#include <shared_mutex>
-
 #include "zelph.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <shared_mutex>
 #include <stdexcept>
 
 using namespace zelph::network;

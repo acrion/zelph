@@ -26,7 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "versions.hpp"
 
 #include "interactive.hpp"
-#include "script_engine.hpp"
+#include "script/script_engine.hpp"
 
 #include <ankerl/unordered_dense.h>
 

@@ -37,6 +37,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cmath>
 #include <functional>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 using namespace zelph::network;

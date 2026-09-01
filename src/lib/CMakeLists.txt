@@ -317,6 +317,8 @@ if(ZELPH_WASM)
 else()
     set(ZELPH_LIB_TYPE SHARED)
     set(ZELPH_PERSISTENCE_SOURCES
+        io/bin_inspect.cpp
+        io/bin_inspect.hpp
         io/data_manager.cpp
         io/read_async.cpp
         wikidata/wikidata.cpp
@@ -328,13 +330,38 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     capi/zelph_c.cpp
     capi/zelph_c.h
 
-    command_executor.cpp
-    command_executor.hpp
     interactive.cpp
     interactive.hpp
     repl_state.hpp
-    script_engine.cpp
-    script_engine.hpp
+
+    script/command_executor.cpp
+    script/command_executor.hpp
+    script/command_executor_impl.hpp
+    script/command_patterns.cpp
+    script/commands_cluster.cpp
+    script/commands_edit.cpp
+    script/commands_engine.cpp
+    script/commands_explain.cpp
+    script/commands_explore.cpp
+    script/commands_help.cpp
+    script/commands_inference.cpp
+    script/commands_names.cpp
+    script/commands_session.cpp
+    script/commands_wikidata.cpp
+    script/janet_api_commands.cpp
+    script/janet_api_display.cpp
+    script/janet_api_facts.cpp
+    script/janet_api_graph.cpp
+    script/janet_api_neural.cpp
+    script/janet_values.cpp
+    script/script_engine.cpp
+    script/script_engine.hpp
+    script/script_engine_impl.hpp
+    script/script_engine_setup.cpp
+    script/script_keywords.cpp
+    script/syntax_errors.cpp
+    script/syntax_errors.hpp
+    script/zelph_to_janet.cpp
     versions.cpp
     versions.hpp
 
@@ -377,10 +404,14 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     network/unification.cpp
     network/unification.hpp
     network/zelph.cpp
+    network/zelph_caches.cpp
+    network/zelph_display.cpp
     network/zelph_names.cpp
     network/zelph_maintenance.cpp
     network/zelph.hpp
     network/zelph_impl.hpp
+    network/zelph_index.cpp
+    network/zelph_persistence.cpp
 
     platform/platform_utils.cpp
     platform/platform_utils.hpp

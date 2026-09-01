@@ -99,6 +99,7 @@ add_executable(zelph_tests
     test_sharding.cpp
     test_sparql.cpp
     test_stratified.cpp
+    test_syntax_errors.cpp
     test_symbolic.cpp
     test_symbolic_integers.cpp
     test_topoly.cpp

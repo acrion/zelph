@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
+#include <thread>
 #include <vector>
 
 using namespace zelph::network;

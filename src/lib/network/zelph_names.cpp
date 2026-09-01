@@ -884,3 +884,361 @@ size_t Zelph::language_count() const
     // .stat cannot contradict each other.
     return get_languages().size();
 }
+
+void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
+{
+    if (from == into) return;
+
+    // PRECONDITION:
+    // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively,
+    // always in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+    for (auto& [lang, forward] : _name_of_node)
+    {
+        auto it_from = forward.find(from);
+        if (it_from == forward.end())
+        {
+            continue;
+        }
+
+        const std::string_view from_name = it_from->second;
+
+        auto [reverse_outer_it, inserted_reverse_outer] = _node_of_name.try_emplace(lang);
+        (void)inserted_reverse_outer;
+        auto& reverse = reverse_outer_it->second;
+
+        // Remove reverse entry for the disappearing pair (from_name -> from), if it exists.
+        auto rev_from_it = reverse.find(from_name);
+        if (rev_from_it != reverse.end() && rev_from_it->second == from)
+        {
+            reverse.erase(rev_from_it);
+        }
+
+        auto it_into = forward.find(into);
+        if (it_into != forward.end())
+        {
+            const std::string_view into_name = it_into->second;
+
+            if (into_name != from_name)
+            {
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                    << "Warning: Name conflict in language '" << lang << "': '"
+                    << from_name << "' (from merged node) vs '" << into_name
+                    << "'. Keeping existing name '" << into_name << "'.";
+            }
+
+            // Drop the old forward mapping for "from".
+            forward.erase(it_from);
+
+            // Repair reverse mapping for the kept name.
+            auto rev_into_it = reverse.find(into_name);
+            if (rev_into_it == reverse.end())
+            {
+                reverse.emplace(into_name, into);
+            }
+            else if (rev_into_it->second == from)
+            {
+                rev_into_it->second = into;
+            }
+        }
+        else
+        {
+            // Move forward mapping from -> into
+            forward.erase(it_from);
+            auto [new_into_it, inserted_into] = forward.emplace(into, from_name);
+            if (!inserted_into)
+            {
+                new_into_it->second = from_name;
+            }
+
+            // Move reverse mapping from_name -> into
+            auto rev_it = reverse.find(from_name);
+            if (rev_it == reverse.end())
+            {
+                reverse.emplace(from_name, into);
+            }
+            else if (rev_it->second == from)
+            {
+                rev_it->second = into;
+            }
+            else if (rev_it->second != into)
+            {
+                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+                    << "Warning: Skipping reverse mapping update for name '" << from_name
+                    << "' in language '" << lang
+                    << "' due to existing conflicting mapping.";
+            }
+        }
+    }
+}
+
+void Zelph::Impl::transfer_names(const Node from, const Node into)
+{
+    if (from == into) return;
+
+    // Global lock order must be consistent everywhere:
+    // _mtx_node_of_name -> _mtx_name_of_node
+    std::unique_lock lock_node(_mtx_node_of_name);
+    std::unique_lock lock_name(_mtx_name_of_node);
+
+    transfer_names_locked(from, into);
+}
+
+void Zelph::Impl::assign_name_locked(const Node node, const std::string& name, const std::string& lang)
+{
+    // PRECONDITION:
+    // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively
+    // in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+    auto [rev_outer_it, rev_outer_inserted] = _node_of_name.try_emplace(lang);
+    auto [fwd_outer_it, fwd_outer_inserted] = _name_of_node.try_emplace(lang);
+    (void)rev_outer_inserted;
+    (void)fwd_outer_inserted;
+
+    auto& rev = rev_outer_it->second; // name -> node
+    auto& fwd = fwd_outer_it->second; // node -> name
+
+    // 1. Remove old name of this node, if different
+    auto fwd_it = fwd.find(node);
+    if (fwd_it != fwd.end() && fwd_it->second != name)
+    {
+        auto old_rev_it = rev.find(fwd_it->second);
+        if (old_rev_it != rev.end() && old_rev_it->second == node)
+        {
+            rev.erase(old_rev_it);
+        }
+        fwd.erase(fwd_it);
+    }
+
+    // 2. Intern new name
+    std::string_view sv = _string_pool.intern(name);
+
+    // 3. If another node currently owns that name, decide who keeps
+    //    what. A VARIABLE's name is purely cosmetic and
+    //    statement-scoped -- parsing resolves variables through the
+    //    scoped variable table, never through this map -- and every
+    //    statement makes fresh ones, so many nodes legitimately
+    //    carry the same variable name.
+    //
+    //    Both directions matter:
+    //      - a new owner must not strip an EARLIER VARIABLE's
+    //        display name, or every rule that used the same letter
+    //        would start rendering as «??»;
+    //      - a new VARIABLE must not take anything from a real node.
+    //        A graph with a node named "A" -- a Wikidata label can
+    //        be a single letter -- lost that name to the first query
+    //        mentioning A, and the node afterwards rendered as
+    //        "(?? ?? ??)": asking a question deleted data.
+    //
+    //    So a VARIABLE never takes this mapping over, from a real
+    //    node or from an earlier variable. The variable case is not
+    //    cosmetic either: the TRANSIENT variables a read-only
+    //    command builds -- .explain evaluates its pattern in a
+    //    scratch cluster and drops it again -- would otherwise take
+    //    the name and carry it into the removal, leaving the name
+    //    unresolvable while the surviving variables still display
+    //    it. `.node A` answered before such a command and reported
+    //    "No node found with name 'A'" afterwards, and the two maps
+    //    disagreed from then on, in the session and in a .bin saved
+    //    from it. Whichever node holds the mapping is arbitrary
+    //    among same-named variables anyway; first wins is the
+    //    reading that nothing transient can disturb.
+    auto rev_it = rev.find(sv);
+    if (rev_it != rev.end() && rev_it->second != node)
+    {
+        const Node previous_owner = rev_it->second;
+        const bool takes_over     = !is_var(node);
+
+        if (takes_over && !is_var(previous_owner))
+        {
+            auto prev_fwd_it = fwd.find(previous_owner);
+            if (prev_fwd_it != fwd.end() && prev_fwd_it->second == sv)
+            {
+                fwd.erase(prev_fwd_it);
+            }
+        }
+
+        if (takes_over) rev_it->second = node;
+    }
+    else if (rev_it == rev.end())
+    {
+        rev.emplace(sv, node);
+    }
+
+    // 4. Write/repair forward mapping
+    auto [new_fwd_it, inserted] = fwd.emplace(node, sv);
+    if (!inserted)
+    {
+        new_fwd_it->second = sv;
+    }
+}
+
+void Zelph::Impl::remove_name_locked(const Node node, const std::string& lang)
+{
+    // PRECONDITION:
+    // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively
+    // in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+    auto fwd_outer_it = _name_of_node.find(lang);
+    if (fwd_outer_it == _name_of_node.end())
+    {
+        return;
+    }
+
+    auto& fwd    = fwd_outer_it->second;
+    auto  fwd_it = fwd.find(node);
+    if (fwd_it == fwd.end())
+    {
+        return;
+    }
+
+    const std::string_view old_name = fwd_it->second;
+    fwd.erase(fwd_it);
+
+    auto rev_outer_it = _node_of_name.find(lang);
+    if (rev_outer_it == _node_of_name.end())
+    {
+        return;
+    }
+
+    auto& rev    = rev_outer_it->second;
+    auto  rev_it = rev.find(old_name);
+    if (rev_it != rev.end() && rev_it->second == node)
+    {
+        rev.erase(rev_it);
+    }
+}
+
+size_t Zelph::Impl::cleanup_dangling_names()
+{
+    size_t removed_count = 0;
+
+    ankerl::unordered_dense::set<Node> valid_nodes;
+    {
+        std::shared_lock<std::shared_mutex> lock(_smtx_left);
+        valid_nodes.reserve(_left.size());
+        for (const auto& pair : _left)
+        {
+            valid_nodes.insert(pair.first);
+        }
+    }
+
+    {
+        std::unique_lock lock(_mtx_name_of_node);
+        for (auto& lang_pair : _name_of_node)
+        {
+            auto& map = lang_pair.second;
+            for (auto it = map.begin(); it != map.end();)
+            {
+                if (valid_nodes.count(it->first) == 0)
+                {
+                    it = map.erase(it);
+                    removed_count++;
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+    }
+
+    {
+        std::unique_lock lock(_mtx_node_of_name);
+        for (auto& lang_pair : _node_of_name)
+        {
+            auto& map = lang_pair.second;
+            for (auto it = map.begin(); it != map.end();)
+            {
+                if (valid_nodes.count(it->second) == 0)
+                {
+                    it = map.erase(it);
+                    removed_count++;
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+    }
+
+    // Note: removed strings remain in _string_pool (append-only).
+
+    return removed_count;
+}
+
+// The names of MANY nodes, in ONE pass over the reverse map.
+//
+// remove_node_names below has to SCAN `_node_of_name` for a value
+// equal to the node: the forward map holds one name per language,
+// while several names may point AT one node, so it cannot say which
+// reverse entries exist. One scan per node is the right trade for
+// `.remove`, where one scan is one scan, and fatal in bulk.
+//
+// Measured on the live run of 11 August 2026: pruning the full
+// Wikidata dump managed 1.11 nodes per second and spent 97.7 % of its
+// time in remove_node_names, because that map holds ~204 million
+// entries there (204 chunks of `chunk_entries`). The script's
+// 6.2 million removals would have taken two months. The dead set
+// answers the same question in one pass, so a prune costs one scan
+// per COMMAND instead of one per node.
+void Zelph::Impl::remove_names_of(const adjacency_set& dead)
+{
+    if (dead.empty()) return;
+
+    std::unique_lock lock1(_mtx_node_of_name);
+    std::unique_lock lock2(_mtx_name_of_node);
+
+    // Forward: keyed by the node, so no scan is needed either way.
+    for (auto& lang_map : _name_of_node)
+    {
+        for (const Node nd : dead)
+            lang_map.second.erase(nd);
+    }
+
+    _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
+    for (auto& lang_map : _node_of_name)
+    {
+        auto& map = lang_map.second;
+        for (auto it = map.begin(); it != map.end();)
+        {
+            if (dead.count(it->second) != 0)
+                it = map.erase(it);
+            else
+                ++it;
+        }
+    }
+}
+
+void Zelph::Impl::remove_node_names(Node nd)
+{
+    std::unique_lock lock1(_mtx_node_of_name);
+    std::unique_lock lock2(_mtx_name_of_node);
+
+    // Remove forward mappings (node → name) in all languages
+    for (auto& lang_map : _name_of_node)
+    {
+        lang_map.second.erase(nd);
+    }
+
+    // Remove reverse mappings (name → node) for this node in all languages
+    _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
+    for (auto& lang_map : _node_of_name)
+    {
+        auto& map = lang_map.second;
+        for (auto it = map.begin(); it != map.end();)
+        {
+            if (it->second == nd)
+            {
+                it = map.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+}
