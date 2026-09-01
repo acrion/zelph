@@ -1212,9 +1212,16 @@ TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phas
             examined_before_first_removal.push_back(std::stoull(e.text.substr(0, pos)));
         }
 
-        // The batch spoke while it was collecting, not only once it was done.
+        // The batch spoke while it was collecting, not only after completion,
+        // and that -- not how OFTEN it spoke -- is the property. The line is
+        // emitted by a polling loop that yields while the workers run
+        // (reasoning_pruning.cpp), so the number of lines measures the
+        // scheduler: a machine whose workers cross several steps between two
+        // observations reports fewer. Windows CI reported 2 where this once
+        // demanded 5. The regression it guards against produces ZERO, because
+        // the old code reported after the batch rather than during it.
         REQUIRE(removal_seen); // not vacuous: the prune really ran
-        CHECK(examined_before_first_removal.size() >= 5);
+        CHECK(examined_before_first_removal.size() >= 1);
 
         // Monotone and inside the job it reports against -- a counter that
         // restarts per worker, or overshoots the batch, is a wrong number

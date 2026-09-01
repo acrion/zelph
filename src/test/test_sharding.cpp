@@ -264,7 +264,11 @@ gamma ~ beta
                 << "  \"hfObjects\": {\"nodeRouteIndex\": {\"path\": \"" << hf_root << "/net.route.json\"}},\n"
                 << "  \"source\": {\"binPath\": \"" << hf_root << "/net.bin\", \"headerLengthBytes\": " << header_length << "},\n"
                 << "  \"sections\": {\n";
-        seek << "{\n  \"source\": {\"binPath\": \"" << paths.bin.string()
+
+        // The generic form on purpose: a native Windows path written into a
+        // JSON string is not one -- every separator starts an escape, and
+        // "\\net.bin" arrives as a newline. Forward slashes open the same file.
+        seek << "{\n  \"source\": {\"binPath\": \"" << paths.bin.generic_string()
              << "\", \"headerLengthBytes\": " << header_length << "},\n"
              << "  \"sections\": {\n";
 

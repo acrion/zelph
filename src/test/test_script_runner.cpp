@@ -71,9 +71,13 @@ namespace
         out << content;
     }
 
+    // The generic form intentionally: this builds a Janet string literal,
+    // and a native Windows path fills it with escapes Janet rejects --
+    // "C:\\Users" is an invalid unicode escape. Forward slashes open the
+    // same file.
     std::string call(const std::filesystem::path& script)
     {
-        return R"js(%(zelph/run-script ")js" + script.string() + R"js("))js";
+        return R"js(%(zelph/run-script ")js" + script.generic_string() + R"js("))js";
     }
 } // namespace
 
@@ -145,7 +149,7 @@ TEST_CASE("zelph/import: a .zph script imported from Janet builds facts and rule
                    "(A ancestorof B) => (B descendantof A)\n"
                    "abraham ancestorof isaac\n");
 
-        interactive.process(R"js(%(zelph/import ")js" + (dir / "rules.zph").string() + R"js("))js");
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "rules.zph").generic_string() + R"js("))js");
         interactive.run(true, false, false);
         collector.clear();
 
@@ -166,8 +170,8 @@ TEST_CASE("zelph/import: the same rule imported twice from Janet stays one rule"
         write_file(dir / "first.zph", "(A ancestorof B) => (B descendantof A)\n");
         write_file(dir / "second.zph", "(X ancestorof Y) => (Y descendantof X)\n");
 
-        interactive.process(R"js(%(zelph/import ")js" + (dir / "first.zph").string() + R"js("))js");
-        interactive.process(R"js(%(zelph/import ")js" + (dir / "second.zph").string() + R"js("))js");
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "first.zph").generic_string() + R"js("))js");
+        interactive.process(R"js(%(zelph/import ")js" + (dir / "second.zph").generic_string() + R"js("))js");
         interactive.process("abraham ancestorof isaac");
         interactive.run(true, false, false);
         collector.clear();

@@ -625,8 +625,14 @@ x q y
     CHECK(contradiction_lines(collector) == 0); // quiet, as it should be
 
     REQUIRE(std::filesystem::exists(file));
-    std::ifstream     in(file);
-    const std::string exported((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string exported;
+    {
+        // Scoped, because Windows will not remove a file that is still
+        // open: on Linux the same code deletes it and the reader goes on
+        // reading, so nothing here said that the handle was still held.
+        std::ifstream in(file);
+        exported.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
     CHECK(exported.find("contradiction") != std::string::npos);
 
     std::filesystem::remove(file);
