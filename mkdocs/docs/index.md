@@ -50,11 +50,21 @@ A separate [presentation video](presentation.md) covers zelph's application to W
 
 see [this page](quickstart.md)
 
-### Community and Support
+### Funding and Collaboration
 
-Development of zelph is supported by the Wikimedia Community Fund, through two Rapid Fund projects: [Wikidata Contradiction Detection and Constraint Integration](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Wikidata_Contradiction_Detection_and_Constraint_Integration_(ID:_23553409)>) and [Transitive Reasoning, Qualifier Support, and SPARQL-Subset Integration](<https://meta.wikimedia.org/wiki/Grants:Programs/Wikimedia_Community_Fund/Rapid_Fund/zelph:Transitive_Reasoning,_Qualifier_Support,_and_SPARQL-Subset_Integration_(ID:_23759260)>).
+zelph is developed with support from the
+[NGI0 Commons Fund](https://nlnet.nl/project/Zelph/) (NLnet Foundation) for
+*Auditable Reasoning over Linked Open Data*, and has previously been supported
+by two grants from the Wikimedia Community Fund (Rapid Fund):
+[Wikidata Contradiction Detection and Constraint Integration](…/Final_Report)
+and
+[Transitive Reasoning, Qualifier Support, and SPARQL-Subset Integration](…/Final_Report).
 
-The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
+The project addresses real-world challenges in large-scale ontology management
+through direct collaboration with the
+[Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force)
+and the
+[Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
 
 ### Use of generative AI
 
@@ -207,9 +217,9 @@ and only `@{` is special.
 
 ```
 zelph> A in { elem1 elem2 elem3 }
-A in {elem1 elem2 elem3}
-Answer: elem2 in {elem1 elem2 elem3}
-Answer: elem1 in {elem1 elem2 elem3}
+A  in  { elem1   elem2   elem3 }
+Answer:   elem2    in  { elem1   elem2   elem3 }
+Answer:   elem1    in  { elem1   elem2   elem3 }
 Answer: elem3 in {elem1 elem2 elem3}
 ```
 
@@ -434,7 +444,7 @@ zelph supports two input modes that both create cons lists:
 2. **Compact Lists (continuous characters):** `<abc>`
    - **Syntax:** No spaces inside the brackets.
    - **Semantics:** The input is split into individual characters. Each character is resolved to a named node (e.g. `"a"`, `"b"`, `"c"`), and these become the list elements.
-   - **Construction detail:** Before building the cons list, the character sequence is **reversed**.
+   - **Construction detail:** Before building the cons list, the character sequence is **reversed**.  
      So `"abc"` becomes the element vector `["c","b","a"]`, yielding: - `Cell3 = "a" cons nil` - `Cell2 = "b" cons Cell3` - `Cell1 = "c" cons Cell2`
 
 This reversal is **not** "numeric logic" — it is simply the definition of the compact syntax and is useful for many right-to-left processing rules (including, but not limited to, arithmetic scripts).
@@ -537,10 +547,10 @@ The focus operator lets you create a fact and use its subject in an outer statem
 
 ```
 zelph> (*tim ~ human) ~ male
-tim ~ male
+  tim    ~   male
 zelph> tim _predicate _object
 Answer: tim ~ male
-Answer: tim ~ human
+Answer:   tim    ~   human
 ```
 
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
@@ -717,16 +727,16 @@ Now, let's declare that the relation `>` (greater than) is an instance of transi
 
 ```
 zelph> > is transitive
-> is transitive
+>  is   transitive
 ```
 
 Next, we provide three elements ("4", "5" and "6") for which the `>` relation applies:
 
 ```
 zelph> 6 > 5
-6 > 5
+ 6  >  5
 zelph> 5 > 4
-5 > 4
+ 5  >  4
 (6 > 4) ⇐ {(6 > 5) (> is transitive) (5 > 4)}
 zelph>
 ```
@@ -741,9 +751,9 @@ zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
 zelph> bright "is opposite of" dark
 bright "is opposite of" dark
 zelph> yellow ~ bright
-yellow ~ bright
+ yellow   ~   bright
 zelph> yellow ~ dark
-yellow ~ dark
+ yellow   ~   dark
 ! ⇐ {(bright "is opposite of" dark) (yellow ~ bright) (bright != dark) (yellow ~ dark)}
 Found one or more contradictions!
 zelph>
@@ -1057,9 +1067,9 @@ zelph> .lang wikidata
 wikidata> .auto-run
 Auto-run is now disabled.
 wikidata-> Q1 P279 Q2
-Q1 P279 Q2
+ Q1   P279   Q2
 wikidata-> Q2 P279 Q3
-Q2 P279 Q3
+ Q2   P279   Q3
 wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
 ((B P279 C), (A P279 B)) => (A P279 C)
 wikidata-> .run-export /tmp/derivations.jsonl
@@ -1193,7 +1203,7 @@ Answer: paul "is ancestor of" pius
 (catnip ~ lamiacea) ⇐ (catnip "is a" lamiacea)
 (mint ~ lamiacea) ⇐ (mint "is a" lamiacea)
 ("water mint" ~ mint) ⇐ ("water mint" "is a" mint)
-(peppermint ~ lamiacea) ⇐ {(peppermint ~ mint) (~ is transitive) (mint ~ lamiacea)}
+( peppermint ~ lamiacea ) ⇐ {( peppermint ~ mint ) ( ~ is transitive ) ( mint ~ lamiacea )}
 ("water mint" ~ lamiacea) ⇐ {("water mint" ~ mint) (~ is transitive) (mint ~ lamiacea)}
 (peter "is ancestor of" pius) ⇐ {(peter "is ancestor of" paul) ("is ancestor of" is transitive) (paul "is ancestor of" pius)}
 (chimpanzee "has part" finger) ⇐ {(chimpanzee "has part" hand) ("has part" is transitive) (hand "has part" finger)}

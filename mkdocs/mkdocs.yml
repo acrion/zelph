@@ -1,6 +1,7 @@
 site_name: zelph - A Sophisticated Semantic Network System
 theme:
   name: material
+  custom_dir: overrides
   palette:
     - scheme: slate
       toggle:
