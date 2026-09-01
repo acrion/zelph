@@ -1,0 +1,20 @@
+# Deliberately NOT a member of the workspace next to it: this crate stands in
+# for a project that depends on zelph from outside, the way Aristarch 6 does.
+# Inside the workspace it would prove less than it does here.
+[workspace]
+
+[package]
+name = "downstream-check"
+description = "Builds and runs against the zelph crate the way an outside project does"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+zelph = { path = "../zelph" }
+# Direct, and it has to be: cargo hands DEP_ZELPH_LIB_DIR to the DIRECT
+# dependents of the crate that declares `links = "zelph"`. Through `zelph`
+# alone the variable never reaches this build script, and the binary then
+# links but does not start.
+zelph-sys = { path = "../zelph-sys" }

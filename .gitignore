@@ -56,6 +56,7 @@ latest-all*.json
 mkdocs/docs/missing-superclass/
 mkdocs/site
 rust/target
+rust/downstream-check/target
 /*.svg
 /*.dot
 /*.html

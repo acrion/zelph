@@ -28,6 +28,13 @@
 //! silently invalidates every measurement taken against it, and nothing in the
 //! output says so.
 //!
+//! Inside a checkout the header is read where it lives, and the library is
+//! built. A PUBLISHED crate has neither: `zelph_c.h` travels in the package as
+//! a symlink to the one true copy, which cargo resolves to its contents at
+//! packaging time, and the caller says where the library is. docs.rs has no
+//! library at all and only needs the declarations, so there the build step and
+//! the link directives are skipped.
+//!
 //! Environment:
 //!   ZELPH_BUILD_DIR   the CMake build directory to use and to keep current
 //!                     (default: `build-release` in the repository root)
@@ -46,11 +53,14 @@ fn main() {
         .expect("zelph-sys lives two levels below the repository root")
         .to_path_buf();
 
-    let header = repo.join("src/lib/capi/zelph_c.h");
+    // In a checkout the header is where it always was; in a published package
+    // it sits beside this file, and the two are the same file.
+    let in_repo = repo.join("src/lib/capi/zelph_c.h");
+    let packaged = manifest.join("zelph_c.h");
+    let header = if in_repo.exists() { in_repo } else { packaged };
     assert!(
         header.exists(),
-        "cannot find {} - is {} a zelph checkout?",
-        header.display(),
+        "cannot find zelph_c.h - neither in {} nor beside this build script",
         repo.display()
     );
 
@@ -58,24 +68,35 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|| repo.join("build-release"));
 
-    if env::var_os("ZELPH_NO_BUILD").is_none() {
+    // docs.rs builds without a network and without zelph: it needs the
+    // declarations and nothing else, and a link directive there would only
+    // fail the documentation of a crate that is otherwise fine.
+    let documenting = env::var_os("DOCS_RS").is_some();
+
+    if !documenting && env::var_os("ZELPH_NO_BUILD").is_none() && repo.join("CMakeLists.txt").exists() {
         build_zelph(&repo, &build_dir);
     }
 
-    let lib_dir = find_library(&build_dir).unwrap_or_else(|| {
-        panic!(
-            "no zelph library under {} - configure and build it, or point ZELPH_BUILD_DIR at a tree that has one",
-            build_dir.display()
-        )
-    });
+    let lib_dir = if documenting {
+        PathBuf::new()
+    } else {
+        find_library(&build_dir).unwrap_or_else(|| {
+            panic!(
+                "no zelph library under {} - build zelph and point ZELPH_BUILD_DIR at that build directory",
+                build_dir.display()
+            )
+        })
+    };
 
     // The generated export header lives with the objects, not in the source
     // tree, and zelph_c.h includes it.
     let generated_include = build_dir.join("src/lib");
 
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=dylib=zelph");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    if !documenting {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        println!("cargo:rustc-link-lib=dylib=zelph");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    }
 
     // Read by dependent crates as DEP_ZELPH_LIB_DIR / DEP_ZELPH_INCLUDE_DIR
     // (the `links = "zelph"` key is what makes cargo forward these). A

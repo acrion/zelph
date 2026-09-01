@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/network_types.hpp"
 
+#include <zelph_export.h>
+
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -85,5 +87,5 @@ namespace zelph::string
     /// Is the self-fact sugar ":pred subject" re-enterable for this
     /// predicate NAME? Display and the test helpers ask the same function,
     /// so the two cannot drift apart.
-    bool          selffact_sugar_safe(const std::string& name);
+    ZELPH_EXPORT bool selffact_sugar_safe(const std::string& name);
 }

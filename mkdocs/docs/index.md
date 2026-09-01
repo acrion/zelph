@@ -83,7 +83,7 @@ The zelph ecosystem includes:
 - A core C++ library providing both C++ and C interfaces
 - A single command-line binary that offers both interactive usage (CLI) and batch processing capabilities
 - API functions beyond what's available in the command-line interface
-- Integration options for languages like Go and Lua through the C interface
+- A Rust layer over the C interface, so a host application binds zelph without the Janet interpreter in between. Any other language with an FFI reaches it the same way.
 
 The key features of zelph include:
 

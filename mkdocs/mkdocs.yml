@@ -45,6 +45,7 @@ nav:
   - SPARQL Queries: sparql.md
   - Scripting with Janet: janet.md
   - The C ABI: capi.md
+  - The Rust Layer: rust.md
   - Neural Networks in the Graph: neural.md
   - Importing and Exporting Data: import-export.md
   - Binary Data Files: binaries.md

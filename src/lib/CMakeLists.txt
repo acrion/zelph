@@ -532,6 +532,21 @@ endif ()
 
 set_target_properties(zelph_lib PROPERTIES OUTPUT_NAME zelph)
 
+# A Windows DLL offers only what carries __declspec(dllexport), while an ELF
+# shared object offers everything by default -- so a missing ZELPH_EXPORT is
+# invisible here and a linker error there. generate_export_header maps the
+# macro to visibility("default") on GCC and Clang, so hiding the rest makes
+# this library offer exactly what the DLL offers, and the mistake surfaces on
+# the machine it was made on.
+#
+# This narrows what the shipped library exports. The C ABI (zelph_c.h), which
+# the Rust layer and any other FFI consumer binds to, is marked in full and is
+# unaffected; the Rust test suite is run against this setting.
+set_target_properties(zelph_lib PROPERTIES
+    CXX_VISIBILITY_PRESET     hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+
 install(TARGETS zelph_lib
     EXPORT zelph_libTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

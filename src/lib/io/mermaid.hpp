@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/network_types.hpp"
 
+#include <zelph_export.h>
+
 #include <unordered_set>
 
 namespace zelph::network
@@ -36,7 +38,7 @@ namespace zelph::network
 
 namespace zelph::io
 {
-    void gen_mermaid_html(const network::Zelph* const              z,
+    ZELPH_EXPORT void gen_mermaid_html(const network::Zelph* const              z,
                           network::Node                            start,
                           std::string                              file_name,
                           int                                      max_depth,

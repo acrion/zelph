@@ -29,6 +29,7 @@ The complete documentation, including tutorials, language references, and the ar
 - 🧠 [Core Concepts & Homoiconicity](https://acrion.github.io/zelph/#homoiconicity-the-executable-graph)
 - 🧮 [Semantic Math & Rule-based Addition](https://acrion.github.io/zelph/logic/#semantic-math-computation-as-graph-rewriting)
 - 📜 [Scripting with Janet](https://acrion.github.io/zelph/janet/)
+- 🦀 [The Rust layer](https://acrion.github.io/zelph/rust/) – safe bindings for a host application, over the same C ABI any other language uses.
 - 🗃️ [Use Case: Wikidata](https://acrion.github.io/zelph/wikidata/)
 
 ## Mathematics from the axioms up

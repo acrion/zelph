@@ -203,6 +203,51 @@ jobs:
           path: build-wasm/bin/
           if-no-files-found: error
 
+  rust:
+    name: Rust bindings
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install clang lld meson ninja-build -y
+
+      - name: Build the library the bindings link against
+        run: |
+          cmake -DCMAKE_BUILD_TYPE=Release -B build-release -S .
+          cmake --build build-release --target zelph_lib -j$(nproc)
+
+      # ZELPH_NO_BUILD: the library is already current, and the build script
+      # would otherwise run cmake a second time.
+      - name: Test the crates
+        env:
+          ZELPH_NO_BUILD: 1
+          ZELPH_BUILD_DIR: ${{ github.workspace }}/build-release
+        run: cargo test --release --manifest-path rust/Cargo.toml
+
+      # The part no test inside the workspace reaches: a crate that depends on
+      # zelph from OUTSIDE, produces a binary, and has to find the shared
+      # library at startup. Aristarch 6 is such a project, and until this job
+      # existed a mistake in that contract surfaced only when Stefan built it.
+      - name: Build and run an outside consumer
+        env:
+          ZELPH_NO_BUILD: 1
+          ZELPH_BUILD_DIR: ${{ github.workspace }}/build-release
+        run: cargo run --release --manifest-path rust/downstream-check/Cargo.toml
+
+      - name: Documentation of the crates
+        env:
+          ZELPH_NO_BUILD: 1
+          ZELPH_BUILD_DIR: ${{ github.workspace }}/build-release
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --manifest-path rust/Cargo.toml
+
   docs:
     name: Build MkDocs site
     runs-on: ubuntu-latest

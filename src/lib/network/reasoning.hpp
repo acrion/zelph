@@ -82,7 +82,7 @@ namespace zelph::network
 
     // Recursively collect all variable nodes from a fact pattern.
     // Used to detect "fresh variables" that appear only in rule consequences.
-    void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, int depth, std::vector<Node>& history);
+    ZELPH_EXPORT void collect_variables(Zelph* z, Node pattern, std::unordered_set<Node>& vars, int depth, std::vector<Node>& history);
 
     // --- Proof reconstruction (reasoning_explain.cpp) --------------------------
     // Rebuild a justification for an asserted fact from the saturated graph.
