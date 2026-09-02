@@ -7,7 +7,7 @@ acrion.github.io follows `main`, zelph.org follows the latest release.
 | site | content | how it is produced |
 | --- | --- | --- |
 | [acrion.github.io/zelph](https://acrion.github.io/zelph/) | current `main` | automatically, by the `docs` job in `.github/workflows/ci.yml` on every push to the default branch |
-| [zelph.org](https://zelph.org/) | the latest release | by hand, from the release tag, with the steps below |
+| [zelph.org](https://zelph.org/) | the latest release | by `publish.sh <ref>` in the site repository, see below |
 
 ## Local preview
 
@@ -48,6 +48,14 @@ Two consequences matter here:
   correctly under a subpath (`acrion.github.io/zelph/logic/`) and at a domain
   root (`zelph.org/logic/`). A root-absolute `/assets/x.svg` works only at the
   root and silently breaks the other build.
+- **Links must stay relative too.** A page here must not link to `zelph.org`.
+  These pages are published on both sites, so such a link inside one of them
+  sends a reader of the development build across to the release build without
+  saying so, and the two can be different versions. Use a relative link, which
+  resolves on both. Two things are the exception: the three video sources,
+  because those files exist only on the release host and cannot be reached any
+  other way, and the *Versions* note at the end of `playground.md`, whose whole
+  subject is the difference between the two hosts.
 
 The order of the remaining steps is crucial in either case: `mkdocs build` wipes
 `site/` and writes it again from scratch, so the playground must be fetched after

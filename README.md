@@ -1,7 +1,7 @@
 # zelph
 
 [![CI Build](https://github.com/acrion/zelph/actions/workflows/ci.yml/badge.svg)](https://github.com/acrion/zelph/actions/workflows/ci.yml)
-[![Documentation](https://img.shields.io/badge/docs-zelph.org-blue.svg)](https://zelph.org/)
+[![Documentation](https://img.shields.io/badge/docs-GitHub_Pages-blue.svg)](https://acrion.github.io/zelph/)
 [![GitHub Release](https://img.shields.io/github/v/release/acrion/zelph?include_prereleases)](https://github.com/acrion/zelph/releases)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![NGI0 Commons Fund](https://img.shields.io/badge/NGI0-Commons_Fund-1a1a1a.svg)](https://nlnet.nl/project/Zelph/)
@@ -26,25 +26,27 @@ The rule never mentions `is part of`. It quantifies over the relation itself, an
 
 The complete documentation, including tutorials, language references, and the architectural concepts behind "Semantic Math", is hosted on our documentation site:
 
-👉 **[Read the zelph Documentation](https://zelph.org/)**
+👉 **[Read the zelph Documentation](https://acrion.github.io/zelph/)**
 
-[zelph.org](https://zelph.org/) documents the latest release. The same pages built from `main` are available at [acrion.github.io/zelph](https://acrion.github.io/zelph/).
+These pages are built from `main`, so they describe the current state of development and can be ahead of what you would download. The documentation belonging to the latest release lives on zelph.org instead:
+
+[![Documentation for the latest release](https://img.shields.io/github/v/release/acrion/zelph?include_prereleases&label=docs%20for%20release&color=blue)](https://zelph.org/)
 
 ### Quick Links
 
-- 🕹️ **[Try zelph in your browser](https://zelph.org/play/)** – the complete reasoning engine as WebAssembly, no installation required.
-- 🚀 **[Installation & Quick Start Guide](https://zelph.org/quickstart/)** – Get started immediately with pre-compiled binaries for all major platforms (no build required).
-- 🧠 [Core Concepts & Homoiconicity](https://zelph.org/concepts/#homoiconicity-the-executable-graph)
-- 🧮 [Semantic Math & Rule-based Addition](https://zelph.org/logic/#semantic-math-computation-as-graph-rewriting)
-- 📜 [Scripting with Janet](https://zelph.org/janet/)
-- 🦀 [The Rust layer](https://zelph.org/rust/) – safe bindings for a host application, over the same C ABI any other language uses.
-- 🗃️ [Use Case: Wikidata](https://zelph.org/wikidata/)
+- 🕹️ **[Try zelph in your browser](https://acrion.github.io/zelph/play/)** – the complete reasoning engine as WebAssembly, no installation required.
+- 🚀 **[Installation & Quick Start Guide](https://acrion.github.io/zelph/quickstart/)** – Get started immediately with pre-compiled binaries for all major platforms (no build required).
+- 🧠 [Core Concepts & Homoiconicity](https://acrion.github.io/zelph/concepts/#homoiconicity-the-executable-graph)
+- 🧮 [Semantic Math & Rule-based Addition](https://acrion.github.io/zelph/logic/#semantic-math-computation-as-graph-rewriting)
+- 📜 [Scripting with Janet](https://acrion.github.io/zelph/janet/)
+- 🦀 [The Rust layer](https://acrion.github.io/zelph/rust/) – safe bindings for a host application, over the same C ABI any other language uses.
+- 🗃️ [Use Case: Wikidata](https://acrion.github.io/zelph/wikidata/)
 - 🛠️ [Contributing](CONTRIBUTING.md) – what a change to the engine has to bring with it.
 - 🔒 [Security Policy](SECURITY.md) – how to report a vulnerability privately.
 
 ## Mathematics from the axioms up
 
-Since the C++ core contains no arithmetic, the entire mathematical stack in `stdlib/` is implemented via zelph rules – digits, numerals, integers, polynomials, symbolic differentiation. [Six tutorials](https://zelph.org/math/) progress from proving an identity to a full [refutation of the Jacobian conjecture](https://zelph.org/math/tutorial-jacobian/) – the July-2026 Alpöge/Fable counterexample, verified over the integers using rules exclusively. Each example on those pages was executed against the actual binary and its real output pasted in.
+Since the C++ core contains no arithmetic, the entire mathematical stack in `stdlib/` is implemented via zelph rules – digits, numerals, integers, polynomials, symbolic differentiation. [Six tutorials](https://acrion.github.io/zelph/math/) progress from proving an identity to a full [refutation of the Jacobian conjecture](https://acrion.github.io/zelph/math/tutorial-jacobian/) – the July-2026 Alpöge/Fable counterexample, verified over the integers using rules exclusively. Each example on those pages was executed against the actual binary and its real output pasted in.
 
 ## Funding and Collaboration
 

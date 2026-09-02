@@ -24,7 +24,7 @@ Two properties shape the API. **A node is its hash**: values remain constant acr
 
 ## Linking
 
-zelph is a C++ library and this crate does not carry it. Point `ZELPH_BUILD_DIR` at a CMake build directory of the [zelph repository](https://github.com/acrion/zelph), or work inside a checkout, where the default is `build-release` in the repository root. A consumer that produces a binary also names `zelph-sys` as a direct dependency and emits an rpath for it; the reason and the three lines are in [the documentation](https://acrion.github.io/zelph/rust/).
+zelph is a C++ library and this crate does not carry it. Point `ZELPH_BUILD_DIR` at a CMake build directory of the [zelph repository](https://github.com/acrion/zelph), or work inside a checkout, where the default is `build-release` in the repository root. A consumer that produces a binary also names `zelph-sys` as a direct dependency and emits an rpath for it; the reason and the three lines are in [the documentation](https://zelph.org/rust/).
 
 ## Licence
 
