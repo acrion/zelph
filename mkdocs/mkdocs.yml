@@ -1,28 +1,71 @@
-site_name: zelph - A Sophisticated Semantic Network System
+site_name: zelph
+site_url: https://zelph.org/
+site_description: >-
+  A semantic network and reasoning engine in which the rules reside within the
+  graph: contradiction detection over Wikidata, mathematics derived from axioms,
+  and a reconstructible proof for every answer.
+site_author: acrion innovations GmbH
+copyright: >-
+  Copyright &copy; 2025, 2026 acrion innovations GmbH &mdash;
+  AGPL-3.0-or-later or a
+  <a href="https://acrion.ch/sales">commercial licence</a>.
+repo_url: https://github.com/acrion/zelph
+repo_name: acrion/zelph
+edit_uri: edit/main/mkdocs/docs/
 theme:
   name: material
   custom_dir: overrides
   palette:
-    - scheme: slate
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    # Light is the first impression on purpose. The first entry wins when nothing
+    # is stored, and deliberately without a `media` query: reading the operating
+    # system here would hand a dark-mode visitor a very dark site to judge the
+    # project by. Whoever wants dark toggles once, and the choice is remembered.
     - scheme: default
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   features:
-    - navigation.expand
-    - content.code.annotate
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+    - search.suggest
 extra_css:
   - stylesheets/extra.css
+plugins:
+  - search
+# Relative links and in-page anchors are checked on every build. Together with
+# `mkdocs build --strict` in CI this turns a dead cross-reference into a failed
+# build rather than a line of INFO nobody reads. `unrecognized_links` stays at
+# info because of `play/`, which is grafted onto the built site afterwards and
+# therefore never exists in the source tree.
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: info
 nav:
   - Home: index.md
   - Playground: playground.md
-  - Logic and Computation: logic.md
-  - Rules That Write Rules: rule-generators.md
+  - Quick Start Guide: quickstart.md
+  - Language and Reasoning:
+      - Core Concepts: concepts.md
+      - Rules and Inference: rules.md
+      - Example Script: example-script.md
+      - Scripts and Modules: modules.md
+      - Logic and Computation: logic.md
+      - Rules That Write Rules: rule-generators.md
+      - Querying in zelph: queries.md
+      - SPARQL Queries: sparql.md
   - Mathematics:
-      - Why zelph for Mathematics: math/index.md
+      - math/index.md
       - Tutorials:
           - 1 · Proving Identities: math/tutorial-identities.md
           - 2 · Numbers from Nothing: math/tutorial-numbers.md
@@ -34,31 +77,38 @@ nav:
           - Module and Predicate Index: math/reference.md
           - The math Front End: math/frontend.md
           - Arithmetic Substrates: math/arithmetic.md
-          - Integers over Z: math/integers.md
+          - Integers over ℤ: math/integers.md
           - Polynomial Normal Forms: math/polynomial.md
           - The Symbolic Layer: math/symbolic.md
           - Term-to-Polynomial Compiler: math/topoly.md
           - Primality: math/primality.md
-          - Case Study - The EML Operator: math/eml.md
-  - Presentation: presentation.md
-  - Quick Start Guide: quickstart.md
-  - Performing Queries: queries.md
-  - SPARQL Queries: sparql.md
-  - Scripting with Janet: janet.md
-  - The C ABI: capi.md
-  - The Rust Layer: rust.md
-  - Neural Networks in the Graph: neural.md
-  - Importing and Exporting Data: import-export.md
-  - Binary Data Files: binaries.md
-  - Sharding and Partial Loading: sharding.md
-  - Use Case - Wikidata: wikidata.md
-  - Wikidata Class Hierarchy: class-hierarchy.md
-  - Publishing a Predicate Slice: publishing-slices.md
-  - Wikidata Qualifiers: qualifiers.md
+          - "Case Study: The EML Operator": math/eml.md
+  - Data:
+      - Binary Data Files: binaries.md
+      - Sharding and Partial Loading: sharding.md
+      - Importing and Exporting Data: import-export.md
+  - Wikidata:
+      - zelph and Wikidata: wikidata.md
+      - Working on the Wikidata Class Hierarchy: class-hierarchy.md
+      - Wikidata Qualifiers: qualifiers.md
+      - Publishing a Predicate Slice: publishing-slices.md
+  - Embedding zelph:
+      - Scripting with Janet: janet.md
+      - The C ABI: capi.md
+      - The Rust Layer: rust.md
+      - Neural Networks in the Graph: neural.md
+  - Video Introduction: presentation.md
+  - Building zelph: building.md
+  - About the Project: about.md
   - Internals:
       - Performance Architecture: internals/performance.md
       - Measurement Methodology: internals/measurement.md
 markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -76,9 +126,11 @@ markdown_extensions:
 extra_javascript:
   - https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js
   - javascripts/mathjax.js
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
-extra:
-  mermaid:
-    version: 11.4.1
+  - https://unpkg.com/mathjax@3.2.2/es5/tex-mml-chtml.js
+# `missing-superclass/` is the generated Wikidata report tree that `.run-export`
+# writes into docs/; it is git-ignored and must not reach the published site.
+# `*.orig` keeps a merge leftover from being copied verbatim into site/ — MkDocs
+# publishes every file in docs/, whether or not git tracks it.
 exclude_docs: |
   missing-superclass/
+  *.orig

@@ -1,14 +1,23 @@
 #!/usr/bin/env python
 import os
 import re
+import sys
 
 # zelph Markdown Link Processor
-# Purpose: Process markdown files in subdirectories of 'docs/' to convert invalid internal links to Wikidata URLs.
-#          Only processes files in subdirectories (e.g., docs/tree/*.md), not direct files in docs/.
-#          For each subdirectory, collects existing .md files in that subdir only (since subdirs are independent).
-#          Replaces [text](file.md) with [text](https://www.wikidata.org/wiki/file) or Property: if file starts with P.
-#          Skips links with :// (external). Modifies files in-place if changes are made.
-# Usage: python replace_invalid_mkdocs_links.py
+# Purpose: In the generated Wikidata report tree, a link target that names no file
+#          in the same directory is a Wikidata identifier rather than a page.
+#          Replaces [text](Q42.md) with [text](https://www.wikidata.org/wiki/Q42),
+#          and Property: for a target starting with P. Modifies files in place.
+# Usage: python replace-invalid-mkdocs-links.py [directory ...]
+#
+# THE ASSUMPTION ONLY HOLDS INSIDE THE GENERATED TREE. When this script was
+# written, docs/missing-superclass/ was the only subdirectory of docs/. It is not
+# any more: docs/math/ and docs/internals/ are hand-written, and their
+# cross-directory links (../janet.md, ../quickstart.md, ../internals/performance.md)
+# are exactly the shape this script converts. Pointing it at docs/ therefore
+# rewrites real documentation into Wikidata URLs, and mkdocs --strict stays green
+# because the results are valid external links. Hence the explicit directory
+# argument, and the guards in is_wikidata_target().
 
 
 def process_subdirectory(subdir_path):
@@ -35,8 +44,11 @@ def process_subdirectory(subdir_path):
         changes = 0
         line_count = 0
 
-        # Regex to match markdown links: [text](file.md) - no DOTALL needed since links don't span lines
-        md_link_regex = re.compile(r"\[(.*?)\]\((.*?)\.md\)")
+        # Neither the text nor the target may contain a bracket, a parenthesis or
+        # whitespace. With the original `.*?` the match could span from one link
+        # across a whole clause to the next ".md)", so the replacement swallowed a
+        # sentence of prose into a URL.
+        md_link_regex = re.compile(r"\[([^\][]*)\]\(([^()\s]*?)\.md\)")
 
         with (
             open(file_path, "r", encoding="utf-8") as f_in,
@@ -74,7 +86,7 @@ def process_subdirectory(subdir_path):
                         new_line_parts.append(full_match)
                     else:
                         # Check if the referenced file exists in this subdirectory's md_files set
-                        if file in md_files:
+                        if file in md_files or not is_wikidata_target(file_base):
                             # Append original match
                             new_line_parts.append(full_match)
                         else:
@@ -128,25 +140,21 @@ def process_subdirectory(subdir_path):
     print(f"Total items modified: {links_changed}")
 
 
+def is_wikidata_target(file_base):
+    """A Wikidata identifier is a bare Q- or P-number, never a path."""
+    return re.fullmatch(r"[QP]\d+", file_base) is not None
+
+
 def main():
-    base_dir = "docs"
+    dirs = sys.argv[1:] or ["docs/missing-superclass"]
 
-    # Find all subdirectories in docs/
-    subdirs = [
-        os.path.join(base_dir, d)
-        for d in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, d))
-    ]
+    for base_dir in dirs:
+        if not os.path.isdir(base_dir):
+            print(f"{base_dir} does not exist - skipped.")
+            continue
+        process_subdirectory(base_dir)
 
-    if not subdirs:
-        print("No subdirectories found in 'docs/'.")
-        return
-
-    for subdir_path in sorted(subdirs):
-        process_subdirectory(subdir_path)
-
-    print("\nAll subdirectories processed.")
-    print("Ready.")
+    print("\nReady.")
 
 
 if __name__ == "__main__":

@@ -150,7 +150,7 @@ or non-canonical operands derives nothing.
 ## Display note
 
 The module excludes `padd`, `psub`, `ladd` and `pmul` from the
-[self-fact display sugar](../index.md#the-self-fact-prefix): operand value
+[self-fact display sugar](../concepts.md#the-self-fact-prefix): operand value
 coincidences like `(P padd P)` are ordinary facts about equal operands, not
 request markers, and must render verbosely. The genuine marker predicates
 (`pneg`, `lneg`, `needsplcanon`, `plcanon`, `pzcheck`, `pnonzero`) stay

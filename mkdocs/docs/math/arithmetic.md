@@ -1,3 +1,5 @@
+# Arithmetic Substrates
+
 zelph performs arithmetic — addition, subtraction, comparison, multiplication and division with remainder of arbitrarily large natural numbers — purely inside its reasoning engine. There is no arithmetic code in the C++ core: digits are ordinary named nodes, numbers are ordinary cons-lists, digit tables are ordinary facts, and the algorithms are ordinary forward-chaining rules. When you type `&12 * &34`, the engine does not call a multiplication routine; it _derives_ the fact `((&12 * &34) = &408)` the same way it derives `Berlin is located in Europe` from a transitivity rule.
 
 This page describes the complete arithmetic system: the number representation, the shared architecture of the four rule modules, the base-independence property, and the engine machinery — bound-pattern grounding, cost-based condition ordering, semi-naive evaluation — that makes rule-based computation fast enough to be practical. It complements [Logic and Computation](../logic.md#semantic-math-computation-as-graph-rewriting), which builds up the addition module step by step.
@@ -9,7 +11,7 @@ The modules live in the standard library. Three of them supply the digit level, 
 - [`stdlib/binary-nand-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-nand-arithmetic.zph) — internal base 2, derived from a **single NAND axiom**
 - [`stdlib/common-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/common-arithmetic.zph) — the base-agnostic recursions, shared by all three
 
-All three digit-level modules claim the module ID `arithmetic` via [`.provides`](../index.md#interchangeable-implementations-provides), so anything built on top of arithmetic — [integers](integers.md), [polynomials](polynomial.md), the [symbolic layer](symbolic.md) — imports whichever substrate you loaded first and is otherwise indifferent.
+All three digit-level modules claim the module ID `arithmetic` via [`.provides`](../modules.md#interchangeable-implementations-provides), so anything built on top of arithmetic — [integers](integers.md), [polynomials](polynomial.md), the [symbolic layer](symbolic.md) — imports whichever substrate you loaded first and is otherwise indifferent.
 
 They expose the identical user interface:
 

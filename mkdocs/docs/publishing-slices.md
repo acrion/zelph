@@ -159,7 +159,7 @@ Saved adjacency index to wikidata-20260309-all-pruned-small-P279.bin.pidx.322 (1
 
 That file is a **machine-local cache**: it stores raw pairs in host byte order and is validated against the exact network it was built from. It must not be uploaded — it would be wrong on a machine of different endianness and stale against any regenerated file. Rebuilding costs about 15 seconds and happens automatically on every user's first transitive question.
 
-In `/home/stefan/zelph` this is already handled: `.gitignore` lists `*.pidx.*`, and `upload-all-to-hf.sh` derives its exclude list from git, so the mirror script skips them. A manual upload of a whole directory does not, so check first:
+In the dataset working directory this is already handled: `.gitignore` lists `*.pidx.*`, and `upload-all-to-hf.sh` derives its exclude list from git, so the mirror script skips them. A manual upload of a whole directory does not, so check first:
 
 ```bash
 ls /home/stefan/zelph/*.pidx.*
@@ -188,8 +188,8 @@ ls -la /tmp/hf-check
 
 Three places name the artifacts, and a slice that nobody can find is not published:
 
-1. **The dataset README** (`README.md` in `/home/stefan/zelph`, mirrored to the Hub): add the slice to the file list with its size and what it contains.
-2. **[zelph.org/binaries](https://zelph.org/binaries)** — the same for the web page.
+1. **The dataset README** (`README.md` in the dataset working directory, mirrored to the Hub): add the slice to the file list with its size and what it contains.
+2. **[Binary Data Files](binaries.md)** — the same for the web page.
 3. **[Working on the Wikidata Class Hierarchy](class-hierarchy.md)** — the hands-on page names the file in its `hf download` line and quotes concrete numbers (violation counts, culprit counts, timings). If the dump changed, those numbers changed. Re-run the session in that page and paste the actual output; the page exists to be followed literally.
 
 A slice for a **new dump** replaces nothing: the old file stays, because published numbers refer to it. A slice for a **new predicate** is a new file under its own name.
@@ -220,5 +220,5 @@ Two limits worth stating when answering such a request:
 [ ] no .pidx.* file in the upload
 [ ] hf upload
 [ ] download check from a clean directory
-[ ] dataset README, zelph.org/binaries, class-hierarchy.md updated
+[ ] dataset README, binaries.md, class-hierarchy.md updated
 ```

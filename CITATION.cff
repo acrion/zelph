@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: If you use zelph in your research, please cite it as below.
+title: "zelph: a semantic network system and reasoning engine"
+abstract: >-
+  A semantic network and reasoning engine in which the rules reside within the
+  graph: contradiction detection over Wikidata, mathematics derived from axioms,
+  and a reconstructible proof for every answer.
+type: software
+authors:
+  - family-names: Zipproth
+    given-names: Stefan
+    email: s.zipproth@acrion.ch
+    affiliation: acrion innovations GmbH
+repository-code: https://github.com/acrion/zelph
+url: https://zelph.org/
+license: AGPL-3.0-or-later
+version: 1.0.0
+keywords:
+  - semantic network
+  - reasoning engine
+  - knowledge graph
+  - logic programming
+  - forward chaining
+  - Wikidata
+  - symbolic mathematics

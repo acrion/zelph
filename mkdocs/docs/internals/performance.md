@@ -22,7 +22,7 @@ counter bit-identical and the full test suite permanently running in
 
 Everything on this page is a corollary of one design decision: **a fact
 node's ID _is_ the hash of its triple**, `create_hash(predicate, subject,
-objects)` — see [Internal Representation of Facts](../index.md#internal-representation-of-facts)
+objects)` — see [Internal Representation of Facts](../rules.md#internal-representation-of-facts)
 for the topology this identifies. Four consequences carry all the soundness
 arguments that follow:
 

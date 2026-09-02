@@ -1,12 +1,12 @@
-## The C ABI
+# The C ABI
 
 zelph is a C++ library with a Janet host on top. The C ABI is the third way in: a narrow `extern "C"` surface over the graph and its compiled networks, so a program written in Rust, C, Go, Python or anything else with an FFI can drive zelph directly, without the Janet interpreter in between.
 
-It is deliberately small. Everything that is naturally expressed as a script — rules, `.import`, display schemes, SPARQL — stays in Janet and the REPL. What the C ABI covers is the part a *host application* needs: resolve names to nodes, assert facts, read them back, compile a network out of the graph, evaluate it, train it, and persist the result.
+It is deliberately small. Everything that is naturally expressed as a script — rules, `.import`, display schemes, SPARQL — stays in [Janet](janet.md) and the REPL. What the C ABI covers is the part a *host application* needs: resolve names to nodes, assert facts, read them back, compile a network out of the graph, evaluate it, train it, and persist the result.
 
 The header is `zelph/capi/zelph_c.h`. Link against `libzelph`.
 
-### Conventions
+## Conventions
 
 Every function follows the same five rules, so there is nothing per-function to remember:
 
@@ -18,7 +18,7 @@ Every function follows the same five rules, so there is nothing per-function to 
 | **Strings are UTF-8** | Strings passed in are borrowed for the duration of the call. Strings handed out are owned by the caller and released with `zelph_string_free()`. |
 | **Caller owns array memory** | Arrays are written into a caller-supplied buffer. The `count` parameter is in/out: on entry the capacity, on return the number of elements produced. If the buffer is too small, *nothing* is written, `count` holds what is needed and the call returns `ZELPH_BUFFER_TOO_SMALL` — so passing a null buffer with capacity `0` asks for the size. |
 
-### Lifetime and threading
+## Lifetime and threading
 
 ```c
 int32_t zelph_engine_create(zelph_output_fn output, void* user_data, zelph_engine** out_engine);
@@ -31,7 +31,7 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 
 **`zelph_nn_eval_nodes` is safe to call from any number of threads at once, including while another thread is training the same network.** That guarantee comes from `NeuralNet` itself and is the reason a compiled net can serve a parallel search. Everything that mutates the *graph* — `zelph_resolve`, `zelph_fact`, `zelph_list`, `zelph_load`, `zelph_save`, `zelph_nn_compile`, `zelph_nn_connect_layers`, `zelph_nn_write_back` — is main-thread only, exactly as the corresponding Janet functions are.
 
-### The graph
+## The graph
 
 | Function | |
 | --- | --- |
@@ -49,7 +49,7 @@ Structural identity is the property to build on: `zelph_list` over the same node
 
 And it survives the file. Because a node *is* its hash, describing the same structure again in a freshly loaded graph arrives at the node the file talks about, so a caller that saved facts about `<a b c>` finds them again without having stored an id anywhere – the structure is the key. `zelph_list_elements` and `zelph_fact_parts` close the loop by reading a structure back, which is what a program needs to use one as a *stored* identifier rather than only as a lookup key. Everything the ABI can build it can also take apart, including what the ABI did not build: a cons cell is the fact `(car cons cdr)`, so the two readers are one mechanism seen twice.
 
-### Networks
+## Networks
 
 | Function | |
 | --- | --- |
@@ -73,7 +73,7 @@ The node-addressed entry points are the ones that matter for a sparse input laye
 
 A caller that evaluates the same layer millions of times can go one step further and name the active neurons by their slot in the input layer rather than by their node. That skips a hash lookup per active neuron, which on a small network is the largest single item an evaluation has left – 0.17 of 0.43 microseconds for 34 active inputs of 780. Resolve the mapping once with `zelph_nn_layer_nodes` after compiling, then pass slots for ever after.
 
-### Keeping the first layer between calls
+## Keeping the first layer between calls
 
 An accumulator is the input layer’s pre-activation vector, maintained by the caller and shifted by the difference between one active input set and the next rather than being reconstructed from all of them. Where consecutive queries share most of their active inputs – a search over states that change by a few features per move, or a fixed context scored against many candidates – that transforms the cost of the first layer from `O(active)` into `O(changed)`, and what remains is the layers behind it.
 
@@ -81,7 +81,7 @@ The buffer is `zelph_nn_accumulator_size` doubles and belongs to the caller, so 
 
 Two points to grasp. An accumulator holds value only in relation to the weights it was constructed with, thus a training iteration nullifies each of those. And `zelph_nn_accumulator_update` is not bit-identical to `zelph_nn_accumulator_set` when applied to the same active set: adding and subtracting rows introduces rounding disparities compared to summing them in a single operation, and that divergence builds up across a sequence of updates. Set it afresh whenever that becomes relevant.
 
-### The hidden-layer activation
+## The hidden-layer activation
 
 `ZELPH_ACTIVATION_RELU` is `max(0, x)` and is the default, the value `0` of the enum.
 `ZELPH_ACTIVATION_LEAKY_RELU` is `max(0.01 x, x)`.
@@ -102,7 +102,7 @@ net was built.
 
 Snapshot and restore exist because training walks past its best point: the criterion that says "stop" can only fire after the fact, so without a way back the weights that get saved are always some epochs late.
 
-### A complete example
+## A complete example
 
 ```c
 #include <zelph_c.h>
@@ -192,7 +192,7 @@ i1 -> o1 (1.000)
 i2 -> o2 (1.000)
 ```
 
-### Reasoning
+## Reasoning
 
 The graph is not only a store, and this is the surface a program needs to use rules over it.
 
@@ -215,7 +215,7 @@ A query reports the variable as the **node the caller created**, not as a name, 
 crosses the boundary and no lookup is needed to read an answer.
 
 Clusters are what make the monotonic graph usable as a workspace. The loop a caller runs is
-### Staying quiet
+## Staying quiet
 
 zelph narrates, because its primary front end is a REPL: a line per derived fact on
 `ZELPH_CHANNEL_OUT`, the progress of a reasoning run on `ZELPH_CHANNEL_DIAGNOSTIC`
@@ -248,9 +248,9 @@ before a C caller could touch it.
 activate, assert, `zelph_run_delta`, query, deactivate, drop - and what a drop removes is
 exactly what was created inside it, so a graph loaded from disk is never at risk.
 
-### Rust
+## Rust
 
-Two crates in `rust/` sit on this ABI and are maintained with it:
+Two crates in `rust/` sit on this ABI and are maintained with it — see [The Rust Layer](rust.md):
 
 | | |
 | --- | --- |

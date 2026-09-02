@@ -49,7 +49,7 @@ Running inference on Wikidata data is computationally intensive but highly optim
 
 - **Parallel processing:** both data import and the unification/reasoning engine are multi-threaded and can utilise all available CPU cores.
 - **Performance:** the figure quoted here used to be "approximately 2.5 hours for a complete inference pass on the full dataset". That measurement was taken in December 2025, on a different dump and a different engine, and it has not been repeated since; it is withdrawn rather than restated, because a timing whose file and version are unknown cannot be checked. What is current, and measured on the published 2026-03-09 artifacts: six contradiction rules across three violation families run together over `wikidata-20260309-all-pruned-small.bin` (26.5 million nodes) in under a minute, and the class-hierarchy queries of [Working on the Wikidata Class Hierarchy](class-hierarchy.md) answer in milliseconds to seconds. A pass over the full network is a different order of magnitude and depends strongly on available RAM and on the rules applied.
-- **Workflow:** users can run targeted scripts to find specific classes of contradictions (see additional Wikidata sections on [zelph.org](https://zelph.org/wikidata) for examples such as split-order violations).
+- **Workflow:** users can run targeted scripts to find specific classes of contradictions. [Working on the Wikidata Class Hierarchy](class-hierarchy.md) walks through one such session end to end, and [Wikidata Qualifiers](qualifiers.md) covers the qualifier-aware variants.
 
 ## Wikidata Integration Script
 
@@ -278,7 +278,7 @@ Two of Wikidata's constraint types are translated today:
 
 `I`, `Y` and `Z` are variables: `I` is the item under test, `Y` and `Z` stand
 for whatever values it happens to carry. `=> !` marks the combination as a
-[contradiction](index.md#rules-and-inference) — importing such a rule asserts nothing, it
+[contradiction](rules.md#rules-and-inference) — importing such a rule asserts nothing, it
 makes the violations of that constraint reportable.
 
 So the whole check is three steps: load a dump, import the script, infer.
@@ -309,7 +309,7 @@ The line after `⇐` is the justification: exactly the two statements on Q42 tha
 together break the constraint, which is what you need in order to decide which
 of them is the mistake. (`.explain` does not apply here — a contradiction
 materialises no fact to explain, so it carries its premises with it instead.)
-For a large run, [`.run-export <file>`](index.md#exporting-derivations) writes every derivation
+For a large run, [`.run-export <file>`](rules.md#exporting-derivations) writes every derivation
 and every contradiction to a JSON Lines file, one record per line, with
 `"kind":"contradiction"` and the premises.
 
@@ -321,6 +321,6 @@ of their P2302 statement, commented out and marked
 material you need to write the rule yourself. A constraint whose qualifiers
 carry no usable value says so (`# No P2306 (conflict property) found`) rather
 than guessing at one. Which of the remaining types are worth generating next is
-an [open roadmap question](index.md#where-the-logic-goes-next).
+an [open roadmap question](about.md#where-the-logic-goes-next).
 
 Please note that after executing a '.load' command, '.auto-run' is disabled. This means that any rules added will only be applied when inference is performed explicitly via the `.run`, `.run-once`, `.run-delta` or `.run-export` commands (see the Performing Inference section above).

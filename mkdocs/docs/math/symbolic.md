@@ -70,7 +70,7 @@ by absence — silence, never a wrong answer.
 ## The Simplification Core
 
 The user-facing idiom mirrors `testprime`: a request self-fact seeds the
-work — entered with the [self-fact prefix `:`](../index.md#the-self-fact-prefix)
+work — entered with the [self-fact prefix `:`](../concepts.md#the-self-fact-prefix)
 — and a query retrieves the result repeatably.
 
 ```

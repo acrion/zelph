@@ -12,7 +12,7 @@ Queries are statements that contain variables (single uppercase letters) but no 
 - **Multi-Conditions (Conjunctions)**: Write the conditions as a comma list, e.g. `cond1, cond2`, or use the explicit form `*{(cond1) (cond2)} ~ conjunction`. Note that neither carries outer parentheses: `(cond1, cond2)` on a line by itself is a *term*, i.e. the beginning of a statement, and awaits the rest of it – see [Basic Usage](quickstart.md#basic-usage).
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
 - **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).
-- **Output**: Matches are printed with bound values. If no matches: only the query is echoed. The order of the answers is not specified – with parallel unification (the default, see `.parallel`) it can differ between two runs of the same query; see [Deduction Output Modes](index.md#deduction-output-modes).
+- **Output**: Matches are printed with bound values. If no matches: only the query is echoed. The order of the answers is not specified – with parallel unification (the default, see `.parallel`) it can differ between two runs of the same query; see [Deduction Output Modes](rules.md#deduction-output-modes).
 - **Limitations**: A query is a statement, so it may span several lines, but each answer is one line and there is no paging.
 
 ## General Queries
@@ -61,13 +61,13 @@ Combine for intersections.
   Answer: {(Berlin "is capital of" Germany) (Berlin "is located in" Europe)}
   ```
 
-  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](index.md#syntax-sugar-for-conditions). The fully explicit form is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`, which answers identically.
+  > Note: In this example we use the comma `,` [syntax sugar for conjunctions](rules.md#syntax-sugar-for-conditions). The fully explicit form is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`, which answers identically.
 
 ## Wikidata-Specific Queries
 
 For Wikidata, switch to `.lang wikidata` after loading a dump (`.load path/to/dump.json` or `.load cached.bin`). Queries use Q/P IDs or names (if set). Examples from paleontology (e.g., Brontosaurus Q3222766).
 
-### Single-Condition Queries
+### Single-Condition Queries on Wikidata
 
 - Instances of fossil taxon: `X P31 Q23038290`  
   Output: Many answers, e.g., `Answer: Q3222766 P31 Q23038290` (Brontosaurus).
@@ -75,7 +75,7 @@ For Wikidata, switch to `.lang wikidata` after loading a dump (`.load path/to/du
 - Parent taxa: `X P171 Q3222766`  
   Output: Taxa with Brontosaurus as parent (if any).
 
-### Multi-Condition Queries
+### Multi-Condition Queries on Wikidata
 
 Combine for targeted searches.
 
@@ -96,4 +96,4 @@ Combine for targeted searches.
 - **Patterns**: Fixed parts in quotes if spaces; variables anywhere.
 - For complex logic, define rules first, then query the inferred graph.
 
-See [Rules and Inference](index.md#rules-and-inference) for synergy with queries.
+See [Rules and Inference](rules.md#rules-and-inference) for synergy with queries.

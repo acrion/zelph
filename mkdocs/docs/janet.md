@@ -1,16 +1,16 @@
-## Scripting with Janet
+# Scripting with Janet
 
 zelph embeds [Janet](https://janet-lang.org), a lightweight functional programming language, as its scripting layer. Janet serves as the programmatic backbone behind zelph's syntax: every zelph statement is parsed into a Janet expression before execution. This integration enables users to go beyond zelph's declarative syntax and use loops, conditionals, macros, and data structures to generate facts, rules, and queries programmatically.
 
 Importantly, Janet operates exclusively at _input time_ — it generates graph structures that are then processed by zelph's reasoning engine. During inference, only zelph's native engine runs. Think of Janet as a powerful macro system: it constructs the graph, then steps aside. It may decide _when_ the engine runs — see [Running the engine](#running-the-engine) — but not how.
 
-### Installing External Packages
+## Installing External Packages
 
 zelph ships with an **embedded Janet runtime** — you do not need a separate Janet installation to use Janet scripting in zelph. All built-in Janet functions (including `slurp`, `spit`, `string/split`, and the full standard library) work out of the box.
 
 External Janet packages are only needed for specific functionality such as JSON parsing (`spork/json`) or advanced CSV handling (`spork/csv`). These packages are installed via `jpm` (Janet's package manager), which _does_ require a Janet installation on the host system.
 
-#### Checking the embedded Janet version
+### Checking the embedded Janet version
 
 Use the `.licenses` command to see which Janet version is embedded in your zelph build:
 
@@ -24,7 +24,7 @@ Janet (v1.41.2) - MIT License
 
 Packages installed via `jpm` should match this major version. In practice, Janet packages remain compatible across minor version differences, but if you encounter unexpected errors, check for a version mismatch first.
 
-#### Installing jpm
+### Installing jpm
 
 `jpm` is typically bundled with the Janet distribution:
 
@@ -33,7 +33,7 @@ Packages installed via `jpm` should match this major version. In practice, Janet
 - **Windows (Chocolatey / Scoop)**: `jpm` is included with the Janet installation.
 - **Other Linux distributions**: If your package does not include `jpm`, see the [Janet documentation](https://janet-lang.org/docs/index.html) for manual installation.
 
-#### Setting up the module path
+### Setting up the module path
 
 Janet needs to know where to find installed packages. Set the following environment variables (example for Linux/macOS — adapt paths for your system):
 
@@ -44,7 +44,7 @@ export JANET_PATH="$JANET_TREE/lib:/usr/lib/janet"
 
 Add these to your shell profile (e.g. `~/.bashrc`, `~/.zshrc`) so they persist across sessions. On Windows, set the corresponding environment variables via the system settings.
 
-#### Installing packages
+### Installing packages
 
 To install the `spork` library (which provides JSON, CSV, and other utilities):
 
@@ -60,11 +60,11 @@ Once installed, you can use its modules in zelph scripts:
 @{"age" 30 "name" "Alice"}
 ```
 
-### Entering Janet Code
+## Entering Janet Code
 
 There are three ways to write Janet code in zelph:
 
-#### Inline Prefix `%`
+### Inline Prefix `%`
 
 Prefix a line with `%` to execute it as Janet:
 
@@ -82,7 +82,7 @@ Whitespace after `%` is optional. If the expression spans multiple lines (i.e., 
 
 All four lines are collected and executed as a single Janet expression.
 
-#### Block Mode `%`
+### Block Mode `%`
 
 A bare `%` on its own line toggles between zelph mode and Janet mode. In Janet mode, all lines are accumulated and executed together when the block is closed:
 
@@ -99,15 +99,15 @@ A bare `%` on its own line toggles between zelph mode and Janet mode. In Janet m
 
 This is convenient for longer scripts with multiple definitions and function calls. When closing a Janet block, zelph automatically triggers the reasoning engine (if [auto-run](quickstart.md#full-command-reference) is enabled), so any rules created in the block take effect immediately.
 
-#### Comments and Commands
+### Comments and Commands
 
 Lines starting with `#` (comments) and `.` (commands like `.lang`, `.run`, `.save`) work identically in both modes. They are never interpreted as Janet or zelph statements.
 
-### The zelph API for Janet
+## The zelph API for Janet
 
 zelph registers a set of functions in the Janet environment that mirror zelph's syntactic constructs. These functions operate directly on the semantic network, creating nodes, facts, lists, and sets.
 
-#### Nodes and Names: `zelph/resolve`
+### Nodes and Names: `zelph/resolve`
 
 Every named entity in zelph's graph is a _node_. The function `zelph/resolve` takes a string and returns the corresponding node in the current language (as set by `.lang`), creating it if it does not yet exist:
 
@@ -120,7 +120,7 @@ The returned value is a `zelph/node` abstract type — an opaque handle to the i
 
 **When to use `zelph/resolve`:** Whenever you need to refer to a node by name from Janet code. The node is resolved in the currently active language, which matters when working with Wikidata IDs vs. human-readable names.
 
-#### Facts: `zelph/fact`
+### Facts: `zelph/fact`
 
 `zelph/fact` creates a subject–predicate–object triple in the graph and returns the relation node. It accepts three or more arguments (multiple objects create multiple facts with the same subject and predicate):
 
@@ -143,7 +143,7 @@ String arguments are automatically resolved as node names (identical to `zelph/r
 
 The function also accepts quoted Janet symbols (`'X`, `'_Var`) for zelph variables — single uppercase letters or underscore-prefixed identifiers. This is used when building rules and queries (see below).
 
-#### Programmatic Query Results: `zelph/query`
+### Programmatic Query Results: `zelph/query`
 
 When called from Janet, `zelph/query` returns its results as a Janet array of tables rather than printing them. Each table represents one match, mapping variable symbols to their bound `zelph/node` values:
 
@@ -187,7 +187,7 @@ Both loops print the same matches. The bindings are labelled from the names the 
 
 When a query is entered in **zelph syntax** (not via `zelph/query`), results are printed to the console — `zelph/query`'s return-value behavior only applies when called from Janet code.
 
-#### Filtering and Transforming Query Results
+### Filtering and Transforming Query Results
 
 Since results are standard Janet arrays and tables, all of Janet's collection functions work naturally:
 
@@ -215,7 +215,7 @@ Since results are standard Janet arrays and tables, all of Janet's collection fu
 
 Each `zelph/query` call resets the variable scope, so consecutive queries produce independent results with fresh variable bindings.
 
-#### Using Query Results in Rules and Facts
+### Using Query Results in Rules and Facts
 
 Query results can feed back into graph construction:
 
@@ -228,9 +228,9 @@ Query results can feed back into graph construction:
 %
 ```
 
-#### Rules in Janet: The `let` Pattern
+### Rules in Janet: The `let` Pattern
 
-In zelph syntax, the [focus operator `*`](index.md#the-focus-operator) controls what a parenthesized expression returns. For example, `(*{...} ~ conjunction)` creates the conjunction fact but returns the **set node** itself, which is then used as the subject of `=>`. In Janet, this is achieved naturally using `let` bindings:
+In zelph syntax, the [focus operator `*`](concepts.md#the-focus-operator) controls what a parenthesized expression returns. For example, `(*{...} ~ conjunction)` creates the conjunction fact but returns the **set node** itself, which is then used as the subject of `=>`. In Janet, this is achieved naturally using `let` bindings:
 
 ```
 # zelph syntax:
@@ -249,7 +249,7 @@ In zelph syntax, the [focus operator `*`](index.md#the-focus-operator) controls 
 
 The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](quickstart.md#full-command-reference)).
 
-#### The Scope of a Variable Symbol: One Block
+### The Scope of a Variable Symbol: One Block
 
 That `let` is not only a matter of style. **A variable symbol is scoped to one evaluation of a Janet block**, exactly as a variable in zelph syntax is quantified by the statement it appears in. Two blocks that both write `'B` mean two *different* variables, so conditions built in separate blocks are not joined by their shared symbol — they are multiplied:
 
@@ -295,7 +295,7 @@ zelph> %(length (zelph/query joined))
 
 Every call to `zelph/var` makes a *new* variable, whatever name it is given — otherwise a program building many patterns in one loop would join them all by accident. The name is display only; it is what lets the binding be read back as `(get r 'B)`.
 
-#### Lists: `zelph/list` and `zelph/list-chars`
+### Lists: `zelph/list` and `zelph/list-chars`
 
 zelph has two list syntaxes, each with a Janet counterpart:
 
@@ -325,11 +325,11 @@ Equivalent to:
 
 This is the foundation of zelph's [Semantic Math](logic.md#semantic-math-computation-as-graph-rewriting) system, where numbers are topological structures within the graph.
 
-#### Sets and collections: `zelph/set`, `zelph/collection`
+### Sets and collections: `zelph/set`, `zelph/collection`
 
 Both create an unordered grouping and return its super-node. They differ in
 identity, exactly as the two literals do (see
-[Set Constants and Collections](index.md#braces-set-constants-and-collections)):
+[Set Constants and Collections](concepts.md#braces-set-constants-and-collections)):
 `zelph/set` hashes its members, so the same elements always yield the same node
 and membership cannot be extended; `zelph/collection` returns a fresh container
 that `(member in container)` adds to.
@@ -357,11 +357,11 @@ Equivalent to:
 A rule's conjunction of conditions is a collection, not a set constant: its
 members are condition patterns, and the rule needs a container of its own.
 
-#### Janet API Reference (zelph/\*)
+### Janet API Reference (zelph/\*)
 
 The embedded Janet environment exposes the following functions. Unless stated otherwise, functions accept either strings (resolved as node names in the current `.lang`) or `zelph/node` values.
 
-##### Graph construction (mutating)
+#### Graph construction (mutating)
 
 - **`(zelph/resolve name)`**  
   Resolve (and create if needed) the node named `name` in the current language.
@@ -397,9 +397,9 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Convenience constructor for rules.  
   `conditions` must be a non-empty array/tuple of fact (pattern) nodes; `consequences` are one or more fact nodes.  
   Returns the conjunction set node.  
-  Unlike a parsed `... => ...` statement, this does **not** check whether the graph already holds the same rule up to a renaming of its variables (see [Rules Say Themselves Only Once](index.md#rules-say-themselves-only-once)): the condition nodes are created by the caller, before `zelph/rule` sees them, so there is nothing zelph could roll back without touching facts the caller asked for. A program that builds the same rule repeatedly should either build it once or go through `zelph/import`.
+  Unlike a parsed `... => ...` statement, this does **not** check whether the graph already holds the same rule up to a renaming of its variables (see [Rules Say Themselves Only Once](modules.md#rules-say-themselves-only-once)): the condition nodes are created by the caller, before `zelph/rule` sees them, so there is nothing zelph could roll back without touching facts the caller asked for. A program that builds the same rule repeatedly should either build it once or go through `zelph/import`.
 
-##### Querying (read-only)
+#### Querying (read-only)
 
 - **`(zelph/query pattern-node)`**  
   Execute a query and return an array of tables, mapping variable symbols (e.g. `'X`) to bound `zelph/node` values.  
@@ -426,7 +426,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/closure-sources target predicate &opt include-target)`**  
   Transitive closure following `predicate` backward (object to subject). `include-target` true gives the reflexive closure.
 
-##### Cons cell inspection (read-only)
+#### Cons cell inspection (read-only)
 
 - **`(zelph/car cell)`**  
   Return the car (first element) of a cons cell, or `nil` if `cell` is not a cons cell.
@@ -434,7 +434,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 - **`(zelph/cdr cell)`**  
   Return the cdr (rest of list) of a cons cell. Returns the `nil` list terminator node for the last cell; returns `nil` if `cell` is not a cons cell.
 
-##### Script import
+#### Script import
 
 - **`(zelph/import path & args)`**  
   Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
@@ -448,7 +448,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
     - Relative imports such as `(use ./helper)` resolve against the **script's** directory, not the process's working directory, so a script can be started from anywhere.
     - Every run starts from an empty module cache. Janet's `require` caches modules process-wide, so without this a second run of the same script would keep the first version of every dependency it pulled in — an edit to `helper.janet` would be invisible for the rest of the session.
 
-##### Running the engine
+#### Running the engine
 
 - **`(zelph/run)`**  
   Run forward chaining to a fixed point, exactly like the `.run` command. Returns `nil`. Main thread only.
@@ -492,7 +492,7 @@ zelph->
 
 The rule is in the graph from the moment it is created, but its consequence only exists once the engine has run.
 
-##### Reasoning incrementally
+#### Reasoning incrementally
 
 `zelph/run` always begins with one classic pass over the whole graph, because it cannot know what the graph looked like before. That pass costs time proportional to the graph — so a program that alternates between asserting a little and reasoning pays, every time, for everything it has ever asserted. This is the shape of most library use: a fact base per document, per position, per request.
 
@@ -537,7 +537,7 @@ Note that facts created by an imported script count as ordinary additions here. 
 
 The safe pattern is therefore: define the rules, `zelph/run` once, then assert and `zelph/run-delta` per unit of new data.
 
-##### Scoped work: clusters
+#### Scoped work: clusters
 
 The graph is monotonic. A program that asserts a fact base, reasons about it and reads the conclusions has no way to take the fact base out again, so every question it ever asks stays — and the pattern "one fact base per document, per position, per request" accumulates without bound.
 
@@ -567,7 +567,7 @@ Unlike `.cluster` and `.cluster-drop`, these print nothing. That is deliberate: 
 
 Clusters are session state and are not persisted by `zelph/save`.
 
-##### Persistence
+#### Persistence
 
 - **`(zelph/save file)`**  
   Save the current network to a binary file, exactly like the `.save` command. The filename must end with `.bin`. Returns `nil`. Main thread only.
@@ -578,7 +578,7 @@ Clusters are session state and are not persisted by `zelph/save`.
   - If `file` ends with `.json` or `.json.bz2` (Wikidata dump), the data is imported and a `.bin` cache file is created in the same directory for faster future loads.  
     In the interactive REPL, loading disables auto-run (large datasets). Inside a script run, auto-run is already suspended for the duration of the import and restored afterwards — the same behavior as `.load` inside a `.zph` script. Returns `nil`. Main thread only.
 
-##### Neural network functions
+#### Neural network functions
 
 zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can consult via the `≈` operator. The full documentation — including semantics, training workflow, and a Wikidata proof of concept — is on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:
 
@@ -595,15 +595,15 @@ zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are 
 - **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — densely wire two layers; idempotent, preserves existing weights.
 - **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
 - **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
+- **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
 **Threading.** Unlike most of the API above, a compiled network may be used from more than one thread. Any number of threads may **evaluate** concurrently — `nn-eval`, `nn-eval-nodes`, `nn-snapshot`, `nn-write-back` — while a **training** step (`nn-train`, `nn-train-nodes`) or `nn-restore` excludes them for its duration. So a program may evaluate a network from a worker thread while another thread trains it, which is what lets training run continuously alongside the work that uses the result. `nn-compile` is *not* synchronised: build the network before sharing its handle. The guarantee covers the network's weights only — the graph operations marked "Main thread only" above stay main-thread-only, so `zelph/save` and `zelph/load` must not run while another thread trains.
 
 The two node-addressed calls price the input layer by the number of active neurons rather than by its width, because they are told which ones are non-zero; the dense pair cannot be. Same numbers, so prefer them whenever the input is a multi-hot encoding of a large domain — see [Neural networks](neural.md#node-addressed-training).
-- **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
-##### Output
+#### Output
 
-- **`(zelph/out text)`**
+- **`(zelph/out text)`**  
   Emit `text` through zelph's own output pipeline (the `Out` channel) rather
   than Janet's `stdout`. Use this in modules: it is the only form that
   reaches the REPL, `.log` capture, the WebAssembly playground and the test
@@ -612,7 +612,7 @@ The two node-addressed calls price the input layer by the number of active neuro
   and is invisible to all of them. The standard library uses it for load
   banners, e.g. `(zelph/out "math-syntax loaded: $( ... ) term islands")`.
 
-##### Display registration
+#### Display registration
 
 A script can declare how *its own* notation is written, so that
 `node_to_string` renders matching terms in it. The C++ side knows
@@ -620,7 +620,7 @@ precedence, associativity, delimiters, numeral prefix and leaf grammar —
 never a concrete operator. A term is rendered under a scheme only when the
 whole subtree is expressible in it; otherwise the default rendering is used.
 
-- **`(zelph/register-display-scheme name open close &opt options)`**
+- **`(zelph/register-display-scheme name open close &opt options)`**  
   Declare a scheme. `open`/`close` are the delimiters wrapped around a
   rendered term (`"$( "` and `" )"` for the stdlib's term islands).
   `options` is a struct:
@@ -632,14 +632,14 @@ whole subtree is expressible in it; otherwise the default rendering is used.
       declares no grammar can never deviate from the default rendering,
       which is the safe default rather than a limitation.
 
-- **`(zelph/set-infix-display scheme entries)`**
+- **`(zelph/set-infix-display scheme entries)`**  
   Register infix operators into a declared scheme. `entries` is an array of
   `[predicate precedence associativity]`, with associativity `:left` or
   `:right`. Higher precedence binds tighter. Registration is additive across
   calls, but a predicate belongs to at most one scheme — re-registering it
   is an error.
 
-- **`(zelph/set-application-display scheme predicates)`**
+- **`(zelph/set-application-display scheme predicates)`**  
   Register predicates whose facts render in call notation: `(S P O)` becomes
   `S(O)`. Application heads must be atomic names; a composite head falls
   back to the default rendering. Registering a predicate here also excludes
@@ -655,7 +655,7 @@ whole subtree is expressible in it; otherwise the default rendering is used.
     `zelph/set-infix-display` directly only when you are registering a
     notation you do not intend to parse.
 
-##### Redefinable hooks
+#### Redefinable hooks
 
 - **`(zelph/number str)`**  
   Called by the parser for every `&`-prefixed number literal (e.g. `&42` becomes `(zelph/number "42")`). The default implementation raises an error; arithmetic scripts such as [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) (decimal) or [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) (binary) redefine it to build the cons-list representation of their choice. See [Number Literals](logic.md#number-literals).
@@ -671,7 +671,7 @@ whole subtree is expressible in it; otherwise the default rendering is used.
 - **`(zelph/no-selffact-sugar preds...)`**  
   Exclude predicates from the self-fact display sugar. A fact whose subject
   and object are the same node normally prints in the compact prefix form
-  `:pred subject` (see [The Self-Fact Prefix `:`](index.md#the-self-fact-prefix)).
+  `:pred subject` (see [The Self-Fact Prefix `:`](concepts.md#the-self-fact-prefix)).
   For term-forming operators this contraction is undesirable: `(&1 + &1)` is
   a self-fact only because all terms are hash-consed, and should print
   verbose. Registered predicates always render as `S P S`. The registration
@@ -681,7 +681,7 @@ whole subtree is expressible in it; otherwise the default rendering is used.
   persisted). The arithmetic modules register their operators (`+`, `-`,
   `d+`, ...), `stdlib/eml.zph` registers `eml`.
 
-### Referencing Janet Variables in zelph: Unquote `,`
+## Referencing Janet Variables in zelph: Unquote `,`
 
 The `,` (comma) operator bridges the two languages in the opposite direction: it allows zelph statements to reference values defined in Janet. Prefix any Janet variable name with `,` inside zelph syntax:
 
@@ -700,7 +700,7 @@ This is equivalent to writing `Berlin "is capital of" Germany`, but the subject 
 > - `,pred` → unquote the Janet variable `pred`
 > - `, pred` → **not** unquote; inside conjunction parentheses it acts as a separator, and outside it is simply invalid syntax
 
-#### How Unquote Works
+### How Unquote Works
 
 The unquoted variable name is emitted directly into the generated Janet code. At runtime, zelph's argument resolver handles the value based on its Janet type:
 
@@ -719,7 +719,7 @@ This means you can use either form depending on your needs:
 
 For Wikidata work where IDs are language-independent, both forms are equivalent. For multilingual scenarios, `zelph/resolve` gives you explicit control over _when_ the name is resolved.
 
-#### Unquote in Complex Structures
+### Unquote in Complex Structures
 
 The `,` operator works anywhere a value is expected — in facts, sets, lists, and nested expressions:
 
@@ -737,9 +737,9 @@ X ,pred ,obj
 (,subject ,pred ,obj)
 ```
 
-### Practical Patterns
+## Practical Patterns
 
-#### Generating Facts from Data
+### Generating Facts from Data
 
 A common pattern is defining data in Janet and generating zelph facts programmatically:
 
@@ -762,7 +762,7 @@ A common pattern is defining data in Janet and generating zelph facts programmat
 
 After inference, zelph deduces that Brontosaurus and Apatosaurus have Diplodocidae as an ancestor — entirely from data generated by a Janet loop.
 
-#### Parameterized Rules
+### Parameterized Rules
 
 Janet functions can encapsulate common rule patterns:
 
@@ -784,7 +784,7 @@ Janet functions can encapsulate common rule patterns:
 
 A single function generates a transitive inference rule for any relation. The `let` pattern captures the condition set and reuses it — the Janet equivalent of the focus operator `*` in zelph syntax.
 
-#### Parameterized Queries
+### Parameterized Queries
 
 Similarly, queries can be wrapped in reusable functions:
 
@@ -800,7 +800,7 @@ Similarly, queries can be wrapped in reusable functions:
 
 Each `zelph/query` call resets the variable scope, so the two calls produce independent results.
 
-#### Wikidata Query Helpers
+### Wikidata Query Helpers
 
 Janet functions can provide a higher-level query interface for Wikidata:
 
@@ -825,11 +825,11 @@ This generates and executes the equivalent of:
 (*{(X P31 Q23038290) (X P105 Q34740)} ~ conjunction)
 ```
 
-#### Read-Only Graph Inspection
+### Read-Only Graph Inspection
 
 The following functions inspect the graph without modifying it. Unlike `zelph/fact`, they never create nodes or facts as a side effect. If a referenced name does not exist in the graph, the functions return `false`, `nil`, or an empty array as appropriate.
 
-##### Existence Check: `zelph/exists`
+#### Existence Check: `zelph/exists`
 
 `zelph/exists` checks whether a fact was claimed — asserted or derived:
 
@@ -848,7 +848,7 @@ Like `zelph/fact`, it accepts strings (resolved in the current language), `zelph
 %(zelph/exists berlin "~" "city")
 ```
 
-##### Claimed or Merely Written Down
+#### Claimed or Merely Written Down
 
 Writing a rule materialises its conditions and consequences as real fact
 nodes — the engine has nothing else to match against. Such a node is a
@@ -887,7 +887,7 @@ exists Berlin now: true
 A pattern carrying a variable is never data either, so a rule condition
 such as `(X p Y)` is invisible to all of the above by the same rule.
 
-##### Node Names: `zelph/name`
+#### Node Names: `zelph/name`
 
 `zelph/name` returns the name of a node as a string, or `nil` if the node has no name:
 
@@ -909,7 +909,7 @@ An optional second argument specifies the language:
 
 If no name exists in the requested language, `zelph/name` falls back through English, zelph, and other available languages before returning `nil`.
 
-##### Graph Traversal: `zelph/sources` and `zelph/targets`
+#### Graph Traversal: `zelph/sources` and `zelph/targets`
 
 These functions traverse the graph along a specific relation, returning arrays of `zelph/node` values:
 
@@ -942,7 +942,7 @@ These functions traverse the graph along a specific relation, returning arrays o
 %(zelph/targets elem-node "in")     # → @[<set-node>]
 ```
 
-##### List Decomposition: `zelph/car` and `zelph/cdr`
+#### List Decomposition: `zelph/car` and `zelph/cdr`
 
 These functions decompose cons cells (Lisp-style list nodes), mirroring the classic Lisp `car`/`cdr` operations:
 
@@ -951,17 +951,17 @@ These functions decompose cons cells (Lisp-style list nodes), mirroring the clas
 
 Both return `nil` for invalid input. `zelph/cdr` returns the `nil` node for the last cell in a list.
 
-``​`
+```
 %(def list-42 (zelph/list-chars "42"))
 %(zelph/car list-42)                    # → <zelph/node> for "4"
 %(zelph/cdr list-42)                    # → <zelph/node> for the sublist <2>
 %(zelph/car (zelph/cdr list-42))        # → <zelph/node> for "2"
 %(zelph/cdr (zelph/cdr list-42))        # → <zelph/node> for nil
-``​`
+```
 
 **Important:** `zelph/sources` and `zelph/targets` do _not_ work for decomposing cons cells, because cons cells are relation nodes (fact nodes) in the graph, not entities that appear as subjects or objects in higher-level facts. Use `zelph/car` and `zelph/cdr` instead.
 
-##### Practical Example: Inspecting a List
+#### Practical Example: Inspecting a List
 
 Combining `zelph/car` and `zelph/cdr` to walk a cons-list:
 
@@ -986,7 +986,7 @@ zelph> <42>
 
 Note: `zelph/car` and `zelph/cdr` mirror the classic Lisp operations. `zelph/sources` and `zelph/targets` cannot be used for cons cell decomposition because cons cells are relation nodes in the graph, not entities.
 
-##### Combining with Query Results
+#### Combining with Query Results
 
 Read-only functions are especially useful for processing query results:
 
@@ -1010,7 +1010,7 @@ Read-only functions are especially useful for processing query results:
 %
 ```
 
-#### Building a SPARQL-like Interface
+### Building a SPARQL-like Interface
 
 Combining Janet's macro system with zelph's API, you can create domain-specific query languages. Here is a sketch of a `SELECT ... WHERE` syntax:
 
@@ -1030,11 +1030,11 @@ Combining Janet's macro system with zelph's API, you can create domain-specific 
 
 The macro translates a SPARQL-inspired syntax into zelph conjunction queries. Since Janet is a full programming language, this can be extended with `OPTIONAL` (using negation), `FILTER`, and other SPARQL features — each mapped to the appropriate zelph construct.
 
-#### Rule Construction: `zelph/rule` and `zelph/negate`
+### Rule Construction: `zelph/rule` and `zelph/negate`
 
 These functions simplify the creation of inference rules from Janet. While rules can always be built manually using `zelph/collection`, `zelph/fact`, and `let` bindings (see [Rules in Janet: The `let` Pattern](#rules-in-janet-the-let-pattern)), `zelph/rule` encapsulates the entire pattern in a single call.
 
-##### `zelph/negate`
+#### `zelph/negate`
 
 Marks a fact pattern as a negation condition. Returns the pattern node itself (equivalent to the focus operator `*` in `(*(pattern) ~ negation)`):
 
@@ -1044,7 +1044,7 @@ Marks a fact pattern as a negation condition. Returns the pattern node itself (e
 
 This is equivalent to the zelph syntax fragment `(*(A .. X) ~ negation)` inside a condition set.
 
-##### `zelph/rule`
+#### `zelph/rule`
 
 Creates a complete inference rule: a conjunction of conditions linked to one or more consequences via `=>`.
 
@@ -1092,7 +1092,7 @@ Creates a complete inference rule: a conjunction of conditions linked to one or 
    (zelph/fact 'A "has" "mortality"))
 ```
 
-##### Parameterized Rules with `zelph/rule`
+#### Parameterized Rules with `zelph/rule`
 
 Combined with Janet functions, `zelph/rule` enables concise parameterized rule generation:
 
@@ -1112,7 +1112,7 @@ Combined with Janet functions, `zelph/rule` enables concise parameterized rule g
 
 Compare this to the manual `let` pattern from [Parameterized Rules](#parameterized-rules) — `zelph/rule` eliminates the boilerplate of creating the set, tagging it as a conjunction, and linking the consequence.
 
-##### Setting Up Digit-Wise Addition
+#### Setting Up Digit-Wise Addition
 
 As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops to set up a domain for the reasoning engine, here is the setup for single-digit arithmetic. All reasoning happens purely within zelph's inference engine — Janet only generates the initial facts and rules:
 
@@ -1155,7 +1155,7 @@ As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops
 
 The rules above are general-purpose (they work on any list, not just numbers). The lookup table encodes digit arithmetic as graph facts. From here, additional rules can process multi-digit numbers by walking lists from right to left, extracting digits, applying the lookup table, handling carries, and constructing new result lists using fresh variables — all within zelph's reasoning engine.
 
-### Extending the REPL: `zelph/register-keyword`
+## Extending the REPL: `zelph/register-keyword`
 
 `(zelph/register-keyword keyword handler)` registers a custom multi-line syntax block for the REPL and for `.zph` scripts. After the keyword is entered (optionally with content on the same line), subsequent lines are accumulated verbatim until an empty line, then passed as a single string to `handler`. The handler may return `:incomplete` to signal that the block is not yet complete (e.g. unbalanced braces) — accumulation then continues, and a second consecutive blank line forces dispatch. String results are printed line by line.
 
@@ -1175,7 +1175,7 @@ surrounding statement's scope. This is the host mechanism behind the stdlib's
 term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 `.zph` module — the language grows in scripts, not in C++.
 
-### Summary: zelph Syntax and Janet Equivalents
+## Summary: zelph Syntax and Janet Equivalents
 
 | zelph Syntax                    | Janet Equivalent                                    | Description                                                                 |
 | :------------------------------ | :-------------------------------------------------- | :-------------------------------------------------------------------------- |

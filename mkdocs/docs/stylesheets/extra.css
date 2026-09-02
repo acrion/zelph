@@ -1,7 +1,30 @@
 /* docs/extra.css */
-.svg-dark-container {
+
+/* The comparison diagrams in logic.md are drawn light-on-dark: white text and
+   saturated boxes on a transparent background. On the dark scheme they simply
+   work, and a panel behind them keeps them from bleeding into the page.
+
+   On the light scheme they do not, and a dark card in the middle of a light page
+   reads as a leftover rather than as a figure. Inverting the image and rotating
+   the hue back by half a turn puts dark text on pastel boxes and lets the panel
+   go away entirely, so the diagram sits on the page like any other figure. This
+   costs one rule and touches none of the ten SVG files; giving them a palette of
+   their own would mean rewriting all ten.
+
+   Both blocks are scoped by scheme, so switching the palette switches the
+   diagrams with it. */
+
+.diagram {
+    margin: 1em 0;
+    text-align: center;
+}
+
+[data-md-color-scheme="slate"] .diagram {
     background: #1e1e1e;
     border-radius: 8px;
     padding: 16px;
-    margin: 1em 0;
+}
+
+[data-md-color-scheme="default"] .diagram img {
+    filter: invert(1) hue-rotate(180deg);
 }

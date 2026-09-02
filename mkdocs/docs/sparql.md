@@ -1,3 +1,5 @@
+# SPARQL Queries
+
 zelph includes a SPARQL query interface: you can query any zelph network — not just Wikidata imports — using a substantial subset of the standard SPARQL query language. This page describes the feature from a user's perspective: how to enable it, what is supported, and what to expect in terms of performance.
 
 ## Why an Import Is Required

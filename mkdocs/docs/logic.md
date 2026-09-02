@@ -1,3 +1,5 @@
+# Logic and Computation
+
 <video id="logic-video" controls width="100%" preload="metadata">
     <source src="https://zelph.org/assets/2026-03-21-zelph.mp4" type="video/mp4">
   Your browser does not support the video tag.
@@ -16,22 +18,20 @@ function jumpTo(time) {
 
 ---
 
-## Logic and Computation
-
 zelph is a logic programming system, but not in the traditional sense.
 Where Prolog operates on terms and Datalog on flat relations, zelph stores _everything_ — facts, rules, predicates, even numbers — as structures in a single semantic network.
 Computation does not happen outside the graph; it _emerges from_ the graph, through rule-driven inference over its topology.
 
 This page introduces zelph's reasoning capabilities from a logic programming perspective.
-For the basic syntax of facts, sets, and lists, see the [main documentation](index.md).
+For the basic syntax of facts, sets, and lists, see [Core Concepts](concepts.md).
 For a hands-on quick start, see the [Quick Start Guide](quickstart.md).
 
-### Positioning: Forward Chaining over Graphs
+## Positioning: Forward Chaining over Graphs
 
 <a href="#" onclick="jumpTo(403); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/herbrand_fixpoint_overlay.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/herbrand_fixpoint_overlay.svg" alt="Forward chaining as a fixpoint over the Herbrand base" width="67%">
 </div>
 
 zelph's inference engine performs **forward chaining** (bottom-up evaluation), similar to Datalog or production rule systems.
@@ -136,8 +136,8 @@ In zelph, this problem does not exist. Every statement is already a node. The re
 
 zelph's design can be understood through comparisons with several established systems. These comparisons highlight both shared principles and fundamental differences.
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/zelph_summary_wrapup_v2.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/zelph_summary_wrapup_v2.svg" alt="Summary of how zelph relates to the systems compared on this page" width="67%">
 </div>
 
 ### Prolog and Datalog
@@ -150,8 +150,8 @@ But unlike standard Datalog, zelph's predicates are first-class nodes. This enab
 
 <a href="#" onclick="jumpTo(542); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/lean_vs_zelph_comparison.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/lean_vs_zelph_comparison.svg" alt="Lean and the Curry-Howard correspondence beside the zelph equivalent" width="67%">
 </div>
 
 [Lean 4](https://lean-lang.org) is a powerful theorem prover based on dependent type theory. Through the [Curry-Howard correspondence](https://en.wikipedia.org/wiki/Curry%E2%80%93Howard_correspondence), proofs in Lean _are_ programs — propositions are types, and proofs are terms. This is a beautiful unification of logic and computation, but it is a different kind of unification than what zelph provides.
@@ -166,8 +166,8 @@ Lean unifies through **type theory**. zelph unifies through **graph topology**. 
 
 <a href="#" onclick="jumpTo(611); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/goedel_vs_zelph_comparison.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/goedel_vs_zelph_comparison.svg" alt="Gödel numbering beside self-reference through node identity in zelph" width="67%">
 </div>
 
 In 1931, [Gödel](https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems) showed that formal systems can reason about themselves by encoding formulas as numbers via prime factorization. Arithmetic statements about those numbers become, implicitly, statements about formulas.
@@ -178,8 +178,8 @@ zelph's [relation nodes](#relation-nodes-and-self-reference) serve the exact sam
 
 <a href="#" onclick="jumpTo(708); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/lisp_vs_zelph_comparison_v2.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/lisp_vs_zelph_comparison_v2.svg" alt="Lisp S-expressions beside the same structure as zelph graph nodes" width="67%">
 </div>
 
 Lisp's famous "code is data" principle — [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity) via S-expressions — is a direct ancestor of what zelph does. But where Lisp applies this idea to _programs_ via cons-cell lists, zelph applies it to _knowledge_ via subject–predicate–object triples.
@@ -393,7 +393,7 @@ The engine recursively walks the graph topology, binding `A = 4`, `B = 5`, `C = 
 `.deductions all` is necessary here because the derived fact pertains to
 `test`, a node not referenced in the typed statement, so the default `focus`
 mode counts it instead of printing it – see [Deduction Output
-Modes](index.md#deduction-output-modes). (In `test A B` the variables occupy
+Modes](rules.md#deduction-output-modes). (In `test A B` the variables occupy
 predicate and object position: the derived statement is `test`, related to `5`
 through the predicate `4`.)
 
@@ -450,7 +450,7 @@ The statement `f maps 1 2` means: `f` is related via `maps` to both `1` and `2`,
 This is a deliberate design choice: zelph's internal topology represents objects as a set of incoming connections to the fact node, not as a sequence.
 
 When order matters — for example, to represent a mapping from a domain element to a codomain element — you must use **lists** (cons-lists via angle brackets `<...>`), which provide an explicit structural ordering.
-See [Angle Brackets: Lists](index.md#angle-brackets-lists) for details on the list syntax.
+See [Angle Brackets: Lists](concepts.md#angle-brackets-lists) for details on the list syntax.
 
 **Example — unordered objects in rules:**
 
@@ -506,8 +506,8 @@ This is higher-order reasoning expressed as first-order graph topology — with 
 
 <a href="#" onclick="jumpTo(812.5); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/negation_as_failure_comparison.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/negation_as_failure_comparison.svg" alt="Negation as failure in a conventional system beside negation in zelph" width="67%">
 </div>
 
 Negation in zelph follows **negation-as-failure** (NAF) semantics, familiar from Datalog with stratified negation and Prolog's `\+`.
@@ -578,7 +578,7 @@ candidates — the negation then only filters. The justification of each
 derived fact names both, so a result can be traced back to why the entity was
 considered at all.
 
-The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](index.md#the-focus-operator).
+The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](concepts.md#the-focus-operator).
 
 **What `¬` applies to.** A single fact pattern, not a group of them —
 `¬(A is y, A is z)` is rejected rather than guessed at. Use De Morgan:
@@ -592,7 +592,7 @@ consequence:
 ```
 
 Negating a group directly is an open direction, not a decision against it —
-see [Where the logic goes next](index.md#where-the-logic-goes-next).
+see [Where the logic goes next](about.md#where-the-logic-goes-next).
 
 **Where `¬` may stand, and what it means there.** In a rule condition it is the negation-as-failure operator above. Alone on a line it is a claim: the fact does _not_ hold.
 
@@ -746,8 +746,8 @@ Two boundaries are worth knowing:
 
 <a href="#" onclick="jumpTo(859); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/inequality_fol_vs_zelph.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/inequality_fol_vs_zelph.svg" alt="Inequality constraints in first-order logic beside their zelph form" width="67%">
 </div>
 
 The `!=` operator is a **built-in guard constraint** — not a fact lookup.
@@ -967,7 +967,7 @@ binary relation `P` — asserting P(x) via x P x is the classic encoding of
 unary predicates in a formalism whose primitive is a binary relation. The
 standard library uses self-facts as _request markers_: `(N testprime N)`
 triggers the primality test, `(T simplify T)` a simplification. The
-[self-fact prefix `:`](index.md#the-self-fact-prefix) makes both directions
+[self-fact prefix `:`](concepts.md#the-self-fact-prefix) makes both directions
 convenient — `:testprime N` on input, and the same compact form on output.
 
 A natural question, especially from a mathematical perspective: why not
@@ -1001,13 +1001,13 @@ If a knowledge base (e.g. Wikidata) records that 13 is a prime number, that sema
 
 ### Numbers as Cons-Lists
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/arithmetic_conventional_vs_zelph.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/arithmetic_conventional_vs_zelph.svg" alt="Conventional machine arithmetic beside numbers as cons-lists in zelph" width="67%">
 </div>
 
 The list `<42>` is internally stored as `2 cons (4 cons nil)` — least significant digit first.
 The display reverses the order for human readability, so results appear in conventional notation.
-For details on the list syntax, see [Angle Brackets: Lists](index.md#angle-brackets-lists).
+For details on the list syntax, see [Angle Brackets: Lists](concepts.md#angle-brackets-lists).
 
 This representation means digits are ordinary named nodes.
 The node `"4"` is the same node everywhere in the graph — in a number, in a Wikidata entity, in a classification.
@@ -1030,7 +1030,7 @@ This states: if `A` is followed by `B` in the number succession, then `1 + A = B
 The engine derives one sum per successor fact, and it derives them in whatever
 order the run reaches them. `(<1> + <1>) = <2>` is among them: subject and
 object of the sum coincide there, so it is printed with the
-[self-fact prefix](index.md#the-self-fact-prefix) as `(:+ <1>) = <2>`, which
+[self-fact prefix](concepts.md#the-self-fact-prefix) as `(:+ <1>) = <2>`, which
 re-enters as the same fact.
 
 The key point: `followed-by` is a user-defined relation. zelph has no arithmetic kernel. The rule works because the graph contains the corresponding facts.
@@ -1039,8 +1039,8 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 
 <a href="#" onclick="jumpTo(1068); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/multidigit_addition_pipeline_v2.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/multidigit_addition_pipeline_v2.svg" alt="The rule pipeline that carries a multi-digit addition" width="67%">
 </div>
 
 > **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](math/arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
@@ -1077,7 +1077,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 
 > The intermediate states below are shown with `.deductions all`. The
 > default mode (`focus`) derives them all the same but prints only the
-> final `=` fact — see [Deduction Output Modes](index.md#deduction-output-modes).
+> final `=` fact — see [Deduction Output Modes](rules.md#deduction-output-modes).
 
 ```
 .import decimal-arithmetic
@@ -1139,10 +1139,10 @@ Queries contain variables and are always evaluated, so this prints the result
 no matter how often it is repeated. The derived intermediate facts
 deliberately stay in the graph: they are reusable knowledge for subsequent
 computations. To sandbox a computation instead, wrap it in a
-[cluster](index.md#node-clusters-transactional-workspaces) and drop it
+[cluster](rules.md#node-clusters-transactional-workspaces) and drop it
 afterwards.
 
-By default, the REPL's deduction trace is filtered to facts about your input; see [Deduction Output Modes](index.md#deduction-output-modes).
+By default, the REPL's deduction trace is filtered to facts about your input; see [Deduction Output Modes](rules.md#deduction-output-modes).
 
 ### Semantic Integration with Knowledge Graphs
 
@@ -1237,7 +1237,7 @@ Division and remainder complete the four operations; see [Semantic Arithmetic](m
 
 Cons-lists are a general-purpose structure — numbers are merely one _use_ of them, and zelph deliberately does not hard-code any numeric representation. Which base is used, or whether digits are decimal characters at all, is decided entirely by the loaded rule scripts. The parser, however, offers two pieces of syntax sugar that make the numeric use case pleasant without constraining it:
 
-1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](index.md#angle-brackets-lists)).
+1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](concepts.md#angle-brackets-lists)).
 
 2. **The `&` prefix.** A token like `&42` is always decimal _input_, regardless of the internal representation. The parser transforms it into `(zelph/number "42")` — a call to the redefinable Janet function `zelph/number`, whose default implementation raises an error until a representation is loaded. [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) maps it to a decimal digit list (`&42` ≡ `<42>`), while [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) converts to base 2 (`&5` ≡ `<101>`). The prefix applies unconditionally: a token starting with `&` is a number literal, and if the loaded `zelph/number` cannot interpret it, that is an error — by design, there is no silent fallback to an atom. Every stdlib substrate reads the literal the same way, which is what makes them interchangeable under the shared module ID `arithmetic`: non-digits are rejected (`&abc` is an error, not a cons list of letters), and leading zeros are stripped, so `&007` and `&7` denote the same node. (The choice of `&` is a small homage to classic home-computer BASICs, where `&` prefixed number literals.)
 
@@ -1291,11 +1291,11 @@ zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
 
 **Both ends free is refused**, with a message asking you to bind one: a path over an unanchored pair would enumerate every path in the graph. The condition is scheduled after the conditions that bind ordinary variables, so the order in which you write it does not matter. The predicate itself must be a concrete predicate — a closure is indexed per predicate, and quantifying over predicates remains the business of an ordinary condition, which can do it.
 
-The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](index.md#the-focus-operator).
+The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](concepts.md#the-focus-operator).
 
 Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
 
-**A marker on a [self-fact](index.md#the-self-fact-prefix) inquires if a node reaches itself**, since `:pred X` is `(X pred X)` and predicate position is where the marker is read. That is a cycle test, and it needs nothing beyond what is already here – one condition to bind the node, and the path condition to ask:
+**A marker on a [self-fact](concepts.md#the-self-fact-prefix) inquires if a node reaches itself**, since `:pred X` is `(X pred X)` and predicate position is where the marker is read. That is a cycle test, and it needs nothing beyond what is already here – one condition to bind the node, and the path condition to ask:
 
 ```
 zelph> Q1 ~ class
@@ -1356,7 +1356,7 @@ This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), wher
 
 The record is a fact in the graph, and it says what a contradiction says: the set of the statements that matched, entered as **refuted** – these do not hold together. None of them is retracted; each stays asserted and keeps answering queries, and the set is the only node created.
 
-That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](index.md#exporting-derivations) and in `.help .contradiction-records`.
+That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](rules.md#exporting-derivations) and in `.help .contradiction-records`.
 
 Silence differs from a clean graph, thus the summary of a run says which of the two applies. A network that already holds records reports them next to the count of what this run found: `0 contradictions found (1 already recorded in this network)`. The number is extracted from the graph rather than counted as the run meets them, so it counts contradictions and not the rule instantiations that reach them – a symmetric rule matches the same pair twice and still reports one. A network you downloaded therefore states what it holds on the very first run over it.
 
@@ -1364,8 +1364,8 @@ Silence differs from a clean graph, thus the summary of a run says which of the 
 
 <a href="#" onclick="jumpTo(1143); return false;">🎬 Watch this section</a>
 
-<div class="svg-dark-container" style="text-align: center;">
-  <img src="../assets/wikidata_p361_p527_consistency_v2.svg" width="67%">
+<div class="diagram">
+  <img src="../assets/wikidata_p361_p527_consistency_v2.svg" alt="Consistency between the Wikidata properties P361 and P527" width="67%">
 </div>
 
 zelph can load and reason over millions of Wikidata facts. A typical consistency check uses negation to detect missing inverse relations:

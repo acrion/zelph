@@ -46,10 +46,61 @@ minimum is an entry in the command list in the [Quick Start
 Guide](https://acrion.github.io/zelph/quickstart/) _and_ the built-in help
 text in `command_executor.cpp`; the two must not drift apart.
 
+Every documentation link in this file targets the build that follows `main`,
+because that is the tree you are working against. The release site is
+[zelph.org](https://zelph.org/).
+
+Build the documentation before you open a pull request. CI runs the same
+command with `--strict`, so a dead cross-reference or a broken anchor fails the
+build rather than reaching the site.
+
+```bash
+pip install -r mkdocs/requirements.txt
+cd mkdocs
+mkdocs serve --livereload      # http://127.0.0.1:8000
+mkdocs build --strict          # what CI does
+```
+
+Pass `--livereload` explicitly. With mkdocs 1.6.1 the flag defaults to off, the
+server then builds once and serves that build for the rest of the session, and no
+amount of reloading in the browser helps because it is the server that is stale.
+The line `Watching paths for changes` in the startup output is what tells you the
+watcher is running.
+
+The playground under `/play` is not part of `docs/`; CI grafts it onto the
+built site afterwards. A local build therefore has no `/play`, and the links to
+it on the home page and the Playground page do not resolve. That is expected.
+
 ## Code Organization and Style
 
 If a change adds a substantial amount of code, consider a separate source file instead of
 growing an existing one — small, single-purpose files are preferred.
+
+Every C++ change is formatted using the repository’s `.clang-format` before it
+is committed. The style is settled and is not something that requires review to
+spend time on.
+
+```bash
+dev_scripts/clang-format.sh     # or clang-format.nu, for nushell
+```
+
+Both format every tracked `.cpp`, `.hpp` and `.h` in place. There is no
+formatting check in CI, because the output of clang-format differs between major
+versions and a gate would fail on the version rather than on the change. Running
+the script is therefore your responsibility.
+
+## Editor setup
+
+`compile_commands.json` at the repository root is a symlink into
+`build-release/`. That file is what `clangd` reads, and `clangd` is what gives an
+editor working completion, jump-to-definition and diagnostics across the project
+– Zed, VS Code, Neovim and the other language-server clients all go through it.
+The symlink dangles until you have configured a release build once, because the
+compilation database is written by CMake into the build directory:
+
+```bash
+cmake -D CMAKE_BUILD_TYPE=Release -B build-release .
+```
 
 Two hard rules from the engine internals break the build or deadlock the
 process when violated: `zelph_impl.hpp` is included only by `zelph.cpp`, and
@@ -78,6 +129,7 @@ developed.
 ## Pull Request Checklist
 
 - The test suite is green, including the tests added for this change.
+- `dev_scripts/clang-format.sh` has been run.
 - Documentation is updated (mkdocs; for new commands: quickstart list and
   built-in help).
 - The change is focused; unrelated improvements are split out.

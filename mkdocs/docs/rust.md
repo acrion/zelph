@@ -1,4 +1,4 @@
-## The Rust Layer
+# The Rust Layer
 
 Two crates live in `rust/` and sit on the [C ABI](capi.md):
 
@@ -9,7 +9,7 @@ Two crates live in `rust/` and sit on the [C ABI](capi.md):
 
 Anyone developing a host application relies on `zelph`. `zelph-sys` is named in `Cargo.toml` as well, for the reason given below.
 
-### What it covers, and what it does not
+## What it covers, and what it does not
 
 The same line as the C ABI: the part a host application needs – resolve names to nodes, assert facts, read them back, build lists and sets, compile a network out of the graph, evaluate it, train it, persist it. Rules, imports, display schemes and SPARQL stay in zelph's own language and in the REPL, where they are written once and read by anyone.
 
@@ -18,7 +18,7 @@ Two properties shape everything else:
 - **A node is its hash.** `Node` values are stable across calls and across a save and load cycle, and two structurally identical constructions collapse into one node. Identity is derived, never handed out.
 - **The engine is single-threaded, a compiled network is not.** `Engine` is neither `Send` nor `Sync`, and there is one per process. `Net` is both, and may be evaluated from many threads while another one trains it.
 
-### Depending on it
+## Depending on it
 
 There is no crates.io release yet, so a project points at a checkout:
 
@@ -41,7 +41,7 @@ fn main() {
 }
 ```
 
-### The build
+## The build
 
 `zelph-sys` builds zelph on each `cargo build` instead of simply detecting its presence. A stale library is the failure this project has already paid for once: it quietly invalidates every measurement made relative to it and nothing in the output conveys this.
 
@@ -50,7 +50,7 @@ fn main() {
 | `ZELPH_BUILD_DIR` | the CMake build directory to employ and maintain. Default: `build-release` in the repository root. |
 | `ZELPH_NO_BUILD` | set it to skip the CMake step, for a caller that builds zelph itself and knows the tree is current. |
 
-### An example
+## An example
 
 ```rust
 use zelph::{Engine, Result};
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
 
 A failure arrives as an `Error` carrying an `ErrorKind` and the engine's own message. `InvalidArgument` says the call itself was wrong and retrying it unaltered will not assist; `Runtime` says the engine reached the call and refused it; `Unknown` says the C ABI has grown a status this crate is not yet aware of.
 
-### How it is tested
+## How it is tested
 
 Three items operate in CI, and the third exists because the first two cannot reach it:
 

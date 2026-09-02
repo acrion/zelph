@@ -1,6 +1,8 @@
 # Binary Data Files
 
-Here, we will regularly publish precompiled `.bin` files for zelph that you can load and use directly. These files contain prepared semantic networks, mainly based on Wikidata data, but also on other domains. The focus is on efficiency: compared with JSON files, which can take hours to read, `.bin` files load in just a few minutes, depending on the hardware.
+Here, we will regularly publish precompiled `.bin` files for zelph that you can load and use directly. These files contain prepared semantic networks. The focus is on efficiency: compared with JSON files, which can take hours to read, `.bin` files load in just a few minutes, depending on the hardware.
+
+A `.bin` file is a saved zelph network and nothing more. The format carries no domain: it stores nodes, facts and rules, whatever they happen to be about. Everything listed below is derived from Wikidata, because that is where the large public datasets are today, but the page is the general inventory of published networks and will hold others as they appear.
 
 I plan to upload new `.bin` files regularly based on current Wikidata dumps (see [Wikidata Dumps](https://dumps.wikimedia.org/wikidatawiki/entities/) for transparency), and also to provide files for other data sources in the future.
 
@@ -385,11 +387,7 @@ of the two published variants).
 
 The programs responsible for generating the released files are
 [`dev_scripts/prune-full-dump-phased.zph`](https://github.com/acrion/zelph/tree/main/dev_scripts)
-and `prune-full-dump-phased-2.zph`. Previous log entries from earlier versions are
-stored at
-[https://github.com/acrion/zelph/tree/main/logs](https://github.com/acrion/zelph/tree/main/logs);
-note that they record a distinct, earlier pruning operation and not the files
-listed above.
+and `prune-full-dump-phased-2.zph`.
 
 ## Acknowledgments
 

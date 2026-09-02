@@ -153,7 +153,7 @@ What a generator can do is produce one rule per match, and the matches come from
 
 **A generated rule is an ordinary rule.**
 It survives `.save` and `.load`, `.explain` reconstructs proofs through it, `.list-rules` shows it, and `.remove` takes it — although the generator will write it again on the next run, because a consequence cannot be deleted while its premise stands.
-It is created inside whatever [cluster](index.md#node-clusters-transactional-workspaces) is active, so `.cluster-drop` rolls it back with the rest of an experiment.
+It is created inside whatever [cluster](rules.md#node-clusters-transactional-workspaces) is active, so `.cluster-drop` rolls it back with the rest of an experiment.
 
 ## Reference: what is substituted
 
@@ -185,7 +185,7 @@ zelph> (K is on) => ((X p Y) => (X likes {Y}))
 The exception is the accumulator: `(K is on) => ((X reported Y) => (Y in @{X}))`
 keeps naming the one container the generator wrote, because putting something
 into a container is a statement about that container. See
-[Braces](index.md#braces-set-constants-and-collections) for the two literals.
+[Braces](concepts.md#braces-set-constants-and-collections) for the two literals.
 
 The one shape that cannot be told apart is a fully **ground** inner rule that is also merely mentioned somewhere: [hash-consing](logic.md#mentioning-a-rule-is-not-asserting-it) makes those a single node, and the graph carries no evidence of which was meant.
 A rule with variables is two nodes, because every statement names its own variables — which is why the generator can assert a rule that is written out, unasserted, elsewhere.

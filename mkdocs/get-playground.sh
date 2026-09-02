@@ -9,8 +9,8 @@
 #
 # Requirements: GitHub CLI (gh, authenticated) and unzip.
 #
-# Meant to be run after building the mkdocs site (mkdocs build / generate-mkdocs.sh),
-# because the site directory is rebuilt from scratch there, wiping /play.
+# Meant to be run after `mkdocs build`, because that rebuilds the site directory
+# from scratch and wipes /play. See README.md beside this script.
 
 set -euo pipefail
 cd "$(dirname "$0")"

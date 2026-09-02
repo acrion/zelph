@@ -1,3 +1,5 @@
+# Importing and Exporting Data
+
 This page demonstrates how to use Janet's file I/O and JSON capabilities to import external data into zelph's semantic network and export inferred knowledge back to files.
 
 For general Janet integration, see [Scripting with Janet](janet.md). For installing external Janet packages (required for JSON support), see [Installing External Packages](janet.md#installing-external-packages).
@@ -115,7 +117,7 @@ zelph will automatically deduce facts like:
 Seventeen of them, and to observe them you must run `.deductions all` first:
 the facts they relate to emerged from an imported script, which contributes no
 anchor to the default `focus` mode, thus it outputs `(skipped 17 deductions)`
-instead – refer to [Deduction Output Modes](index.md#deduction-output-modes).
+instead – refer to [Deduction Output Modes](rules.md#deduction-output-modes).
 
 You can also add contradiction rules to validate the data. For example, to detect if a species is mistakenly assigned to two different families:
 

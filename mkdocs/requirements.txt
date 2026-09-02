@@ -1,0 +1,7 @@
+# Documentation toolchain, pinned so that a CI run and a local preview render the
+# same site. Material's own release notes warn that MkDocs 2.0 removes the plugin
+# system and rewrites theming with no migration path, so an unpinned install can
+# break the docs build on a day nothing in this repository changed.
+mkdocs==1.6.1
+mkdocs-material==9.7.6
+pymdown-extensions==10.21.2

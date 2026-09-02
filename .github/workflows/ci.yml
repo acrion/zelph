@@ -267,7 +267,16 @@ jobs:
       - name: Install documentation dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material pymdown-extensions
+          pip install -r mkdocs/requirements.txt
+
+      # A zero-width space inside a code fence is invisible in review and in the
+      # source, and it silently turns the whole block into running inline code.
+      - name: Reject invisible characters in the documentation
+        run: |
+          if grep -rlP '[\x{200b}\x{200c}\x{200d}\x{feff}]' mkdocs/docs README.md CONTRIBUTING.md; then
+            echo "::error::zero-width character found in the files listed above"
+            exit 1
+          fi
 
       - name: Build documentation
         working-directory: mkdocs

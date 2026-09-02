@@ -218,25 +218,28 @@ up.
 
 ## Exercises
 
-1. `sin hasderivative cos` is easy; the other half is not, because
-   d(cos u)/du = −sin(u) is not of the form g(u) for a named symbol `g`.
-   Give `cos` a dedicated assemble rule, in the shape `ln` uses:
+1.  `sin hasderivative cos` is easy; the other half is not, because
+    d(cos u)/du = −sin(u) is not of the form g(u) for a named symbol `g`.
+    Give `cos` a dedicated assemble rule, in the shape `ln` uses:
 
-   ```
-   ((cos of U) dstate X, (U wrt X) deriv P)
-   => (((cos of U) wrt X) deriv ((neg of (sin of U)) * P))
-   ((cos of U) dstate X, U contains X) => ((cos of U) contains X)
-   ```
+    ```
+    ((cos of U) dstate X, (U wrt X) deriv P)
+    => (((cos of U) wrt X) deriv ((neg of (sin of U)) * P))
+    ((cos of U) dstate X, U contains X) => ((cos of U) contains X)
+    ```
 
-   Then check that `$( sin(x) ) diffalong <x x x x>` closes the cycle back
-   to `sin(x)`. Why is the second rule needed as well?
-2. Verify Euler's theorem for a homogeneous polynomial of degree 4 in three
-   variables.
-3. `? $( x^2 ) diffalong <x x x>` — predict the answer, then check it.
-4. Write the quotient rule as an operator extension and confirm that
-   `((ln of x) diffalong <x x>)` then answers. You will need a `ddom`
-   declaration for `/`; without it the constancy fallback stays gated and
-   your rule will look correct but never fire on a constant numerator.
+    Then check that `$( sin(x) ) diffalong <x x x x>` closes the cycle back
+    to `sin(x)`. Why is the second rule needed as well?
+
+2.  Verify Euler's theorem for a homogeneous polynomial of degree 4 in three
+    variables.
+
+3.  `? $( x^2 ) diffalong <x x x>` — predict the answer, then check it.
+
+4.  Write the quotient rule as an operator extension and confirm that
+    `((ln of x) diffalong <x x>)` then answers. You will need a `ddom`
+    declaration for `/`; without it the constancy fallback stays gated and
+    your rule will look correct but never fire on a constant numerator.
 
 ## Next
 

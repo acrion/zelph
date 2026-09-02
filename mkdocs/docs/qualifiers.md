@@ -1,3 +1,5 @@
+# Wikidata Qualifiers
+
 Wikidata statements can carry **qualifiers** — additional property-value pairs that refine a statement, such as _start time_ (P580) on a _position held_ (P39) statement, or _list item_ (P11260) on a _disjoint union of_ (P2738) statement. Qualifiers are essential for two things zelph cares about: many [property constraints](https://www.wikidata.org/wiki/Help:Property_constraints_portal) are defined via qualifiers, and structural definitions such as class disjointness live entirely in qualifiers.
 
 The standard zelph Wikidata import (`.load`) deliberately imports only direct triples (entity–property–entity) for memory efficiency. Since version 0.9.6, the command `.wikidata-qualifiers` adds the statement layer on top of an already loaded network.

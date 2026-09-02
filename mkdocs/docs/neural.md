@@ -58,7 +58,7 @@ The low-level API:
 
 ## Layers Are Sets, Neurons Are Nodes
 
-A _layer_ is simply a node, and its neurons are the subjects of ordinary `(neuron in layer)` membership facts — the same `in` (PartOf) relation used for [sets](index.md#braces-set-constants-and-collections):
+A _layer_ is simply a node, and its neurons are the subjects of ordinary `(neuron in layer)` membership facts — the same `in` (PartOf) relation used for [sets](concepts.md#braces-set-constants-and-collections):
 
 ```
 x1 in Lin
@@ -252,15 +252,15 @@ The script, step by step:
 3. **Train a link predictor:** `(nn/link-predictor "geo" countries [p30] :epochs 150 :lr 0.2)` — input layer: countries + the P30 predicate node, output layer: the continents observed in the training triples. On the demo dump: 144 countries, 118 P30 samples.
 4. **Guard rule** — verify existing P30 facts through the network:
 
-```
-   (A demo-country yes, A P30 X, ≈geo(A P30 X)) => (A P30-verified X)
-```
+    ```
+    (A demo-country yes, A P30 X, ≈geo(A P30 X)) => (A P30-verified X)
+    ```
 
 5. **Generator rule** — let the network propose continents, keep only proposals _not_ backed by an existing fact (note the interplay of `≈` and negation-as-failure):
 
-```
-   (A demo-country yes, ≈geo(A P30 X), ¬(A P30 X)) => (A P30-candidate X)
-```
+    ```
+    (A demo-country yes, ≈geo(A P30 X), ¬(A P30 X)) => (A P30-candidate X)
+    ```
 
 6. **Cluster hygiene.** Everything runs inside `.cluster nn-demo`, so the entire experiment — layers, synapses, rules, deductions — can be rolled back with a single `.cluster-drop nn-demo`, leaving the loaded dump untouched.
 7. **Verification block.** After `.run`, the script queries the deduced facts and reads their confidences back from the weight store, closing the loop: network score → rule confidence → fact probability.

@@ -1,16 +1,18 @@
-### Installation
+# Quick Start Guide
+
+## Installation
 
 Choose the method that matches your operating system:
 
-#### 🐧 Linux (Arch Linux)
+### 🐧 Linux (Arch Linux)
 
 zelph is available in the [AUR](https://aur.archlinux.org/packages/zelph):
 
 ```bash
-pikaur -S zelph
+paru -S zelph
 ```
 
-#### 🐧 Linux (Debian / Ubuntu)
+### 🐧 Linux (Debian / Ubuntu)
 
 Download the latest `.deb` package for your architecture from [Releases](https://github.com/acrion/zelph/releases) and install it:
 
@@ -18,25 +20,25 @@ Download the latest `.deb` package for your architecture from [Releases](https:/
 sudo apt install ./zelph_*_amd64.deb
 ```
 
-#### 🐧 Linux (Other Distributions)
+### 🐧 Linux (Other Distributions)
 
 Download the latest `zelph-linux-x64.zip` (for arm64: `zelph-linux-arm64.zip`) from [Releases](https://github.com/acrion/zelph/releases), extract it, and run the binary directly.
-Alternatively, see [Building zelph](index.md#building-zelph) to compile from source.
+Alternatively, see [Building zelph](building.md#building-zelph) to compile from source.
 
-#### 🍏 macOS (via Homebrew)
+### 🍏 macOS (via Homebrew)
 
 ```bash
 brew tap acrion/zelph
 brew install zelph
 ```
 
-#### 🪟 Windows (via Chocolatey)
+### 🪟 Windows (via Chocolatey)
 
 ```powershell
 choco install zelph
 ```
 
-### Basic Usage
+## Basic Usage
 
 Once installed, you can run zelph in interactive mode simply by typing `zelph` in your terminal.
 (If you downloaded a binary manually without installing, run `./zelph` from the extraction directory).
@@ -56,7 +58,7 @@ After entering these statements, zelph will automatically infer that Berlin is l
 ```
 
 Note that none of the items used in the above statements are predefined, i.e. all are made known to zelph by these statements.
-In section [Semantic Network Structure](index.md#semantic-network-structure) you'll find details about the core concepts, including syntactic details.
+In section [Semantic Network Structure](concepts.md#semantic-network-structure) you'll find details about the core concepts, including syntactic details.
 
 **A statement may span several lines.** zelph reads lines until it has a
 complete statement — a subject, a predicate and at least one object — so a
@@ -82,7 +84,7 @@ At end of input an unfinished statement is reported (`Input ends inside an
 unfinished statement: (a p b)`), and a `.`-command typed while one is pending
 says which one it is.
 
-### Two Statement Prefixes
+## Two Statement Prefixes
 
 Besides the dot-commands, two prefixes modify how a *statement* is read.
 They are not commands and take no arguments — they attach to the statement
@@ -105,7 +107,7 @@ the graph without re-deriving anything.
 **`:` — the self-fact prefix.** Many requests are facts whose subject and
 object are the same node, `(T simplify T)`. The prefix spells that once:
 `:simplify T` *is* `(T simplify T)`, in input and in output. See
-[The Self-Fact Prefix](index.md#the-self-fact-prefix).
+[The Self-Fact Prefix](concepts.md#the-self-fact-prefix).
 
 The two combine, which is the usual way to drive the mathematical modules:
 
@@ -120,7 +122,7 @@ When a request has no answer, nothing is printed. Throughout the standard
 library that is deliberate: partiality is expressed by absence, never by a
 default value.
 
-### The Standard Library
+## The Standard Library
 
 zelph ships with a standard library of scripts. When a script given to `.import` is not found at the given path, zelph searches the standard library — there, the `.zph` extension is optional:
 
@@ -153,7 +155,7 @@ All installation methods on this page install the standard library automatically
 
 Note: some import/export examples read data files (e.g. `taxonomy.json`) from the current working directory; run those from within their examples directory or copy the data files first.
 
-### Loading and Saving Network State
+## Loading and Saving Network State
 
 zelph allows you to save the current network state to a binary file and load it later:
 
@@ -167,7 +169,7 @@ The `.load` command is general-purpose:
 - If the file ends with `.bin`, it loads the serialized network directly (fast).
 - If the file ends with `.json` or `.json.bz2` (a Wikidata dump), it imports the data and automatically creates a `.bin` cache file for future loads.
 
-### Data Cleanup Commands
+## Data Cleanup Commands
 
 zelph provides powerful commands for targeted data removal:
 
@@ -196,17 +198,17 @@ A P31 Q8054                 # Query all proteins
 .cleanup                    # Clean up any remaining isolated nodes
 ```
 
-### Full Command Reference
+## Full Command Reference
 
 Type `.help` inside the interactive session for a complete overview, or `.help <command>` for details on a specific command.
 
-#### Session
+### Session
 
 - `.help [command]` – Show this help or detailed help for a specific command
 - `.quit` – Exit REPL (quits zelph)
 - `.licenses` – Show third-party libraries and licenses
 
-#### Scripts, Loading & Saving
+### Scripts, Loading & Saving
 
 - `.import <script> [args...]` – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library
 - `.provides <id> [id2 ...]` – Claim module IDs in the import registry
@@ -217,7 +219,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.stat-file <file.bin>` – Show serialized-file chunk statistics without loading the network
 - `.index-file <file.bin> <json>` – Emit a JSON byte-offset index for a serialized .bin file
 
-#### Languages & Names
+### Languages & Names
 
 - `.lang [code]` – Show or set current language (e.g. en, de, wikidata)
 - `.name <node|id> <new_name>` – Set name in current language
@@ -226,7 +228,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 Giving a node a name that another node already holds in that language **merges the two**, with a warning naming both — that is how one states, after the fact, that a node written by hand and an imported entity are the same thing. A node *is* the hash of what it is built from, so everything built on the node that disappears is re-created under the id its new components give it, and folds into an equal fact where the graph already holds one. Core nodes are never the ones that disappear, and a variable and a non-variable cannot be merged at all.
 
-#### Exploring the Network
+### Exploring the Network
 
 - `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
 - `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: `.why`
@@ -239,18 +241,18 @@ Giving a node a name that another node already holds in that language **merges t
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent predicates)
 - `.list-predicate-value-usage <name|id|fact> [max]` – Show object/value usage statistics for a specific predicate (top N most frequent values)
 
-#### Inference & Rules
+### Inference & Rules
 
 - `.run` – Run full inference (from Janet: [`(zelph/run)`](janet.md#running-the-engine))
 - `.run-once` – Run a single inference pass (from Janet: `(zelph/run-once)`)
 - `.run-delta` – Run inference seeded only by the facts added since the last run; costs time in the size of the addition rather than of the graph (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
-- `.run-export <file>` – Run inference and write what that run derives to a JSON Lines file (see [Exporting Derivations](index.md#exporting-derivations))
+- `.run-export <file>` – Run inference and write what that run derives to a JSON Lines file (see [Exporting Derivations](rules.md#exporting-derivations))
 - `.auto-run` – Toggle automatic execution of .run after each input; takes no argument (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
 - `.deductions [all|focus|off]` – Set the deduction printing mode (default: focus)
 - `.list-rules` – List all defined inference rules
 - `.remove-rules` – Remove all inference rules
 
-#### Editing & Removing
+### Editing & Removing
 
 - `.remove <name|id>` – Remove a node and everything it is a part of (destructive)
 - `.prune-facts <pattern>` – Remove all facts matching the query pattern (only statements)
@@ -259,19 +261,19 @@ Giving a node a name that another node already holds in that language **merges t
 - `.cleanup` – Remove isolated nodes and clean name mappings (core nodes exempt)
 - `.new` – Clear the complete network and re-initialize the core nodes
 
-#### Clusters
+### Clusters
 
 - `.cluster [name]` – Show clusters, or activate one ('default' = no cluster)
 - `.cluster-drop <name>` – Remove a cluster INCLUDING all nodes created in it (rollback)
 - `.cluster-merge <from> <to>` – Move a cluster's membership into another ('default' = keep nodes, forget cluster)
 
-#### Wikidata
+### Wikidata
 
 - `.wikidata-constraints <json> <dir>` – Export property constraints as zelph scripts to a directory
 - `.wikidata-qualifiers <json> [P1 P2 ...]` – Import statement qualifiers from a Wikidata dump (all, or only listed qualifier properties)
 - `.export-wikidata <json> <id1> [id2 ...]` – Extract exact JSON lines for Q-IDs (no import)
 
-#### Engine Behaviour
+### Engine Behaviour
 
 - `.parallel` – Toggle parallel processing (default: on)
 - `.anchors [on|off]` – Show or set anchor-based candidate lookups in unification (default: on)
@@ -279,15 +281,15 @@ Giving a node a name that another node already holds in that language **merges t
 - `.fact-stores [on|off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
 - `.contradiction-records [on|off]` – Show or disable writing each contradiction into the graph (memory vs. repeated reports)
 
-#### Logging & Profiling
+### Logging & Profiling
 
 - `.log <max-depth>` – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)
 - `.log-janet` – Toggle logging of Janet function calls (inputs/outputs)
 - `.prof [reset]` – Dump reasoning profiler counters (requires .log -1 or .log N); 'reset' starts a fresh window
 
-### What's Next?
+## What's Next?
 
 - [Mathematics](math/index.md) — proving polynomial identities, symbolic differentiation, and a stack built from a single logic gate upwards
-- Explore the [Core Concepts](index.md#core-concepts) to understand how zelph represents knowledge
-- Learn about [Rules and Inference](index.md#rules-and-inference) to leverage zelph's reasoning capabilities
-- Check out the [Example Script](index.md#example-script) for a comprehensive demonstration
+- Explore the [Core Concepts](concepts.md#core-concepts) to understand how zelph represents knowledge
+- Learn about [Rules and Inference](rules.md#rules-and-inference) to leverage zelph's reasoning capabilities
+- Check out the [Example Script](example-script.md#example-script) for a comprehensive demonstration

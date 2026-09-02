@@ -35,7 +35,7 @@ window accumulates across statements and imports; `.prof` dumps it on
 demand and `.prof reset` starts a fresh window between phases. Use
 `.deductions off` as well: rendering large derived terms dominates
 wall-clock time otherwise (see
-[Deduction Output Modes](../index.md#deduction-output-modes)).
+[Deduction Output Modes](../rules.md#deduction-output-modes)).
 
 ## The Reference Protocol
 
