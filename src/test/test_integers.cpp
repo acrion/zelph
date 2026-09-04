@@ -56,7 +56,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("integers: signed addition (all arithmetic modules)")
+TEST_CASE("integers: signed addition (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -106,7 +106,7 @@ TEST_CASE("integers: signed addition (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("integers: signed subtraction via delegation (all arithmetic modules)")
+TEST_CASE("integers: signed subtraction via delegation (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -159,7 +159,7 @@ TEST_CASE("integers: signed subtraction via delegation (all arithmetic modules)"
         } });
 }
 
-TEST_CASE("integers: signed multiplication (all arithmetic modules)")
+TEST_CASE("integers: signed multiplication (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -250,7 +250,7 @@ TEST_CASE("integers: signed comparison (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("integers: composability and cross-module cascades (all arithmetic modules)")
+TEST_CASE("integers: composability and cross-module cascades (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -296,7 +296,7 @@ TEST_CASE("integers: composability and cross-module cascades (all arithmetic mod
         } });
 }
 
-TEST_CASE("integers: uniform operator facade on shared predicates (all arithmetic modules)")
+TEST_CASE("integers: uniform operator facade on shared predicates (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

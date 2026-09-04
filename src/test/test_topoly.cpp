@@ -58,7 +58,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("topoly: leaves and numeral promotion (all arithmetic modules)")
+TEST_CASE("topoly: leaves and numeral promotion (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -109,7 +109,7 @@ TEST_CASE("topoly: leaves and numeral promotion (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("topoly: operators delegate to the data layer (all arithmetic modules)")
+TEST_CASE("topoly: operators delegate to the data layer (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -159,7 +159,7 @@ TEST_CASE("topoly: operators delegate to the data layer (all arithmetic modules)
         } });
 }
 
-TEST_CASE("topoly: polynomial identities are node identity (all arithmetic modules)")
+TEST_CASE("topoly: polynomial identities are node identity (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -222,7 +222,7 @@ TEST_CASE("topoly: polynomial identity ≡ via node identity (all arithmetic mod
         CHECK(any_output_contains(collector, "TI-NEQ-false")); });
 }
 
-TEST_CASE("topoly: identity verdicts are three-way (all arithmetic modules)")
+TEST_CASE("topoly: identity verdicts are three-way (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

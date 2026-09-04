@@ -28,6 +28,21 @@ You need:
     cmake --build build
     ```
 
+## Which processors the build targets
+
+On x86-64, a release build targets `x86-64-v3`, which means AVX2, FMA and BMI2, and which every processor from 2013 onwards has. The result therefore runs on any machine that meets that floor, and not merely on the one that compiled it.
+
+Two options change this:
+
+```bash
+cmake -D ZELPH_NATIVE_ARCH=ON -B build .          # for this machine only, and faster
+cmake -D ZELPH_X86_BASELINE=x86-64-v2 -B build .  # for processors older than 2013
+```
+
+`ZELPH_NATIVE_ARCH` hands the compiler everything the building machine offers. That is worth having for a build you run yourself, and it must not be used for anything you pass on: the binary then dies with an illegal instruction on every processor that lacks one of those instructions.
+
+`ctest` holds the built library against the declared floor and fails when it needs more, so a release cannot acquire such a dependency unnoticed.
+
 ## Verifying the Build
 
 Test your installation by running the CLI:

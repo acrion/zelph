@@ -437,17 +437,38 @@ if(ZELPH_WASM)
 endif()
 
 set(ZELPH_OPT_FLAGS "")
-check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
 
 if (EMSCRIPTEN)
     # Keep the first wasm build simple and debuggable; LTO and unrolling are
-    # (re)evaluated against real timings in M5. -march=native is meaningless
-    # for wasm32.
+    # (re)evaluated against real timings in M5. An instruction set floor is
+    # meaningless for wasm32.
     list(APPEND ZELPH_OPT_FLAGS "-O3")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     list(APPEND ZELPH_OPT_FLAGS "-O3")
-    if (COMPILER_SUPPORTS_MARCH_NATIVE)
-        list(APPEND ZELPH_OPT_FLAGS "-march=native")
+
+    if (ZELPH_TARGET_IS_X86_64)
+        if (ZELPH_NATIVE_ARCH)
+            check_cxx_compiler_flag("-march=native" ZELPH_SUPPORTS_MARCH_NATIVE)
+            if (ZELPH_SUPPORTS_MARCH_NATIVE)
+                list(APPEND ZELPH_OPT_FLAGS "-march=native")
+            else ()
+                message(WARNING "ZELPH_NATIVE_ARCH is on, but the compiler rejects -march=native")
+            endif ()
+        else ()
+            string(MAKE_C_IDENTIFIER "ZELPH_SUPPORTS_MARCH_${ZELPH_X86_BASELINE}" ZELPH_BASELINE_CACHE_VAR)
+            check_cxx_compiler_flag("-march=${ZELPH_X86_BASELINE}" ${ZELPH_BASELINE_CACHE_VAR})
+            if (${ZELPH_BASELINE_CACHE_VAR})
+                list(APPEND ZELPH_OPT_FLAGS "-march=${ZELPH_X86_BASELINE}")
+            else ()
+                # Falling back to a lower floor by hand would ship a different
+                # instruction set than the one the build declares, and the check
+                # on the artefact would then measure against the wrong number.
+                message(WARNING
+                        "The compiler rejects -march=${ZELPH_X86_BASELINE}; building for its own "
+                        "default instruction set instead. The result runs anywhere the compiler "
+                        "targets by default, and is slower than a released build.")
+            endif ()
+        endif ()
     endif ()
 
     # CRITICAL: Do NOT use -ffast-math!

@@ -51,6 +51,30 @@ add_library(project_options INTERFACE)
 option(ZELPH_BUILD_APP   "Build the zelph REPL executable" ${PROJECT_IS_TOP_LEVEL})
 option(ZELPH_BUILD_TESTS "Build zelph tests"               ${PROJECT_IS_TOP_LEVEL})
 
+# A released binary must run on the machines its users have, not on the one that
+# happened to build it. -march=native decides that by lottery: it hands the
+# build machine's whole instruction set to the compiler, so an artefact built on
+# a Xeon with AVX-512 dies with an illegal instruction on any desktop CPU. The
+# floor below is therefore the default, and native is something you ask for.
+set(ZELPH_X86_BASELINE "x86-64-v3" CACHE STRING
+    "Instruction set floor for x86-64 builds (a -march= name, e.g. x86-64-v2)")
+option(ZELPH_NATIVE_ARCH
+       "Build for the machine that compiles, rather than for ZELPH_X86_BASELINE" OFF)
+
+# CMAKE_SYSTEM_PROCESSOR names the host, which is incorrect when the build aims
+# at a different architecture. Where the toolchain names a target, that decides.
+if (CMAKE_CXX_COMPILER_TARGET)
+    if (CMAKE_CXX_COMPILER_TARGET MATCHES "^(x86_64|amd64)")
+        set(ZELPH_TARGET_IS_X86_64 TRUE)
+    else ()
+        set(ZELPH_TARGET_IS_X86_64 FALSE)
+    endif ()
+elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(ZELPH_TARGET_IS_X86_64 TRUE)
+else ()
+    set(ZELPH_TARGET_IS_X86_64 FALSE)
+endif ()
+
 # WebAssembly playground build. Implies: static lib, no Cap'n Proto
 # persistence, no native app, no test suite. Use via: emcmake cmake ...
 option(ZELPH_WASM "Build the WebAssembly playground" ${EMSCRIPTEN})

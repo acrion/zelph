@@ -70,7 +70,7 @@ namespace
     }
 }
 
-TEST_CASE("math: Cayley-Hamilton for a symbolic 2x2 matrix")
+TEST_CASE("math: Cayley-Hamilton for a symbolic 2x2 matrix" * doctest::test_suite("slow"))
 {
     // Every square matrix satisfies its own characteristic polynomial. For
     //
@@ -121,7 +121,7 @@ TEST_CASE("math: Newton's identities in three indeterminates")
     CHECK_FALSE(proves(collector, interactive, "$( (a+b+c)*(a^2+b^2+c^2) - (a*b+a*c+b*c)*(a+b+c) + 2*(a*b*c) ) ≡ $( a^3 + b^3 + c^3 )"));
 }
 
-TEST_CASE("math: Jacobi's formula proved by a pipeline of rules")
+TEST_CASE("math: Jacobi's formula proved by a pipeline of rules" * doctest::test_suite("slow"))
 {
     // d/dx det A(x) = tr(adj(A) A'(x)), for
     //
@@ -165,7 +165,7 @@ TEST_CASE("math: Jacobi's formula proved by a pipeline of rules")
     CHECK(answers.size() == 1); // the true claim only
 }
 
-TEST_CASE("math: asking a question a rule is already waiting for")
+TEST_CASE("math: asking a question a rule is already waiting for" * doctest::test_suite("slow"))
 {
     // The defect the case above turned up, reduced to three lines.
     //
@@ -224,7 +224,7 @@ TEST_CASE("math: asking a question a rule is already waiting for")
     }
 }
 
-TEST_CASE("math: Jacobi's formula assembled from the matrix entries")
+TEST_CASE("math: Jacobi's formula assembled from the matrix entries" * doctest::test_suite("slow"))
 {
     // The full construction, and the most demanding thing in this suite: the
     // rules build BOTH sides out of the matrix entries rather than being
@@ -333,7 +333,7 @@ m ed $( x^3 )
     }
 }
 
-TEST_CASE("math: a multi-letter variable needs its underscore")
+TEST_CASE("math: a multi-letter variable needs its underscore" * doctest::test_suite("slow"))
 {
     // The trap this file was written around, and it cost an hour: variables
     // are single uppercase letters or identifiers starting with `_`. `DA` is
@@ -381,7 +381,7 @@ TEST_CASE("math: a multi-letter variable needs its underscore")
 // nobody can account for.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("math: negation-as-failure over the equivalence machinery")
+TEST_CASE("math: negation-as-failure over the equivalence machinery" * doctest::test_suite("slow"))
 {
     // The negation has to be evaluated AFTER the equivalence machinery has
     // had its chance -- it is a multi-stage, demand-driven proof, not a
@@ -483,7 +483,7 @@ $( x*y ) interesting yes
     CHECK_FALSE(any_output_contains(collector, "No rules found"));
 }
 
-TEST_CASE("math: a refuted identity reported as a contradiction")
+TEST_CASE("math: a refuted identity reported as a contradiction" * doctest::test_suite("slow"))
 {
     // Negation-as-failure, the equivalence machinery and the contradiction
     // marker in one rule set: a claimed identity that cannot be proved makes

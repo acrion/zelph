@@ -53,7 +53,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("symbolic-minus: subtraction and negation in the simplifier (all arithmetic modules)")
+TEST_CASE("symbolic-minus: subtraction and negation in the simplifier (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -158,7 +158,7 @@ c ~ symconst
         } });
 }
 
-TEST_CASE("symbolic-integers: Z numerals in the simplifier (all arithmetic modules)")
+TEST_CASE("symbolic-integers: Z numerals in the simplifier (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -247,7 +247,7 @@ TEST_CASE("symbolic-integers: Z numerals in the simplifier (all arithmetic modul
         } });
 }
 
-TEST_CASE("symbolic-integers: differentiation over Z coefficients (all arithmetic modules)")
+TEST_CASE("symbolic-integers: differentiation over Z coefficients (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

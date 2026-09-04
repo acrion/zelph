@@ -161,3 +161,102 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 add_test(NAME zelph_tests COMMAND zelph_tests)
+
+# Two checks that hold the build to something it declares about itself, rather
+# than to what the machine it was built on happened to offer. Both are wired as
+# tests, so the step that already runs ctest carries them on every platform.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
+function(zelph_add_check_test name script arguments expect_code)
+    add_test(NAME ${name} COMMAND ${CMAKE_COMMAND}
+             -DPYTHON=${Python3_EXECUTABLE}
+             -DSCRIPT=${script}
+             "-DARGS=${arguments}"
+             -DEXPECT_CODE=${expect_code}
+             "-DEXPECT_OUTPUT=${ARGN}"
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_check.cmake)
+endfunction()
+
+# --- the instruction set the build may use -----------------------------------
+
+if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    find_program(ZELPH_OBJDUMP NAMES objdump llvm-objdump gobjdump)
+
+    if (NOT Python3_Interpreter_FOUND OR NOT ZELPH_OBJDUMP)
+        # Rather than vanish without a trace. A check that silently does not
+        # run reads exactly like a check that passed.
+        message(WARNING
+                "Not checking the instruction set floor of the build: it needs python3 and "
+                "objdump, and this machine has "
+                "python3=${Python3_Interpreter_FOUND} objdump=${ZELPH_OBJDUMP}.")
+    else ()
+        set(ZELPH_ARCH_CHECK "${CMAKE_SOURCE_DIR}/tools/check_arch_baseline.py")
+
+        include(CheckCXXCompilerFlag)
+        string(MAKE_C_IDENTIFIER "ZELPH_SUPPORTS_MARCH_${ZELPH_X86_BASELINE}" ZELPH_TEST_BASELINE_VAR)
+        check_cxx_compiler_flag("-march=${ZELPH_X86_BASELINE}" ${ZELPH_TEST_BASELINE_VAR})
+        check_cxx_compiler_flag("-mavx512f" ZELPH_SUPPORTS_MAVX512F)
+
+        function(zelph_add_arch_probe name source flag)
+            add_library(${name} STATIC ${source})
+            # The probe needs to reach the disassembler in machine code, so
+            # link time optimization stays off here whatever the build sets
+            # globally.
+            set_target_properties(${name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+            target_compile_options(${name} PRIVATE -O3 -fno-lto ${flag})
+        endfunction()
+
+        if (${ZELPH_TEST_BASELINE_VAR})
+            zelph_add_arch_probe(zelph_arch_probe_baseline arch_probe_baseline.cpp
+                                 "-march=${ZELPH_X86_BASELINE}")
+            zelph_add_check_test(arch_baseline_accepts_the_floor "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_arch_probe_baseline> --floor ${ZELPH_X86_BASELINE}" 0)
+        endif ()
+
+        if (ZELPH_SUPPORTS_MAVX512F)
+            zelph_add_arch_probe(zelph_arch_probe_avx512 arch_probe_avx512.cpp "-mavx512f")
+            zelph_add_check_test(arch_baseline_refuses_avx512 "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_arch_probe_avx512> --floor ${ZELPH_X86_BASELINE}" 1
+                    "above ${ZELPH_X86_BASELINE}")
+        endif ()
+
+        # The one that guards the release. The two probes above only establish
+        # that the check can tell the two cases apart.
+        if (NOT ZELPH_NATIVE_ARCH)
+            zelph_add_check_test(arch_baseline_of_the_library "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_lib> --floor ${ZELPH_X86_BASELINE}" 0)
+        endif ()
+    endif ()
+endif ()
+
+# --- the tests that the packages run when a user installs zelph --------------
+
+set(ZELPH_INSTALL_TIER_BUDGET_SECONDS "180" CACHE STRING
+    "Seconds the tests outside the slow suite may take, measured where the build runs")
+
+if (Python3_Interpreter_FOUND)
+    set(ZELPH_TIER_CHECK "${CMAKE_SOURCE_DIR}/tools/check_install_tier.py")
+    set(ZELPH_TIER_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/install_tier_fixtures")
+
+    # What a user actually waits for. It runs the selection the packages run and
+    # holds it to its own rules, so a case that grows expensive is found here and
+    # not on somebody's machine during an install.
+    zelph_add_check_test(install_tier "${ZELPH_TIER_CHECK}"
+            "--run $<TARGET_FILE:zelph_tests> --budget ${ZELPH_INSTALL_TIER_BUDGET_SECONDS}" 0)
+
+    # Recorded listings instead of the binary, so these three exercise the rules
+    # themselves and stay fast. A selection that no longer refuses what it is
+    # meant to refuse is worse than no selection at all.
+    zelph_add_check_test(install_tier_accepts_a_healthy_selection "${ZELPH_TIER_CHECK}"
+            "--from-listing ${ZELPH_TIER_FIXTURES}/healthy.txt --budget 100" 0)
+    zelph_add_check_test(install_tier_refuses_a_dominating_case "${ZELPH_TIER_CHECK}"
+            "--from-listing ${ZELPH_TIER_FIXTURES}/dominated.txt --budget 100" 1
+            "swallows the selection.* above the allowed")
+    zelph_add_check_test(install_tier_refuses_creep "${ZELPH_TIER_CHECK}"
+            "--from-listing ${ZELPH_TIER_FIXTURES}/creep.txt --budget 100" 1
+            "above the declared budget")
+else ()
+    # Rather than skip. The tests the packages run at install time are the ones
+    # nobody watches, so their guard must not be the first thing to disappear.
+    message(WARNING "Not checking what the packages run at install time: python3 was not found.")
+endif ()

@@ -197,7 +197,7 @@ TEST_CASE("display: tagging a structured term does not hide it behind the concep
         CHECK_FALSE(any_output_contains(collector, "t ~ t")); });
 }
 
-TEST_CASE("display: a compiled term renders in full as a nested subterm")
+TEST_CASE("display: a compiled term renders in full as a nested subterm" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -225,7 +225,7 @@ x pouter y
         CHECK_FALSE(any_output_contains(collector, "(?? * y)")); });
 }
 
-TEST_CASE("display: a compiled term keeps its structure across several parents")
+TEST_CASE("display: a compiled term keeps its structure across several parents" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -249,7 +249,7 @@ x pouter y
         CHECK_FALSE(any_output_contains(collector, "?")); });
 }
 
-TEST_CASE("display: rendering under active logging does not recurse")
+TEST_CASE("display: rendering under active logging does not recurse" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

@@ -36,7 +36,7 @@ using namespace zelph::test;
 // must leak neither echoes nor deduction traces nor premature answers.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("? prefix: arithmetic one-liners, quiet pre-pass (all arithmetic modules)")
+TEST_CASE("? prefix: arithmetic one-liners, quiet pre-pass (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -82,7 +82,7 @@ TEST_CASE("? prefix: arithmetic one-liners, quiet pre-pass (all arithmetic modul
         } });
 }
 
-TEST_CASE("? prefix: self-fact requests (all arithmetic modules)")
+TEST_CASE("? prefix: self-fact requests (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -92,7 +92,7 @@ TEST_CASE("? prefix: self-fact requests (all arithmetic modules)")
         CHECK(answers_contain(collector, "(:testprime &7) = prime")); });
 }
 
-TEST_CASE("? prefix: symbolic pipeline and math-syntax islands (all arithmetic modules)")
+TEST_CASE("? prefix: symbolic pipeline and math-syntax islands (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

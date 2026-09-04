@@ -57,7 +57,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("polynomial: constant and same-variable addition (all arithmetic modules)")
+TEST_CASE("polynomial: constant and same-variable addition (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -109,7 +109,7 @@ TEST_CASE("polynomial: constant and same-variable addition (all arithmetic modul
         } });
 }
 
-TEST_CASE("polynomial: cross-variable and constant-composite addition (all arithmetic modules)")
+TEST_CASE("polynomial: cross-variable and constant-composite addition (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -160,7 +160,7 @@ TEST_CASE("polynomial: cross-variable and constant-composite addition (all arith
         } });
 }
 
-TEST_CASE("polynomial: negation and subtraction (all arithmetic modules)")
+TEST_CASE("polynomial: negation and subtraction (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -202,7 +202,7 @@ TEST_CASE("polynomial: negation and subtraction (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("polynomial: multiplication -- constants, zero factor, scaling (all arithmetic modules)")
+TEST_CASE("polynomial: multiplication -- constants, zero factor, scaling (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -261,7 +261,7 @@ TEST_CASE("polynomial: multiplication -- constants, zero factor, scaling (all ar
         } });
 }
 
-TEST_CASE("polynomial: multiplication -- same-main-variable schoolbook (all arithmetic modules)")
+TEST_CASE("polynomial: multiplication -- same-main-variable schoolbook (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

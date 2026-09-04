@@ -295,7 +295,7 @@ TEST_CASE("number display: registered digits render lists as decimal &-literals"
 // Comparison via rules (stdlib scripts, base-agnostic)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: comparison via rules (all arithmetic modules)")
+TEST_CASE("numbers: comparison via rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -336,7 +336,7 @@ TEST_CASE("numbers: comparison via rules (all arithmetic modules)")
 // Subtraction via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: subtraction via rules (all arithmetic modules)")
+TEST_CASE("numbers: subtraction via rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -408,7 +408,7 @@ TEST_CASE("numbers: comparison and subtraction via rules (binary, identical rule
 // Composability: computed facts are ordinary facts
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: computed comparison facts compose with meta-rules")
+TEST_CASE("numbers: computed comparison facts compose with meta-rules" * doctest::test_suite("slow"))
 {
     // Comparison results are relational facts (N > M), so they feed the same
     // meta-rules as declared knowledge -- here the generic transitivity rule.
@@ -449,7 +449,7 @@ TEST_CASE("numbers: derived results trigger further rule-based computations")
 // Result queries: the repeatable user-facing idiom
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: result query (A + B) = X is repeatable")
+TEST_CASE("numbers: result query (A + B) = X is repeatable" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -473,7 +473,7 @@ TEST_CASE("numbers: result query (A + B) = X is repeatable")
         CHECK(answers_contain(collector, "(&12 + &34) = &46")); });
 }
 
-TEST_CASE("numbers: result query (A cmp B) = X is repeatable (rule CC0)")
+TEST_CASE("numbers: result query (A cmp B) = X is repeatable (rule CC0)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -493,7 +493,7 @@ TEST_CASE("numbers: result query (A cmp B) = X is repeatable (rule CC0)")
 // Multiplication via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: multiplication via rules (all arithmetic modules)")
+TEST_CASE("numbers: multiplication via rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -534,7 +534,7 @@ TEST_CASE("numbers: multiplication via rules (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("numbers: result query (A * B) = X is repeatable")
+TEST_CASE("numbers: result query (A * B) = X is repeatable" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -553,7 +553,7 @@ TEST_CASE("numbers: result query (A * B) = X is repeatable")
         CHECK(answers_contain(collector, "(&6 * &7) = &42")); });
 }
 
-TEST_CASE("numbers: multiplication cascades into comparison")
+TEST_CASE("numbers: multiplication cascades into comparison" * doctest::test_suite("slow"))
 {
     // Three modules chained: mul internally drives add (MA1/MA2), a user
     // rule consumes the = result and asserts a cmp trigger.
@@ -572,7 +572,7 @@ TEST_CASE("numbers: multiplication cascades into comparison")
 // Division via rules
 // ---------------------------------------------------------------------------
 
-TEST_CASE("numbers: division via rules (all arithmetic modules)")
+TEST_CASE("numbers: division via rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {
@@ -649,7 +649,7 @@ TEST_CASE("numbers: result query (A / B) = X is repeatable")
         CHECK(answers_contain(collector, "(&17 / &5) = &3")); });
 }
 
-TEST_CASE("numbers: subtraction and division results are canonical (no leading zeros)")
+TEST_CASE("numbers: subtraction and division results are canonical (no leading zeros)" * doctest::test_suite("slow"))
 {
     // Pins the canonicalization bridge: the = results of the two
     // non-canonical producers are the canonical node, verified WITHOUT
@@ -696,7 +696,7 @@ TEST_CASE("numbers: subtraction and division results are canonical (no leading z
         } });
 }
 
-TEST_CASE("numbers: multiplication by zero yields the canonical zero node (all arithmetic modules)")
+TEST_CASE("numbers: multiplication by zero yields the canonical zero node (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -726,7 +726,7 @@ TEST_CASE("numbers: multiplication by zero yields the canonical zero node (all a
         CHECK(any_output_contains(collector, "MUL1-true")); });
 }
 
-TEST_CASE("number literals: the substrates agree on what a literal denotes (all arithmetic modules)")
+TEST_CASE("number literals: the substrates agree on what a literal denotes (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     // The three arithmetic modules all claim the module ID `arithmetic`
     // and are therefore interchangeable -- which they only are if a

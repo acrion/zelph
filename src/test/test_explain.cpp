@@ -100,7 +100,7 @@ TEST_CASE("explain: a premise carrying further objects is found")
         CHECK(collect_answers(collector).size() == 2); });
 }
 
-TEST_CASE("explain: depth limit and the ? companion idiom (all arithmetic modules)")
+TEST_CASE("explain: depth limit and the ? companion idiom (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -145,7 +145,7 @@ TEST_CASE("explain: shared subproofs print once")
         CHECK(any_output_contains(collector, "[see above]")); });
 }
 
-TEST_CASE("explain: NAF premises render as absent (all arithmetic modules)")
+TEST_CASE("explain: NAF premises render as absent (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

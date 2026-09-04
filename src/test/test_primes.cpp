@@ -37,7 +37,7 @@ using namespace zelph::test;
 // Number results (&46) have no trailing space, which is why patterns
 // like "((&12 + &34) = &46)" may keep theirs.
 
-TEST_CASE("primes: trial-division primality via rules (all arithmetic modules)")
+TEST_CASE("primes: trial-division primality via rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {

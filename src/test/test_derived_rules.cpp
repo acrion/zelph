@@ -886,7 +886,7 @@ a marks p
         CHECK(listed_rules(collector) == 3); });
 }
 
-TEST_CASE("derived rules: fifty declarations make fifty rules and the run still settles")
+TEST_CASE("derived rules: fifty declarations make fifty rules and the run still settles" * doctest::test_suite("slow"))
 {
     // One generator against fifty relations, each with a two-step chain to
     // close. What this adds over the small cases is the fixpoint loop's

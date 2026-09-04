@@ -117,7 +117,7 @@ TEST_CASE("wikidata qualifiers: full import materializes statement structures")
     std::filesystem::remove(dump);
 }
 
-TEST_CASE("wikidata qualifiers: selective import filters by qualifier property")
+TEST_CASE("wikidata qualifiers: selective import filters by qualifier property" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();
     run_both_modes([&](auto& collector, auto& interactive)
@@ -151,7 +151,7 @@ TEST_CASE("wikidata qualifiers: selective import filters by qualifier property")
 // queries and unification afterwards -- silently, since adjacency reads
 // (zelph/targets, zelph/exists) never consult the set. This is the
 // realistic REPL order: load a network, look around, then add qualifiers.
-TEST_CASE("wikidata qualifiers: statement layer is queryable after an earlier query")
+TEST_CASE("wikidata qualifiers: statement layer is queryable after an earlier query" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();
     run_both_modes([&](auto& collector, auto& interactive)
@@ -177,7 +177,7 @@ Q300 P279 Q101
     std::filesystem::remove(dump);
 }
 
-TEST_CASE("wikidata qualifiers: paper disjointness query runs on imported qualifier data")
+TEST_CASE("wikidata qualifiers: paper disjointness query runs on imported qualifier data" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();
     run_both_modes([&](auto& collector, auto& interactive)
@@ -269,7 +269,7 @@ namespace
     }
 }
 
-TEST_CASE("wikidata qualifiers: text values arrive decoded, scalars stay verbatim")
+TEST_CASE("wikidata qualifiers: text values arrive decoded, scalars stay verbatim" * doctest::test_suite("slow"))
 {
     const auto dump = write_named_dump("zelph_qualifier_escape_test.json", kEscapeDump);
 
@@ -305,7 +305,7 @@ TEST_CASE("wikidata qualifiers: text values arrive decoded, scalars stay verbati
     std::filesystem::remove(dump);
 }
 
-TEST_CASE("wikidata qualifiers: the two importers agree on node identity")
+TEST_CASE("wikidata qualifiers: the two importers agree on node identity" * doctest::test_suite("slow"))
 {
     const auto dump = write_named_dump("zelph_qualifier_workflow_test.json", kWorkflowDump);
 
@@ -334,7 +334,7 @@ TEST_CASE("wikidata qualifiers: the two importers agree on node identity")
     remove_dump_and_cache(dump);
 }
 
-TEST_CASE("wikidata qualifiers: a second import of the same file changes nothing")
+TEST_CASE("wikidata qualifiers: a second import of the same file changes nothing" * doctest::test_suite("slow"))
 {
     const auto dump = write_named_dump("zelph_qualifier_idempotence_test.json", kWorkflowDump);
 

@@ -37,7 +37,7 @@ using namespace zelph::test;
 // and checks that the island-built fact connects to it.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("math-syntax: precedence and associativity (all arithmetic modules)")
+TEST_CASE("math-syntax: precedence and associativity (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -58,7 +58,7 @@ TEST_CASE("math-syntax: precedence and associativity (all arithmetic modules)")
         CHECK(any_output_contains(collector, "MS-ASSOC2-true")); });
 }
 
-TEST_CASE("math-syntax: numeric literals and unary minus (all arithmetic modules)")
+TEST_CASE("math-syntax: numeric literals and unary minus (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -77,7 +77,7 @@ TEST_CASE("math-syntax: numeric literals and unary minus (all arithmetic modules
         CHECK(any_output_contains(collector, "MS-NEGNUM-true")); });
 }
 
-TEST_CASE("math-syntax: powers build a ^ term (all arithmetic modules)")
+TEST_CASE("math-syntax: powers build a ^ term (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -140,7 +140,7 @@ TEST_CASE("math-syntax: variables in islands write rules; sugar and verbose form
         CHECK_THROWS_AS(interactive.process("$( X ) ~ bad"), std::runtime_error); });
 }
 
-TEST_CASE("math-syntax: integration with the symbolic pipeline (all arithmetic modules)")
+TEST_CASE("math-syntax: integration with the symbolic pipeline (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -193,7 +193,7 @@ TEST_CASE("math-syntax: default substrate works out of the box; blocked substrat
         } });
 }
 
-TEST_CASE("math-syntax: polynomial identity with islands and the ? prefix (all arithmetic modules)")
+TEST_CASE("math-syntax: polynomial identity with islands and the ? prefix (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -209,7 +209,7 @@ TEST_CASE("math-syntax: polynomial identity with islands and the ? prefix (all a
         CHECK(any_output_contains(collector, "MSI-PROVEN-true")); });
 }
 
-TEST_CASE("math-syntax: terms render in island form exactly where it is needed (all arithmetic modules)")
+TEST_CASE("math-syntax: terms render in island form exactly where it is needed (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -248,7 +248,7 @@ TEST_CASE("math-syntax: terms render in island form exactly where it is needed (
         } });
 }
 
-TEST_CASE("math-syntax: the engine's own output re-enters as the same node (all arithmetic modules)")
+TEST_CASE("math-syntax: the engine's own output re-enters as the same node (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -281,7 +281,7 @@ TEST_CASE("math-syntax: the engine's own output re-enters as the same node (all 
         CHECK(any_output_contains(collector, "MSD-RT-true")); });
 }
 
-TEST_CASE("math-syntax: the '&' sigil is optional inside islands (all arithmetic modules)")
+TEST_CASE("math-syntax: the '&' sigil is optional inside islands (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -298,7 +298,7 @@ TEST_CASE("math-syntax: the '&' sigil is optional inside islands (all arithmetic
         CHECK(any_output_contains(collector, "MSD-AMP-true")); });
 }
 
-TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic modules)")
+TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -330,7 +330,7 @@ TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic mo
 // island syntax the parser refuses to read back.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("math-syntax: a declared operator parses, associates and round-trips")
+TEST_CASE("math-syntax: a declared operator parses, associates and round-trips" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

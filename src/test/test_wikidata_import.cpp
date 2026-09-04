@@ -76,7 +76,7 @@ namespace
     }
 }
 
-TEST_CASE("wikidata import: JSON escapes in labels are decoded")
+TEST_CASE("wikidata import: JSON escapes in labels are decoded" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();
 

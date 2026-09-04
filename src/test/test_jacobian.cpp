@@ -133,7 +133,7 @@ TEST_CASE("jacobian: three distinct points collide on (-8, 0, 0) (binary substra
         CHECK(any_output_contains(collector, "JB-NOTPOS-false")); });
 }
 
-TEST_CASE("jacobian: det J_G is the constant -512 as a polynomial identity (binary substrate)")
+TEST_CASE("jacobian: det J_G is the constant -512 as a polynomial identity (binary substrate)" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -183,7 +183,7 @@ b pouter c
 // above under both schedules; what this adds is that the FILE parses,
 // imports and still answers.
 // ---------------------------------------------------------------------------
-TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512")
+TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());

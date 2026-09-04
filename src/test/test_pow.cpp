@@ -37,7 +37,7 @@ using namespace zelph::test;
 // assumed by the parser.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("pow: natural exponentiation (all arithmetic modules)")
+TEST_CASE("pow: natural exponentiation (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -73,7 +73,7 @@ TEST_CASE("pow: natural exponentiation (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("pow: polynomial identities involving powers")
+TEST_CASE("pow: polynomial identities involving powers" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -128,7 +128,7 @@ TEST_CASE("pow: the simplifier knows the neutral exponents")
         CHECK(any_output_contains(collector, "POW-S0-true")); });
 }
 
-TEST_CASE("pow: the power rule differentiates")
+TEST_CASE("pow: the power rule differentiates" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -161,7 +161,7 @@ TEST_CASE("pow: the power rule differentiates")
         } });
 }
 
-TEST_CASE("pow: powers render as powers")
+TEST_CASE("pow: powers render as powers" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

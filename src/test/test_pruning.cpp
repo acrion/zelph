@@ -1165,7 +1165,7 @@ TEST_CASE("pruning: the batched cascade removes exactly what removing one by one
     CHECK(batched == one_by_one);
 }
 
-TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phase")
+TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phase" * doctest::test_suite("slow"))
 {
     // A guard on a DIAGNOSTIC, and it is worth one because the diagnostic is
     // the only thing a multi-day operation offers from outside the process.

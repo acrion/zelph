@@ -68,7 +68,7 @@ TEST_CASE("semi-naive: .semi-naive command reports and switches modes")
         CHECK_THROWS_AS(interactive.process(".semi-naive banana"), std::runtime_error); });
 }
 
-TEST_CASE("semi-naive: classic mode (off) still computes full results (all arithmetic modules)")
+TEST_CASE("semi-naive: classic mode (off) still computes full results (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     // Pins that .semi-naive off remains a fully functional evaluation
     // strategy. The switch happens BEFORE the import on purpose (hence no

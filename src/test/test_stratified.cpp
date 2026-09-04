@@ -498,7 +498,7 @@ w start w
 // The payoff: the textbook primality rule, sound under stratification
 // ---------------------------------------------------------------------------
 
-TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules")
+TEST_CASE("primes-naf: textbook negation rule on the arithmetic modules" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, const auto& interactive)
                            {

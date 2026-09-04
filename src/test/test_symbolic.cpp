@@ -48,7 +48,7 @@ using namespace zelph::test;
 // These tests intentionally mix the explicit syntax `S P S` and the syntax sugar `:P S`.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("symbolic: simplification core (all arithmetic modules)")
+TEST_CASE("symbolic: simplification core (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -119,7 +119,7 @@ y ~ symvar
         } });
 }
 
-TEST_CASE("symbolic: differentiation base cases and constancy (all arithmetic modules)")
+TEST_CASE("symbolic: differentiation base cases and constancy (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -192,7 +192,7 @@ c ~ symconst
         } });
 }
 
-TEST_CASE("symbolic: iterated differentiation along a list (all arithmetic modules)")
+TEST_CASE("symbolic: iterated differentiation along a list (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -247,7 +247,7 @@ y ~ symvar
         } });
 }
 
-TEST_CASE("symbolic: differentiation structural rules (all arithmetic modules)")
+TEST_CASE("symbolic: differentiation structural rules (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -294,7 +294,7 @@ c ~ symconst
         } });
 }
 
-TEST_CASE("symbolic: coexistence with the numeric substrate (all arithmetic modules)")
+TEST_CASE("symbolic: coexistence with the numeric substrate (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -330,7 +330,7 @@ TEST_CASE("symbolic: coexistence with the numeric substrate (all arithmetic modu
         CHECK(answers_contain(collector, "(&12 + &34) = &46")); });
 }
 
-TEST_CASE("symbolic: knowledge-folding bridge (all arithmetic modules)")
+TEST_CASE("symbolic: knowledge-folding bridge (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -403,7 +403,7 @@ c ~ symconst
         } });
 }
 
-TEST_CASE("symbolic: EML identities and round trips (all arithmetic modules)")
+TEST_CASE("symbolic: EML identities and round trips (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -463,7 +463,7 @@ TEST_CASE("symbolic: EML identities and round trips (all arithmetic modules)")
         } });
 }
 
-TEST_CASE("symbolic: EML compiler macro chain matches eml_compiler_v4 (all arithmetic modules)")
+TEST_CASE("symbolic: EML compiler macro chain matches eml_compiler_v4 (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -550,7 +550,7 @@ y ~ symvar
 // render back in the sugar form. The feature is arithmetic-agnostic;
 // run_arithmetic_modules is used as the standard harness only.
 // ---------------------------------------------------------------------------
-TEST_CASE("self-fact sugar: rules, conjunctions, consequences, display")
+TEST_CASE("self-fact sugar: rules, conjunctions, consequences, display" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -609,7 +609,7 @@ TEST_CASE("symbolic: numeral-times-zero folding is single-valued (all arithmetic
         CHECK(any_output_contains(collector, "SMUL0-NOT-false")); });
 }
 
-TEST_CASE("symbolic: constant reassociation folds nested numeral factors")
+TEST_CASE("symbolic: constant reassociation folds nested numeral factors" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
@@ -676,7 +676,7 @@ TEST_CASE("symbolic: constant reassociation folds nested numeral factors")
         } });
 }
 
-TEST_CASE("symbolic: constant reassociation over Z (all arithmetic modules)")
+TEST_CASE("symbolic: constant reassociation over Z (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

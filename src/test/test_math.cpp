@@ -35,7 +35,7 @@ using namespace zelph::test;
 // polynomial layer consumes -- no Janet anywhere in the user's path.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("math: polyring derives sorts and the adjacent nesting order")
+TEST_CASE("math: polyring derives sorts and the adjacent nesting order" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -57,7 +57,7 @@ TEST_CASE("math: polyring derives sorts and the adjacent nesting order")
         CHECK(any_output_contains(collector, "RING-DIR-false")); });
 }
 
-TEST_CASE("math: a one-element ring declares its variable and no order pair")
+TEST_CASE("math: a one-element ring declares its variable and no order pair" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -82,7 +82,7 @@ TEST_CASE("math: a ring declaration echoes in the order it was written")
         CHECK(any_output_contains(collector, "<x y z> ~ polyring")); });
 }
 
-TEST_CASE("math: three lines prove a one-variable identity")
+TEST_CASE("math: three lines prove a one-variable identity" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -95,7 +95,7 @@ TEST_CASE("math: three lines prove a one-variable identity")
         CHECK(any_output_contains(collector, "RING-ID1-true")); });
 }
 
-TEST_CASE("math: a two-variable identity consumes the declared order")
+TEST_CASE("math: a two-variable identity consumes the declared order" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -108,7 +108,7 @@ TEST_CASE("math: a two-variable identity consumes the declared order")
         CHECK(any_output_contains(collector, "RING-ID2-true")); });
 }
 
-TEST_CASE("math: without a ring declaration nothing is proven")
+TEST_CASE("math: without a ring declaration nothing is proven" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -123,7 +123,7 @@ TEST_CASE("math: without a ring declaration nothing is proven")
         CHECK(any_output_contains(collector, "RING-NONE-false")); });
 }
 
-TEST_CASE("math: rings are ordinary nodes and can carry further facts")
+TEST_CASE("math: rings are ordinary nodes and can carry further facts" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
