@@ -488,7 +488,17 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif ()
 
 elseif (MSVC)
-    list(APPEND ZELPH_OPT_FLAGS "/O2" "/Oi" "/Ot" "/GL")
+    # /Gw lets the linker discard data that no one reads, /Ob3 raises the
+    # inlining budget beyond what /O2 sets. Both leave the program's meaning
+    # unchanged. Two things are intentionally omitted. /fp:fast matches the
+    # trap described above with -ffast-math and would break Janet's NaN
+    # boxing in exactly the same way. And no /arch: at all: it would raise
+    # what the artefact demands of a processor, which is the property
+    # safeguarded by the check beside the tests.
+    list(APPEND ZELPH_OPT_FLAGS "/O2" "/Oi" "/Ot" "/GL" "/Gw")
+    if (MSVC_VERSION GREATER_EQUAL 1927)
+        list(APPEND ZELPH_OPT_FLAGS "/Ob3")
+    endif ()
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
 endif ()

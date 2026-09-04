@@ -1,7 +1,7 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s6_knowledge_folding.zph
 # Computed folding (cascaded), declared folding, and composed partiality.
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 x ~ symvar
 

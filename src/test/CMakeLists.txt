@@ -225,6 +225,15 @@ if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         if (NOT ZELPH_NATIVE_ARCH)
             zelph_add_check_test(arch_baseline_of_the_library "${ZELPH_ARCH_CHECK}"
                     "$<TARGET_FILE:zelph_lib> --floor ${ZELPH_X86_BASELINE}" 0)
+
+            # The app binary as well, not only the library. mimalloc is linked
+            # into the app and nowhere else, and it carries its own architecture
+            # flags, so the one place a dependency could raise the floor is the
+            # place the library check does not reach.
+            if (TARGET zelph)
+                zelph_add_check_test(arch_baseline_of_the_app "${ZELPH_ARCH_CHECK}"
+                        "$<TARGET_FILE:zelph> --floor ${ZELPH_X86_BASELINE}" 0)
+            endif ()
         endif ()
     endif ()
 endif ()

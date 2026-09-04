@@ -2,7 +2,7 @@
 # dev_scripts/paper/s3_macro_chain.zph
 # Macro-chain compilation (-,+,*,/) and the Table-S2 witness recovery:
 # simplifying the compiled x - y tree yields eml(ln x, exp y).
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 .import eml
 x ~ symvar

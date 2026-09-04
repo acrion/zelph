@@ -1,7 +1,7 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s2_roundtrips.zph
 # Compile/reduce round trips for exp and ln in one session.
-.import arithmetic
+.import decimal-arithmetic
 .import symbolic-core
 .import eml
 x ~ symvar

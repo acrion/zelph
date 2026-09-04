@@ -5,7 +5,7 @@
 # we execute .run after each command (in the REPL, .auto-run is on by default).
 # This does not influence results, but internal node IDs printed by the last command `.node`.
 
-.import arithmetic
+.import decimal-arithmetic
 .run
 
 .import symbolic-core

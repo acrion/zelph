@@ -133,6 +133,15 @@ jobs:
               print(f"Error: Directory {source_dir} not found!")
               exit(1)
 
+      # The zip goes to the release directly, so it needs a second way out of
+      # the job for the check that follows to reach it.
+      - name: Keep the Windows build for the floor check
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zelph-windows
+          path: zelph-windows.zip
+
       - name: Upload Release Asset (Zip)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -191,6 +200,50 @@ jobs:
           fi
 
           gh release upload ${{ github.event.release.tag_name }} "zelph_${VERSION}_${DEB_ARCH}.deb" --clobber
+
+  windows-floor:
+    # The floor is checked where the artefact is built, except on Windows: that
+    # job compiles with MSVC and has no objdump, so the check registers nowhere.
+    # Reading a Windows binary needs neither, only a tool that understands the
+    # format, and objdump on Linux does. So the artefact travels to the check
+    # rather than the check to the artefact.
+    name: Instruction set floor of the Windows build
+    needs: release-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: zelph-windows
+
+      - name: Hold it against the floor the build declares
+        shell: bash
+        run: |
+          floor=$(sed -n 's/^set(ZELPH_X86_BASELINE "\([^"]*\)".*/\1/p' CMakeLists.txt)
+          if [ -z "$floor" ]; then
+            echo "::error::CMakeLists.txt declares no ZELPH_X86_BASELINE"
+            exit 1
+          fi
+          echo "the build declares $floor"
+          unzip -q -o zelph-windows.zip -d windows
+          # Every binary, and the verdict collected rather than taken from the
+          # last one. A loop that leaves its result to whichever call occurred
+          # last reports the state of one file and refers to it as the state of
+          # all.
+          status=0
+          for binary in windows/zelph.dll windows/zelph.exe windows/zelph_tests.exe; do
+            if [ ! -f "$binary" ]; then
+              echo "::error::$binary is not in the artifact"
+              status=1
+              continue
+            fi
+            python3 tools/check_arch_baseline.py "$binary" --floor "$floor" || status=1
+          done
+          exit $status
 
   release-wasm:
     name: WebAssembly Playground
