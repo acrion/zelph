@@ -126,7 +126,7 @@ namespace zelph::console
         network::Node evaluate_pattern_read_only(const std::string& code);
         std::string   pattern_code(const std::vector<std::string>& parts, const std::size_t first, bool* has_collection = nullptr, std::string* why = nullptr) const;
         network::Node resolve_explain_pattern(const std::vector<std::string>& parts, const std::size_t first = 1);
-        network::Node resolve_node_or_fact(const std::vector<std::string>& parts, size_t* count = nullptr);
+        network::Node resolve_node_or_fact(const std::vector<std::string>& parts, size_t* count = nullptr, size_t* second_count = nullptr);
 
         // --- Implemented in commands_help.cpp ---
 

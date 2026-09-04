@@ -40,6 +40,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <iomanip>
 #include <ios>
+#include <limits>
 #include <map>
 #include <ostream>
 #include <stdexcept>
@@ -604,22 +605,49 @@ namespace zelph::console
 
     void CommandExecutor::Impl::cmd_mermaid(const std::vector<std::string>& cmd)
     {
-        if (cmd.size() < 2) throw std::runtime_error("Command .mermaid: Missing node name to visualise");
-        const std::string& arg = cmd[1];
-        network::Node      nd  = resolve_single_node(arg, true);
-        if (nd == 0) throw std::runtime_error("Command .mermaid: Unknown node '" + arg + "'");
-        int max_depth     = 1;
-        int max_neighbors = string::default_display_max_neighbors;
-        if (cmd.size() >= 3)
+        int           max_depth     = 1;
+        int           max_neighbors = string::default_display_max_neighbors;
+        network::Node nd            = 0;
+
+        if (cmd.size() == 1)
         {
-            max_depth = std::stoi(cmd[2]);
-            if (max_depth < 1) throw std::runtime_error("Command .mermaid: Maximum depth must be greater than 0. Note: when using 1, a dynamic depth based on the node count will be used.");
+            // The same fallback .node has. A figure is usually wanted for the
+            // statement one has just read, and naming it twice is what the
+            // shell wrapper around the paper scripts existed to avoid.
+            nd = string::last_node_to_string_node();
+            if (nd == network::Node{}) throw std::runtime_error("Command .mermaid: No argument given and no previous output node available");
         }
-        if (cmd.size() >= 4)
+        else
         {
-            max_neighbors = std::stoi(cmd[3]);
-            if (max_neighbors < 1) throw std::runtime_error("Command .mermaid: Maximum neighbors must be at least 1");
+            // One resolution for every form: a name, an ID, or the fact as it
+            // prints, with the two counts separated the way .in and .out
+            // separate theirs. Performing it here instead would be the
+            // precedence rule written a second time.
+            constexpr size_t not_given = std::numeric_limits<size_t>::max();
+            size_t           depth     = not_given;
+            size_t           neighbors = not_given;
+
+            nd = resolve_node_or_fact({cmd.begin() + 1, cmd.end()}, &depth, &neighbors);
+            if (nd == 0) throw std::runtime_error("Command .mermaid: expected a name, an ID, or a fact pattern denoting an existing node");
+
+            // parse_count has already refused zero and any negative value, so
+            // only the upper end remains to be guarded. The value must fit an
+            // int because that is what the generator takes.
+            if (depth != not_given)
+            {
+                if (depth > static_cast<size_t>(std::numeric_limits<int>::max()))
+                    throw std::runtime_error("Command .mermaid: Maximum depth " + cmd[cmd.size() - (neighbors == not_given ? 1 : 2)] + " is out of range");
+                max_depth = static_cast<int>(depth);
+            }
+
+            if (neighbors != not_given)
+            {
+                if (neighbors > static_cast<size_t>(std::numeric_limits<int>::max()))
+                    throw std::runtime_error("Command .mermaid: Maximum neighbours " + cmd.back() + " is out of range");
+                max_neighbors = static_cast<int>(neighbors);
+            }
         }
+
         generate_and_print_mermaid_link(nd,
                                         max_depth,
                                         max_neighbors,

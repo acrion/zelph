@@ -237,7 +237,7 @@ Giving a node a name that another node already holds in that language **merges t
 - `.node [<name|id|fact>]` – Show detailed node information; defaults to last output node
 - `.out <name|id|fact> [count]` – List details of outgoing connected nodes (default 20)
 - `.in <name|id|fact> [count]` – List details of incoming connected nodes (default 20)
-- `.mermaid <node_name> [max_depth]` – Generate Mermaid HTML file for a node (default depth 3)
+- `.mermaid [<name|id|fact>] [depth] [max_neighbours]` – Generate a Mermaid HTML graph; defaults to last output node
 - `.list-predicate-usage [max]` – Show predicate usage statistics (top N most frequent predicates)
 - `.list-predicate-value-usage <name|id|fact> [max]` – Show object/value usage statistics for a specific predicate (top N most frequent values)
 

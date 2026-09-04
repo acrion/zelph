@@ -828,6 +828,86 @@ TEST_CASE("display: the negation of a rule condition stays with the rule")
         CHECK(any_output_contains(collector, "¬(u q v)")); });
 }
 
+// .mermaid took a single name or ID while .node took the fact itself, so a
+// figure of a derived statement needed its node ID to be looked up first.
+// These pin the forms against each other; the file name in the printed link is
+// what says which node the command actually resolved.
+TEST_CASE("mermaid: the node is named the way .node names it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.run(true, false, false);
+
+        SUBCASE("a bare name")
+        {
+            collector.clear();
+            interactive.process(".mermaid a");
+            CHECK(any_output_contains(collector, "Mermaid HTML"));
+            CHECK(any_output_contains(collector, "/a.html"));
+        }
+        SUBCASE("the fact itself, as it prints")
+        {
+            collector.clear();
+            interactive.process(".mermaid a rel b");
+            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+        }
+        SUBCASE("the same fact in parentheses")
+        {
+            collector.clear();
+            interactive.process(".mermaid (a rel b)");
+            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+        }
+        SUBCASE("no argument at all takes the node from the last output")
+        {
+            // Asserting a fresh fact moves the last output on, which is what
+            // makes the no-argument form worth having and worth pinning.
+            interactive.process("c rel d");
+            collector.clear();
+            interactive.process(".mermaid");
+            CHECK(any_output_contains(collector, "«c» «rel» «d».html"));
+        }
+        SUBCASE("a name nothing answers to is refused")
+        {
+            CHECK_THROWS_AS(interactive.process(".mermaid nosuchnode"), std::runtime_error);
+        } });
+}
+
+// The ambiguity introduced by a second command with trailing counts, and the
+// reason the resolution lives in the shared helper: a numeral at the end is
+// a count only where dropping it still leaves something that denotes a node.
+TEST_CASE("mermaid: a trailing numeral is a count only when the head already denotes a node")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a rel b");
+        interactive.run(true, false, false);
+
+        SUBCASE("one trailing numeral is the depth, not part of the fact")
+        {
+            collector.clear();
+            interactive.process(".mermaid a rel b 2");
+            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+        }
+        SUBCASE("two trailing numerals are depth and neighbour cap")
+        {
+            collector.clear();
+            interactive.process(".mermaid a rel b 2 30");
+            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+        }
+        SUBCASE("a numeral stays in the fact when the shorter reading denotes nothing")
+        {
+            // "a rel" is not a node, so nothing is peeled and the whole list is
+            // read as the fact "a rel 2" -- which does not exist either, and the
+            // command says so rather than silently visualising "a".
+            CHECK_THROWS_AS(interactive.process(".mermaid a rel 2"), std::runtime_error);
+        }
+        SUBCASE("a count that is not a positive number is reported as such")
+        {
+            CHECK_THROWS_AS(interactive.process(".mermaid a rel b 0"), std::runtime_error);
+        } });
+}
+
 TEST_CASE("display: a rule prints its conditions in the surface syntax")
 {
     // The brace form is the TOPOLOGY, and re-entering it built something

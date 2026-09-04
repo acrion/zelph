@@ -82,7 +82,7 @@ namespace zelph::console
             "  .node [<name|id|fact>]                    – Show detailed node information; defaults to last output node",
             "  .out <name|id|fact> [count]               – List details of outgoing connected nodes (default 20)",
             "  .in <name|id|fact> [count]                – List details of incoming connected nodes (default 20)",
-            "  .mermaid <node_name> [max_depth]          – Generate Mermaid HTML file for a node (default depth 3)",
+            "  .mermaid [<name|id|fact>] [depth] [max_neighbours] – Generate a Mermaid HTML graph; defaults to last output node",
             "  .list-predicate-usage [max]               – Show predicate usage statistics (top N most frequent predicates)",
             "  .list-predicate-value-usage <name|id|fact> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             "",
@@ -260,10 +260,21 @@ namespace zelph::console
                       "(not asserted)', the latter for a statement that exists only because a rule\n"
                       "was written with it."},
 
-            {".mermaid", ".mermaid <node_name> [max_depth]\n"
-                         "Generates a Mermaid HTML file visualizing the specified node and its connections\n"
-                         "up to the given depth (default 3). The file is named <node_name>.html in the system temp dir.\n"
-                         "Outputs a clickable file:// link to the generated HTML."},
+            {".mermaid", ".mermaid [<name|id|fact>] [depth] [max_neighbours]\n"
+                         "Generates a Mermaid HTML file visualizing a node and its connections, and outputs\n"
+                         "a clickable file:// link to it. The file is written to the system temp directory\n"
+                         "and named after the node.\n"
+                         "The node is named the same way as for .node: a name in the current language, a\n"
+                         "numeric node ID, or the FACT itself -- '.mermaid a rel b', with or without\n"
+                         "parentheses, exactly as the fact prints. With no argument at all, the node from\n"
+                         "the last output is used.\n"
+                         "depth defaults to 1, which does not mean one hop: it selects a depth that grows\n"
+                         "until the graph holds enough nodes to be worth looking at. max_neighbours caps\n"
+                         "how many neighbours each node contributes.\n"
+                         "Both numbers are read off the END of the arguments, and only when what stands\n"
+                         "before them already denotes a node. '.mermaid a rel b 2' is therefore the fact\n"
+                         "'a rel b' at depth 2, while '.mermaid a rel 2' is the fact 'a rel 2', because\n"
+                         "'a rel' denotes nothing. .in and .out separate their count the same way."},
 
             {".run", ".run\n"
                      "Performs full inference: repeatedly applies all rules until no new facts are derived.\n"

@@ -547,6 +547,14 @@ You can generate a node graph yourself using zelph's `.mermaid` command, which o
 .mermaid name 3
 ```
 
-In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualise. The following number represents the depth of connections to include in the graph (default is 3).
+In this example, `name` refers to the node identifier (in the currently active language specified via the `.lang` command) whose connections you want to visualize. The number after it is the depth of connections to include. It defaults to 1, which does not mean a single hop: the depth then grows by itself until the graph holds enough nodes to be worth looking at. A second number caps how many neighbours each node contributes.
+
+A node can also be named by the fact it is, written exactly as the fact prints, with or without parentheses:
+
+```
+.mermaid (a rel b) 3
+```
+
+With no argument at all the command takes the node from the last output, so a figure can be produced right after the statement that derived it, without naming anything twice.
 
 To view the Mermaid graph, open the generated HTML file in a web browser.

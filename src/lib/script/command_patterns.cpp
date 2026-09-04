@@ -268,7 +268,11 @@ namespace zelph::console
     // the two readings .explain settled on and in its order: the documented
     // count wins, and a trailing numeral stays part of the pattern only when
     // the shorter reading resolves to nothing.
-    network::Node CommandExecutor::Impl::resolve_node_or_fact(const std::vector<std::string>& parts, size_t* count)
+    //
+    // `second_count` extends that to the two numbers .mermaid takes. Both are
+    // required to be numerals here, because a command with two trailing
+    // options has no reading left in which a non-number is one of them.
+    network::Node CommandExecutor::Impl::resolve_node_or_fact(const std::vector<std::string>& parts, size_t* count, size_t* second_count)
     {
         const auto is_number = [](const std::string& s)
         { return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos; };
@@ -290,6 +294,21 @@ namespace zelph::console
             const network::Node nd = resolve_explain_pattern(p, 1);
             return nd != 0 && _n->exists(nd) ? nd : network::Node{0};
         };
+
+        // The pair is peeled before the single count, so that the longer
+        // reading wins where both are open. Peeling one first would take the
+        // neighbour cap for the depth and leave the depth inside the fact.
+        if (second_count != nullptr && parts.size() >= 3
+            && is_number(parts[parts.size() - 2]) && is_number(parts.back()))
+        {
+            const std::vector<std::string> head(parts.begin(), parts.end() - 2);
+            if (const network::Node without_two = resolve(head); without_two != 0)
+            {
+                *count        = string::parse_count(parts[parts.size() - 2]);
+                *second_count = string::parse_count(parts.back());
+                return without_two;
+            }
+        }
 
         if (count != nullptr && parts.size() >= 2)
         {
