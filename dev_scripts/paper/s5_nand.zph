@@ -1,6 +1,11 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s5_nand.zph
 # Discrete Sheffer case study: arithmetic and number theory from one gate.
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .import binary-nand-arithmetic
 (1 nand 1) out X
 (0 nand 1) out X

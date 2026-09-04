@@ -2,4 +2,9 @@
 # dev_scripts/paper/s0_environment.zph
 # Reproducibility header: embedded component versions. Record manually in
 # addition: zelph version/commit, OS, compiler, CPU/RAM of the machine.
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .licenses

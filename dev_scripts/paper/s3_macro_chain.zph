@@ -2,6 +2,11 @@
 # dev_scripts/paper/s3_macro_chain.zph
 # Macro-chain compilation (-,+,*,/) and the Table-S2 witness recovery:
 # simplifying the compiled x - y tree yields eml(ln x, exp y).
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .import decimal-arithmetic
 .import symbolic-core
 .import eml

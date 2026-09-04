@@ -5,6 +5,11 @@
 # we execute .run after each command (in the REPL, .auto-run is on by default).
 # This does not influence results, but internal node IDs printed by the last command `.node`.
 
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .import decimal-arithmetic
 .run
 
@@ -27,3 +32,8 @@ y ~ symvar
 .run
 
 .node
+.run
+
+# The figure itself. .mermaid takes the fact directly, so no ID has to be
+# read out of the .node report first.
+.mermaid (&1 eml ((&1 eml x) eml &1)) eml (y eml &1)

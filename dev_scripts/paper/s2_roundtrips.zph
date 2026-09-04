@@ -1,6 +1,11 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s2_roundtrips.zph
 # Compile/reduce round trips for exp and ln in one session.
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .import decimal-arithmetic
 .import symbolic-core
 .import eml

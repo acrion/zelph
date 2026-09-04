@@ -1,6 +1,11 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s6_knowledge_folding.zph
 # Computed folding (cascaded), declared folding, and composed partiality.
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
 .import decimal-arithmetic
 .import symbolic-core
 x ~ symvar

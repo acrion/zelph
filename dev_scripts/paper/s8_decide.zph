@@ -1,0 +1,40 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s8_decide.zph
+# Where a canonical form exists, and where none can: the polynomial layer
+# decides an identity by unification on normal forms, and stays silent on
+# terms it cannot compile. Three outcomes, and the third is the point.
+# Evidence scripts print the FULL derivation trace: the paper quotes
+# individual deduction lines, and the default 'focus' mode shows only
+# deductions anchored to interactively entered statements, which silently
+# drops most of them from a log.
+.deductions all
+
+.import math
+<x y> ~ polyring
+
+# proven -- both sides compile to the same hash-consed normal form
+$( (x+1)^2 ) ≡ $( x^2 + 2*x + 1 )
+$( (x+y)^2 ) ≡ $( x^2 + 2*x*y + y^2 )
+
+# disproven -- both compile, to different normal forms
+$( (x+1)^2 ) ≡ $( x^2 + 1 )
+
+# no answer at all -- exp is outside the polynomial vocabulary, so the
+# question was never posed to the decision procedure. Not 'disproven'.
+$( exp(x) + 1 ) ≡ $( 1 + exp(x) )
+
+# the normal forms themselves are ordinary retrievable facts
+:topoly $( (x+1)^2 )
+:topoly $( x - x )
+.run
+
+($( (x+1)^2 ) ≡ $( x^2 + 2*x + 1 )) = R
+($( (x+y)^2 ) ≡ $( x^2 + 2*x*y + y^2 )) = R
+($( (x+1)^2 ) ≡ $( x^2 + 1 )) = R
+($( exp(x) + 1 ) ≡ $( 1 + exp(x) )) = R
+(:topoly $( (x+1)^2 )) = P
+(:topoly $( x - x )) = P
+
+# the two spellings meet at one node, so the island is notation, not a layer
+(:topoly $( x*1 )) = P
+(:topoly (x * &1)) = P
