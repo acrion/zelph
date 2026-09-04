@@ -34,7 +34,8 @@ def fail(message):
 
 def run(*command):
     try:
-        done = subprocess.run(command, capture_output=True, text=True, check=False)
+        done = subprocess.run(command, capture_output=True, check=False,
+                              encoding="utf-8", errors="replace")
     except OSError as exc:
         fail(f"cannot run {command[0]}: {exc}")
     if done.returncode != 0:
@@ -118,4 +119,13 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # A crash here must not resemble a verdict. Without this, an exception leaves
+    # with 1, which is the code indicating the artefact failed the check, and the
+    # build then reports a violation that was never established.
+    try:
+        exit_code = main()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        fail(f"the check itself broke: {exc.__class__.__name__}: {exc}")
+    sys.exit(exit_code)

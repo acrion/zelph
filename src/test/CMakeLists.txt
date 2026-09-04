@@ -255,6 +255,13 @@ if (Python3_Interpreter_FOUND)
     zelph_add_check_test(install_tier_refuses_creep "${ZELPH_TIER_CHECK}"
             "--from-listing ${ZELPH_TIER_FIXTURES}/creep.txt --budget 100" 1
             "above the declared budget")
+
+    # Ties the check to a process whose output no strict decoder accepts, which
+    # is how the Windows build found it. The check must read such output, not
+    # fall over it.
+    add_executable(zelph_noisy_listing_probe noisy_listing_probe.cpp)
+    zelph_add_check_test(install_tier_survives_undecodable_output "${ZELPH_TIER_CHECK}"
+            "--run $<TARGET_FILE:zelph_noisy_listing_probe> --budget 100" 0)
 else ()
     # Rather than skip. The tests the packages run at install time are the ones
     # nobody watches, so their guard must not be the first thing to disappear.

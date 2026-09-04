@@ -93,6 +93,28 @@ jobs:
           QEMU_LD_PREFIX: ${{ matrix.name == 'linux-arm64' && '/usr/aarch64-linux-gnu' || '' }}
         run: cmake --build build --config Release
 
+      # A green test run only means that nothing failed, not that anything ran.
+      # Both checks register themselves under conditions, so a machine without
+      # python3 or objdump quietly ends up with fewer tests and still reports
+      # success. This step explicitly states which ones have to be present.
+      - name: Verify the self-checks are registered
+        if: matrix.name != 'linux-arm64'
+        working-directory: build
+        shell: bash
+        run: |
+          listed=$(ctest -N ${{ runner.os == 'Windows' && '-C Release' || '' }})
+          echo "$listed"
+          require() {
+            echo "$listed" | grep -qE "Test +#[0-9]+: $1\\b" \
+              || { echo "::error::$1 is not registered, so nothing checks what it checks"; exit 1; }
+          }
+          require zelph_tests
+          require install_tier
+          require install_tier_survives_undecodable_output
+          if [ "${{ runner.os }}" != "Windows" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
+            require arch_baseline_of_the_library
+          fi
+
       - name: Run tests
         if: matrix.name != 'linux-arm64'
         working-directory: build
