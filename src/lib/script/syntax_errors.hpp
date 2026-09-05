@@ -63,4 +63,24 @@ namespace zelph::script
     /// stands in ("condition 2 of the comma list", "the consequence"), and is
     /// empty where the surrounding form adds nothing to the message.
     [[noreturn]] void refuse_short_statement(const std::string& role, const std::vector<Janet>& args);
+
+    /// What to append to "Syntax error: Could not parse statement." when the
+    /// text alone says what went wrong. Empty when it does not.
+    ///
+    /// This is a second KIND of entry in this file. Everything above works on
+    /// the PEG's syntax tree, which exists because the parse succeeded and
+    /// only the shape was refused. A parse that FAILS leaves no tree, no
+    /// position and no expectation -- a PEG has no error productions -- so
+    /// the only evidence left is the text the user typed, and the message has
+    /// to be reconstructed from it.
+    ///
+    /// One rule accounts for most of what people actually type: `:stmt-any`
+    /// separates two values by `:s+`, so a value glued to an opening
+    /// parenthesis is not a statement. `f(x)` is the shape every reader of
+    /// mathematics writes, and in zelph it is spelled with a space -- or
+    /// inside a notation island such as the standard library's `$( … )`.
+    /// The one report this was written for reached it through `%`, which is a
+    /// LINE escape and can never be a term; that case gets its own sentence,
+    /// because the answer to it is a different one (the unquote `,name`).
+    std::string diagnose_unparsable(const std::string& statement);
 }

@@ -26,6 +26,12 @@ WARNING: 'examples/english' added 239 node(s) to a partial view.
 
 Nothing is undone — the addition is as legitimate as a typed statement, which was always allowed — but the two consequences are worth knowing, and the second one is otherwise invisible.
 
+This warning is **not** a failure, and it does not affect the exit status: what
+it accompanies is an operation zelph carried out as asked. The warning that
+does fail a run is the one in [Scripts and Modules](modules.md#interchangeable-implementations-provides)
+— there your request was declined, so the session that follows is not the one
+you asked for.
+
 Partial loading has been available since version 0.9.6.
 
 ## On-Disk Chunk Structure

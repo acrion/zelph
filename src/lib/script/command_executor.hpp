@@ -101,8 +101,13 @@ namespace zelph::console
          *
          * @param file UTF-16 path to the .zph file.
          * @param args Optional script arguments (accessible as :args in Janet).
+         * @param role Module (a library load, the default) or Session (a file
+         *        named on the command line, run as if it had been typed). See
+         *        ScriptRole in repl_state.hpp for what the two differ in.
          */
-        void import_file(const std::string& file, const std::vector<std::string>& args = {}) const;
+        void import_file(const std::string&              file,
+                         const std::vector<std::string>& args = {},
+                         ScriptRole                      role = ScriptRole::Module) const;
 
         // Non-copyable due to internal state references
         CommandExecutor(const CommandExecutor&)            = delete;

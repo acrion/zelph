@@ -154,7 +154,13 @@ namespace zelph::console
     {
         _command_map[".help"] = [this](auto& c)
         { cmd_help(c); };
-        _command_map[".quit"] = [](auto& c) { /* Exit handled by caller loop, usually acts as no-op here or throws */ };
+        // The REPL loop in main() intercepts the line before it gets here, so
+        // this handler exists for the OTHER readers: a session script, and a
+        // `.quit` reached from Janet. Recording the request rather than acting
+        // on it keeps the decision with the loop that owns the input -- see
+        // ReplState::quit_requested.
+        _command_map[".quit"] = [this](auto&)
+        { _repl_state->quit_requested = true; };
         _command_map[".lang"] = [this](auto& c)
         { cmd_lang(c); };
         _command_map[".name"] = [this](auto& c)
@@ -305,7 +311,7 @@ void console::CommandExecutor::finish_input()
     _pImpl->finish_input();
 }
 
-void console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args) const
+void console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role) const
 {
-    _pImpl->import_file(file, args);
+    _pImpl->import_file(file, args, role);
 }

@@ -111,10 +111,15 @@ namespace zelph
 
         // Predicate consulted before echoing input back: the parsed form of a
         // zelph statement and the result value of inline Janet code. Set by
-        // Interactive to suppress these echoes inside imported scripts while
-        // keeping them for interactive input. Query answers (apply_rule),
-        // deductions, keyword-handler output and explicit printing (print, ...)
-        // are not affected. Unset means: always echo.
+        // Interactive to suppress these echoes inside a MODULE while keeping
+        // them for the session -- typed, piped, or a script named on the
+        // command line (see ScriptRole in repl_state.hpp). Query answers
+        // (apply_rule), deductions, keyword-handler output and explicit
+        // printing (print, ...) are not affected. Unset means: always echo.
+        //
+        // The echo is also what records the node a bare `.node`, `.mermaid` or
+        // `.explain` falls back to (string::node_to_string stores it), so
+        // suppressing it removes that fallback as well.
         using EchoPredicate = std::function<bool()>;
         void set_echo_predicate(EchoPredicate predicate);
 

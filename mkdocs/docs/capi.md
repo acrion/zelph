@@ -223,6 +223,11 @@ zelph narrates, because its primary front end is a REPL: a line per derived fact
 `ZELPH_CHANNEL_PROMPT`. **Inside another program that is noise**, and for a host with its own
 protocol on stdout it is a protocol error.
 
+`ZELPH_CHANNEL_OUT` also carries the occasional line _about_ the results — a run
+that filtered deductions says so there rather than on `ZELPH_CHANNEL_DIAGNOSTIC`,
+because a reader who keeps only `OUT` must not end up with an incomplete
+derivation and no sentence saying it is incomplete.
+
 The channel is how you say so. An embedded caller ignores everything except
 `ZELPH_CHANNEL_ERROR`:
 

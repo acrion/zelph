@@ -261,6 +261,17 @@ namespace zelph::test
                                                        && text_starts_with_sugar_aware(e.text, expected); }));
     }
 
+    // How many Out-channel events contain the substring. The counterpart of
+    // count_outputs_starting_with, and what a test needs when the question is
+    // "exactly once per run" rather than "at all" -- a notice emitted per
+    // flush and one emitted per run both satisfy `any`.
+    [[maybe_unused]] inline size_t count_outputs_containing(const zelph::io::OutputCollector& collector, const std::string& sub)
+    {
+        return static_cast<size_t>(std::count_if(collector.events().begin(), collector.events().end(), [&](const auto& e)
+                                                 { return e.channel == zelph::io::OutputChannel::Out
+                                                       && text_contains_sugar_aware(e.text, sub); }));
+    }
+
     // Check whether ANY Out-channel event contains the substring (normalized).
     inline bool any_output_contains(const zelph::io::OutputCollector& collector, const std::string& sub)
     {

@@ -43,6 +43,22 @@ choco install zelph
 Once installed, you can run zelph in interactive mode simply by typing `zelph` in your terminal.
 (If you downloaded a binary manually without installing, run `./zelph` from the extraction directory).
 
+A file of the same lines runs the same way, either as an argument or on
+standard input:
+
+```bash
+zelph my-facts.zph          # runs as if the lines had been typed
+zelph < my-facts.zph        # the same, read from a pipe
+```
+
+Both are a **session**, so statements are echoed, derivations are printed and
+inference runs after every line. A `#!/usr/bin/env zelph` script therefore
+behaves the way it looks, and it may be called anything — `report`, not
+`report.zph`. Loading a file with `.import` from inside a session is the other
+thing: that makes it a quiet **module**, see [Scripts and Modules](modules.md).
+zelph leaves with a non-zero status when something failed, so a script can be
+used in a pipeline or a Makefile.
+
 Let's try a basic example:
 
 ```
@@ -83,6 +99,19 @@ predicate `c` and objects `q` and `d`.
 At end of input an unfinished statement is reported (`Input ends inside an
 unfinished statement: (a p b)`), and a `.`-command typed while one is pending
 says which one it is.
+
+**Two values need whitespace between them.** A line the parser cannot read at
+all is refused rather than buffered, and the most frequent cause is a value
+written against an opening parenthesis — the `f(x)` of ordinary mathematical
+notation:
+
+```
+zelph> a b x(c d e)
+Error in line "a b x(c d e)": Syntax error: Could not parse statement. "x(" is a
+value glued to a "(": the grammar separates two values by whitespace, so write
+"x (" if a group was meant. Function notation such as "f(x)" exists only inside
+a notation island -- see ".import math-syntax".
+```
 
 ## Two Statement Prefixes
 

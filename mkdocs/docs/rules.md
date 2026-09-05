@@ -283,28 +283,50 @@ The `.deductions` command controls which derived facts are printed:
     .deductions focus    # print only deductions about your input (default)
     .deductions off      # print no deductions
 
-In `focus` mode, a deduction is printed when its subject stems from an
-interactively entered statement: the subject is the entered fact itself, or
-its subject, or one of its objects. Anchors accumulate over the session, so
-a rule entered later still surfaces conclusions about earlier inputs.
-Imported scripts (`.import`) do not contribute anchors — a loaded arithmetic
-library stays silent about its internals.
+In `focus` mode, a deduction is printed when its subject stems from a
+statement of the **session**: the subject is the entered fact itself, or its
+subject, or one of its objects. The session is everything you type, everything
+piped in, and every line of a script named on the command line
+(`zelph script.zph`) – see [Scripts and Modules](modules.md). Anchors
+accumulate over the session, so a rule entered later still surfaces
+conclusions about earlier inputs. A **module** loaded with `.import`
+contributes no anchors — a loaded arithmetic library stays silent about its
+internals.
 
 **What is printed is deterministic; the order in which it appears is not.**
 The reasoner is parallel (`.parallel`), so two runs of the same input derive
 the same facts and answer the same queries, but the deduction lines, the
 answers of one query, and the bindings of two variables that could be
-exchanged may come out in a different order – and a `(skipped N deductions)`
-line may fall in a different place. Transcripts in this documentation are real
-runs; read them as one of the possible orders.
+exchanged may come out in a different order. Transcripts in this documentation
+are real runs; read them as one of the possible orders.
 
 The filter affects printing only: **all facts are derived and stored
 regardless of the mode**, and query answers, contradictions and warnings are
 always printed. If a result you are interested in is not shown, query it
-(e.g. `&7 > X`) or switch to `.deductions all`. Filtered deductions are
-counted in the "(skipped N deductions)" summary. As a side effect, heavy
+(e.g. `&7 > X`) or switch to `.deductions all`. As a side effect, heavy
 computations run several times faster in focus/off mode, because rendering
 large derived terms dominates the cost.
+
+### What a filtered run tells you
+
+A run that withheld something says so, **once, at the end of the run, with the
+run's total**:
+
+```
+Note: 6 deductions are not shown. '.deductions focus' shows only deductions
+      about statements you entered yourself; '.deductions all' shows every one.
+```
+
+The notice is printed on the same channel as the deduction lines it accounts
+for. That matters for a recorded transcript: redirecting only standard output
+used to keep the incomplete derivation and drop the sentence saying it was
+incomplete, so a log a year later could not be told from a complete one. For
+the same reason it now carries the run's total rather than the count since the
+last printed line — a reader comparing a paper against a log has one number to
+compare, not several to find and add.
+
+A deduction written to a file by `.run-export` is not withheld and is not
+counted: the caller asked for a file, not for lines.
 
 ## Exporting Derivations
 

@@ -85,6 +85,13 @@ Here, the subject of the outer statement is the node representing the inner fact
 
 > Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid _top-level_ statement in the REPL; nested facts are meant to be used _as parts_ of a larger statement.
 
+> Note: **two values are separated by whitespace**, so a value written directly
+> against an opening parenthesis is not a statement: `a b x(c d e)` is refused,
+> `a b x (c d e)` is read. Function notation `f(x)` therefore exists only inside
+> a _notation island_ such as the standard library's `$( ... )` — see
+> [the math front end](math/frontend.md#notation). The refusal names the token it stumbled
+> over and the space that would fix it.
+
 ### Braces: Set Constants and Collections
 
 zelph distinguishes two kinds of unordered grouping, because mathematics and
@@ -494,7 +501,8 @@ Deduction printing mode: off
 zelph> .import decimal-arithmetic
 zelph> .import primes
 zelph> :testprime &13
- (skipped 328 deductions)
+Note: 328 deductions are not shown, because deduction printing is off.
+      '.deductions all' shows every one.
 zelph> (:testprime &13) = X
 Answer: (:testprime &13) = prime
 zelph> (:isprime N, N hasdivisor D) => !

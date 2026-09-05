@@ -104,6 +104,7 @@ jobs:
           require zelph_tests
           require install_tier
           require install_tier_survives_undecodable_output
+          require exit_status_of_the_binary
           if [ "${{ runner.os }}" != "Windows" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
             require arch_baseline_of_the_library
           fi

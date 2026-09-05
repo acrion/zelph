@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/command_executor_impl.hpp"
 
+#include "chrono/stopwatch.hpp"
 #include "io/bin_inspect.hpp"
 #include "io/data_manager.hpp"
 #include "network/reasoning.hpp"
@@ -39,6 +40,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -57,10 +59,27 @@ using namespace zelph;
 // ".zph" scripts are fed line by line through the REPL pipeline; ".janet"
 // scripts are executed as whole Janet programs (see
 // ScriptEngine::run_janet_script). The ".janet" extension must be spelled
-// out; a bare name still resolves to ".zph". Other extensions are rejected.
-static std::string resolve_script_path(const std::string& raw)
+// out; a bare name still resolves to ".zph".
+//
+// What the two roles differ in is what an unknown EXTENSION means.
+// `.import` names a MODULE, and there the name is the whole interface: a
+// ".json" behind it is a mistake worth refusing before the file is fed to the
+// parser line by line. A script named on the COMMAND LINE is a file the user
+// pointed at, and by the conventions of every other interpreter its name is
+// none of our business -- a `#!/usr/bin/env zelph` script is normally called
+// `report` or `check-facts`, not `check-facts.zph`, and refusing `zelph
+// build.tool` while accepting `zelph build` helped nobody. So a session
+// script that EXISTS runs, whatever it is called; the extension then only
+// picks the runner.
+static std::string resolve_script_path(const std::string& raw, const zelph::console::ScriptRole role)
 {
     namespace fs = std::filesystem;
+
+    if (role == zelph::console::ScriptRole::Session)
+    {
+        std::error_code ec;
+        if (fs::is_regular_file(raw, ec)) return raw;
+    }
 
     const std::string ext = fs::path(raw).extension().string();
     if (!ext.empty() && ext != ".zph" && ext != ".janet")
@@ -246,13 +265,20 @@ namespace zelph::console
     }
 #endif
 
-    void CommandExecutor::Impl::import_file(const std::string& file, const std::vector<std::string>& args) const
+    void CommandExecutor::Impl::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role) const
     {
         // Resolve against the working directory first, then the standard
         // library ('.zph' extension optional). This also covers scripts
         // passed on the command line (Interactive::process_file ends up
         // here), so `zelph examples/english` works like `.import`.
-        const std::string resolved = resolve_script_path(file);
+        const std::string resolved = resolve_script_path(file, role);
+
+        // A file named on the command line is a SESSION: it runs the way the
+        // same lines would run if they were typed or piped in. Everything
+        // this function does to find and prepare the file is shared; what is
+        // skipped below are the three suppressions that make a MODULE a
+        // library load rather than a session. See ScriptRole.
+        const bool as_module = role == ScriptRole::Module;
 
         // A partial view is incomplete, so a script that ADDS to it deserves a
         // word -- but most scripts only define things. Which of the two it is
@@ -295,7 +321,12 @@ namespace zelph::console
                 else if (_repl_state->import_depth == 0)
                 {
                     // The user explicitly asked for THIS script, but an
-                    // alternative implementation already claimed the ID.
+                    // alternative implementation already claimed the ID. The
+                    // request is not carried out, so the session that follows
+                    // is not the one that was asked for -- and this path
+                    // throws nothing, which is why the failure has to be
+                    // recorded here rather than left to a catch.
+                    _repl_state->failed = true;
                     _n->error("Warning: skipping import of '" + file + "': module ID '" + id
                                   + "' is already provided by '" + it->second + "'",
                               true);
@@ -336,27 +367,66 @@ namespace zelph::console
             }
         } module_id_claim{*_repl_state, module_ids};
 
+        // The three suppressions that make a module a LIBRARY LOAD, each held
+        // by an optional guard so that a session script simply does not take
+        // it. What each of them costs a session is written where it is built.
+        //
         // Nesting depth: suppresses the input echo inside imported scripts and
-        // distinguishes direct from nested import requests (see the guard above).
+        // distinguishes direct from nested import requests (see the guard
+        // above). For a session it would remove the echo -- and the echo is
+        // also what records the node a bare `.node`, `.mermaid` or `.explain`
+        // falls back to, which is why those answered "no previous output node
+        // available" for `zelph script.zph` and worked for `zelph < script.zph`.
         struct ImportDepthGuard
         {
-            ReplState& state;
-            explicit ImportDepthGuard(ReplState& s) : state(s) { ++state.import_depth; }
-            ~ImportDepthGuard() { --state.import_depth; }
-        } depth_guard{*_repl_state};
+            ReplState* state;
+            explicit ImportDepthGuard(ReplState* s) : state(s)
+            {
+                if (state) ++state->import_depth;
+            }
+            ~ImportDepthGuard()
+            {
+                if (state) --state->import_depth;
+            }
+        } depth_guard{as_module ? _repl_state.get() : nullptr};
 
-        AutoRunSuspender suspend(_repl_state);
+        // Auto-run: a module is run once when it has been read in full, a
+        // session after every line, exactly as when the lines are typed.
+        std::optional<AutoRunSuspender> suspend;
+        if (as_module) suspend.emplace(_repl_state);
 
+        // Input capture: what a statement mentions becomes an anchor of the
+        // deduction focus. Suppressed for a module, because a library's own
+        // definitions are not what the user is looking at. Suppressing it for
+        // a session left the default filter without a single anchor, so it
+        // removed EVERY deduction: `zelph script.zph > log` wrote an empty
+        // file for a script whose piped twin printed its whole derivation.
+        //
         // RAII so the exception path releases suppression too; the depth
         // counter in suppress_input_capture keeps nested imports correct.
         struct CaptureSuppressor
         {
             network::Reasoning* n;
-            explicit CaptureSuppressor(network::Reasoning* r) : n(r) { n->suppress_input_capture(true); }
-            ~CaptureSuppressor() { n->suppress_input_capture(false); }
-        } capture_guard{_n};
+            explicit CaptureSuppressor(network::Reasoning* r) : n(r)
+            {
+                if (n) n->suppress_input_capture(true);
+            }
+            ~CaptureSuppressor()
+            {
+                if (n) n->suppress_input_capture(false);
+            }
+        } capture_guard{as_module ? _n : nullptr};
 
-        _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
+        // A session announces itself only where the name it was given is not
+        // the file it found -- `zelph english` running the standard library's
+        // example, `zelph report` running `report.zph`. A piped session prints
+        // no such line, and the point of a session script is that it reads
+        // like one; but which file a resolved NAME turned into is the one
+        // thing the log could not otherwise be asked afterwards.
+        if (as_module)
+            _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
+        else if (resolved != file)
+            _n->diagnostic_stream() << "Running " << resolved << "..." << std::endl;
 
         if (std::filesystem::path(resolved).extension() == ".janet")
         {
@@ -379,6 +449,18 @@ namespace zelph::console
             for (std::string line_utf8; std::getline(stream, line_utf8);)
             {
                 _process_line_callback(line_utf8);
+
+                // `.quit` ends a session script where it stands, the way it
+                // ends a piped one. It used to be a silent no-op in a file:
+                // the command table registers it as an empty handler because
+                // the REPL loop intercepts the line itself, and no other loop
+                // was looking. A module ignores it -- a library that stops the
+                // session it is being loaded into would be a surprising thing.
+                if (_repl_state->quit_requested)
+                {
+                    if (!as_module) break;
+                    _repl_state->quit_requested = false;
+                }
             }
 
             finish_input();
@@ -395,7 +477,9 @@ namespace zelph::console
                       true);
         }
 
-        if (suspend.was_active())
+        // A module that suspended an active auto-run owes the session the one
+        // run it postponed. A session ran after every line already.
+        if (suspend && suspend->was_active())
         {
             _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, true);
         }

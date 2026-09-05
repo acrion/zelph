@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "string/node_to_string.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -144,5 +145,123 @@ namespace zelph::script
                    "or, if the statement is about one node, write the self-fact \":"
             + predicate + " " + subject + "\", which is \""
             + subject + " " + predicate + " " + subject + "\".");
+    }
+
+    namespace
+    {
+        // Byte length of the reserved character at `i`, or 0. This is the
+        // grammar's own `:reserved` set (script_engine_setup.cpp), and it has
+        // to be asked for a LENGTH rather than tested one byte at a time,
+        // because `¬` is two bytes: reading it as one byte reported `¬(a b)`
+        // -- which parses -- as a value glued to a parenthesis.
+        std::size_t reserved_length(const std::string& s, const std::size_t i)
+        {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (std::string(" \t\r\n\v<\"(){}*>,").find(static_cast<char>(c)) != std::string::npos) return 1;
+            if (c == 0xC2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0xAC) return 2; // ¬
+            return 0;
+        }
+
+        // Values whose grammar rule reads its own operand with `:s*`, so that
+        // an operand glued to them is CORRECT and says nothing about spacing:
+        // `:tag-approx` (≈net(x)) and `:tag-selffact` (:pred(x)). Reporting
+        // those would name a token the user got right.
+        bool takes_a_glued_operand(const std::string& token)
+        {
+            return token.front() == ':' || token.starts_with("≈"); // ≈
+        }
+
+        std::string quoted(const std::string& token)
+        {
+            constexpr std::size_t limit = 40;
+            return "\"" + (token.size() <= limit ? token : token.substr(0, limit) + "...") + "\"";
+        }
+
+        std::string explain_glued(const std::string& token)
+        {
+            if (token == "%")
+                return " '%' escapes a whole LINE to Janet, so it cannot stand as a term inside a statement. "
+                       "To use a Janet VALUE in a statement, bind it and unquote the name -- one line "
+                       "\"%(def v ...)\", then \",v z+ (pos zint &5)\".";
+
+            if (token == "$")
+                return " \"$( ... )\" is a notation island of the standard library rather than core syntax. "
+                       "\".import math-syntax\" registers it.";
+
+            return " " + quoted(token + "(") + " is a value glued to a \"(\": the grammar separates two values by "
+                                               "whitespace, so write "
+                 + quoted(token + " (") + " if a group was meant. Function notation such as \"f(x)\" "
+                                          "exists only inside a notation island -- see \".import math-syntax\".";
+        }
+    }
+
+    std::string diagnose_unparsable(const std::string& statement)
+    {
+        bool        in_quotes   = false;
+        bool        escape      = false;
+        std::size_t token_start = 0; // first byte of the value being read
+        std::size_t i           = 0;
+
+        while (i < statement.size())
+        {
+            const char c = statement[i];
+
+            // Inside a quoted atom everything is text, including "(" -- and
+            // the two escapes the atom knows have to be honoured, or a
+            // trailing `\"` ends the atom one character early and the rest of
+            // the line is scanned in the wrong state.
+            if (in_quotes)
+            {
+                if (escape)
+                    escape = false;
+                else if (c == '\\')
+                    escape = true;
+                else if (c == '"')
+                    in_quotes = false;
+                ++i;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                in_quotes   = true;
+                token_start = ++i;
+                continue;
+            }
+
+            if (c == '(')
+            {
+                if (i > token_start)
+                {
+                    const std::string token = statement.substr(token_start, i - token_start);
+                    if (!takes_a_glued_operand(token)) return explain_glued(token);
+                }
+                else if (i > 0 && statement[i - 1] == ','
+                         && statement.find_first_not_of(" \t\r\n\v") == i - 1)
+                {
+                    // Only at the very beginning of the statement. Further in,
+                    // ",(" is the conjunction separator followed by a group
+                    // (`:comma-sep` requires a reserved character after the
+                    // comma), so "x p y,(a q b)" is correct and must not be
+                    // diagnosed.
+                    return " The unquote \",\" takes the NAME of a Janet binding, not an expression: "
+                           "bind it with \"%(def v ...)\" and write \",v\".";
+                }
+                token_start = ++i;
+                continue;
+            }
+
+            const std::size_t r = reserved_length(statement, i);
+            if (r > 0)
+            {
+                i += r;
+                token_start = i;
+                continue;
+            }
+
+            ++i;
+        }
+
+        return {};
     }
 }

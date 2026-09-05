@@ -80,7 +80,7 @@ namespace zelph::console
 #ifndef __EMSCRIPTEN__
         static std::vector<uint64_t> parse_node_id_list(const std::string& value, const std::string& label);
 #endif
-        void import_file(const std::string& file, const std::vector<std::string>& args = {}) const;
+        void import_file(const std::string& file, const std::vector<std::string>& args = {}, ScriptRole role = ScriptRole::Module) const;
 #ifndef __EMSCRIPTEN__
         void cmd_load(const std::vector<std::string>& cmd);
 #endif

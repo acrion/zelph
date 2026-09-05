@@ -25,7 +25,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-#include "chrono/stopwatch.hpp"
 #include "concurrency/thread_pool.hpp"
 #include "contradiction_error.hpp"
 #include "io/derivation_export.hpp"
@@ -262,10 +261,12 @@ namespace zelph::network
         // When on, deduction printing is restricted to deductions whose
         // subject or rule is in the input-focus set ("focus mode").
         void set_deduction_filter(bool on);
-        // Temporarily suppress input capture (imports): begin_input_capture
+        // Temporarily suppress input capture (modules): begin_input_capture
         // becomes a no-op while suppressed, and an active capture is closed
-        // WITHOUT contributing to the focus set -- imported statements are
-        // not "entered by the user".
+        // WITHOUT contributing to the focus set -- a library's own definitions
+        // are not what the user is looking at. Only `.import` suppresses; the
+        // lines of a script named on the command line are the session's own
+        // and do anchor the filter (see ScriptRole in repl_state.hpp).
         void suppress_input_capture(bool on);
         // Reset the accumulated focus anchors (mode switch; .reset gets a fresh Reasoning instance anyway).
         void clear_input_focus();
@@ -412,12 +413,14 @@ namespace zelph::network
         bool                                  _print_deductions{true};
         bool                                  _export_derivations{false};
         std::atomic<bool>                     _contradiction{false};
-        chrono::StopWatch                     _stop_watch;
-        std::atomic<size_t>                   _skipped{0};
-        std::mutex                            _mtx_output;
-        std::mutex                            _mtx_network;
-        std::atomic<int>                      _total_matches{0};
-        std::atomic<int>                      _total_contradictions{0};
+        // Deductions this run derived but did not show. Reset per run and
+        // reported once at the end of run(), so what the reader gets is the
+        // run's total rather than the remainder since the last printed line.
+        std::atomic<size_t> _skipped{0};
+        std::mutex          _mtx_output;
+        std::mutex          _mtx_network;
+        std::atomic<int>    _total_matches{0};
+        std::atomic<int>    _total_contradictions{0};
         // How many contradiction records the graph HELD when this run began.
         // A run that reports nothing and says nothing else is indistinguishable
         // from a clean graph -- and after a .load of a network that was saved

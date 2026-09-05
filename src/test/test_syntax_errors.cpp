@@ -180,3 +180,104 @@ TEST_CASE("syntax errors: a statement of two parts is named, not reported as an 
                              doctest::Contains("is a subject and a predicate"),
                              std::runtime_error); });
 }
+
+// ---------------------------------------------------------------------------
+// What an UNPARSABLE statement is told.
+//
+// The cases above work on the PEG's syntax tree: the parse succeeded and only
+// the shape was refused. A parse that FAILS leaves no tree, no position and no
+// expectation -- a PEG has no error productions -- so the whole message had to
+// come from somewhere, and for years it came from nowhere: "Syntax error:
+// Could not parse statement." names nothing at all.
+//
+// One rule accounts for most of what people actually type. `:stmt-any`
+// separates two values by `:s+`, so a value glued to an opening parenthesis is
+// not a statement -- and `f(x)` is the shape every reader of mathematics
+// writes. The report that prompted this arrived through `%`, which is a LINE
+// escape and can never be a term; that case has an answer of its own, the
+// unquote `,name`, so it gets its own sentence.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("syntax errors: a value glued to a parenthesis says so, and says where the space goes")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process("a b x(c d e)"),
+                             doctest::Contains("\"x(\" is a value glued to a \"(\""),
+                             std::runtime_error);
+        // The advice has to be the thing that actually parses.
+        interactive.process("a b x (c d e)");
+        CHECK(any_output_contains(collector, "a b x (c d e)")); });
+}
+
+TEST_CASE("syntax errors: '%' inside a statement is answered with the unquote, not with a space")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // `%` is a whole-LINE escape (Interactive::process step 6), so no
+        // amount of whitespace makes it a term. Advising a space here would
+        // send the reader in the wrong direction; what they want is to bind
+        // the Janet value and unquote its name.
+        CHECK_THROWS_WITH_AS(interactive.process(R"(x knows %(some/fn "arg"))"),
+                             doctest::Contains("escapes a whole LINE to Janet"),
+                             std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process(R"(x knows %(some/fn "arg"))"),
+                             doctest::Contains(",v"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("syntax errors: '$(' names the module that registers it, not a missing space")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // `$( ... )` is an inline keyword the standard library registers, not
+        // core syntax. Without `.import math-syntax` it reaches the parser as
+        // a `$` glued to a group, and "write $ (" is advice that produces a
+        // nonsense fact instead of an error.
+        CHECK_THROWS_WITH_AS(interactive.process("$(x + y) ist gut"),
+                             doctest::Contains("math-syntax"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("syntax errors: the glue rule does not fire where a glued group is correct")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Three rules read their own operand with `:s*`, so an operand glued
+        // to them is right and saying otherwise would name a token the user
+        // got correct. `¬` is the one that costs attention: it is TWO bytes,
+        // and a byte-wise reading of the reserved set reported `¬(a b)` --
+        // which parses -- as a value glued to a parenthesis.
+        collector.clear();
+        interactive.process("(A p B, ¬(A q B)) => (A r B)");
+        CHECK_FALSE(any_event_contains(collector, "glued"));
+
+        collector.clear();
+        interactive.process(":unary(a b c)");
+        CHECK_FALSE(any_event_contains(collector, "glued"));
+
+        // And a comma followed by a group is the conjunction separator, which
+        // is why the diagnosis for ",(" is restricted to the start of a
+        // statement.
+        collector.clear();
+        interactive.process("(x p y, (a q b)) => (x r y)");
+        CHECK_FALSE(any_event_contains(collector, "glued")); });
+}
+
+TEST_CASE("syntax errors: a parenthesis inside a quoted atom is text, not structure")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // The scan has to honour the two escapes a quoted atom knows, or a
+        // name ending in `\"` closes the atom one character early and the
+        // rest of the line is read in the wrong state -- which would name a
+        // token out of the middle of a string.
+        collector.clear();
+        interactive.process(R"(a b "name with (a paren")");
+        CHECK_FALSE(any_event_contains(collector, "glued"));
+        CHECK_FALSE(any_event_contains(collector, "Could not parse statement")); });
+}

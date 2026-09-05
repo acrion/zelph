@@ -95,6 +95,38 @@ TEST_CASE("run-export: a deduction becomes one record with separated premises")
         CHECK(lines[0].find("\"names\":{\"zelph\":\"c\"}") != std::string::npos); });
 }
 
+TEST_CASE("run-export: an exported deduction is not one that was withheld")
+{
+    // .run-export runs with printing off, and everything not printed used to
+    // be counted as withheld -- so a run that wrote every one of its
+    // derivations to the file also reported "(skipped 1 deductions)" once per
+    // derivation. Nothing had been skipped: the caller asked for a file, not
+    // for lines, and the notice contradicted the file sitting next to it.
+    //
+    // What the count means is "derived, and you did not get to see it", and a
+    // record in the export is seeing it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_not_withheld.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process("(*{(A rel B) (B rel C)} ~ conjunction) => (A rel C)");
+        interactive.process("a rel b");
+        interactive.process("b rel c");
+        collector.clear();
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE(lines.size() == 1);
+        CHECK_FALSE(any_event_contains(collector, "not shown"));
+        CHECK_FALSE(any_event_contains(collector, "skipped")); });
+}
+
 TEST_CASE("run-export: a contradiction names zelph's own vocabulary as core")
 {
     run_both_modes([](auto& collector, auto& interactive)

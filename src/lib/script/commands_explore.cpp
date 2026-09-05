@@ -53,6 +53,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph;
 
+namespace
+{
+    // Said by .node and .mermaid, so it is written once. The second sentence
+    // is the part that was missing for a long time: the fallback is a side
+    // effect of RENDERING, and a module loaded with .import renders nothing,
+    // so the same script answered this from a file and worked when piped in.
+    // A command-line script is a session now and prints, which leaves .import
+    // as the one place the fallback genuinely does not exist -- and that is
+    // what the message has to say.
+    constexpr const char* kNoLastNode =
+        "No argument given and no previous output node available. The fallback is the node of "
+        "the last statement, answer or deduction PRINTED, and a module loaded with .import "
+        "prints none -- name the node, or run the script as a session ('zelph script.zph').";
+}
+
 namespace zelph::console
 {
     void CommandExecutor::Impl::display_node_details(network::Node nd, bool resolved_from_name, int depth, int max_neighbors) const
@@ -487,7 +502,7 @@ namespace zelph::console
         else if (cmd.size() == 1)
         {
             network::Node last = string::last_node_to_string_node();
-            if (last == network::Node{}) throw std::runtime_error("Command .node: No argument given and no previous output node available");
+            if (last == network::Node{}) throw std::runtime_error("Command .node: " + std::string(kNoLastNode));
             nodes.push_back(last);
         }
         else
@@ -615,7 +630,7 @@ namespace zelph::console
             // statement one has just read, and naming it twice is what the
             // shell wrapper around the paper scripts existed to avoid.
             nd = string::last_node_to_string_node();
-            if (nd == network::Node{}) throw std::runtime_error("Command .mermaid: No argument given and no previous output node available");
+            if (nd == network::Node{}) throw std::runtime_error("Command .mermaid: " + std::string(kNoLastNode));
         }
         else
         {

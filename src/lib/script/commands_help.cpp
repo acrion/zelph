@@ -57,7 +57,8 @@ namespace zelph::console
             "  .licenses                                 – Show third-party libraries and licenses",
             "",
             "Scripts, Loading & Saving",
-            "  .import <script> [args...]                – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library",
+            "  .import <script> [args...]                – Load a MODULE: quiet (no echo, no focus anchors, one run at the end), .zph/.janet only, falls back to the standard library",
+            "  (from the shell) zelph <script> [args...] – Run a script as a SESSION: exactly as if its lines had been typed. Same resolution, any file name",
             "  .provides <id> [id2 ...]                  – Claim module IDs in the import registry",
 #ifndef __EMSCRIPTEN__
             "  .load <file>                              – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
@@ -169,7 +170,9 @@ namespace zelph::console
             "",
             "Janet Scripting",
             "───────────────",
-            "Janet:    %<code> (inline, one line) or bare % (toggle block mode until next %).",
+            "Janet:    %<code> at the START of a line (the whole line is Janet) or bare % (toggle",
+            "          block mode until next %). '%' is a LINE escape, never a term: 'S %(f x) O' is",
+            "          not a statement. Bind the value in Janet and unquote its name instead.",
             "          Janet generates facts/rules programmatically – then zelph inference runs as usual.",
             "          Example (using the Berlin/Germany facts from above):",
             "          %(zelph/fact \"Berlin\" \"is capital of\" \"Germany\")",
@@ -185,7 +188,10 @@ namespace zelph::console
             "            ⇐ {(Germany \"is located in\" Europe)",
             "               (Berlin \"is capital of\" Germany)}",
             "",
-            "Unquote:  ,janet-var inside zelph lines (after defining in Janet).",
+            "Unquote:  ,janet-var inside zelph lines (after defining in Janet). This is how a",
+            "          value COMPUTED in Janet becomes a term of a statement.",
+            "          Written without whitespace after the comma: ',pred' unquotes, ', pred'",
+            "          is the conjunction separator. It takes a NAME, not an expression.",
             "          Example:",
             "          %(def berlin (zelph/resolve \"Berlin\"))",
             "          ,berlin \"is capital of\" Germany"};
@@ -255,6 +261,10 @@ namespace zelph::console
                       "The argument can be a name (in current language), a numeric node ID, or the\n"
                       "FACT itself -- '.node a rel b', with or without parentheses, exactly as the\n"
                       "fact prints. If no argument is given, the node from the last output is used.\n"
+                      "That is the node of the statement, query answer or deduction printed last, so\n"
+                      "the argument-less form works in the session -- typed, piped, or a script run\n"
+                      "as 'zelph script.zph'. Inside a module (.import) nothing is printed, so there\n"
+                      "is no last node to fall back to.\n"
                       "Facts ABOUT the node that are engine bookkeeping are reported as properties\n"
                       "instead of being written into the term: 'Negated by a rule' and 'Rule pattern\n"
                       "(not asserted)', the latter for a statement that exists only because a rule\n"
@@ -267,7 +277,8 @@ namespace zelph::console
                          "The node is named the same way as for .node: a name in the current language, a\n"
                          "numeric node ID, or the FACT itself -- '.mermaid a rel b', with or without\n"
                          "parentheses, exactly as the fact prints. With no argument at all, the node from\n"
-                         "the last output is used.\n"
+                         "the last output is used -- see '.help .node' for what that is and where it\n"
+                         "exists.\n"
                          "depth defaults to 1, which does not mean one hop: it selects a depth that grows\n"
                          "until the graph holds enough nodes to be worth looking at. max_neighbours caps\n"
                          "how many neighbours each node contributes.\n"
@@ -311,6 +322,8 @@ namespace zelph::console
                          "    .import binary-arithmetic\n"
                          "    ? (&6 + &7)\n"
                          "    .explain\n"
+                         "The same three lines work as a script file, because a script\n"
+                         "named on the command line is a session (see '.help .node').\n"
                          "Nothing is recorded during inference: after quiescence, every\n"
                          "derived fact has a rule instantiation whose conditions are all\n"
                          "present, and .explain finds one by backward search (forward\n"
@@ -413,7 +426,19 @@ namespace zelph::console
                         "WARNING: This operation is destructive and irreversible!"},
 
             {".import", ".import <script> [args...]\n"
-                        "Loads and immediately executes a script. Two script types are supported:\n"
+                        "Loads a MODULE: a script whose purpose is to define things for the session\n"
+                        "around it. Its own lines are therefore not echoed, its statements are not\n"
+                        "focus anchors for the deduction filter, and inference runs once when the\n"
+                        "whole file has been read rather than after every line.\n"
+                        "\n"
+                        "That is NOT how 'zelph script.zph' runs a script. A file named on the\n"
+                        "command line is a SESSION: it behaves exactly as if its lines had been\n"
+                        "typed, which is what the shebang '#!/usr/bin/env zelph' promises. It shares\n"
+                        "everything below -- resolution, the .janet runner, arguments, the module\n"
+                        "registry -- except that it may be called anything, whereas .import accepts\n"
+                        "only '.zph' and '.janet'.\n"
+                        "\n"
+                        "Two script types are supported:\n"
                         "  .zph   – zelph scripts, processed line by line. The extension is optional.\n"
                         "  .janet – Janet programs, run like the janet CLI would: fresh environment\n"
                         "           with the zelph/... API available, relative imports such as\n"
@@ -669,17 +694,28 @@ namespace zelph::console
                             "argument, shows the current mode (default: focus).\n"
                             "  all    print every deduction (full derivation trace)\n"
                             "  focus  print only deductions about your own input: the deduced\n"
-                            "         fact's subject stems from an interactively entered\n"
-                            "         statement -- it is the entered fact itself, or its subject\n"
-                            "         or one of its objects. Anchors accumulate over the session;\n"
-                            "         imported scripts (.import) do not contribute. Switching\n"
-                            "         modes resets the collected anchors.\n"
+                            "         fact's subject stems from a statement of the SESSION --\n"
+                            "         typed, piped, or a script run as 'zelph script.zph'. It is\n"
+                            "         the entered fact itself, or its subject, or one of its\n"
+                            "         objects. Anchors accumulate over the session; a module\n"
+                            "         loaded with .import does not contribute. Switching modes\n"
+                            "         resets the collected anchors.\n"
                             "  off    print no deductions\n"
                             "All facts are derived and stored regardless of the mode. Query\n"
-                            "answers, contradictions and warnings are always printed. Filtered\n"
-                            "deductions are counted in \"(skipped N deductions)\". Heavy\n"
-                            "computations run several times faster with focus/off: rendering\n"
-                            "large derived terms dominates the cost."},
+                            "answers, contradictions and warnings are always printed.\n"
+                            "\n"
+                            "A run that withheld something says so, once, at the end of the run\n"
+                            "and with the run's total:\n"
+                            "  Note: 6 deductions are not shown. '.deductions focus' shows only\n"
+                            "        deductions about statements you entered yourself;\n"
+                            "        '.deductions all' shows every one.\n"
+                            "It is printed on the same channel as the deduction lines it accounts\n"
+                            "for, so a redirected transcript cannot keep the gap and lose the\n"
+                            "notice. A deduction written to a file by .run-export is not withheld\n"
+                            "and is not counted.\n"
+                            "\n"
+                            "Heavy computations run several times faster with focus/off:\n"
+                            "rendering large derived terms dominates the cost."},
 
             {".parallel", ".parallel\n"
                           "Toggles parallel processing on/off.\n"

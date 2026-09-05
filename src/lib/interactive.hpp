@@ -62,7 +62,27 @@ namespace zelph::console
         // otherwise discard it without a word -- and "printf ... | zelph" is
         // how zelph gets verified.
         void finish_input() const;
+
+        // Run a script named on the command line. It is a SESSION, not a
+        // library load: its lines are echoed, its statements anchor the
+        // deduction focus, and auto-run fires after each of them -- so
+        // `zelph script.zph` and `zelph < script.zph` produce the same
+        // reasoning and the same output. What it keeps from `.import` is the
+        // path resolution (including the standard library), the `.janet`
+        // whole-program runner, the script arguments and the module guard.
         void process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
+
+        // Whether anything has FAILED in this session: a command that threw
+        // and was reported, or an import that was declined. The binary turns
+        // it into its exit status. Not cleared by `.new`, and deliberately not
+        // derived from the Error output channel, which also carries warnings
+        // about operations the documentation calls legitimate.
+        bool had_failure() const;
+
+        // Record a failure the library cannot see -- what a caller caught and
+        // reported itself, which for the binary is every error the REPL loop
+        // survives.
+        void note_failure() const;
 
         // The graph this REPL drives, for a caller that embeds zelph rather
         // than typing at it. Non-owning, and NOT stable across .new, which

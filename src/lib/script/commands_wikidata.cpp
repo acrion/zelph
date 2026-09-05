@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/command_executor_impl.hpp"
 
+#include "chrono/stopwatch.hpp"
 #include "network/reasoning.hpp"
 
 #ifndef __EMSCRIPTEN__

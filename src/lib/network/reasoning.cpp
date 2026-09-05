@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "reasoning.hpp"
 
+#include "chrono/stopwatch.hpp"
 #include "contradiction_error.hpp"
 #include "fact_structure.hpp"
 #include "string/node_to_string.hpp"
@@ -391,7 +392,21 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                             << ". Total contradictions found: " << _total_contradictions
                             << known_contradiction_note() << "." << std::endl;
 
-    if (_skipped > 0) diagnostic(" (skipped " + std::to_string(_skipped) + " deductions)", true);
+    // Once per run, with the run's total, on the same channel as the
+    // deduction lines it accounts for, and naming both the cause and the way
+    // out. Kept out of the `!silent` block deliberately: auto-run is silent, and a
+    // filtered auto-run is exactly where a reader loses lines without asking.
+    if (_skipped > 0)
+    {
+        const std::string count = std::to_string(_skipped.load());
+        const std::string are   = _skipped == 1 ? " deduction is " : " deductions are ";
+        const std::string cause = _print_deductions
+                                    ? "not shown. '.deductions focus' shows only deductions\n"
+                                      "      about statements you entered yourself;"
+                                    : "not shown, because deduction printing is off.\n"
+                                      "     ";
+        out("Note: " + count + are + cause + " '.deductions all' shows every one.", true);
+    }
 
     if (_contradiction)
     {

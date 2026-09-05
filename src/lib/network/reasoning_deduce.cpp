@@ -626,41 +626,30 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         {
             std::lock_guard<std::mutex> lock(_mtx_output);
 
-            // Focus mode: only deductions ABOUT an interactively entered
-            // subject are printed. The applied rule is deliberately NOT an
-            // anchor: with session-wide accumulation, rule anchors would
-            // make focus degenerate to "all" for any interactively entered
-            // (or pasted) rule set. A subject the deduction CONSTRUCTED is
-            // reached through what it was constructed of -- see
-            // in_input_focus.
+            // Focus mode: only deductions ABOUT a subject of the SESSION are
+            // printed -- typed, piped, or a line of a script named on the
+            // command line (see ScriptRole in repl_state.hpp); a module
+            // loaded with .import contributes no anchor. The applied rule is
+            // deliberately NOT an anchor either: with session-wide
+            // accumulation, rule anchors would make focus degenerate to "all"
+            // for any entered (or pasted) rule set. A subject the deduction
+            // CONSTRUCTED is reached through what it was constructed of --
+            // see in_input_focus.
             const bool focus_reject = _print_deductions && _deduction_filter && !is_rule
                                    && !in_input_focus(source, _focus_subject_depth);
 
-            bool do_print = _print_deductions && !focus_reject;
+            const bool do_print = _print_deductions && !focus_reject;
 
-            if (focus_reject)
-            {
-                ++_skipped;
-            }
-            else if (!do_print && _stop_watch.is_running() && _stop_watch.duration() >= 1000)
-            {
-                do_print = true;
-                _stop_watch.start();
-            }
-            else if (!do_print)
-            {
-                ++_skipped;
-            }
-            else
-            {
-                _stop_watch.start();
-            }
+            // What the count MEANS is "derived, and you did not get to see
+            // it", so a deduction that reaches the derivation export is not
+            // one of them: the caller of .run-export asked for a file rather
+            // than for lines. Counting it made .run-export report "(skipped
+            // 1 deductions)" once per deduction, for deductions all of which
+            // were in the JSON it had just written.
+            if (!do_print && !_export_derivations) ++_skipped;
 
             if (do_print || _export_derivations)
             {
-                size_t skipped_val = _skipped.exchange(0);
-                if (skipped_val > 0) diagnostic(" (skipped " + std::to_string(skipped_val) + " deductions)", true);
-
                 std::string input, output;
                 string::node_to_string(this, input, _lang, ctx.current_condition, 3, augmented, parent);
                 string::node_to_string(this, output, _lang, d, 3, {}, parent);

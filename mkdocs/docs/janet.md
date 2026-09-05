@@ -72,6 +72,16 @@ Prefix a line with `%` to execute it as Janet:
 %(print "Hello from Janet!")
 ```
 
+`%` is a **line** escape and nothing else. It is recognized only as the first
+character of a line, and it hands zelph the WHOLE line as Janet code — so it
+can never stand as a term inside a statement:
+
+```
+x knows %(zelph/resolve "Berlin")     # not a statement
+```
+
+To use a value computed in Janet as a term, bind it and unquote its name with
+`,name` (see [Referencing Janet Variables in zelph](#referencing-janet-variables-in-zelph-unquote) below).
 Whitespace after `%` is optional. If the expression spans multiple lines (i.e., has unbalanced delimiters), zelph automatically accumulates subsequent lines until the expression is complete:
 
 ```
@@ -437,13 +447,13 @@ The embedded Janet environment exposes the following functions. Unless stated ot
 #### Script import
 
 - **`(zelph/import path & args)`**  
-  Load and execute a script through the same machinery as the `.import` command: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
+  Load and execute a script as a **module**, through the same machinery as the `.import` command — not as a session, whatever the surrounding script is: `path` is resolved against the current working directory first, then the zelph standard library, and the `.zph` extension is optional. Any further arguments must be strings; they are passed to the imported script and available there via `(dyn :args)`. Returns `nil`.  
   This is the way to pull `.zph` files into the network from Janet code — for example `(zelph/import "decimal-arithmetic")` to load the decimal arithmetic rules before working with `&`-literals.  
   Two restrictions apply: `.janet` files are rejected (use `zelph/run-script` below, or Janet's own `import`, `use`, or `dofile`, for Janet modules), and the function must be called from the main thread, not from inside `ev/spawn-thread`.
 
 - **`(zelph/run-script path & args)`**  
   Run a Janet source file the way the `janet` CLI would, and the counterpart of `zelph/import` for `.janet` files: the file is evaluated in a fresh environment, and its `main` function — if it defines one — is then called with the script path followed by `args`. Returns `nil`.  
-  This is what the binary itself uses for `zelph <file.janet>`, so a script written for that invocation runs unchanged when called from Janet.  
+  This is the same runner the binary uses for `zelph <file.janet>`, so a script written for that invocation runs unchanged when called from Janet. What differs is the surroundings, not the runner: on the command line the file is a session, so what it asserts anchors the deduction filter and auto-run fires as usual, while a call to `zelph/run-script` inherits whatever surrounds it.  
   Two properties are worth knowing, because neither follows from the name:
     - Relative imports such as `(use ./helper)` resolve against the **script's** directory, not the process's working directory, so a script can be started from anywhere.
     - Every run starts from an empty module cache. Janet's `require` caches modules process-wide, so without this a second run of the same script would keep the first version of every dependency it pulled in — an edit to `helper.janet` would be invisible for the rest of the session.
@@ -576,7 +586,7 @@ Clusters are session state and are not persisted by `zelph/save`.
   Load a previously saved network state, exactly like the `.load` command:
   - If `file` ends with `.bin`, the serialized network is loaded directly (fast).
   - If `file` ends with `.json` or `.json.bz2` (Wikidata dump), the data is imported and a `.bin` cache file is created in the same directory for faster future loads.  
-    In the interactive REPL, loading disables auto-run (large datasets). Inside a script run, auto-run is already suspended for the duration of the import and restored afterwards — the same behavior as `.load` inside a `.zph` script. Returns `nil`. Main thread only.
+    In the interactive REPL, loading disables auto-run (large datasets). Inside a module (`.import`) auto-run is already suspended for the duration of the load and restored afterwards. A script named on the command line is a session, so there `.load` disables auto-run exactly as it does in the REPL — see [Scripts and Modules](modules.md). Returns `nil`. Main thread only.
 
 #### Neural network functions
 
@@ -699,6 +709,9 @@ This is equivalent to writing `Berlin "is capital of" Germany`, but the subject 
 >
 > - `,pred` → unquote the Janet variable `pred`
 > - `, pred` → **not** unquote; inside conjunction parentheses it acts as a separator, and outside it is simply invalid syntax
+>
+> It takes a **name**, not an expression: `,(zelph/resolve "Berlin")` does not
+> parse. Bind the value first with `%(def berlin ...)` and write `,berlin`.
 
 ### How Unquote Works
 
@@ -1189,7 +1202,7 @@ term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
 | `<abc>`                         | `(zelph/list-chars "abc")`                          | Compact char cons-list (LSB-first: rightmost char = outermost)              |
 | `*expr`                         | `let` binding to capture and reuse a sub-expression | Focus operator                                                              |
 | `,var` in zelph                 | Direct variable reference in generated code         | Unquote a Janet value (no whitespace after comma)                           |
-| `% code`                        | —                                                   | Execute Janet inline                                                        |
+| `% code`                        | —                                                   | Execute Janet inline (line start only; never a term)                        |
 | `%` (bare)                      | —                                                   | Toggle Janet block mode                                                     |
 | `X ~ human`                     | `(zelph/query (zelph/fact 'X "~" "human"))`         | Query — returns array of `@{symbol node}` tables                            |
 | _(no equivalent)_               | `(zelph/exists "sun" "is" "yellow")`                | Check if a fact exists (read-only)                                          |

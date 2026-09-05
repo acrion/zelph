@@ -128,7 +128,10 @@ namespace zelph::console
 
             target = string::last_node_to_string_node();
             if (!target)
-                throw std::runtime_error(".explain: no previous output node -- pass a fact pattern");
+                throw std::runtime_error(
+                    ".explain: no previous output node -- pass a fact pattern. The fallback is "
+                    "the node of the last statement, answer or deduction PRINTED, and a module "
+                    "loaded with .import prints none.");
         }
 
         if (!_n->check_fact(target).is_known())

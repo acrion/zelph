@@ -120,7 +120,12 @@ extern "C"
        program that is noise at best - and for a host with its own protocol on
        stdout, a protocol error.
 
-         OUT         derived facts, query answers: the REPL's results
+         OUT         derived facts, query answers: the REPL's results, plus
+                     the occasional line ABOUT them -- a run that filtered
+                     deductions says so here rather than on DIAGNOSTIC,
+                     because a reader who keeps only OUT must not keep an
+                     incomplete derivation without the sentence saying it is
+                     incomplete
          ERROR       something went wrong; keep this one
          DIAGNOSTIC  progress and summaries: the REPL's narration
          PROMPT      the REPL's own decoration

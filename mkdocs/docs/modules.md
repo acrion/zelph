@@ -10,11 +10,41 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 
 This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata").
 
-## Importing Scripts: Module IDs and Interchangeable Implementations
+## Two ways to run a script
 
-`.import <script>` loads and executes a zelph (`.zph`) or Janet (`.janet`)
-script, resolving first against the working directory and then the standard
-library (the `.zph` extension is optional).
+A script file reaches zelph on one of two paths, and they differ in what the
+file IS to the engine.
+
+`.import <script>` loads a **module**: a script whose purpose is to define
+things for the session around it. Its own lines are not echoed, its statements
+are not anchors for the deduction filter (see
+[Deduction Output Modes](rules.md#deduction-output-modes)), and inference runs
+once when the whole file has been read rather than after every line. It
+resolves first against the working directory and then the standard library
+(the `.zph` extension is optional), and it accepts `.zph` and `.janet` only.
+
+`zelph <script> [args...]` from the shell runs a **session**: the file behaves
+exactly as if its lines had been typed, which is what the shebang
+`#!/usr/bin/env zelph` promises. Statements are echoed, they anchor the
+deduction filter, and inference runs after each of them — so a line can read
+what the line before it derived. Everything about finding and preparing the
+file is shared with `.import`: the same resolution order, the same `.janet`
+runner, the same script arguments, the same module registry below. The one
+difference is the file NAME: a session script that exists is run whatever it
+is called, because a shebang script is normally called `report` rather than
+`report.zph`.
+
+```bash
+zelph stdlib/examples/english.zph      # a session: echoes, derives, prints
+zelph < stdlib/examples/english.zph    # the same session, read from a pipe
+```
+
+Inside the REPL the same file is a module:
+
+    .import examples/english
+
+`.quit` ends a session script where it stands. A module ignores it — a library
+that stopped the session it is being loaded into would be a surprising thing.
 
 ### Import once
 
@@ -88,4 +118,8 @@ on arithmetic:
 
 If a directly requested script is skipped because a _different_ script
 already provides one of its IDs, zelph prints a warning — you asked for a
-specific implementation, but an alternative is already active.
+specific implementation, but an alternative is already active. This is one of
+the cases that make zelph **exit with a non-zero status**: your request was not
+carried out, so the session that follows is not the one you asked for. (The
+partial-view warning of [Sharding](sharding.md) is not such a case; it
+accompanies an operation that is legitimate.)

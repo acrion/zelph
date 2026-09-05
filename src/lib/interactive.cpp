@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "repl_state.hpp"
 #include "script/command_executor.hpp"
 #include "script/script_engine.hpp"
+#include "script/syntax_errors.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
@@ -91,8 +92,9 @@ public:
             { _command_executor->execute(cmd); });
 
         // Suppress the input echo (parsed statements, inline Janet results)
-        // inside imported scripts; interactive input keeps it. Reasoning
-        // output, query answers and import diagnostics are unaffected.
+        // inside a MODULE; the session keeps it -- typed, piped, or a script
+        // named on the command line (see ScriptRole). Reasoning output, query
+        // answers and import diagnostics are unaffected.
         _script_engine->set_echo_predicate(
             [this]
             { return _repl_state->import_depth == 0 && _repl_state->quiet_depth == 0; });
@@ -156,7 +158,17 @@ console::Interactive::~Interactive()
 
 void console::Interactive::process_file(const std::string& file, const std::vector<std::string>& args) const
 {
-    _pImpl->_command_executor->import_file(file, args);
+    _pImpl->_command_executor->import_file(file, args, ScriptRole::Session);
+}
+
+bool console::Interactive::had_failure() const
+{
+    return _pImpl->_repl_state->failed;
+}
+
+void console::Interactive::note_failure() const
+{
+    _pImpl->_repl_state->failed = true;
 }
 
 zelph::network::Reasoning* console::Interactive::graph() const
@@ -251,15 +263,28 @@ void console::Interactive::process(std::string line) const
             return;
         }
 
-        // --- 1. Comments (work in all modes) ---
-        if (!line.empty() && line[0] == '#') return;
+        // What a line IS -- comment, command, statement -- is decided by its
+        // first character, so the scan for it has to know every character
+        // that can stand invisibly in front of one. It used to know space
+        // and tab only, which is why a file saved with a byte order mark
+        // lost its first line without a word: `.import x` behind U+FEFF is
+        // neither a comment nor a command, so it was read as the start of a
+        // statement, stayed incomplete, and the next line was appended to
+        // it. See zelph::string::whitespace_length.
+        const size_t first_char_pos = zelph::string::first_non_whitespace(line);
 
-        size_t first_char_pos = line.find_first_not_of(" \t");
+        // --- 1. Comments (work in all modes) ---
+        if (first_char_pos != std::string::npos && line[first_char_pos] == '#') return;
 
         // --- 2. Commands starting with '.' (work in all modes) ---
         if (first_char_pos != std::string::npos && line[first_char_pos] == '.')
         {
-            const std::vector<zelph::string::QuotedToken> marked = zelph::string::tokenize_quoted_marked(line);
+            // From the first real character, not from byte 0: the tokenizer
+            // splits on ASCII whitespace, so a U+FEFF or a no-break space in
+            // front would stay glued to the command and ".import" would not
+            // be recognized as one. Leading ASCII blanks are unaffected --
+            // they never produced a token.
+            const std::vector<zelph::string::QuotedToken> marked = zelph::string::tokenize_quoted_marked(line.substr(first_char_pos));
 
             std::vector<std::string> parts;
             std::vector<std::string> sources;
@@ -455,7 +480,8 @@ void console::Interactive::process(std::string line) const
                 {
                     const std::string transformed = _pImpl->_script_engine->parse_zelph_to_janet(stmt);
                     if (transformed.empty())
-                        throw std::runtime_error("Syntax error: Could not parse statement.");
+                        throw std::runtime_error("Syntax error: Could not parse statement."
+                                                 + script::diagnose_unparsable(stmt));
                     _pImpl->_n->profiler_reset_epoch();
                     _pImpl->_script_engine->process_janet(transformed, true);
                 };
@@ -541,7 +567,8 @@ void console::Interactive::process(std::string line) const
             size_t u_first = complete_stmt.find_first_not_of(" \t\n");
             if (u_first != std::string::npos)
             {
-                throw std::runtime_error("Syntax error: Could not parse statement.");
+                throw std::runtime_error("Syntax error: Could not parse statement."
+                                         + script::diagnose_unparsable(complete_stmt));
             }
         }
 

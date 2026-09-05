@@ -295,9 +295,10 @@ The following is a complete, unaltered session log of `stdlib/examples/neural/nn
 ```
 
 > **`.deductions all`** is what causes the `⇐` lines to show up. Focus mode, the
-> default, anchors only to statements you entered manually, and an imported
-> script adds no anchors (see `.help .deductions`), so without that initial
-> line the identical run displays `(skipped 142 deductions)` instead.
+> default, anchors only to statements of the session, and the demo is loaded as
+> a module with `.import`, which adds no anchors (see `.help .deductions` and
+> [Scripts and Modules](modules.md)). Without that initial line the identical
+> run prints one notice naming the 142 derivations it withheld instead.
 >
 > The training is seeded, so the counts and the loss come out identical on
 > every run and on every machine – that is what makes the figures quotable. The

@@ -75,6 +75,7 @@ add_executable(zelph_tests
     test_ontology.cpp
     test_path_conditions.cpp
     test_output.cpp
+    test_paper_scripts.cpp
     test_partial_anchor.cpp
     test_performance_guard.cpp
     test_polynomial.cpp
@@ -93,6 +94,7 @@ add_executable(zelph_tests
     test_script_query.cpp
     test_script_run.cpp
     test_script_runner.cpp
+    test_script_session.cpp
     test_self_predicate.cpp
     test_seminaive.cpp
     test_sets.cpp
@@ -110,6 +112,13 @@ add_executable(zelph_tests
     test_wikidata_qualifiers.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
+
+# Where test_paper_scripts.cpp looks. An absolute path into the SOURCE tree,
+# because the scripts are development material and are not installed anywhere:
+# the cases that read them are all in the "slow" suite, which the packages
+# exclude, so this path is only ever resolved where the source is.
+target_compile_definitions(zelph_tests PRIVATE
+    ZELPH_PAPER_SCRIPT_DIR="${CMAKE_SOURCE_DIR}/dev_scripts/paper")
 
 # Mirror the standard library next to the test binary. Same rationale as in
 # src/app; needed independently so tests work when the app target is not
@@ -271,6 +280,18 @@ if (Python3_Interpreter_FOUND)
     add_executable(zelph_noisy_listing_probe noisy_listing_probe.cpp)
     zelph_add_check_test(install_tier_survives_undecodable_output "${ZELPH_TIER_CHECK}"
             "--run $<TARGET_FILE:zelph_noisy_listing_probe> --budget 100" 0)
+
+    # --- the status the binary reports ---------------------------------------
+    #
+    # The doctest suite pins the flag the library keeps; only a real process
+    # can be asked what it told the shell, and that is the half a caller
+    # actually depends on. It stayed 0 through every failure there is until
+    # 1.0.1, which is how a script with an unresolved import passed for a
+    # working one for six weeks.
+    if (TARGET zelph)
+        zelph_add_check_test(exit_status_of_the_binary "${CMAKE_SOURCE_DIR}/tools/check_exit_status.py"
+                "$<TARGET_FILE:zelph>" 0)
+    endif ()
 else ()
     # Rather than skip. The tests the packages run at install time are the ones
     # nobody watches, so their guard must not be the first thing to disappear.

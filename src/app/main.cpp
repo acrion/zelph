@@ -144,7 +144,16 @@ int main(int argc, char** argv)
 
         for (const auto& file : script_files)
         {
-            interactive.process_file(file, script_args);
+            try
+            {
+                interactive.process_file(file, script_args);
+            }
+            catch (const std::exception& e)
+            {
+                interactive.err(e.what());
+                interactive.note_failure();
+                interactive.err("zelph: '" + file + "' stopped at the error above; the lines after it did not run.");
+            }
         }
 
         if (script_files.empty())
@@ -187,6 +196,7 @@ int main(int argc, char** argv)
                 catch (const std::exception& e)
                 {
                     interactive.err(e.what());
+                    interactive.note_failure();
                 }
 
                 const auto elapsed = std::chrono::steady_clock::now() - start_time;
@@ -209,6 +219,7 @@ int main(int argc, char** argv)
             catch (const std::exception& e)
             {
                 interactive.err(e.what());
+                interactive.note_failure();
             }
 
             interactive.out("");
@@ -217,6 +228,13 @@ int main(int argc, char** argv)
     catch (std::exception& ex)
     {
         interactive.err(ex.what());
+        interactive.note_failure();
+    }
+
+    if (interactive.had_failure())
+    {
+        interactive.err("zelph: finished with errors, see above.");
+        return 1;
     }
 
     return 0;

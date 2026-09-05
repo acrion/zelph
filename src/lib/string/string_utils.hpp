@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <zelph_export.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -229,14 +230,80 @@ namespace zelph::string
     std::string escape_atom(const std::string& name);
     std::string unescape_atom(const std::string& body);
 
-    /// Trim ASCII whitespace (space, tab, \r, \n, \v, \f) from both ends.
+    /// Length in bytes of the whitespace character that starts at `s[i]`, or
+    /// 0 when what stands there is not whitespace.
+    ///
+    /// ASCII whitespace, plus the characters an editor or a copy out of a PDF
+    /// puts into a line without showing it. Those matter here because zelph
+    /// decides what a line IS from its first character: a leading U+FEFF made
+    /// a line miss both the comment test and the command test, so a `.zph`
+    /// file saved with a byte order mark had its first line parsed as the
+    /// beginning of a statement, which then stayed incomplete and swallowed
+    /// the line after it. A whole script rewritten, without one message.
+    /// U+FEFF is a zero-width no-break SPACE wherever it is not a byte order
+    /// mark, so dropping it is not a special case for files.
+    ///
+    /// Reading the encoding rather than decoding first is deliberate: every
+    /// byte listed below is a LEAD byte (>= 0xC2), and a UTF-8 continuation
+    /// byte (0x80..0xBF) can never be one, so no scan can mistake the tail of
+    /// a multi-byte character for the start of a space.
+    inline std::size_t whitespace_length(const std::string& s, const std::size_t i)
+    {
+        if (i >= s.size()) return 0;
+
+        const auto byte = [&s](const std::size_t k) -> unsigned char
+        { return k < s.size() ? static_cast<unsigned char>(s[k]) : 0; };
+
+        const unsigned char c = byte(i);
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f') return 1;
+
+        if (c == 0xC2 && byte(i + 1) == 0xA0) return 2;                        // U+00A0 no-break space
+        if (c == 0xE1 && byte(i + 1) == 0x9A && byte(i + 2) == 0x80) return 3; // U+1680 ogham space mark
+        if (c == 0xE2 && byte(i + 1) == 0x80)
+        {
+            const unsigned char t = byte(i + 2);
+            if (t >= 0x80 && t <= 0x8A) return 3; // U+2000..U+200A the typographic spaces
+            if (t == 0xA8 || t == 0xA9) return 3; // U+2028, U+2029 line and paragraph separator
+            if (t == 0xAF) return 3;              // U+202F narrow no-break space
+        }
+        if (c == 0xE2 && byte(i + 1) == 0x81 && byte(i + 2) == 0x9F) return 3; // U+205F medium mathematical space
+        if (c == 0xE3 && byte(i + 1) == 0x80 && byte(i + 2) == 0x80) return 3; // U+3000 ideographic space
+        if (c == 0xEF && byte(i + 1) == 0xBB && byte(i + 2) == 0xBF) return 3; // U+FEFF byte order mark
+
+        return 0;
+    }
+
+    /// Index of the first byte that does not start a whitespace character, or
+    /// npos when the string holds nothing else.
+    inline std::size_t first_non_whitespace(const std::string& s)
+    {
+        std::size_t i = 0;
+        while (i < s.size())
+        {
+            const std::size_t n = whitespace_length(s, i);
+            if (n == 0) return i;
+            i += n;
+        }
+        return std::string::npos;
+    }
+
+    /// Trim whitespace from both ends -- ASCII and the invisible Unicode
+    /// spaces, see whitespace_length.
     inline std::string trim(const std::string& s)
     {
-        const char* ws    = " \t\r\n\v\f";
-        size_t      start = s.find_first_not_of(ws);
+        const std::size_t start = first_non_whitespace(s);
         if (start == std::string::npos) return {};
-        size_t end = s.find_last_not_of(ws);
-        return s.substr(start, end - start + 1);
+
+        std::size_t end = start; // one past the last byte that is not whitespace
+        for (std::size_t i = start; i < s.size();)
+        {
+            const std::size_t n = whitespace_length(s, i);
+            if (n == 0)
+                end = ++i;
+            else
+                i += n;
+        }
+        return s.substr(start, end - start);
     }
 
     inline void trim_in_place(std::string& s)
@@ -244,11 +311,10 @@ namespace zelph::string
         s = trim(s);
     }
 
-    /// Trim ASCII whitespace from the left only.
+    /// Trim whitespace from the left only, same character set as trim.
     inline std::string trim_left(const std::string& s)
     {
-        const char* ws    = " \t\r\n\v\f";
-        size_t      start = s.find_first_not_of(ws);
+        const std::size_t start = first_non_whitespace(s);
         if (start == std::string::npos) return {};
         return s.substr(start);
     }

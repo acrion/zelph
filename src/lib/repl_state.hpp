@@ -44,6 +44,26 @@ namespace zelph::console
         Off    // print no deductions
     };
 
+    // What a script file IS to the engine, which decides how it is run.
+    //
+    // A MODULE is a library load: `.import`, `zelph/import`, and every nested
+    // import below them. It defines things for the session around it, so its
+    // own lines are not echoed, its statements are not focus anchors, and
+    // auto-run waits until the whole file has been read.
+    //
+    // A SESSION is a file named on the command line -- `zelph script.zph`, and
+    // the shebang `#!/usr/bin/env zelph` that points at it. It is a typed
+    // session that happens to arrive from a file rather than from a keyboard,
+    // so it runs exactly as `zelph < script.zph` does. 
+    // What a session keeps from a module is everything about FINDING and
+    // preparing the file: standard-library path resolution, the `.janet`
+    // whole-program runner, script arguments, and the import-once module guard.
+    enum class ScriptRole
+    {
+        Module,
+        Session
+    };
+
     struct ReplState
     {
         bool          auto_run{true};
@@ -69,10 +89,12 @@ namespace zelph::console
         // parsing file:// links out of the terminal output.
         std::string last_graph_html_path;
 
-        // Depth of nested .import processing. 0 = interactive input. Managed
-        // strictly by RAII in CommandExecutor::import_file; deliberately NOT
-        // reset by .new (the guards on the stack restore it correctly even
-        // when .new is issued from inside a script).
+        // Depth of nested MODULE processing. 0 = the session: interactive
+        // input, piped input, or the lines of a script named on the command
+        // line. Managed strictly by RAII in CommandExecutor::import_file, and
+        // raised only for ScriptRole::Module; deliberately NOT reset by .new
+        // (the guards on the stack restore it correctly even when .new is
+        // issued from inside a script).
         int import_depth{0};
 
         // Import guard ("import once"): maps every registered module ID to
@@ -85,6 +107,28 @@ namespace zelph::console
         // while > 0, the input echo is suppressed like inside imports.
         // Managed strictly by RAII in Interactive::process.
         int quiet_depth{0};
+
+        // Something went wrong that the caller has to be able to notice
+        // without reading the log. main() turns this into the process's exit
+        // status, which used to be 0 whatever happened -- so a script whose
+        // `.import` did not resolve reported success, and the session it
+        // described was one nobody had asked for.
+        //
+        // Set at the places that MEAN failure, deliberately not by counting
+        // Error-channel events: that channel also carries the partial-view
+        // warning, and mkdocs/docs/sharding.md documents the operation it
+        // accompanies as legitimate ("Nothing is undone"). A count would
+        // report the documented sharding workflow as a failed run.
+        //
+        // Never cleared, and `.new` does not clear it either: `.new` resets
+        // the graph, not what the session has already got wrong.
+        bool failed{false};
+
+        // `.quit` was read. Honoured by the loop that reads a SESSION script
+        // (see ScriptRole), so a script can end before its last line the way
+        // a piped session can. In the REPL main() intercepts the line before
+        // it ever reaches the command table.
+        bool quit_requested{false};
     };
 
     // Helper RAII struct to temporarily suspend auto-run

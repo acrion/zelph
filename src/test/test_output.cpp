@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/zelph.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -173,6 +174,105 @@ TEST_CASE(".deductions focus: imported statements do not become anchors")
         CHECK(any_deduction_of(collector, "(&6 * &7) = &42"));
         CHECK_FALSE(any_deduction_of(collector, "mci"));
         CHECK_FALSE(any_deduction_of(collector, "pprod")); });
+}
+
+// ---------------------------------------------------------------------------
+// What a filtered run TELLS the reader.
+//
+// The counting was always right; the delivery was not, and every one of the
+// four properties below is about somebody reading a RECORDED log rather than
+// watching a session. The notice used to be flushed before each printed
+// deduction, so a run emitted several REMAINDERS and none of them was the
+// run's total -- a paper quoting 16 derivations against a log showing 10 and
+// a scattered "(skipped 3)" cannot be checked by anyone. It went to the
+// Diagnostic channel while the deductions go to Out, so `zelph ... > log.txt`
+// kept the incomplete content and dropped the sentence saying it was
+// incomplete. And " (skipped 6 deductions)" named neither the filter that
+// removed them nor the command that shows them.
+// ---------------------------------------------------------------------------
+
+TEST_CASE(".deductions focus: one notice per run, carrying the run's total")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Same construction as "subterms of the input are not focus anchors",
+        // widened to TWO filtered deductions plus one printed: that is the
+        // shape in which a per-flush remainder differs from a run total. The
+        // old code emitted "(skipped 1 deductions)" twice here.
+        interactive.process(".deductions focus");
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("(A h1 B) => (A h3 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+
+        CHECK(any_deduction_of(collector, "((s h1 t) g2 r)"));
+        CHECK(count_outputs_containing(collector, "not shown") == 1);
+        CHECK(any_output_contains(collector, "2 deductions are not shown"));
+        // The wording it replaced said nothing a reader could act on.
+        CHECK_FALSE(any_event_contains(collector, "skipped")); });
+}
+
+TEST_CASE(".deductions focus: the notice names the filter and the way past it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions focus");
+        collector.clear();
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+
+        // On the channel the deductions themselves use, or a reader who
+        // redirected only stdout keeps the gap and loses the notice.
+        CHECK(any_output_contains(collector, "not shown"));
+        CHECK(any_output_contains(collector, ".deductions focus"));
+        CHECK(any_output_contains(collector, ".deductions all")); });
+}
+
+TEST_CASE(".deductions off: the notice says the mode rather than blaming the filter")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Off and focus hide deductions for different reasons, and the same
+        // sentence for both would send a reader of an `off` log looking for
+        // a focus set that was never involved.
+        interactive.process(".deductions off");
+        interactive.process("u p1 v");
+        collector.clear();
+        interactive.process("(A p1 B) => (A p2 B)");
+
+        CHECK(any_output_contains(collector, "deduction printing is off"));
+        CHECK_FALSE(any_output_contains(collector, "⇐")); });
+}
+
+TEST_CASE(".deductions off: nothing is printed however long the session has been idle" * doctest::test_suite("slow"))
+{
+    // The 1000 ms throttle used to let one deduction through per second when
+    // printing was off. Its stopwatch was started by a printed deduction,
+    // never stopped and never reset per run, so `is_running()` stayed true
+    // for the life of the engine: after any run that printed something, a
+    // LATER run with printing off found the clock past a second and printed.
+    // The mode was reported as "off" in the same session.
+    //
+    // The wait is what the user does, not a state forced on the engine: a
+    // pause between two runs is an ordinary thing to do at a REPL.
+    run_single_core_mode([](auto& collector, auto& interactive)
+                         {
+        interactive.process(".deductions all");
+        interactive.process("u p1 v");
+        interactive.process("(A p1 B) => (A p2 B)");
+        CHECK(any_deduction_of(collector, "u p2 v"));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+        interactive.process(".deductions off");
+        interactive.process("w p1 z");
+        collector.clear();
+        interactive.process("(A p1 B) => (A p3 B)");
+
+        CHECK_FALSE(any_output_contains(collector, "⇐")); });
 }
 
 // Concurrent OutputStream flushes must be serialized through the same
