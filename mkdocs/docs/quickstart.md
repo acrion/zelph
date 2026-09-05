@@ -277,7 +277,7 @@ Giving a node a name that another node already holds in that language **merges t
 - `.run-delta` – Run inference seeded only by the facts added since the last run; costs time in the size of the addition rather than of the graph (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
 - `.run-export <file>` – Run inference and write what that run derives to a JSON Lines file (see [Exporting Derivations](rules.md#exporting-derivations))
 - `.auto-run` – Toggle automatic execution of .run after each input; takes no argument (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
-- `.deductions [all|focus|off]` – Set the deduction printing mode (default: focus)
+- `.deductions [all|focus|quiet|off]` – Set the deduction printing mode (default: quiet)
 - `.list-rules` – List all defined inference rules
 - `.remove-rules` – Remove all inference rules
 

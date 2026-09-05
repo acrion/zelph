@@ -50,6 +50,24 @@ namespace
     // so it yields exactly one timing - never one per script line.
     constexpr std::chrono::milliseconds kReplTimingThreshold{10};
 
+    // Whether standard input is a person typing.
+    //
+    // It decides the one thing a terminal and a script genuinely differ in:
+    // whether there is input ALREADY COMMITTED that must not run once a line
+    // has failed. A file and a pipe have that -- the rest of the script was
+    // written before the failure and now rests on a premise that did not hold,
+    // which is how a script whose `.import` did not resolve went on answering
+    // plausibly for six weeks. A terminal has none: the next line does not
+    // exist yet, and its author has just read the error.
+    bool stdin_is_a_terminal()
+    {
+#ifdef _WIN32
+        return _isatty(_fileno(stdin)) != 0;
+#else
+        return isatty(STDIN_FILENO) != 0;
+#endif
+    }
+
     std::string format_duration(const std::chrono::steady_clock::duration d)
     {
         using namespace std::chrono;
@@ -142,6 +160,10 @@ int main(int argc, char** argv)
             return 0;
         }
 
+        // A script run prints no prompt, so the mark the default deduction
+        // mode uses has nowhere to appear and a run says in words what it hid.
+        if (!script_files.empty()) interactive.set_prompt_available(false);
+
         for (const auto& file : script_files)
         {
             try
@@ -160,19 +182,18 @@ int main(int argc, char** argv)
         {
             std::string exit_command = ".quit";
             interactive.out("zelph " + zelph::console::Interactive::get_version());
-            interactive.out("-- REPL mode - type .help for commands, " + exit_command + " to exit --");
+            // One line, and it stays one line. What a first-time reader needs
+            // is where the help is, and one example worth following -- the
+            // deduction filter, because it is the only default that WITHHOLDS
+            // something, and the "+" it puts in the prompt is the one mark
+            // nothing else explains.
+            interactive.out("-- REPL mode - type .help for commands, e.g. '.help .deductions' to change what is shown --");
             interactive.out("");
 
-            auto make_prompt = [&]() -> std::string
-            {
-                if (interactive.is_accumulating())
-                    return "";
-                else
-                    return interactive.get_lang()
-                         + (interactive.is_auto_run_active() ? "> " : "-> ");
-            };
+            const bool typed     = stdin_is_a_terminal();
+            bool       broke_off = false;
 
-            interactive.prompt(make_prompt(), false);
+            interactive.prompt(interactive.prompt_text(), false);
 
             std::string line;
             while (std::getline(std::cin, line))
@@ -183,7 +204,7 @@ int main(int argc, char** argv)
                 if (line.empty() && !interactive.is_accumulating())
                 {
                     interactive.out("type .help for help --");
-                    interactive.prompt(make_prompt(), false);
+                    interactive.prompt(interactive.prompt_text(), false);
                     continue;
                 }
 
@@ -197,6 +218,18 @@ int main(int argc, char** argv)
                 {
                     interactive.err(e.what());
                     interactive.note_failure();
+
+                    // Piped input is a script, and a script stops where it
+                    // failed -- the same rule as for a file named on the
+                    // command line, so the two forms of running one no longer
+                    // disagree about what a failure costs. A terminal carries
+                    // on: there is nothing after the failing line yet.
+                    if (!typed)
+                    {
+                        interactive.err("zelph: stopped at the error above; the input after it was not read.");
+                        broke_off = true;
+                        break;
+                    }
                 }
 
                 const auto elapsed = std::chrono::steady_clock::now() - start_time;
@@ -205,21 +238,26 @@ int main(int argc, char** argv)
                     interactive.log("-- " + format_duration(elapsed) + " --");
                 }
 
-                interactive.prompt(make_prompt(), false);
+                interactive.prompt(interactive.prompt_text(), false);
             }
 
             // End of input is the last chance to dispatch a half-read block.
             // Without this, "printf '...sparql\nSELECT ...' | zelph" ran the
             // query when it came from a FILE and silently dropped it when it
-            // came from stdin.
-            try
+            // came from stdin. Skipped after a break-off, where whatever is
+            // half-read belongs to input that will not run anyway, and
+            // reporting it would add a second error about the first one.
+            if (!broke_off)
             {
-                interactive.finish_input();
-            }
-            catch (const std::exception& e)
-            {
-                interactive.err(e.what());
-                interactive.note_failure();
+                try
+                {
+                    interactive.finish_input();
+                }
+                catch (const std::exception& e)
+                {
+                    interactive.err(e.what());
+                    interactive.note_failure();
+                }
             }
 
             interactive.out("");

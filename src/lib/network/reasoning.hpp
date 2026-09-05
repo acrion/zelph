@@ -261,6 +261,13 @@ namespace zelph::network
         // When on, deduction printing is restricted to deductions whose
         // subject or rule is in the input-focus set ("focus mode").
         void set_deduction_filter(bool on);
+        // When off, a run does not write the notice accounting for what it
+        // withheld. The count is still kept and still readable below: what is
+        // switched off is the sentence, not the bookkeeping, so a caller that
+        // reports it some other way -- a mark on the prompt -- can.
+        void set_deduction_notice(bool on);
+        // Deductions the most recent run derived and did not show.
+        std::size_t deductions_withheld() const { return _skipped.load(); }
         // Temporarily suppress input capture (modules): begin_input_capture
         // becomes a no-op while suppressed, and an active capture is closed
         // WITHOUT contributing to the focus set -- a library's own definitions
@@ -416,7 +423,9 @@ namespace zelph::network
         // Deductions this run derived but did not show. Reset per run and
         // reported once at the end of run(), so what the reader gets is the
         // run's total rather than the remainder since the last printed line.
+        // Read after the run by deductions_withheld().
         std::atomic<size_t> _skipped{0};
+        bool                _deduction_notice{true};
         std::mutex          _mtx_output;
         std::mutex          _mtx_network;
         std::atomic<int>    _total_matches{0};

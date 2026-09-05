@@ -179,14 +179,13 @@ wikidata-> .auto-run
 Auto-run is now enabled.
 wikidata> .deductions off
 Deduction printing mode: off
+  No derivations are printed; a run says how many it hid and marks the prompt with '+' (e.g. "wikidata+> ").
 wikidata> (C P279 Q43229, C P279⁺ Q215627) => (C in-violation Q215627)
 (((C P279 Q215627) closure one-or-more), (C P279 Q43229)) => (C in-violation Q215627)
-Note: 9 deductions are not shown, because deduction printing is off.
-      '.deductions all' shows every one.
-wikidata> (C P279 Q43229, ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
+Note: 9 deductions were hidden.
+wikidata+> (C P279 Q43229, ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
 ((C P279 Q43229), ¬((C P279 Q215627) closure one-or-more)) => (C sound-under Q43229)
-Note: 815 deductions are not shown, because deduction printing is off.
-      '.deductions all' shows every one.
+Note: 815 deductions were hidden.
 ```
 
 The `.auto-run` is not optional here: `.load` switches inference off, because

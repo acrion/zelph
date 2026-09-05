@@ -212,7 +212,10 @@ function spawnWorker() {
       prompt = m.prompt;
       accumulating = false;
       term.writeln(`zelph ${m.version} (WebAssembly)`);
-      term.writeln(DIM + "-- engine ready --" + RESET);
+      // Same line the terminal prints, for the same reason: the deduction
+      // filter is the only default that withholds anything, and the "+" it
+      // puts in the prompt is the one mark nothing else explains.
+      term.writeln(DIM + "-- engine ready - type .help for commands, e.g. '.help .deductions' to change what is shown --" + RESET);
       term.writeln("");
       setBusy(false);
     } else if (m.type === "done") {

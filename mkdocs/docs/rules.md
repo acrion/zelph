@@ -277,21 +277,15 @@ question does not arise, because only the proof of the asked goal is ever
 constructed; in a forward chainer, filtering the _trace_ is the natural
 counterpart.
 
-The `.deductions` command controls which derived facts are printed:
+The `.deductions` command controls which derived facts are printed, and what a
+run says about the ones it held back:
 
     .deductions all      # print every deduction (full derivation trace)
-    .deductions focus    # print only deductions about your input (default)
+    .deductions focus    # print only deductions about your input, and say how many were hidden
+    .deductions quiet    # the same, but marked in the prompt instead of said (default)
     .deductions off      # print no deductions
 
-In `focus` mode, a deduction is printed when its subject stems from a
-statement of the **session**: the subject is the entered fact itself, or its
-subject, or one of its objects. The session is everything you type, everything
-piped in, and every line of a script named on the command line
-(`zelph script.zph`) – see [Scripts and Modules](modules.md). Anchors
-accumulate over the session, so a rule entered later still surfaces
-conclusions about earlier inputs. A **module** loaded with `.import`
-contributes no anchors — a loaded arithmetic library stays silent about its
-internals.
+In `focus` and `quiet` mode, a deduction is printed when its subject stems from a statement of the **session**: the subject is the entered fact itself, or its subject, or one of its objects. The session is everything you type, everything piped in, and every line of a script named on the command line (`zelph script.zph`) – see [Scripts and Modules](modules.md). Anchors accumulate over the session, so a rule entered later still surfaces conclusions about earlier inputs. A **module** loaded with `.import` contributes no anchors – a loaded arithmetic library stays silent about its internals.
 
 **What is printed is deterministic; the order in which it appears is not.**
 The reasoner is parallel (`.parallel`), so two runs of the same input derive
@@ -300,33 +294,44 @@ answers of one query, and the bindings of two variables that could be
 exchanged may come out in a different order. Transcripts in this documentation
 are real runs; read them as one of the possible orders.
 
-The filter affects printing only: **all facts are derived and stored
-regardless of the mode**, and query answers, contradictions and warnings are
-always printed. If a result you are interested in is not shown, query it
-(e.g. `&7 > X`) or switch to `.deductions all`. As a side effect, heavy
-computations run several times faster in focus/off mode, because rendering
-large derived terms dominates the cost.
+The filter affects printing only: **all facts are derived and stored regardless of the mode**, and query answers, contradictions and warnings are always printed. If a result you are interested in is not shown, query it (e.g. `&7 > X`) or switch to `.deductions all`. As a side effect, heavy computations run several times faster in every mode but `all`, because rendering large derived terms dominates the cost.
 
 ### What a filtered run tells you
 
-A run that withheld something says so, **once, at the end of the run, with the
-run's total**:
+Two things a run can do about what it hid, and the mode decides which. It can say so, once, at the end of the run and with the run’s total, or it can put a `+` in the prompt and leave it at that. The default is the second, because the count is worth a mark and not a sentence in the middle of the answer you asked for.
+
+In `focus` and in `off` it is the sentence:
 
 ```
-Note: 6 deductions are not shown. '.deductions focus' shows only deductions
-      about statements you entered yourself; '.deductions all' shows every one.
+Note: 130 deductions were hidden.
 ```
 
-The notice is printed on the same channel as the deduction lines it accounts
-for. That matters for a recorded transcript: redirecting only standard output
-used to keep the incomplete derivation and drop the sentence saying it was
-incomplete, so a log a year later could not be told from a complete one. For
-the same reason it now carries the run's total rather than the count since the
-last printed line — a reader comparing a paper against a log has one number to
-compare, not several to find and add.
+The notice is printed on the same channel as the deduction lines it accounts for. That matters for a recorded transcript: redirecting only standard output used to keep the incomplete derivation and drop the sentence saying it was incomplete, so a log a year later could not be told from a complete one. For the same reason it carries the run’s total rather than the count since the last printed line – a reader comparing a paper against a log has one number to compare, not several to find and add.
 
-A deduction written to a file by `.run-export` is not withheld and is not
-counted: the caller asked for a file, not for lines.
+What the notice does not do is explain the mode. It is only ever read in a mode you chose, and telling you after every answer how to reach the mode you are already in is what made the default worth changing. The explanation belongs where the choice is made, so `.deductions` gives it there.
+
+A deduction written to a file by `.run-export` is not withheld and is not counted: the caller asked for a file, not for lines.
+
+### The mark in the prompt
+
+In the default mode a run says nothing and the prompt carries a `+` while the
+most recent one held something back:
+
+```
+zelph> .deductions quiet
+Deduction printing mode: quiet
+  Only derivations about statements you entered are printed, and a run that hid any marks the prompt with '+' (e.g. "zelph+> ").
+zelph> $(53 * 12) = X
+(&53 * &12) = X
+((&53 * &12) = &636) ⇐ {((&53 mul &12) prod &636) (&53 * &12) (:canonnum &636)}
+zelph+>
+```
+
+The mark is the character `+`, and it is the fact rather than the count: a number in a prompt invites being read as a running total, and this is a per-run figure. It clears again after a run that hid nothing, and it sits beside the `-` that marks a disabled auto-run, so a session with both reads e.g. `zelph+-> ` – where the part in front of the marks is the current language and changes with `.lang`.
+
+`off` carries the same mark and keeps its notice, because there the count is the only thing a run still tells you – which is what makes it usable for the large runs on the [class hierarchy](class-hierarchy.md) page.
+
+`zelph script.zph` prints no prompt, so there `quiet` falls back to the notice. A mark with nowhere to appear would leave a log that does not say it is incomplete, which is the one thing the notice exists to prevent.
 
 ## Exporting Derivations
 

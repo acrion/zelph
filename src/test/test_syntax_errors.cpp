@@ -281,3 +281,109 @@ TEST_CASE("syntax errors: a parenthesis inside a quoted atom is text, not struct
         CHECK_FALSE(any_event_contains(collector, "glued"));
         CHECK_FALSE(any_event_contains(collector, "Could not parse statement")); });
 }
+
+// ---------------------------------------------------------------------------
+// A refusal must leave the session usable.
+//
+// Janet unwinds with setjmp/longjmp. A C++ exception travelling out of a Janet
+// C function therefore skips Janet's own cleanup and leaves the VM in a state
+// whose NEXT failure has nothing to do with what caused it -- so every zelph
+// function reachable from Janet now converts an exception into a Janet panic at
+// the boundary (see the guard in script_engine_setup.cpp).
+//
+// The case below is how it was found, and it is the reason this belongs here:
+// the poison is an ordinary REFUSAL, one the engine is right to raise. A
+// session that met it once was silently broken from then on, and the damage
+// surfaced somewhere else entirely -- three imports deep in the standard
+// library, on a line that is perfectly correct, with a bare "Janet error".
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // A rule written without the parentheses around its comma list. The last
+    // condition then reads as one statement whose predicate `R` also stands
+    // among its objects, which fact() refuses.
+    constexpr const char* kRefusedRule = "R is transitive, A R B, B R C => A R C";
+}
+
+TEST_CASE("syntax errors: a refused statement does not poison the Janet VM")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_AS(interactive.process(kRefusedRule), std::runtime_error);
+
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "SUM-" (+ 1 2))))js");
+        CHECK(any_output_contains(collector, "SUM-3"));
+
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "MAP-" (length (map inc [1 2 3])))))js");
+        CHECK(any_output_contains(collector, "MAP-3"));
+
+        // Nothing may have been reported that the session did not ask for.
+        CHECK_FALSE(any_event_contains(collector, "Janet error")); });
+}
+
+TEST_CASE("syntax errors: a refused statement does not break a later import" * doctest::test_suite("slow"))
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // The reported shape, verbatim: the refusal, then `.import math`,
+        // which pulls in topoly and polynomial and does a great deal of Janet
+        // work on the way. It used to die on polynomial.zph:294 with "Janet
+        // error", naming a rule that has nothing wrong with it.
+        CHECK_THROWS_AS(interactive.process(kRefusedRule), std::runtime_error);
+
+        collector.clear();
+        CHECK_NOTHROW(interactive.process(".import math"));
+        CHECK_FALSE(any_event_contains(collector, "Janet error"));
+
+        // And the imported module actually works afterwards.
+        collector.clear();
+        interactive.process("<x> ~ polyring");
+        CHECK_FALSE(any_event_contains(collector, "Janet error")); });
+}
+
+TEST_CASE("syntax errors: an unparenthesised rule names the node in both roles")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // "facts with same relation type and object are not supported" said
+        // neither WHICH node stands in both roles nor what to do, and nobody
+        // reaches this refusal by writing that on purpose. The rule arrow
+        // among the objects is the tell that a rule was meant.
+        CHECK_THROWS_WITH_AS(interactive.process(kRefusedRule),
+                             doctest::Contains("\"R\" is both the predicate and an object"),
+                             std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process(kRefusedRule),
+                             doctest::Contains("(A, B, C) => (D)"),
+                             std::runtime_error);
+
+        // The parenthesised form is what the advice points at, so it has to
+        // be the one that works.
+        collector.clear();
+        interactive.process("(R is transitive, A R B, B R C) => (A R C)");
+        CHECK_FALSE(any_event_contains(collector, "both the predicate and an object")); });
+}
+
+TEST_CASE("syntax errors: a statement spanning lines is named whole, not by its last line")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // A rule written over two lines -- the shape the standard library uses
+        // throughout -- was reported by the line that happened to complete it.
+        // `=> (A r C, X)` is correct on its own and is not where the mistake
+        // is, so the message pointed at the wrong place; in an imported module
+        // it pointed at a line the reader had never written.
+        interactive.process("(A p B, B q C)");
+        CHECK_THROWS_WITH_AS(interactive.process("=> (A r C, X)"),
+                             doctest::Contains("Error in statement \"(A p B, B q C) => (A r C, X)\""),
+                             std::runtime_error);
+
+        // A statement on ONE line keeps the wording it always had.
+        CHECK_THROWS_WITH_AS(interactive.process("a b x(c d e)"),
+                             doctest::Contains("Error in line \"a b x(c d e)\""),
+                             std::runtime_error); });
+}

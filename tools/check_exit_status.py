@@ -17,8 +17,10 @@ binary has:
     zelph < script.zph      the same lines piped in
 
 Both are checked, because the two used to fail differently and both used to
-report success: the file form stops at the failing line and its log simply
-ends, the piped form carries on and answers.
+report success: the file form stopped at the failing line and its log simply
+ended, while the piped form carried on and answered from a premise that had not
+held. They agree now -- both stop, both say so, both leave with 1 -- and that
+agreement is what these cases hold them to.
 
 Exit codes: 0 every case holds, 1 one of them does not, 2 the question could
 not be put.
@@ -48,16 +50,20 @@ CASES = [
     ),
     (
         "a statement that does not parse",
-        "a b x(c d e)\n",
+        "a b x(c d e)\nsocrates ~ human\n",
         1,
         "glued",
     ),
 ]
 
-# Said only by the file form, and only there does it mean anything: a piped
-# session survives its errors line by line, a script stops at the first one and
-# leaves a log that cannot be told from a shorter script.
-ABORT_NOTE = "the lines after it did not run"
+# Both forms stop at the first failing line, and both say so -- in their own
+# words, because only one of them has a file name to give. A log that simply
+# ENDS cannot be told from a shorter script, which is the whole reason these
+# lines exist.
+ABORT_NOTE = {
+    "zelph <file>": "the lines after it did not run",
+    "zelph < file": "the input after it was not read",
+}
 
 
 def fail(message):
@@ -115,18 +121,18 @@ def main():
                     violations.append(
                         f"{name}, {mode}: nothing in the output said '{phrase}'")
 
-            # The file form owes the reader a word about the lines it never
-            # reached; the piped form reached all of them and must not claim
-            # otherwise.
+            # Each form owes the reader a word about the lines it never
+            # reached. Every failing case above carries a line AFTER the one
+            # that fails, so there is always something not to have run.
             if expected != 0:
-                _, file_output = run([args.binary, script], None)
-                if ABORT_NOTE not in file_output:
-                    violations.append(
-                        f"{name}, zelph <file>: the log does not say that it stopped early")
-                _, piped_output = run([args.binary], script)
-                if ABORT_NOTE in piped_output:
-                    violations.append(
-                        f"{name}, zelph < file: claims it stopped early, but it did not")
+                for mode, command, stdin_path in (
+                    ("zelph <file>", [args.binary, script], None),
+                    ("zelph < file", [args.binary], script),
+                ):
+                    _, output = run(command, stdin_path)
+                    if ABORT_NOTE[mode] not in output:
+                        violations.append(
+                            f"{name}, {mode}: the log does not say that it stopped early")
 
     if violations:
         for violation in violations:

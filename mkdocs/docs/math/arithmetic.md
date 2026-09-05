@@ -41,12 +41,9 @@ derivation:
 
 ```
 zelph> .import decimal-arithmetic
-Note: 1 deduction is not shown. '.deductions focus' shows only deductions
-      about statements you entered yourself; '.deductions all' shows every one.
-zelph> (&128 + &53) = X
+zelph+> (&128 + &53) = X
 ((&128 + &53) = &181) ⇐ {(((&128 add &53) ci 0) sum &181) (&128 + &53)}
-Note: 6 deductions are not shown. '.deductions focus' shows only deductions
-      about statements you entered yourself; '.deductions all' shows every one.
+zelph+>
 ```
 
 A computation in zelph is not a black box returning a value – it is a set of ordinary facts, each carrying the conditions that produced it. Comparison additionally leaves the relational facts behind: `&42 cmp &9` derives `&42 > &9`, which is what makes computed order usable by [meta-rules](#the-four-operations).

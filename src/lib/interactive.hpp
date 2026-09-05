@@ -48,10 +48,28 @@ namespace zelph::console
         explicit Interactive(io::OutputHandler output = io::default_output_handler);
         ~Interactive();
 
-        void               import_file(const std::string& file) const;
-        void               process(std::string line) const;
-        void               run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition) const;
-        std::string        get_lang() const;
+        void        import_file(const std::string& file) const;
+        void        process(std::string line) const;
+        void        run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition) const;
+        std::string get_lang() const;
+
+        // The REPL prompt, empty while a multi-line statement, keyword block or
+        // Janet block is still being read. It lives here rather than in the
+        // binary because there are two front ends -- the terminal and the wasm
+        // playground -- and a prompt built twice is a prompt that drifts.
+        //
+        // What it carries besides the language: "-" before the ">" when
+        // auto-run is off, and "+" when deductions are being withheld without
+        // a notice saying so. Both mark a state the user set and would
+        // otherwise have to remember.
+        std::string prompt_text() const;
+
+        // Tell the library whether a prompt will follow each run. False for a
+        // caller that shows none -- `zelph script.zph` -- where the mark of
+        // the default deduction mode would have nowhere to appear, so a run
+        // states in words what it hid instead of leaving a log that does not
+        // say it is incomplete.
+        void               set_prompt_available(bool available) const;
         static std::string get_version();
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;

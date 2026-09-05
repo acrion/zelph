@@ -184,11 +184,15 @@ TEST_CASE(".deductions focus: imported statements do not become anchors")
 // watching a session. The notice used to be flushed before each printed
 // deduction, so a run emitted several REMAINDERS and none of them was the
 // run's total -- a paper quoting 16 derivations against a log showing 10 and
-// a scattered "(skipped 3)" cannot be checked by anyone. It went to the
+// a scattered "(skipped 3)" cannot be checked by anyone. And it went to the
 // Diagnostic channel while the deductions go to Out, so `zelph ... > log.txt`
 // kept the incomplete content and dropped the sentence saying it was
-// incomplete. And " (skipped 6 deductions)" named neither the filter that
-// removed them nor the command that shows them.
+// incomplete.
+//
+// What the notice deliberately does NOT do is explain the mode. It is only
+// ever read in a mode the reader CHOSE -- the default marks the prompt instead
+// -- and three lines telling somebody how to reach the mode they are in,
+// printed after every answer, is the noise this pair of decisions removes.
 // ---------------------------------------------------------------------------
 
 TEST_CASE(".deductions focus: one notice per run, carrying the run's total")
@@ -207,18 +211,22 @@ TEST_CASE(".deductions focus: one notice per run, carrying the run's total")
         interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
 
         CHECK(any_deduction_of(collector, "((s h1 t) g2 r)"));
-        CHECK(count_outputs_containing(collector, "not shown") == 1);
-        CHECK(any_output_contains(collector, "2 deductions are not shown"));
+        CHECK(count_outputs_containing(collector, "were hidden") == 1);
+        CHECK(any_output_contains(collector, "Note: 2 deductions were hidden."));
         // The wording it replaced said nothing a reader could act on.
         CHECK_FALSE(any_event_contains(collector, "skipped")); });
 }
 
-TEST_CASE(".deductions focus: the notice names the filter and the way past it")
+TEST_CASE(".deductions focus: the notice is the count, and the mode is explained where it is chosen")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        interactive.process(".deductions focus");
         collector.clear();
+        interactive.process(".deductions focus");
+        // Switching is the moment the mode gets explained, and the only one.
+        CHECK(any_output_contains(collector, "Deduction printing mode: focus"));
+        CHECK(any_output_contains(collector, "how many it hid"));
+
         interactive.process("(A h1 B) => (A h2 B)");
         interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
         collector.clear();
@@ -226,25 +234,156 @@ TEST_CASE(".deductions focus: the notice names the filter and the way past it")
 
         // On the channel the deductions themselves use, or a reader who
         // redirected only stdout keeps the gap and loses the notice.
-        CHECK(any_output_contains(collector, "not shown"));
-        CHECK(any_output_contains(collector, ".deductions focus"));
-        CHECK(any_output_contains(collector, ".deductions all")); });
+        CHECK(any_output_contains(collector, "Note: 1 deduction was hidden."));
+        // And it does not repeat the mode it is already in.
+        CHECK_FALSE(any_event_contains(collector, ".deductions focus"));
+        CHECK_FALSE(any_event_contains(collector, ".deductions all")); });
 }
 
-TEST_CASE(".deductions off: the notice says the mode rather than blaming the filter")
+TEST_CASE(".deductions off: no deductions, and the count still reported")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        // Off and focus hide deductions for different reasons, and the same
-        // sentence for both would send a reader of an `off` log looking for
-        // a focus set that was never involved.
         interactive.process(".deductions off");
         interactive.process("u p1 v");
         collector.clear();
         interactive.process("(A p1 B) => (A p2 B)");
 
-        CHECK(any_output_contains(collector, "deduction printing is off"));
+        CHECK(any_output_contains(collector, "Note: 1 deduction was hidden."));
         CHECK_FALSE(any_output_contains(collector, "⇐")); });
+}
+
+TEST_CASE(".deductions: quiet is the default, and says nothing after an answer")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Nothing switches the mode here: this is what a session starts in.
+        // The count is worth one mark on the prompt, not a sentence in the
+        // middle of the result somebody asked for.
+        collector.clear();
+        interactive.process(".deductions");
+        CHECK(any_output_contains(collector, "Deduction printing mode: quiet"));
+
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+
+        CHECK(any_deduction_of(collector, "((s h1 t) g2 r)"));
+        CHECK_FALSE(any_event_contains(collector, "hidden"));
+        CHECK(interactive.prompt_text() == "zelph+> "); });
+}
+
+TEST_CASE(".deductions quiet: without a prompt to mark, the run says it in words")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // `zelph script.zph` prints no prompt, so the mark has nowhere to
+        // appear. A quiet run would then be a SILENT one, and the log would
+        // not say that it is incomplete -- which is the failure the notice
+        // exists to prevent. The mark and the notice are two ways of saying
+        // one thing, and the medium decides which fits.
+        interactive.set_prompt_available(false);
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+
+        CHECK(any_output_contains(collector, "Note: 1 deduction was hidden."));
+        interactive.set_prompt_available(true); });
+}
+
+// ---------------------------------------------------------------------------
+// The prompt as the other place a run can say what it withheld.
+//
+// The notice is three lines of prose after every answer, which is what a
+// RECORDED transcript needs and what somebody working at a prompt does not:
+// they are present, they have just set the mode, and they want the result.
+// `quiet` filters exactly as `focus` does and marks the prompt instead.
+//
+// The mark is the FACT, not the count. A number in a prompt invites being read
+// as a running total, and it is a per-run figure.
+// ---------------------------------------------------------------------------
+
+TEST_CASE(".deductions quiet: the same lines as focus, without the notice")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions quiet");
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+
+        // Same filter, so the same deduction is shown and the same one hidden
+        // as in the focus case above.
+        CHECK(any_deduction_of(collector, "((s h1 t) g2 r)"));
+        CHECK_FALSE(any_event_contains(collector, "h2"));
+        // But nothing is said about it.
+        CHECK_FALSE(any_event_contains(collector, "not shown")); });
+}
+
+TEST_CASE(".deductions quiet: the prompt marks a run that withheld something")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        interactive.process(".deductions quiet");
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+        CHECK(interactive.prompt_text() == "zelph+> ");
+
+        // And it goes away again. A mark that never clears says no more than
+        // the mode does, and the mode is what the user just typed.
+        interactive.process("u rel v");
+        CHECK(interactive.prompt_text() == "zelph> "); });
+}
+
+TEST_CASE(".deductions focus: the default prompt is not marked")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // Every recorded transcript in the documentation shows "zelph> ", and
+        // in the default mode the notice already says in words what the mark
+        // would say.
+        interactive.process(".deductions focus");
+        interactive.process("(A h1 B) => (A h2 B)");
+        interactive.process("((A h1 B) g1 C) => ((A h1 B) g2 C)");
+        interactive.process(R"js(%(zelph/fact (zelph/fact "s" "h1" "t") "g1" "r"))js");
+        CHECK(interactive.prompt_text() == "zelph> "); });
+}
+
+TEST_CASE(".deductions off: the prompt is marked there too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        // Same job the "-" of a disabled auto-run does: a state the user set
+        // and would otherwise have to remember. The two compose.
+        interactive.process(".deductions off");
+        interactive.process("u p1 v");
+        interactive.process("(A p1 B) => (A p2 B)");
+        CHECK(interactive.prompt_text() == "zelph+> ");
+
+        interactive.process(".auto-run");
+        CHECK(interactive.prompt_text() == "zelph+-> "); });
+}
+
+TEST_CASE(".deductions: the mode is reported by name, and an unknown one is refused")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions quiet");
+        collector.clear();
+        interactive.process(".deductions");
+        CHECK(any_output_contains(collector, "Deduction printing mode: quiet"));
+
+        CHECK_THROWS_WITH_AS(interactive.process(".deductions loud"),
+                             doctest::Contains("[all|focus|quiet|off]"),
+                             std::runtime_error); });
 }
 
 TEST_CASE(".deductions off: nothing is printed however long the session has been idle" * doctest::test_suite("slow"))

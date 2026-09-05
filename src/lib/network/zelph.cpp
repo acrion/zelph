@@ -668,7 +668,32 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                                          "does not say which arrow binds tighter");
             }
 
-            throw std::runtime_error("fact(): facts with same relation type and object are not supported.");
+            // Naming the node is the whole point: "facts with same relation
+            // type and object are not supported" told the reader neither
+            // WHICH node stands in both roles nor what to do about it, and
+            // this refusal is almost never reached by writing that on
+            // purpose.
+            const std::string named = get_formatted_name(predicate, get_lang());
+            const std::string what  = named.empty() ? std::string("the predicate") : "\"" + named + "\"";
+
+            // The rule arrow among the OBJECTS is the tell. It means the line
+            // was meant as a rule and was read as ONE statement, because the
+            // comma list and the consequence carry no parentheses:
+            // "R is transitive, A R B, B R C => A R C" makes `R` the predicate
+            // of the last condition and `=>` one of its objects. That is how
+            // this refusal is reached in practice.
+            if (objects.count(core.Causes) == 1)
+            {
+                throw std::runtime_error(
+                    "fact(): " + what + " is both the predicate and an object here, and the rule arrow \"=>\" "
+                                        "stands among the objects as well -- so this line was read as one statement "
+                                        "rather than as a rule. A rule needs parentheses around its condition list "
+                                        "and around its consequence: \"(A, B, C) => (D)\".");
+            }
+
+            throw std::runtime_error(
+                "fact(): " + what + " is both the predicate and an object of this statement. A fact is identified "
+                                    "by its predicate, so one node cannot stand in both roles at once.");
         }
 
         // A rule whose consequence is a CONJUNCTION. "A => (B, C)" reads as

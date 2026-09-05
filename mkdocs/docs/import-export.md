@@ -114,13 +114,7 @@ zelph will automatically deduce facts like:
 (Cobra "member of" Reptilia) ⇐ {(Cobra "member of" Squamata) ("member of" is transitive) (Squamata "member of" Reptilia)}
 ```
 
-Seventeen of them, and to observe them you must run `.deductions all` first:
-the facts they relate to emerged from a module loaded with `.import`, which
-contributes no anchor to the default `focus` mode, so instead of the lines it
-prints one notice naming the count, the filter and the way past it – refer to
-[Deduction Output Modes](rules.md#deduction-output-modes). Run the same script
-as a session (`zelph taxonomy.zph`) and the seventeen lines appear without
-`.deductions all`, because there its statements are your own.
+Seventeen of them, and to observe them you must run `.deductions all` first: the facts they relate to emerged from a module loaded with `.import`, which contributes no anchor to the default mode, so instead of the lines you get a `+` in the prompt – see [Deduction Output Modes](rules.md#deduction-output-modes). Run the same script as a session (`zelph taxonomy.zph`) and the seventeen lines appear without `.deductions all`, because there its statements are your own.
 
 You can also add contradiction rules to validate the data. For example, to detect if a species is mistakenly assigned to two different families:
 

@@ -130,34 +130,65 @@ namespace zelph::console
 
     void CommandExecutor::Impl::cmd_deductions(const std::vector<std::string>& cmd)
     {
-        if (cmd.size() > 2) throw std::runtime_error("Usage: .deductions [all|focus|off]");
+        constexpr const char* usage = "Usage: .deductions [all|focus|quiet|off]";
+        if (cmd.size() > 2) throw std::runtime_error(usage);
 
+        bool named = false;
         if (cmd.size() >= 2)
         {
+            named = true;
             if (cmd[1] == "all")
-            {
                 _repl_state->deduction_mode = DeductionMode::All;
-                _n->clear_input_focus();
-            }
             else if (cmd[1] == "focus")
-            {
                 _repl_state->deduction_mode = DeductionMode::Focus;
-                _n->clear_input_focus();
-            }
+            else if (cmd[1] == "quiet")
+                _repl_state->deduction_mode = DeductionMode::Quiet;
             else if (cmd[1] == "off")
-            {
                 _repl_state->deduction_mode = DeductionMode::Off;
-                _n->clear_input_focus();
-            }
             else
+                throw std::runtime_error(usage);
+
+            _n->clear_input_focus();
+        }
+
+        const DeductionMode mode = _repl_state->deduction_mode;
+        _n->set_deduction_filter(filters_deductions(mode));
+        _n->set_deduction_notice(announces_withheld(*_repl_state));
+
+        const char* name = mode == DeductionMode::All   ? "all"
+                         : mode == DeductionMode::Focus ? "focus"
+                         : mode == DeductionMode::Quiet ? "quiet"
+                                                        : "off";
+        _n->out("Deduction printing mode: " + std::string(name), true);
+
+        // Naming a mode is where its effect gets explained, and now the only
+        // place. A run in the mode says at most how much it hid: telling
+        // somebody after every answer how to reach the mode they are already
+        // in is noise, and it is noise in the middle of the result they asked
+        // for.
+        if (named)
+        {
+            // The mark is the '+', and the prompt around it is not fixed: its
+            // first part is the current language, which .lang changes. So the
+            // whole prompt is shown as an EXAMPLE and the character is named
+            // as the thing that carries the meaning.
+            const std::string mark = "marks the prompt with '+' (e.g. \"" + _n->get_lang() + "+> \")";
+
+            switch (mode)
             {
-                throw std::runtime_error("Usage: .deductions [all|focus|off]");
+            case DeductionMode::All:
+                _n->out("  Every derivation is printed.", true);
+                break;
+            case DeductionMode::Focus:
+                _n->out("  Only derivations about statements you entered are printed, and a run says how many it hid.", true);
+                break;
+            case DeductionMode::Quiet:
+                _n->out("  Only derivations about statements you entered are printed, and a run that hid any " + mark + ".", true);
+                break;
+            case DeductionMode::Off:
+                _n->out("  No derivations are printed; a run says how many it hid and " + mark + ".", true);
+                break;
             }
         }
-        _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
-        const char* name = _repl_state->deduction_mode == DeductionMode::All   ? "all"
-                         : _repl_state->deduction_mode == DeductionMode::Focus ? "focus"
-                                                                               : "off";
-        _n->out("Deduction printing mode: " + std::string(name), true);
     }
 }

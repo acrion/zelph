@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # dev_scripts/paper/run_all.sh
 #
-# Regenerates every log under out/ that the paper cites.
+# Regenerates every log the paper cites.
 #
-# The scripts are fed on STDIN, not passed as a filename, and that is not a
-# matter of taste. Reading from stdin puts the engine in REPL mode, which is
-# what the paper's appendix instructs a reader to do, and it is the only mode
-# that (a) prints the per-statement timings the measurement table reports and
-# (b) tracks a "most recently created node" for the bare `.node` in s7. Run
-# with a filename instead and s7 fails with "No argument given and no previous
-# output node available".
+# Each script is passed as a filename. Since 1.0.1 a script named on the
+# command line runs as a session -- its lines are echoed, they anchor the
+# deduction filter, and inference runs after each of them -- so it produces the
+# same reasoning and the same deduction lines as the piped form, without the
+# startup banner and the `zelph> ` prompts. That makes for a cleaner recording.
+# Before 1.0.1 the two forms disagreed and only the piped one worked here.
 #
 # The recorded outputs are NOT kept in this repository. They are evidence for one
 # paper at one released version, and a directory that HEAD keeps moving past
@@ -47,23 +46,19 @@ status=0
 for script in "${here}"/s[0-9]*.zph; do
   name="$(basename "${script}" .zph)"
   log="${out}/${name}.log"
-  "${zelph}" < "${script}" > "${log}" 2>&1 || true
 
-  # An import that does not resolve does NOT stop the run: the remaining
-  # statements still execute, and the symbolic and EML requests still answer,
-  # because those terms never needed the arithmetic module. The log then looks
-  # plausible and describes a configuration nobody asked for. That is how a
-  # module rename went unnoticed here for six weeks, so it is checked.
-  if grep -q "not found" "${log}"; then
-    echo "FAIL ${name}: an import did not resolve" >&2
-    grep -m1 "not found" "${log}" >&2
-    status=1
-  elif grep -q "^Error" "${log}"; then
-    echo "FAIL ${name}: the engine reported an error" >&2
-    grep -m1 "^Error" "${log}" >&2
-    status=1
-  else
+  # The exit status is the whole guard, and it has to be: with stdout and stderr
+  # merged into one file, an error lands on the same line as the prompt that
+  # preceded it, so a `grep '^Error'` over the log matches nothing. Since 1.0.1
+  # the binary exits non-zero on any failure -- a missing import, a syntax error,
+  # a bad depth argument -- and a session script stops at its first failing line,
+  # so a truncated log and a non-zero status arrive together.
+  if "${zelph}" "${script}" > "${log}" 2>&1; then
     echo "ok   ${name}"
+  else
+    echo "FAIL ${name}: see ${log}" >&2
+    tail -2 "${log}" >&2
+    status=1
   fi
 done
 

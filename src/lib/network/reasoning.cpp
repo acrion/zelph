@@ -392,20 +392,27 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                             << ". Total contradictions found: " << _total_contradictions
                             << known_contradiction_note() << "." << std::endl;
 
-    // Once per run, with the run's total, on the same channel as the
-    // deduction lines it accounts for, and naming both the cause and the way
-    // out. Kept out of the `!silent` block deliberately: auto-run is silent, and a
+    // Once per run, with the run's total, on the same channel as the deduction
+    // lines it accounts for. Both of those repair something that misled a
+    // reader: the count used to be flushed before every printed deduction, so
+    // a run reported several REMAINDERS and none of them was the total, and it
+    // used to go to the Diagnostic channel while the deductions go to Out, so
+    // `zelph ... > log.txt` kept the incomplete content and dropped the notice
+    // saying it was incomplete.
+    //
+    // What it does NOT do is explain the mode. A run only reaches this line in
+    // a mode the reader chose -- the default says it with a mark on the prompt
+    // instead -- and explaining the active mode after every answer is telling
+    // somebody how to arrive where they already are, in the middle of the
+    // result they asked for. The explanation belongs where the choice is made,
+    // and .deductions gives it there.
+    //
+    // Kept out of the `!silent` block deliberately: auto-run is silent, and a
     // filtered auto-run is exactly where a reader loses lines without asking.
-    if (_skipped > 0)
+    if (_skipped > 0 && _deduction_notice)
     {
         const std::string count = std::to_string(_skipped.load());
-        const std::string are   = _skipped == 1 ? " deduction is " : " deductions are ";
-        const std::string cause = _print_deductions
-                                    ? "not shown. '.deductions focus' shows only deductions\n"
-                                      "      about statements you entered yourself;"
-                                    : "not shown, because deduction printing is off.\n"
-                                      "     ";
-        out("Note: " + count + are + cause + " '.deductions all' shows every one.", true);
+        out("Note: " + count + (_skipped == 1 ? " deduction was hidden." : " deductions were hidden."), true);
     }
 
     if (_contradiction)
@@ -692,6 +699,11 @@ void Reasoning::end_input_capture()
 void Reasoning::set_deduction_filter(const bool on)
 {
     _deduction_filter = on;
+}
+
+void Reasoning::set_deduction_notice(const bool on)
+{
+    _deduction_notice = on;
 }
 
 void Reasoning::suppress_input_capture(const bool on)

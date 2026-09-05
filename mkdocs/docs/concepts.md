@@ -498,11 +498,12 @@ is detected.
 ```
 zelph> .deductions off
 Deduction printing mode: off
+  No derivations are printed; a run says how many it hid and marks the prompt with '+' (e.g. "zelph+> ").
 zelph> .import decimal-arithmetic
-zelph> .import primes
+Note: 1 deduction was hidden.
+zelph+> .import primes
 zelph> :testprime &13
-Note: 328 deductions are not shown, because deduction printing is off.
-      '.deductions all' shows every one.
+Note: 328 deductions were hidden.
 zelph> (:testprime &13) = X
 Answer: (:testprime &13) = prime
 zelph> (:isprime N, N hasdivisor D) => !

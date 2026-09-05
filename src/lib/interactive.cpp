@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -99,7 +100,8 @@ public:
             [this]
             { return _repl_state->import_depth == 0 && _repl_state->quiet_depth == 0; });
 
-        _n->set_deduction_filter(_repl_state->deduction_mode == DeductionMode::Focus);
+        _n->set_deduction_filter(filters_deductions(_repl_state->deduction_mode));
+        _n->set_deduction_notice(announces_withheld(*_repl_state));
     }
 
     void reset_reasoning()
@@ -207,6 +209,16 @@ bool console::Interactive::is_accumulating() const
 
 void console::Interactive::process(std::string line) const
 {
+    // What a failure NAMES. For a statement that spans several lines this is
+    // the whole statement rather than the line that happened to complete it:
+    // a rule written over two lines was reported as
+    //   Error in line "=> (((G zint N) pmul (V poly L)) = (V poly S))"
+    // -- a fragment that is perfectly correct on its own, and not where
+    // anything is wrong. Someone reading that of a standard-library import
+    // was pointed at the wrong place entirely.
+    std::string reported   = line;
+    bool        whole_stmt = false;
+
     try
     {
         _pImpl->_n->begin_input_capture();
@@ -443,6 +455,15 @@ void console::Interactive::process(std::string line) const
         state->zelph_buffer.clear();
         state->accumulating_zelph = false;
 
+        if (complete_stmt != line)
+        {
+            // Written as one logical line, which is how the same statement
+            // would have been typed without the line breaks.
+            reported = complete_stmt;
+            std::replace(reported.begin(), reported.end(), '\n', ' ');
+            whole_stmt = true;
+        }
+
         // --- 9a. Result-query prefix '?': assert, infer quietly, then query ---
         //
         // "? <statement>" rewrites to the query "(<statement>) = _Result" and
@@ -579,7 +600,8 @@ void console::Interactive::process(std::string line) const
     }
     catch (std::exception& ex)
     {
-        throw std::runtime_error("Error in line \"" + line + "\": " + ex.what());
+        throw std::runtime_error("Error in " + std::string(whole_stmt ? "statement" : "line")
+                                 + " \"" + reported + "\": " + ex.what());
     }
 }
 
@@ -608,6 +630,32 @@ void console::Interactive::run(const bool print_deductions, const bool export_de
 std::string console::Interactive::get_lang() const
 {
     return _pImpl->_n->get_lang();
+}
+
+void console::Interactive::set_prompt_available(const bool available) const
+{
+    _pImpl->_repl_state->prompt_available = available;
+    _pImpl->_n->set_deduction_notice(announces_withheld(*_pImpl->_repl_state));
+}
+
+std::string console::Interactive::prompt_text() const
+{
+    if (is_accumulating()) return {};
+
+    const auto& state = _pImpl->_repl_state;
+
+    std::string prompt = _pImpl->_n->get_lang();
+
+    // Only where something was ACTUALLY withheld, and by the most recent run:
+    // a mark that is always on says no more than the mode does, and the mode
+    // is what the user just typed. `.deductions focus` is deliberately not
+    // marked -- there the notice already says it, in words.
+    if (marks_withheld_in_prompt(state->deduction_mode)
+        && _pImpl->_n->deductions_withheld() > 0)
+        prompt += "+";
+
+    prompt += state->auto_run ? "> " : "-> ";
+    return prompt;
 }
 
 void console::Interactive::set_output_handler(io::OutputHandler output) const

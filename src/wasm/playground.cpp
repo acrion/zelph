@@ -136,18 +136,13 @@ extern "C"
         return instance().is_accumulating() ? 1 : 0;
     }
 
-    // Current REPL prompt; mirrors make_prompt in src/app/main.cpp
-    // (empty while a multi-line statement is being accumulated).
+    // Current REPL prompt. Built by Interactive so that the terminal and this
+    // playground cannot say different things; empty while a multi-line
+    // statement is being accumulated.
     EMSCRIPTEN_KEEPALIVE const char* zelph_prompt()
     {
         static std::string prompt;
-
-        auto& i = instance();
-        if (i.is_accumulating())
-            prompt = "";
-        else
-            prompt = i.get_lang() + (i.is_auto_run_active() ? "> " : "-> ");
-
+        prompt = instance().prompt_text();
         return prompt.c_str();
     }
 

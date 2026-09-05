@@ -41,8 +41,26 @@ namespace zelph::console
     {
         All,   // print every deduction (historic behavior)
         Focus, // print only deductions anchored in the current input
+        Quiet, // as Focus, but the prompt carries what a notice would say
         Off    // print no deductions
     };
+
+    // Whether the mode removes deductions from the output. Quiet differs from
+    // Focus in what it SAYS, not in what it shows, so every decision about
+    // filtering has to treat the two alike.
+    inline bool filters_deductions(const DeductionMode mode)
+    {
+        return mode == DeductionMode::Focus || mode == DeductionMode::Quiet;
+    }
+
+    // Whether the prompt carries the mark. Only where deductions are being
+    // withheld WITHOUT a notice saying so, plus `off`, where the user asked
+    // for silence and the prompt is the only place left to say that something
+    // is being kept back -- the same job the "-" of a disabled auto-run does.
+    inline bool marks_withheld_in_prompt(const DeductionMode mode)
+    {
+        return mode == DeductionMode::Quiet || mode == DeductionMode::Off;
+    }
 
     // What a script file IS to the engine, which decides how it is run.
     //
@@ -54,7 +72,7 @@ namespace zelph::console
     // A SESSION is a file named on the command line -- `zelph script.zph`, and
     // the shebang `#!/usr/bin/env zelph` that points at it. It is a typed
     // session that happens to arrive from a file rather than from a keyboard,
-    // so it runs exactly as `zelph < script.zph` does. 
+    // so it runs exactly as `zelph < script.zph` does.
     // What a session keeps from a module is everything about FINDING and
     // preparing the file: standard-library path resolution, the `.janet`
     // whole-program runner, script arguments, and the import-once module guard.
@@ -66,8 +84,19 @@ namespace zelph::console
 
     struct ReplState
     {
-        bool          auto_run{true};
-        DeductionMode deduction_mode{DeductionMode::Focus};
+        bool auto_run{true};
+
+        // Quiet by default: the filtering is the same as Focus, and what
+        // differs is that the run does not write three lines of prose after
+        // the answer somebody asked for. Whoever wants those lines chooses
+        // Focus, and choosing it is also what tells them what it means.
+        DeductionMode deduction_mode{DeductionMode::Quiet};
+
+        // Whether a prompt will be shown after each run. False for
+        // `zelph script.zph`, which prints none -- and there the mark has
+        // nowhere to appear, so Quiet falls back to the notice (see
+        // announces_withheld). Set once by the binary before it runs.
+        bool prompt_available{true};
 #ifndef __EMSCRIPTEN__
         bool        partial_load_mode{false};
         std::string partial_load_source;
@@ -130,6 +159,19 @@ namespace zelph::console
         // it ever reaches the command table.
         bool quit_requested{false};
     };
+
+    // Whether a run writes the notice accounting for what it withheld.
+    //
+    // The mark and the notice are two ways of saying one thing, and which one
+    // fits depends on the medium. Quiet asks for the prompt rather than the
+    // sentence -- but `zelph script.zph` prints no prompt, so there the
+    // "rather than" has nothing to point at, and a quiet run would be a SILENT
+    // one: a log that does not say it is incomplete, which is the failure the
+    // notice exists to prevent.
+    inline bool announces_withheld(const ReplState& state)
+    {
+        return state.deduction_mode != DeductionMode::Quiet || !state.prompt_available;
+    }
 
     // Helper RAII struct to temporarily suspend auto-run
     struct AutoRunSuspender

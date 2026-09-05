@@ -66,19 +66,13 @@ A "is ancestor of" "pius"
 
 When executed, the last line is interpreted as a query, because it contains a variable (single uppercase letter) and is no rule. Here are the results:
 
-A **module** loaded with `.import` contributes no deduction anchors, so in the
-default `focus` mode only the query answer is printed and the derived facts
-are counted (see [Deduction Output Modes](rules.md#deduction-output-modes)).
-Running the same file as a **session** — `zelph stdlib/examples/english.zph`
-— prints the whole derivation instead, because there its statements are your
-own (see [Scripts and Modules](modules.md)):
+A **module** loaded with `.import` contributes no deduction anchors, so in the default mode only the query answer is printed and the `+` in the prompt says that the derived facts were held back (see [Deduction Output Modes](rules.md#deduction-output-modes)). Running the same file as a **session** – `zelph stdlib/examples/english.zph` – prints the whole derivation instead, because there its statements are your own (see [Scripts and Modules](modules.md)):
 
 ```
 zelph> .import examples/english
 Importing file examples/english.zph...
 Answer: paul "is ancestor of" pius
-Note: 35 deductions are not shown. '.deductions focus' shows only deductions
-      about statements you entered yourself; '.deductions all' shows every one.
+zelph+>
 ```
 
 `.deductions all` shows what those 35 are. The order in which they appear
