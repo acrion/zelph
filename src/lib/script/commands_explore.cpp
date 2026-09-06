@@ -240,7 +240,17 @@ namespace zelph::console
         // playground the graph panel fetches the file from MEMFS via
         // take_last_graph_html() instead, and a dead file:// link in the
         // browser terminal would only mislead - so print nothing there.
-        std::string file_url = "file://" + html_path.string();
+        //
+        // A path is not a URL. On Windows "file://" concatenated with the
+        // native path results in "file://C:\Users\...\a.html", where the
+        // drive letter is read as the host and the backslashes separate
+        // nothing -- the OSC 8 hyperlink wrapped around it leads nowhere.
+        // RFC 8089 wants the generic form with a leading slash, so the
+        // same expression produces file:///C:/Users/.../a.html in that
+        // context and the unchanged file:///tmp/a.html here.
+        std::string url_path = html_path.generic_string();
+        if (!url_path.starts_with('/')) url_path.insert(url_path.begin(), '/');
+        const std::string file_url = "file://" + url_path;
 
         const std::string OSC_START = "\033]8;;";
         const char        OSC_SEP   = '\a';

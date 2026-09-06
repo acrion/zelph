@@ -846,6 +846,25 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             CHECK(any_output_contains(collector, "Mermaid HTML"));
             CHECK(any_output_contains(collector, "/a.html"));
         }
+
+        // The check above reads "/a.html" and therefore says nothing on a
+        // platform whose separator is a backslash -- which is where the
+        // printed link was not a URL at all. This holds the shape instead
+        // of the substring, so both mean the same thing everywhere.
+        SUBCASE("the link is a file URL, not a native path")
+        {
+            collector.clear();
+            interactive.process(".mermaid a");
+
+            std::string link;
+            for (const auto& event : collector.events())
+            {
+                if (event.text.find("Mermaid HTML") != std::string::npos) link = event.text;
+            }
+            REQUIRE_FALSE(link.empty());
+            CHECK(link.find("file:///") != std::string::npos);
+            CHECK(link.find('\\') == std::string::npos);
+        }
         SUBCASE("the fact itself, as it prints")
         {
             collector.clear();
