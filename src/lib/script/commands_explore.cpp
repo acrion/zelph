@@ -248,7 +248,7 @@ namespace zelph::console
         // RFC 8089 wants the generic form with a leading slash, so the
         // same expression produces file:///C:/Users/.../a.html in that
         // context and the unchanged file:///tmp/a.html here.
-        std::string url_path = html_path.generic_string();
+        std::string url_path = std::filesystem::absolute(html_path).generic_string();
         if (!url_path.starts_with('/')) url_path.insert(url_path.begin(), '/');
         const std::string file_url = "file://" + url_path;
 

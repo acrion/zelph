@@ -865,6 +865,21 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             CHECK(link.find("file:///") != std::string::npos);
             CHECK(link.find('\\') == std::string::npos);
         }
+
+        SUBCASE("the link names the absolute temp directory")
+        {
+            collector.clear();
+            interactive.process(".mermaid a");
+
+            std::string link;
+            for (const auto& event : collector.events())
+            {
+                if (event.text.find("Mermaid HTML") != std::string::npos) link = event.text;
+            }
+            REQUIRE_FALSE(link.empty());
+            const std::string dir = std::filesystem::absolute(std::filesystem::temp_directory_path()).generic_string();
+            CHECK(link.find(dir) != std::string::npos);
+        }
         SUBCASE("the fact itself, as it prints")
         {
             collector.clear();
