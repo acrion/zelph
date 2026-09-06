@@ -14,7 +14,7 @@ authors:
 repository-code: https://github.com/acrion/zelph
 url: https://zelph.org/
 license: AGPL-3.0-or-later
-version: 1.0.0
+version: 1.0.1
 keywords:
   - semantic network
   - reasoning engine

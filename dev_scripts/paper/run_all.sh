@@ -65,4 +65,8 @@ done
 python3 "${here}/eml_dag_stats.py" > "${out}/eml_dag_stats.md"
 echo "ok   eml_dag_stats"
 
+# the timing table cannot be read off the logs above.
+python3 "${here}/s9_timings.py" "${zelph}" > "${out}/s9_timings.md"
+echo "ok   s9_timings"
+
 exit ${status}
