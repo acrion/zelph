@@ -1,14 +1,14 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s7_figure1.zph
 #
-# To achieve exactly the same behaviour as when entered in the REPL (as described in the paper),
-# we execute .run after each command (in the REPL, .auto-run is on by default).
-# This does not influence results, but internal node IDs printed by the last command `.node`.
+# The .run after each command is deliberate and must stay. A script named on
+# the command line is a session, so inference already runs after every line and
+# the explicit .run changes no result -- but it does fix the internal node IDs
+# that the closing .node prints, and the figure is addressed by one of them.
 
 # Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and the default 'focus' mode shows only
-# deductions anchored to interactively entered statements, which silently
-# drops most of them from a log.
+# individual deduction lines, and every mode but 'all' shows only deductions
+# anchored to statements of the session, which drops most of them from a log.
 .deductions all
 .import decimal-arithmetic
 .run

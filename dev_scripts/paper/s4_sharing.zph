@@ -6,9 +6,8 @@
 # containing ln x. (If "identical-node" prints false, report back: then
 # Janet's = does not compare node identity and the probe needs rework.)
 # Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and the default 'focus' mode shows only
-# deductions anchored to interactively entered statements, which silently
-# drops most of them from a log.
+# individual deduction lines, and every mode but 'all' shows only deductions
+# anchored to statements of the session, which drops most of them from a log.
 .deductions all
 .import decimal-arithmetic
 .import symbolic-core
