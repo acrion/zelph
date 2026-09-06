@@ -88,6 +88,33 @@ if(ZELPH_WASM)
 endif()
 
 if(MSVC)
+    # /EHs instead of the /EHsc that CMake puts into CMAKE_CXX_FLAGS by default.
+    # The trailing "c" tells the compiler it may assume that a function declared
+    # extern "C" never throws. Janet wraps its whole header in extern "C", and
+    # JanetCFunction -- the type of every callback zelph hands to the VM -- is
+    # included in that. Those callbacks are C++, and each one is enclosed in a
+    # try/catch (see script_engine_setup.cpp) so that a C++ error transforms into
+    # a Janet panic rather than triggering an unwinding through the VM. A try
+    # block around a call the compiler is authorized to treat as non-throwing is
+    # not what /EHc was written for.
+    #
+    # It matters on x64 Windows alone, because a longjmp is a real SEH unwind
+    # there and walks the identical frame data that exception handling emits,
+    # while glibc and the x86 ABI merely restore the registers and jump. The
+    # symptom was a segmentation fault in the Windows test run, in the two cases
+    # where a Janet C function refuses and its panic propagates outside of the
+    # guard's try block.
+    #
+    # This narrows the exposure, it does not remove it. Microsoft documents
+    # neither how longjmp interacts with a C++ try block nor a way to make it
+    # safe, and the setjmp/longjmp pair itself stays undefined under
+    # [csetjmp.syn]/2 for as long as the VM reports errors that way.
+    #
+    # The flag is stated here rather than only substituted, so that the choice
+    # survives a CMake release that stops defaulting to /EHsc.
+    string(REGEX REPLACE "/EH[a-zA-Z-]+" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHs")
+
     target_compile_options(project_options INTERFACE
         /W4 /wd4251 /wd4275 /utf-8
         $<$<CONFIG:Debug>:-D_DEBUG>
