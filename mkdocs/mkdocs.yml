@@ -41,6 +41,10 @@ extra_css:
   - stylesheets/extra.css
 plugins:
   - search
+  - redirects:
+      redirect_maps:
+        arithmetic.md: math/arithmetic.md
+        symbolic.md: math/symbolic.md
 # Relative links and in-page anchors are checked on every build. Together with
 # `mkdocs build --strict` in CI this turns a dead cross-reference into a failed
 # build rather than a line of INFO nobody reads. `unrecognized_links` stays at

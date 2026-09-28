@@ -144,7 +144,7 @@ zelph's design can be understood through comparisons with several established sy
 
 Prolog performs **top-down**, goal-driven search with backtracking. zelph performs **bottom-up** forward chaining, like Datalog: it materializes all derivable facts until a fixed point is reached.
 
-But unlike standard Datalog, zelph's predicates are first-class nodes. This enables **meta-rules** — rules that quantify over relations themselves — which are impossible to express in standard Datalog and require meta-interpreters in Prolog.
+However, in contrast to standard Datalog, zelph treats predicates as first-class nodes. This allows for **meta-rules** – rules that quantify over relations themselves. Standard Datalog lacks variables in predicate position, thus requiring an encoding to express such constructs: each fact is stored as a tuple within a single generic relation, for instance `holds(p, s, o)`, and rules are formulated using this relation. Prolog supports variable predicates via the `call/N` construct. In zelph, no encoding is needed: a predicate functions as a node just like any other, and whether a relation is transitive is simply an ordinary fact that can be provided by the data itself.
 
 ### Lean and Curry-Howard
 
@@ -250,7 +250,7 @@ Notice that `R` in the transitive rule is a **variable ranging over predicates**
 This is possible because predicates in zelph are nodes, not edge labels.
 Any relation declared `is transitive` automatically benefits from this single rule — no separate rule per predicate is needed.
 
-This enables a class of rules that are difficult or impossible to express in standard Datalog or Prolog: rules that _reason about relations themselves_.
+This allows for a class of rules that standard Datalog can only represent via an encoding (see [Prolog and Datalog](#prolog-and-datalog)): rules that _reason about relations themselves_.
 
 **Example — Symmetric relations:**
 
@@ -561,9 +561,13 @@ zelph> (A ~ interval, ¬(B before A)) => (A is earliest)
 (a is earliest) ⇐ {(a ~ interval) (¬(B before a))}
 ```
 
-Datalog would refuse both rules outright: there, a variable under negation
-must be bound by a positive condition (*range restriction*), and `B` is not.
-zelph accepts them and gives them the reading the notation suggests.
+Textbook Datalog would refuse both rules: its safety condition (*range
+restriction*) mandates that every variable appearing within negation must be
+bound by a positive condition, and `B` fails this requirement. Certain
+engines loosen this rule when dealing with an anonymous variable: for
+example, Soufflé permits `_` under negation and reads it as quantified
+inside the negation. zelph extends this allowance to named variables as
+well, granting both rules the interpretation implied by their notation.
 
 **Ranging over a domain is a positive condition, not a negation.** To
 conclude something for each member of a set that *lacks* a property, name the
@@ -890,9 +894,18 @@ It is the same node in both lines; a node the engine generated has no name to pr
 The default mode is `focus`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
 The fact is derived and stored either way; only the line announcing it is suppressed.
 
-**Termination guarantee:** Before creating a new node, zelph checks whether the deduced facts (with the fresh variable as wildcard) already exist. If they do, no new deduction occurs. This ensures that generative rules converge.
+**No duplicate witnesses:** Before generating a new node, zelph checks whether the deduced facts (using the fresh variable as a wildcard) are already present. Should they be, no new deduction takes place, meaning a rule never creates a second witness for facts that already hold.
 
 This mechanism is fundamental for constructive reasoning, such as building new cons-list structures during arithmetic (see below).
+
+The check does not make every generative rule terminate. A rule whose consequence meets its own condition once more, with the newly created node placed in a new position, never stops:
+
+```
+(X p Y) => (Y p Z)
+a p b
+```
+
+derives `b p ??`, followed by a fact concerning that newly created node, then another regarding the subsequent one, indefinitely. Datalog engines employing existential rules face the same limit; preventing these rules from feeding themselves rests with the rule set.
 
 ## A Predicate Logic Perspective
 
@@ -1265,7 +1278,7 @@ They apply whenever computation can be expressed as structure transformation ove
 Because fact nodes can themselves appear as subjects or objects, zelph naturally supports **higher-order assertions**.
 For example, declaring a relation to be symmetric, transitive, or functional is a statement about a predicate — and the inference engine treats it as an ordinary fact that conditions can match against.
 
-This enables concise, generic rules that would require meta-interpreters or reflection mechanisms in traditional logic programming systems.
+This allows for concise, generic rules. In traditional logic programming, the same takes an encoding of each fact in Datalog, or a call via a variable predicate (`call/N`) in Prolog.
 
 ### Neural Rule Conditions
 

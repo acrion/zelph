@@ -171,9 +171,9 @@ zelph’s flexible design accommodates these distinctions.
 The idea behind the script is to follow the [Wikidata usage guidelines](https://www.wikidata.org/wiki/Property:P2559).
 It can easily be adapted or extended further.
 
-Notably, Wikidata marks `subclass of` as transitive, but not the other two relations.
-This makes sense for `instance of` (since an instance is not a class), but the script adds rules for `facet of` that reflect its documented meaning:
-if X is a `facet of` Y, then X inherits relevant properties of Y.
+Notably, Wikidata marks `subclass of` and `facet of` as transitive, yet does not classify `instance of` as such.
+This is logical for `instance of` (as an instance does not constitute a class).
+In addition to transitivity, the script adds rules for `facet of` that align with its documented meaning: whenever X is a `facet of` Y, X inherits pertinent properties from Y.
 
 For this case, the following rules are included in the script:
 
@@ -187,8 +187,8 @@ For this case, the following rules are included in the script:
 
 Here is a step-by-step example of zelph’s inference process when working with Wikidata:
 
-1. According to Wikidata, the property [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is an instance of [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515).
-2. Wikidata also states that [transitive Wikidata property (Q18647515)](https://www.wikidata.org/wiki/Q18647515) is a [facet of (P1269)](https://www.wikidata.org/wiki/Property:P1269) [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
+1. According to Wikidata, the property [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is an instance of [transitive property (Q18647515)](https://www.wikidata.org/wiki/Q18647515).
+2. Wikidata also states that [transitive property (Q18647515)](https://www.wikidata.org/wiki/Q18647515) is a [facet of (P1269)](https://www.wikidata.org/wiki/Property:P1269) [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
 3. The script contains the rule: `(X "is facet of" Y, Y ~ C) => (X ~ C)`
 4. Therefore, zelph infers that [greater than (P5135)](https://www.wikidata.org/wiki/Property:P5135) is also an instance of [transitive relation (Q64861)](https://www.wikidata.org/wiki/Q64861).
 

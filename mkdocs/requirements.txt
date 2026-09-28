@@ -5,3 +5,6 @@
 mkdocs==1.6.1
 mkdocs-material==9.7.7
 pymdown-extensions==11.0.2
+# The version 1.2.3 incorporates a requirement for properdocs, which is a
+# fork of MkDocs; in contrast, version 1.2.2 relies solely on MkDocs.
+mkdocs-redirects==1.2.2
