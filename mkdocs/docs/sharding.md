@@ -6,7 +6,7 @@ If you only want to load a complete network, see [Precompiled Binaries](binaries
 
 ## Motivation
 
-A complete Wikidata network is large. The current full dump (`wikidata-20260309-all.bin`) is roughly 82 GiB on disk and needs about 224 GiB of RAM to materialise fully. Even the pruned variant still needs around 15 GiB. For many uses — inspecting a handful of nodes, resolving a few names, or feeding a bounded slice of the graph into an external tool — loading the entire network is wasteful or simply impossible on the machine at hand.
+A complete Wikidata network is large. The current full dump (`wikidata-20260309-all.bin`) is roughly 82 GiB on disk and needs about 224 GiB of RAM to materialise fully. Even the pruned variants require 6.0 GiB (`-small`) and 25.9 GiB (`-medium`). For many uses — inspecting a handful of nodes, resolving a few names, or feeding a bounded slice of the graph into an external tool — loading the entire network is wasteful or simply impossible on the machine at hand.
 
 Partial loading and sharding address this with three goals:
 
@@ -51,11 +51,11 @@ The two name sections are grouped by language and sorted within it: `nameOfNode`
 
 The `left` and `right` sections are **not** sorted. They are written in the order the nodes stand in the in-memory map, which for an imported network is roughly the order in which they were created; only the adjacency list inside each entry is sorted. `left=0` thus means "the first million nodes that were created", not an ID range, and there is no way to tell from a node ID which adjacency chunk holds it — that is what a [node route index](#route-selectors) is for.
 
-The header message records the number of chunks in each section (it is read by `.stat-file`). For example, the full Wikidata file has 984 left + 984 right + 204 nameOfNode + 204 nodeOfName = 2376 chunks; the pruned file has 75 + 75 + 21 + 21 = 192 chunks.
+The header message records the number of chunks in each section (it is read by `.stat-file`). For example, the full Wikidata file has 984 left + 984 right + 204 nameOfNode + 204 nodeOfName = 2376 chunks; `wikidata-20260309-all-pruned-small.bin` contains 27 + 27 + 13 + 13 = 80 chunks.
 
 ### Chunk Index Semantics
 
-Within each section, every chunk carries a `chunkIndex` that is **unique across the whole section** and equal to the chunk's sequential position in the file. The counter does **not** restart per language — the name sections continue counting across language boundaries. So in the pruned file, the `wikidata` name chunks occupy `nameOfNode` indices 0–13 and the `en` chunks occupy 14–20.
+Within each section, every chunk carries a `chunkIndex` that is **unique across the whole section** and equal to the chunk's sequential position in the file. The counter does **not** restart per language — the name sections continue counting across language boundaries. Thus, in `wikidata-20260309-all-pruned-small.bin`, the `wikidata` name chunks are assigned `nameOfNode` indices 0–7, while the `en` chunks are assigned 8–12.
 
 This invariant matters for selection: it guarantees that the selector `nameOfNode=0` refers to exactly one chunk, regardless of which loading path you use (see [Implementation Invariants](#implementation-invariants)).
 
@@ -75,13 +75,14 @@ zelph> .stat-file /path/to/file.bin
 Serialized File Statistics:
 ------------------------
 File: /path/to/file.bin
-File Size: 5996414847 bytes
-Left Chunks: 75
-Right Chunks: 75
-Name-of-Node Chunks: 21
-Node-of-Name Chunks: 21
-Total Chunks: 192
+File Size: 2367565351 bytes
+Left Chunks: 27
+Right Chunks: 27
+Name-of-Node Chunks: 13
+Node-of-Name Chunks: 13
+Total Chunks: 80
 ------------------------
+(declared by the header; use .index-file to verify the chunks)
 ```
 
 ### `.index-file`
@@ -99,7 +100,7 @@ The output records, for the header and each chunk, its byte offset and length wi
 {
   "file": "/path/to/file.bin",
   "header": {"offset": 0, "length": 31},
-  "left":       [{"chunkIndex":0,"offset":31,"length":232195040,"which":"left"}, ...],
+  "left":       [{"chunkIndex":0,"offset":31,"length":128388733,"which":"left"}, ...],
   "right":      [...],
   "nameOfNode": [{"chunkIndex":0,"offset":...,"length":...,"lang":"wikidata"}, ...],
   "nodeOfName": [...]
@@ -188,7 +189,7 @@ The chunk arrays from `.index-file` can be restructured into a manifest by wrapp
     "headerLengthBytes": 31
   },
   "sections": {
-    "left":       {"chunks": [{"chunkIndex": 0, "offset": 31, "length": 232195040}, ...]},
+    "left":       {"chunks": [{"chunkIndex": 0, "offset": 31, "length": 128388733}, ...]},
     "right":      {"chunks": [...]},
     "nameOfNode": {"chunks": [...]},
     "nodeOfName": {"chunks": [...]}
@@ -370,7 +371,7 @@ If you have already downloaded the artifact (for example via
 over the network:
 
 ```
-zelph> .load-partial /local/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json left=0 right=0
+zelph> .load-partial /local/wikidata-20260309-all-pruned-small/wikidata-20260309-all-pruned-small.hf-v2.json left=0 right=0
 ```
 
 Only if the shards were separated from their manifest does the location have
@@ -503,13 +504,13 @@ A Cap'n Proto message can span multiple segments; the save path uses a 512 MiB f
 ## Performance
 
 What a manifest buys locally, measured on the published pruned artifact
-(`wikidata-20260309-all-pruned`, 75 left chunks, 6.0 GB) by loading its first
+(`wikidata-20260309-all-pruned-small`, 27 left chunks, 2.2 GiB) by loading its first
 left chunk and nothing else, alternating the two commands over two rounds:
 
-| Command                                                                       | Time            |
-| ----------------------------------------------------------------------------- | --------------- |
-| `.load-partial …-pruned.bin left=0 right=none nameOfNode=none nodeOfName=none` | 7.05 s / 7.10 s |
-| `.load-partial …-pruned.hf-v2.json left=0 right=none …` (shards on disk)       | 1.07 s / 1.03 s |
+| Command                                                                             | Time            |
+| ----------------------------------------------------------------------------------- | --------------- |
+| `.load-partial …-pruned-small.bin left=0 right=none nameOfNode=none nodeOfName=none` | 2.79 s / 2.78 s |
+| `.load-partial …-pruned-small.hf-v2.json left=0 right=none …` (shards on disk)       | 0.54 s / 0.52 s |
 
 Both produce the same 1,000,000-node view. The difference is the packed stream:
 the `.bin` path walks it from the beginning, the manifest path seeks — or, with

@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
-MANIFEST="${1:-hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json}"
+MANIFEST="${1:-hf://datasets/acrion/zelph/wikidata-20260309-all-pruned-small/wikidata-20260309-all-pruned-small.hf-v2.json}"
 ZELPH="${2:-${ROOT}/build-release/bin/zelph}"
 CACHE="${3:-${TMPDIR:-/tmp}/zelph-hf-cache-revalidation}"
 

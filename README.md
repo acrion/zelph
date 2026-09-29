@@ -57,6 +57,24 @@ and
 
 The project addresses real-world challenges in large-scale ontology management through direct collaboration with the [Wikidata Ontology Cleaning Task Force](https://www.wikidata.org/wiki/Wikidata:WikiProject_Ontology/Cleaning_Task_Force) and the [Mereology Task Force](https://www.wikidata.org/wiki/Wikidata_talk:WikiProject_Ontology/Mereology_Task_Force).
 
+The progress of the NLnet-funded work is monitored via the [project status page](https://zelph.org/nlnet-status/).
+
+## Software Bill of Materials
+
+The following external dependencies are compiled into zelph during compilation. CMake retrieves each one at build time, specifically at the version specified and locked in the build configuration, with no alterations applied to any of them. `zelph --version` displays the set of components included in a given binary.
+
+| Component | Version | Licence | Used for | Included in |
+| --- | --- | --- | --- | --- |
+| [Janet](https://janet-lang.org) | 1.41.2 | MIT | the embedded scripting layer | all builds |
+| [unordered_dense](https://github.com/martinus/unordered_dense) | 4.8.1 | MIT | hash maps | all builds |
+| [Cap'n Proto](https://capnproto.org) | 1.4.0 | MIT | the `.bin` network format | native builds, not WebAssembly |
+| [bzip2](https://sourceware.org/bzip2/) | 1.0.8 | bzip2 licence (BSD-style) | reading compressed dumps | native builds, not WebAssembly |
+| [mimalloc](https://github.com/microsoft/mimalloc) | 3.4.5 | MIT | memory allocation | standalone Linux builds |
+
+Used only for building, testing or documenting zelph, and not included in its distribution: doctest 2.5.2 (MIT) for the test suite, bindgen 0.72 (BSD-3-Clause) for the Rust bindings, and MkDocs paired with Material for MkDocs, pymdown-extensions, and mkdocs-redirects for the documentation. The WebAssembly build is generated using Emscripten and contains the runtime code produced by Emscripten (MIT or University of Illinois/NCSA licence).
+
+Loaded by the browser from cdn.jsdelivr.net upon viewing a page, and not distributed with zelph: xterm.js 5.5.0 along with its fit add-on 0.10.0 (MIT) in the playground, and Mermaid (MIT) as well as svg-pan-zoom (BSD-2-Clause) in the graph pages that zelph writes.
+
 ## Licensing
 
 zelph is dual-licensed: [AGPL-3.0-or-later](LICENSE) for open-source use, and a commercial licence from acrion innovations GmbH for closed-source integration or special requirements ([acrion.ch/sales](https://acrion.ch/sales)). Offering the commercial option adds a possibility and takes nothing away from anyone using the open-source licence, commercial users included.

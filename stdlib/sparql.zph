@@ -848,9 +848,15 @@
     :bare (node-key (resolve-term op prefixes))
     (error "Unsupported FILTER operand")))
 
+# A value is considered a number solely when the whole string represents
+# one. The sign can be either "+" or "-": Wikidata writes quantity amounts
+# with an explicit sign ("+42"), and the import preserves this formatting.
+# Time values also include a sign ("+1990-05-01T00:00:00Z"); the end anchor
+# maintains them as strings, ensuring a date is never read as the year it
+# begins with.
 (defn numeric? [s]
   (and (string? s)
-       (peg/match '(* (? "-") (some (range "09"))
+       (peg/match '(* (? (set "+-")) (some (range "09"))
                       (? (* "." (some (range "09")))) -1)
                   s)))
 

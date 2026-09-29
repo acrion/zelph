@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 ZELPH="${1:-${ROOT}/build-release/bin/zelph}"
 CACHE="${2:-${TMPDIR:-/tmp}/zelph-hf-transfer-diagnostics}"
-MANIFEST="hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json"
+MANIFEST="hf://datasets/acrion/zelph/wikidata-20260309-all-pruned-small/wikidata-20260309-all-pruned-small.hf-v2.json"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     sed -n '2,7p' "$0"

@@ -218,7 +218,7 @@ This produces a file containing byte offsets and lengths for the header and ever
     "headerLengthBytes": 31
   },
   "sections": {
-    "left":       {"chunks": [{"chunkIndex": 0, "offset": 31, "length": 232195040}, ...]},
+    "left":       {"chunks": [{"chunkIndex": 0, "offset": 31, "length": 128388733}, ...]},
     "right":      {"chunks": [...]},
     "nameOfNode": {"chunks": [...]},
     "nodeOfName": {"chunks": [...]}
@@ -281,7 +281,7 @@ When chunks reference remote URLs (`hf://` or `https://`), zelph fetches them au
 Manifests can also be loaded directly from Hugging Face:
 
 ```
-zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json meta-only
+zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned-small/wikidata-20260309-all-pruned-small.hf-v2.json meta-only
 ```
 
 ### Route Selectors
@@ -331,7 +331,7 @@ manifest, the shards and the offset index side by side –
 see [Sharded Networks](sharding.md#hosting-on-hugging-face):
 
 ```
-zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned/wikidata-20260309-all-pruned.hf-v2.json left=0
+zelph> .load-partial hf://datasets/acrion/zelph/wikidata-20260309-all-pruned-small/wikidata-20260309-all-pruned-small.hf-v2.json left=0
 ```
 
 ### Integration with External Tools
