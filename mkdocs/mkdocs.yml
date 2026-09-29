@@ -104,6 +104,7 @@ nav:
   - Video Introduction: presentation.md
   - Building zelph: building.md
   - About the Project: about.md
+  - NLnet Project Status: nlnet-status.md
   - Internals:
       - Performance Architecture: internals/performance.md
       - Measurement Methodology: internals/measurement.md

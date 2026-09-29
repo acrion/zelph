@@ -14,13 +14,13 @@ Currently, I offer the following Wikidata variants:
 
 | File                                      | Variant                                                        |       Nodes | File Size | RAM Usage | Name Entries (`wikidata` / `en`) | Load Time |
 | ----------------------------------------- | -------------------------------------------------------------- | ----------: | --------: | --------: | -------------------------------: | --------: |
-| `wikidata-20260309-all.bin`               | Current full Wikidata dump, a 1:1 port of the JSON dump        | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
+| `wikidata-20260309-all.bin`               | Current full Wikidata dump: all statements between entities   | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
 | `wikidata-20260309-all-P11260.bin`        | The same, plus the _list item_ qualifier layer                 | 983,435,690 |    82 GiB | 221.7 GiB |         119,232,787 / 83,261,799 |         — |
 | `wikidata-20260309-all-pruned-medium.bin` | Pruned, **keeps people**                                       | 114,477,445 |   9.0 GiB |  25.9 GiB |          21,015,182 / 14,668,496 |    2m 08s |
 | `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   6.0 GiB |            7,106,526 / 4,316,673 |       25s |
 | `wikidata-20260309-all-pruned-small-P279.bin` | The `P279` slice of `-small`: the class hierarchy alone     |   2,005,552 |  0.21 GiB |   0.6 GiB |              890,779 /   775,631 |     2.2s |
 | `wikidata-20171227.bin`                   | Historic full Wikidata dump from 2017                          | 203,190,311 |    18 GiB |  44.6 GiB |          42,187,613 / 27,960,315 |    3m 20s |
-| `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.4 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
+| `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.3 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
 
 The values above reflect observed loading statistics from zelph on my system. Actual loading times and memory usage may vary depending on hardware and build configuration.
 
@@ -41,9 +41,11 @@ name tables rather than mapped from the file.
   [Working on the Wikidata Class Hierarchy](class-hierarchy.md) identically, on
   any machine, in two seconds. See
   [Publishing a Predicate Slice](publishing-slices.md) for how it was cut.
-* The **full** file is the faithful port of the Wikidata dump and needs a
-  machine built for it – 223.7 GiB resident. It is the right choice when you
-  need everything, and the wrong one for anything else.
+* The **full** file holds every statement from the Wikidata dump that links
+  two entities; while dates, quantities, identifiers such as DOIs, and
+  qualifiers are excluded, labels are kept as node names. It needs a machine
+  built for it – 223.7 GiB in memory. It is the appropriate option when all of
+  these statements are required, and unsuitable for any other purpose.
 
 **What the pruned variants drop** – in the order they were removed, least
 missed first: the encyclopedia’s own plumbing (categories, templates, list and
@@ -93,7 +95,7 @@ A `.bin` file is internally organised into four sections of numbered chunks:
 - **nameOfNode** — maps from node IDs to human-readable names, grouped by language
 - **nodeOfName** — maps from human-readable names to node IDs, grouped by language
 
-Each section is divided into multiple chunks. For example, the pruned Wikidata 2026 file contains 75 left chunks, 75 right chunks, 21 nameOfNode chunks, and 21 nodeOfName chunks (192 chunks total).
+Each section is divided into multiple chunks. For example, `wikidata-20260309-all-pruned-small.bin` contains 27 left chunks, 27 right chunks, 13 nameOfNode chunks, and 13 nodeOfName chunks (80 chunks in total).
 
 ### Inspecting a `.bin` File Before Loading
 
