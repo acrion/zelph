@@ -206,7 +206,7 @@ For sharded layouts, each chunk entry additionally carries an `objectPath` point
 ```json
 {
   "chunkIndex": 0,
-  "length": 75535779,
+  "length": 2336659915,
   "objectPath": "hf://datasets/acrion/zelph/wikidata-20260309-all/shards/left/chunk-000000.capnp-packed",
   "which": "left"
 }
