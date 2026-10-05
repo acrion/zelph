@@ -276,6 +276,7 @@ jobs:
           node src/wasm/node_smoke_test.mjs build-wasm/bin/zelph.mjs
           node src/wasm/node_binary_arithmetic_test.mjs build-wasm/bin/zelph.mjs
           node src/wasm/node_demo_smoke_test.mjs build-wasm/bin/zelph.mjs
+          node src/wasm/node_prereq_dialog_test.mjs
 
       - name: Package playground
         run: |

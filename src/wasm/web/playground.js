@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // Mermaid messages.
 
 import { DEMO_GROUPS } from "./demos.js";
+import { escapeHtml, missingPrereqs, press, prereqDialog } from "./rail.js";
 
 // --- terminal (output only) --------------------------------------------------
 
@@ -91,6 +92,7 @@ const resetBtn = document.getElementById("reset");
 const graphFrame = document.getElementById("graphframe");
 const graphLabel = document.getElementById("graphlabel");
 const dlg = document.getElementById("prereq-dialog");
+const dlgTitle = document.getElementById("prereq-title");
 const dlgList = document.getElementById("prereq-list");
 const dlgRun = document.getElementById("prereq-run");
 const dlgCancel = document.getElementById("prereq-cancel");
@@ -120,10 +122,6 @@ addEventListener(
   },
   { capture: true, passive: true },
 );
-
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 // --- info panel: hover preview vs. last executed command -----------------------
 
@@ -363,10 +361,6 @@ inputEl.addEventListener("keydown", (e) => {
 const buttonsById = new Map();
 const groupOfId = new Map(); // demo id -> group title
 
-function missingPrereqs(b) {
-  return (b.requires || []).filter((id) => !clicked.has(id));
-}
-
 function labelOf(id) {
   return buttonsById.get(id)?._demo.label ?? id;
 }
@@ -374,7 +368,7 @@ function labelOf(id) {
 function updateButtons() {
   for (const [id, el] of buttonsById) {
     const b = el._demo;
-    const miss = missingPrereqs(b);
+    const miss = missingPrereqs(b, clicked);
     el.classList.toggle("done", clicked.has(id));
     el.classList.toggle("prereq", miss.length > 0); // CSS: prereq dot wins over done
     if (miss.length > 0) {
@@ -392,33 +386,24 @@ function updateButtons() {
 function execDemo(b) {
   const lines = b.command.split("\n");
   if (b.requiresReset) {
-    // The demo runs on an empty network, so every earlier demo is undone.
-    // Forgetting them keeps the dependency markers honest; `.new` is typed
-    // rather than sent behind the visitor's back, like every other command.
-    clicked.clear();
+    // The demo executes within an empty network, thereby reversing any prior
+    // demo; instead of being dispatched behind the visitor's back, `.new` is
+    // typed, just like every other command.
     lines.unshift(".new");
   }
-  clicked.add(b.id);
+  press(b, clicked);
   runLines(lines, { doc: demoDoc(b) });
   updateButtons();
 }
 
 function runDemo(b) {
   if (busy || !ready) return;
-  const miss = missingPrereqs(b);
+  const miss = missingPrereqs(b, clicked);
   if (miss.length > 0) {
     pendingDemo = b;
-    // Group the missing steps under their group headings so visitors know
-    // where to find them (a group may still be collapsed).
-    dlgList.innerHTML = DEMO_GROUPS.map((g) => {
-      const inGroup = miss.filter((id) => groupOfId.get(id) === g.title);
-      if (inGroup.length === 0) return "";
-      return (
-        `<li><strong>${escapeHtml(g.title)}</strong><ul>` +
-        inGroup.map((id) => `<li>${escapeHtml(labelOf(id))}</li>`).join("") +
-        "</ul></li>"
-      );
-    }).join("");
+    const { title, listHTML } = prereqDialog(miss, DEMO_GROUPS);
+    dlgTitle.textContent = title;
+    dlgList.innerHTML = listHTML;
     dlg.showModal();
     return;
   }

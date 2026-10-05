@@ -28,9 +28,9 @@ The complete documentation, including tutorials, language references, and the ar
 
 👉 **[Read the zelph Documentation](https://acrion.github.io/zelph/)**
 
-These pages are built from `main`, so they describe the current state of development and can be ahead of what you would download. The documentation belonging to the latest release lives on zelph.org instead:
-
 [![Documentation for the latest release](https://img.shields.io/github/v/release/acrion/zelph?include_prereleases&label=docs%20for%20release&color=blue)](https://zelph.org/)
+
+The same pages appear on [zelph.org](https://zelph.org/), alongside the Wikidata reports generated using zelph.
 
 ### Quick Links
 
