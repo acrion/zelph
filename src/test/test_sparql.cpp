@@ -122,6 +122,24 @@ namespace
         QI P31 QX
         )");
     }
+
+    // Quantity qualifiers in the shape .wikidata-qualifiers materializes:
+    // each value node is named by the dump's own rendering of the amount,
+    // which carries an explicit sign for non-negative values ("+42",
+    // refer to qualifiers.md). The unsigned 7 represents a value expressed
+    // using a zelph script.
+    void setup_quantity_graph(const zelph::console::Interactive& interactive)
+    {
+        process_lines(interactive, R"(
+        .lang wikidata
+        QA pq:P1111 +42
+        QB pq:P1111 +100
+        QC pq:P1111 7
+        QD pq:P1111 -5
+        QE pq:P1111 +1.5
+        QF pq:P1111 -0.25
+        )");
+    }
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -678,6 +696,102 @@ QB P569 1995
         CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
 }
 
+TEST_CASE("sparql: FILTER reads a quantity with a leading plus as a number")
+{
+    // Wikidata writes quantity amounts using a sign, and the qualifier
+    // import keeps it. The numeric check previously allowed only a minus
+    // symbol, causing "+100" to be treated as a string when compared to
+    // 50; since "+" comes before any digit in sorting order, the query
+    // returned no result at all.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_quantity_graph(interactive);
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x ?v WHERE {
+  ?x pq:P1111 ?v .
+  FILTER ( ?v > 50 )
+})");
+
+        CHECK(any_output_contains(collector, "QB +100"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: FILTER equality compares a signed quantity by value")
+{
+    // The number represented as "+100" shares the same value as 100,
+    // differing only in notation. When a query performs a comparison
+    // against a plain literal, it must find the value that the dump
+    // expresses using a sign.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_quantity_graph(interactive);
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x ?v WHERE {
+  ?x pq:P1111 ?v .
+  FILTER ( ?v = 100 )
+})");
+
+        CHECK(any_output_contains(collector, "QB +100"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+TEST_CASE("sparql: FILTER compares negative and decimal quantities by value")
+{
+    // A qualifier holds negative and positive values adjacent to one
+    // another, with fractions positioned on either side of zero. As
+    // strings, "+1.5", "+42", and "+100" all come before "0" in sorting
+    // order and passed this filter.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_quantity_graph(interactive);
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x ?v WHERE {
+  ?x pq:P1111 ?v .
+  FILTER ( ?v < 0 )
+})");
+
+        CHECK(any_output_contains(collector, "QD -5"));
+        CHECK(any_output_contains(collector, "QF -0.25"));
+        CHECK_FALSE(any_output_contains(collector, "QE"));
+        CHECK_FALSE(any_output_contains(collector, "QA"));
+        CHECK_FALSE(any_output_contains(collector, "QB"));
+        CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
+}
+
+TEST_CASE("sparql: FILTER does not read a Wikidata date as the year it begins with")
+{
+    // Wikidata time values also start with a sign, and
+    // "+1990-05-01T00:00:00Z" begins like the number +1990. The numeric
+    // check takes the value as a whole, meaning a date is never the year
+    // it begins with. What a date ought to be compared as is a different
+    // matter; the quantity next to it merely indicates that the comparison
+    // took place.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+.lang wikidata
+QL pq:P580 +1990-05-01T00:00:00Z
+QL pq:P1111 +2000
+)");
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?v WHERE {
+  QL ?p ?v .
+  FILTER ( ?v > 1000 )
+})");
+
+        CHECK(any_output_contains(collector, "+2000"));
+        CHECK_FALSE(any_output_contains(collector, "+1990-05-01T00:00:00Z"));
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
 // ---------------------------------------------------------------------------
 // GROUP BY / COUNT / ORDER BY / LIMIT
 // ---------------------------------------------------------------------------
@@ -749,6 +863,42 @@ ORDER BY DESC(?class) ASC(?x))");
 ORDER BY DESC(?class) DESC(?x))");
 
         CHECK(out_line_index(collector, "Q5 Q2") < out_line_index(collector, "Q5 Q1")); });
+}
+
+TEST_CASE("sparql: ORDER BY sorts signed quantities by value")
+{
+    // The ORDER BY clause establishes numeric ordering using the same
+    // numeric check as FILTER. As long as it did not accept a leading plus
+    // sign, "+100" was positioned before "+42", and both came before any
+    // negative value.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_quantity_graph(interactive);
+        collector.clear();
+
+        run_sparql(interactive, R"(SELECT ?x ?v WHERE {
+  ?x pq:P1111 ?v .
+}
+ORDER BY ?v)");
+
+        const size_t minus5    = out_line_index(collector, "QD -5");
+        const size_t minus0_25 = out_line_index(collector, "QF -0.25");
+        const size_t plus1_5   = out_line_index(collector, "QE +1.5");
+        const size_t seven     = out_line_index(collector, "QC 7");
+        const size_t plus42    = out_line_index(collector, "QA +42");
+        const size_t plus100   = out_line_index(collector, "QB +100");
+        REQUIRE(minus5 != std::string::npos);
+        REQUIRE(minus0_25 != std::string::npos);
+        REQUIRE(plus1_5 != std::string::npos);
+        REQUIRE(seven != std::string::npos);
+        REQUIRE(plus42 != std::string::npos);
+        REQUIRE(plus100 != std::string::npos);
+        CHECK(minus5 < minus0_25);
+        CHECK(minus0_25 < plus1_5);
+        CHECK(plus1_5 < seven);
+        CHECK(seven < plus42);
+        CHECK(plus42 < plus100); });
 }
 
 // ---------------------------------------------------------------------------

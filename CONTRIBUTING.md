@@ -56,9 +56,13 @@ minimum is an entry in the command list in the [Quick Start
 Guide](https://acrion.github.io/zelph/quickstart/) _and_ the built-in help
 text in `command_executor.cpp`; the two must not drift apart.
 
-Every documentation link in this file targets the build that follows `main`,
-because that is the tree you are working against. The release site is
-[zelph.org](https://zelph.org/).
+Each documentation link within this file points to
+[acrion.github.io/zelph](https://acrion.github.io/zelph/), while
+[zelph.org](https://zelph.org/) publishes the same pages. Both are built from
+`main`, which effectively serves as the most recent release: apart from
+documentation fixes and playground improvements, it exclusively incorporates
+release candidates, and any modification to zelph itself is tagged as a release
+immediately upon being merged.
 
 Build the documentation before you open a pull request. CI runs the same
 command with `--strict`, so a dead cross-reference or a broken anchor fails the

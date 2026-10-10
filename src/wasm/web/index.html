@@ -246,9 +246,8 @@
             #prereq-list > li {
                 margin: 5px 0;
             }
-            #prereq-list ul {
+            #prereq-list .prereq-step {
                 color: #e2b93d;
-                margin: 2px 0 6px;
             }
             dialog menu {
                 display: flex;
@@ -363,7 +362,7 @@
         </div>
 
         <dialog id="prereq-dialog">
-            <h3>Some prerequisites may be missing</h3>
+            <h3 id="prereq-title">Press another button first</h3>
             <p>
                 This demo step builds on modules or facts created by other
                 buttons you have not pressed yet in this session (listed with

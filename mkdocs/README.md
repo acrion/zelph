@@ -1,13 +1,15 @@
 # Building and publishing the zelph documentation
 
-Two sites are built from this directory, and they are not the same site. Every
-page looks alike on both, so the distinction is worth keeping in mind:
-acrion.github.io follows `main`, zelph.org follows the latest release.
+Two sites are built from this directory. Both follow `main`, effectively
+representing the most recent release (refer to
+[CONTRIBUTING.md](../CONTRIBUTING.md#documentation)); they differ in their
+production method and in the Wikidata reports that zelph.org carries in
+addition.
 
 | site | content | how it is produced |
 | --- | --- | --- |
 | [acrion.github.io/zelph](https://acrion.github.io/zelph/) | current `main` | automatically, by the `docs` job in `.github/workflows/ci.yml` on every push to the default branch |
-| [zelph.org](https://zelph.org/) | the latest release | by `publish.sh <ref>` in the site repository, see below |
+| [zelph.org](https://zelph.org/) | current `main`, plus the published Wikidata reports | by `publish.sh main` in the site repository, see below |
 
 ## Local preview
 
@@ -37,7 +39,7 @@ zelph.org is not built from this directory. It is assembled in a separate
 maintainer-side repository that holds the same pages plus the published Wikidata
 report trees — hundreds of megabytes of derivation output that do not belong in a
 source repository. That repository synchronises `docs/`, `overrides/`,
-`requirements.txt` and this directory's `mkdocs.yml` from a release checkout,
+`requirements.txt` and this directory's `mkdocs.yml` from a checkout of `main`,
 overrides only the navigation, builds, and uploads the result.
 
 Two consequences matter here:
@@ -49,13 +51,12 @@ Two consequences matter here:
   root (`zelph.org/logic/`). A root-absolute `/assets/x.svg` works only at the
   root and silently breaks the other build.
 - **Links must stay relative too.** A page here must not link to `zelph.org`.
-  These pages are published on both sites, so such a link inside one of them
-  sends a reader of the development build across to the release build without
-  saying so, and the two can be different versions. Use a relative link, which
-  resolves on both. Two things are the exception: the three video sources,
-  because those files exist only on the release host and cannot be reached any
-  other way, and the *Versions* note at the end of `playground.md`, whose whole
-  subject is the difference between the two hosts.
+  Since these pages are published on both sites, such a reference within one
+  would redirect a reader from one site to the other without indicating the
+  shift. Opt for a relative link, one that resolves correctly on both. Two
+  things are exempt: the three video sources, as those files are hosted solely
+  on zelph.org and cannot be accessed otherwise, and the *Versions* note found
+  at the end of `playground.md`, which explicitly mentions both hosts.
 
 The order of the remaining steps is crucial in either case: `mkdocs build` wipes
 `site/` and writes it again from scratch, so the playground must be fetched after
