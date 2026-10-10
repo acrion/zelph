@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
@@ -98,8 +99,13 @@ namespace zelph::network
             rightIt->second.insert(a);
         }
 
-        Node insert_fact_single_object_trusted(Node subject, Node predicate, Node object)
+        // The `foreign` flag is set when the node associated with the triple
+        // is already present in the system yet does not hold the triple;
+        // refer to the comment accompanying the check.
+        Node insert_fact_single_object_trusted(Node subject, Node predicate, Node object, bool& foreign)
         {
+            foreign = false;
+
             if (subject == 0 || predicate == 0 || object == 0)
             {
                 throw std::invalid_argument("Network::insert_fact_single_object_trusted: subject/predicate/object must be non-zero");
@@ -124,6 +130,26 @@ namespace zelph::network
 
             if (!inserted_left)
             {
+                // The node is present. Typically, it is precisely this same
+                // triple once more: the Wikidata importer types a property
+                // once per thread, and a dump might duplicate a claim. Any
+                // other case is a node that merely shares the triple's
+                // identifier -- a partially loaded view, a damaged file, or a
+                // collision arising from the 62-bit hash -- and modifying it
+                // would merge two statements. It is not altered, and the
+                // caller is informed, enabling a prolonged import to tally
+                // such nodes rather than terminate upon encountering one.
+                //
+                // The test functions as a superset test, similar to
+                // check_fact: the node's adjacency also holds the facts that
+                // mention it, meaning the subject and predicate edges, along
+                // with the object edge, are looked up individually, rather
+                // than being compared as whole sets.
+                const auto to = _right.find(relation);
+                foreign       = rel_left_it->second.count(subject) == 0
+                             || rel_left_it->second.count(predicate) == 0
+                             || to == _right.end()
+                             || to->second.count(object) == 0;
                 return relation;
             }
 
@@ -161,6 +187,11 @@ namespace zelph::network
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            if (_watched)
+            {
+                note_removal(a);
+                note_removal(b);
+            }
 
             auto leftIt = _left.find(a);
             if (leftIt != _left.end())
@@ -209,6 +240,8 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
             std::unique_lock                    lock_weights(_mtx_weights);
+            const bool                          watching = _watched != nullptr;
+            if (watching) note_removal(node);
 
             Node hash = 0;
 
@@ -227,6 +260,7 @@ namespace zelph::network
                     const auto it = _left.find(from);
                     if (it != _left.end()) it->second.erase(node);
                     drop_weight(from, node);
+                    if (watching) note_removal(from);
                 }
             }
 
@@ -239,6 +273,7 @@ namespace zelph::network
                     const auto it = _right.find(to);
                     if (it != _right.end()) it->second.erase(node);
                     drop_weight(node, to);
+                    if (watching) note_removal(to);
                 }
             }
 
@@ -373,6 +408,48 @@ namespace zelph::network
             }
         }
 
+        // The set of a few nodes touched by a removal. An addition never
+        // reduces the edge count of a node, so a node maintaining its prior
+        // edge count and untouched by any removal since remains unchanged;
+        // following a removal, an addition may reestablish the edge count of a
+        // node that was altered. A reader names the nodes it preserves
+        // information about (watch_removals), which also discards prior touch
+        // records; a removal records only those of them it touches, and
+        // nothing more. Absent a reader, a removal pays one pointer test.
+        // `graph_epoch` tracks the number of loads, which touch nodes without
+        // noting a removal (note_load).
+        using WatchedNodes = ankerl::unordered_dense::set<Node>;
+        void watch_removals(std::shared_ptr<const WatchedNodes> nodes)
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            _watched = std::move(nodes);
+            _touched.clear();
+        }
+
+        // Called by every load before it writes. A load that replaces the
+        // graph clears it, while a load that merges a file into the graph
+        // assigns to each node the file holds the edges contained within the
+        // file, possibly reducing the number of edges it previously held:
+        // either way, edges vanish without a record of removal, and every
+        // reader must re-read the data it keeps. Only a load that cleared the
+        // graph advanced the epoch, and a rule read for an explanation before
+        // a merging load was adopted afterwards whenever the edge counts it
+        // had read from matched.
+        void note_load()
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            _touched.clear();
+            _graph_epoch.fetch_add(1, std::memory_order_acq_rel);
+        }
+        bool touched_by_removal(const Node n) const
+        {
+            std::shared_lock<std::shared_mutex> lock(_smtx_left);
+            return _touched.count(n) != 0;
+        }
+        std::uint64_t graph_epoch() const { return _graph_epoch.load(std::memory_order_acquire); }
+
         bool exists(Node a) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
@@ -409,6 +486,14 @@ namespace zelph::network
             while (_left.find(++_last) != _left.end())
                 ;
 
+            // The identifiers from recipe_floor up are part of rule-built
+            // collections (see is_recipe); a counter there would be read as
+            // one. In practice, 2^61 creates are unattainable.
+            if (_last >= recipe_floor)
+            {
+                throw std::logic_error("Network::create: the node counter reached the ids reserved for rule-built collections");
+            }
+
             if (is_var(_last))
             {
                 throw std::logic_error("Network::var: Exceeded maximum number of " + std::to_string(_last - 1) + " nodes.");
@@ -418,6 +503,44 @@ namespace zelph::network
             _right[_last] = adjacency_set{};
             note_created(_last);
             return _last;
+        }
+
+        // A collection written while a rule is being written: the next counter
+        // value serves as its payload, encapsulated within the
+        // written-template class (see is_written_template). The identifier is
+        // distinct due to the uniqueness of the counter; the counter slot
+        // remains unutilized, and no assumption is made about the counters
+        // being consecutive. A load writes identifiers exactly as they appear
+        // and takes the counter from the file, meaning that after a load
+        // operation merging a file into a session, the counter may fall below
+        // a template currently held by the session: a payload whose template
+        // id exists is skipped.
+        Node create_written_template()
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            Node id = 0;
+            do
+            {
+                while (_left.find(++_last) != _left.end())
+                    ;
+
+                // The payload contains the 59 bits below construction_bit,
+                // which would make the id a construction's recipe. As with
+                // the guard in create(), 2^59 creates are out of reach.
+                if (_last >= construction_bit)
+                {
+                    throw std::logic_error("Network::create_written_template: the node counter outgrew the payload of a written template");
+                }
+
+                id = recipe_floor | template_class | _last;
+            } while (_left.find(id) != _left.end());
+
+            _left[id]  = adjacency_set{};
+            _right[id] = adjacency_set{};
+            note_created(id);
+            return id;
         }
 
         Node count() const
@@ -456,6 +579,66 @@ namespace zelph::network
         static bool is_hash(Node a)
         {
             return (a & mark_hash) == mark_hash;
+        }
+
+        // The classes associated with a node id, determined by
+        // extracting bits 63..60:
+        //   000x  a counter (create): atoms, witnesses, the core nodes, and
+        //         every collection that is in no class below
+        //   0010  a value recipe: the term a firing builds for a template
+        //   0011  the template class, a rule's own collection: bit 59 set a
+        //         construction's recipe, bit 59 clear a written template
+        //         (create_written_template)
+        //   01xx  a hash: facts and set constants
+        //   1xxx  a variable
+        // A recipe is not a hash, so every reader that takes a non-hash as
+        // an atom or a collection interprets it as a collection, and
+        // neither a fact nor a set constant can land on one.
+        static bool is_recipe(Node a)
+        {
+            return (a & 0xE000000000000000ull) == recipe_floor;
+        }
+
+        static bool is_value_recipe(Node a)
+        {
+            return (a & 0xF000000000000000ull) == recipe_floor;
+        }
+
+        static bool is_template_id(Node a)
+        {
+            return (a & 0xF000000000000000ull) == (recipe_floor | template_class);
+        }
+
+        static bool is_written_template(Node a)
+        {
+            return (a & 0xF800000000000000ull) == (recipe_floor | template_class);
+        }
+
+        // The key of a recipe: the binding of the variables the instantiated
+        // statement meets, as (variable, value) pairs arranged in ascending
+        // order by variable. An absence of pairs results in the fixed empty
+        // key.
+        static Node recipe_key(const std::vector<std::pair<Node, Node>>& sorted_pairs)
+        {
+            Node h = mix_bits(recipe_key_seed, sorted_pairs.size());
+            for (const auto& [v, x] : sorted_pairs)
+            {
+                h = mix_bits(h, mod(v));
+                h = mix_bits(h, mod(x));
+            }
+            return h;
+        }
+
+        // The identifier for what an instantiation produces for the template
+        // collection `tmpl` at `key`: either a construction's recipe (59 hash
+        // bits) or, in the case of a firing, a value recipe (60 hash bits).
+        // When two recipes collide, they share a single node; no comparison
+        // occurs between their members.
+        static Node recipe_id(const Node tmpl, const Node key, const bool construction)
+        {
+            const Node h = mix_bits(mix_bits(recipe_id_seed, mod(tmpl)), key);
+            return construction ? (h & construct_payload) | recipe_floor | template_class | construction_bit
+                                : (h & value_payload) | recipe_floor;
         }
 
         void create(const Node a)
@@ -608,6 +791,23 @@ namespace zelph::network
             if (it == _right.end()) return false;
             out = it->second;
             return true;
+        }
+
+        // The same into a list, containing nodes whose identifiers exceed
+        // `after` exclusively, arranged according to adjacency order; returns
+        // how many incoming edges b has. For a reader that processes nodes in
+        // a sequence of its own choosing (Unification::enumerate_by_id): a
+        // copy of a set comprising over 128 items replicates its hash index,
+        // which such a reader has no use for.
+        size_t list_left_of(Node b, std::vector<Node>& out, Node after = 0) const
+        {
+            out.clear();
+            std::shared_lock<std::shared_mutex> lock(_smtx_right);
+            auto                                it = _right.find(b);
+            if (it == _right.end()) return 0;
+            for (const Node n : it->second)
+                if (n > after) out.push_back(n);
+            return it->second.size();
         }
 
         // Size-only counterpart of snapshot_left_of: the number of incoming
@@ -1016,6 +1216,17 @@ namespace zelph::network
         mutable std::shared_mutex _smtx_left;
         mutable std::shared_mutex _smtx_right;
 
+        // See watch_removals(). Written while exclusively holding the
+        // adjacency locks; `_touched` contains only watched nodes, so
+        // neither grows with the graph.
+        std::shared_ptr<const WatchedNodes> _watched;
+        WatchedNodes                        _touched;
+        std::atomic<std::uint64_t>          _graph_epoch{0};
+        void                                note_removal(const Node n)
+        {
+            if (_watched->count(n) != 0) _touched.insert(n);
+        }
+
 #ifdef NDEBUG
     private:
 #endif
@@ -1023,6 +1234,16 @@ namespace zelph::network
         static constexpr Node mark_hash           = 0x4000000000000000ull;
         static constexpr Node mask_node           = 0x7FFFFFFFFFFFFFFFull; // mask highest bit
         static constexpr Node mask_highest_2_bits = 0x3fffffffffffffffull;
+
+        // The identifier classes of collections built by rules, the top of
+        // the counter range (see is_recipe).
+        static constexpr Node recipe_floor      = 0x2000000000000000ull; // bit 61: the recipe classes
+        static constexpr Node template_class    = 0x1000000000000000ull; // bit 60: a rule's own collection
+        static constexpr Node construction_bit  = 0x0800000000000000ull; // bit 59: created by a construction
+        static constexpr Node value_payload     = 0x0FFFFFFFFFFFFFFFull; // the 60 hash bits of a value recipe
+        static constexpr Node construct_payload = 0x07FFFFFFFFFFFFFFull; // the 59 hash bits of a construction's recipe
+        static constexpr Node recipe_key_seed   = 0x6b65793a72656369ull;
+        static constexpr Node recipe_id_seed    = 0x7265636970653a31ull;
 
         // Called from all three node-materialization paths. Lock order is
         // always adjacency locks -> _mtx_clusters, never the reverse.

@@ -15,14 +15,14 @@
 .name "transitive relation" wikidata Q18647515
 
 # The following facts are part of wikidata:
-#"is subclass of" ~ transitive relation
-#"has part"       ~ transitive relation
-#"is facet of"    ~ transitive relation
-#"is part of"     ~ transitive relation
-#"is part of"     is inverse of "has part"
+#"is subclass of" ~ "transitive relation"
+#"has part"       ~ "transitive relation"
+#"is facet of"    ~ "transitive relation"
+#"is part of"     ~ "transitive relation"
+#"is part of"     "is inverse of" "has part"
 
 # The following facts are not part of wikidata:
-"has quality" ~ transitive relation
+"has quality" ~ "transitive relation"
 
 (X "is facet of" Y, Y ~ C) => (X ~ C)
 (X "is facet of" Y, Y "is subclass of" C) => (X "is subclass of" C)
@@ -31,7 +31,7 @@
 (X "is facet of" Y, Y "has quality" Q) => (X "has quality" Q)
 
 # The following fact is not part of wikidata. Wikidata only includes the fact "is subclass of" "subject item of this property" "is for example"
-"is for example"  is inverse of "~"
+"is for example"  "is inverse of" "~"
 
 (R ~ "transitive relation", X R Y, Y R Z) => (X R Z)
 (P ~ "transitive relation", P "is inverse of" Q) => (Q ~ "transitive relation")

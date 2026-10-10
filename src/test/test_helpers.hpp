@@ -331,6 +331,21 @@ namespace zelph::test
                            { return normalize(e.text).find("Found one or more contradictions!") != std::string::npos; });
     }
 
+    // The node count `.stat` reports. First clears the collector.
+    inline std::size_t node_count(zelph::io::OutputCollector&        collector,
+                                  const zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process(".stat");
+        for (const auto& event : collector.events())
+        {
+            const std::string text = normalize(event.text);
+            const auto        pos  = text.find("Nodes: ");
+            if (pos != std::string::npos) return std::stoul(text.substr(pos + 7));
+        }
+        return 0;
+    }
+
     // Process a multiline string, feeding each line to interactive.process().
     inline void process_lines(const zelph::console::Interactive& interactive, const std::string& script)
     {
@@ -342,15 +357,39 @@ namespace zelph::test
         }
     }
 
+    // The node counts after each of four single passes of `lines`, entered
+    // with auto-run off and classic evaluation applied: a firing that finds
+    // no earlier witness or rule makes a new one on each pass, which a run
+    // to the fixpoint would not survive, and a single pass concludes in
+    // either way.
+    inline std::vector<std::size_t> counts_over_passes(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& lines)
+    {
+        interactive.process(".semi-naive off");
+        interactive.process(".auto-run"); // a toggle: off
+        process_lines(interactive, lines);
+        std::vector<std::size_t> counts;
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            interactive.process(".run-once");
+            counts.push_back(node_count(collector, interactive));
+        }
+        interactive.process(".auto-run"); // on again
+        return counts;
+    }
+
     // Run a test function in both parallel and single-core mode.
     // The function receives collector and interactive references.
     //
-    // Both modes run with `.semi-naive check`: after the delta drains,
-    // classic verification passes re-run until quiescence, and run()
-    // throws if delta seeding missed any derivation. Every test therefore
-    // doubles as an equivalence test between semi-naive and classic
-    // evaluation -- permanently, so regressions in either direction fail
-    // loudly instead of silently changing results.
+    // Both modes run with `.semi-naive check`: once the delta drains,
+    // classic verification passes are re-executed repeatedly until
+    // quiescence is reached, and run() raises an exception if delta seeding
+    // missed any derivation or if a fact rests on a negation that has now
+    // become true. Consequently, each test additionally verifies
+    // the semi-naive fixpoint against classic passes -- continuously,
+    // ensuring that any derivation omitted by the delta path results in a
+    // loud failure instead of silently changing results. It does not run
+    // the classic evaluator anew: a test requiring this explicitly requests
+    // `.semi-naive off`.
     template <typename F>
     void run_both_modes(F&& test_fn)
     {
@@ -400,15 +439,16 @@ namespace zelph::test
         }
     }
 
-    // Run a test against every arithmetic stdlib module, nested into
+    // Run a test on each arithmetic stdlib module, embedded within
     // run_both_modes: 3 modules x 2 parallelism modes per leaf subcase,
-    // each in `.semi-naive check` mode. All three modules expose the
-    // identical decimal &-literal interface on identical predicates, so
-    // tests written against that interface are representation-agnostic
-    // and should use this helper. For binary-nand-arithmetic every run
-    // additionally exercises the stratified NAF gate bootstrap, and
-    // check mode extends the delta/classic equivalence guarantee to that
-    // module's deferred stratum.
+    // all operating in `.semi-naive check` mode. Since all three
+    // modules expose the same decimal &-literal interface on identical
+    // predicates, tests crafted for this interface are independent of
+    // representation and ought to employ this helper. For
+    // binary-nand-arithmetic, each run further exercises the
+    // stratified NAF gate bootstrap, while check mode's classic passes
+    // and negation re-test additionally cover the deferred stratum of
+    // that module.
     //
     // NOT suitable for tests that inspect the internal digit
     // representation (raw <...> lists differ per module, e.g. after

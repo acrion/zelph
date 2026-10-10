@@ -51,6 +51,19 @@ namespace zelph::io
         OutputChannel channel;
         std::string   text;
         bool          newline{true};
+        // The line reports a finding instead of detailing the work that
+        // produced it: a contradiction; check mode reporting that the rules
+        // no longer support a fact from the outcome, because a negated
+        // premise it was derived under has come to hold; or check mode
+        // listing the facts that delta seeding failed to include, which
+        // reflects a flaw in the engine, as the final graph is complete.
+        // The verification pass marker bears the flag when it heads one of
+        // these lines (refer to
+        // Reasoning::print_pending_verification_marker). A handler that
+        // silences a pass retains these entries while eliminating Out and
+        // Diagnostic lines: the '?' prefix does so, and a contradiction
+        // that its quiet pass derived used to reach nobody.
+        bool finding{false};
     };
 
     using OutputHandler = std::function<void(const OutputEvent&)>;

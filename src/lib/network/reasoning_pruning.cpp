@@ -185,6 +185,86 @@ bool Reasoning::is_core_declaration(const Node fact) const
     return !get_core_name(parse_fact(fact, objects, 0)).empty();
 }
 
+// A statement may simultaneously function as a claim and a component of a
+// rule -- serving as its condition, its consequence, or appearing nested
+// within either: thanks to hash-consing, "a p b" asserted and
+// "(a p b) => (c q d)" become a single node, and likewise for
+// "((a p b) says Z) => (Z ok yes)".
+// The prune commands eliminate claims, and when the node was removed, the
+// rule vanished too -- a rule that nobody had requested to delete,
+// disappearing silently, and every later run proceeding without it. Such a
+// statement reverts to being the rule's pattern instead, just as a dropped
+// cluster leaves it (restore_rule_patterns).
+bool Reasoning::part_of_rule(const Node fact) const
+{
+    return rule_parts().count(fact) != 0;
+}
+
+// Each rule's conditions and consequences, the members of their condition
+// sets, and every statement nested within them, are read once per prune:
+// asked per fact, the question parsed the neighbours of each fact a
+// predicate-wide prune removed, which caused that prune to become six
+// times slower.
+//
+// A statement nested within a condition or a consequence is part of the rule
+// just as fully as the condition is: the rule is built from it, removing its
+// node takes the rule along, and mark_rule_patterns marks it as the rule's
+// pattern. Read exclusively at the top level, `.prune-facts (a p b)` next to
+// the rule `((a p b) says Z) => (Z ok yes)` removed the rule with the claim.
+// The descent reads the structure of fact nodes solely: querying each node
+// encountered to determine whether it is a condition set inspects the
+// adjacency of every atomic element in every rule, including numerals and
+// operators, and tripled the cost of a ground prune in the context of the
+// 429 rules from the Jacobian session.
+adjacency_set Reasoning::rule_parts() const
+{
+    adjacency_set     parts;
+    std::vector<Node> sets;
+    std::vector<Node> nested; // fact nodes whose subject, predicate, and objects remain to be read
+    const auto        add = [&](const Node nd)
+    {
+        if (nd == 0 || Zelph::Impl::is_var(nd) || parts.count(nd) != 0) return;
+        parts.insert(nd);
+        if (Zelph::Impl::is_hash(nd)) nested.push_back(nd);
+    };
+    for (const Node rel : get_left(core.Causes))
+    {
+        if (parse_relation(rel) != core.Causes) continue;
+        adjacency_set objects;
+        const Node    subject = parse_fact(rel, objects);
+        if (subject == 0) continue;
+        add(subject);
+        for (const Node o : objects)
+            add(o);
+        if (is_condition_set(subject)) sets.push_back(subject);
+    }
+    while (!sets.empty())
+    {
+        const Node set = sets.back();
+        sets.pop_back();
+        adjacency_set members;
+        if (!condition_set_members(set, members)) continue;
+        for (const Node m : members)
+        {
+            if (parts.count(m) != 0) continue;
+            add(m);
+            if (is_condition_set(m)) sets.push_back(m);
+        }
+    }
+    while (!nested.empty())
+    {
+        const Node nd = nested.back();
+        nested.pop_back();
+        const FactStructure fs = get_preferred_structure(this, nd, 3);
+        if (fs.predicate == 0 || fs.subject == 0) continue;
+        add(fs.subject);
+        add(fs.predicate);
+        for (const Node o : fs.objects)
+            add(o);
+    }
+    return parts;
+}
+
 void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 {
     const SuspendFactStructureCache no_cache(*this); // as in prune_nodes
@@ -208,8 +288,10 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     if (removed_count >= prune_progress_step)
         out_stream() << "Pruning " << removed_count << " matched fact(s)..." << std::endl;
 
+    std::vector<Node> rule_parts_hit;
     if (removed_count > 0)
     {
+        const adjacency_set         parts = rule_parts();
         std::lock_guard<std::mutex> lock(_mtx_network);
         bool                        declaration_removed = false;
         size_t                      kept_core           = 0;
@@ -219,6 +301,11 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
             if (is_core_declaration(fact))
             {
                 ++kept_core;
+                continue;
+            }
+            if (parts.count(fact) != 0)
+            {
+                rule_parts_hit.push_back(fact);
                 continue;
             }
 
@@ -237,6 +324,7 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 
         if (declaration_removed) invalidate_relation_type_set();
     }
+    restore_rule_patterns(rule_parts_hit);
 
     _prune_mode = false;
 }

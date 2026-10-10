@@ -11,7 +11,16 @@
 # never be produced (one value, one node -- the invariant canonnum pins
 # for the naturals). All rules below yield canonical results provided
 # the operands are canonical: pos magnitudes may be any canonical
-# natural, neg magnitudes must be nonzero.
+# natural, neg magnitudes must be nonzero. The facade at the end of the
+# file lifts its operands into this form first, including a signed zero.
+#
+# The expression (pos zint N) represents the OPERAND form used in the
+# z-operations listed below, distinct from the user-facing form of a
+# nonnegative integer -- specifically, the natural numeral N. The
+# uniform facade located at the end of this file lifts naturals into the
+# operand form and lowers nonnegative results back from it, ensuring
+# that, beyond the z-operations, a single value corresponds to one node
+# shared between N and Z.
 #
 # OPERATIONS (results exposed under =, the uniform query idiom):
 #   (X z+ Y) = Z     addition
@@ -33,8 +42,14 @@
 # Partiality composes: for a mixed-sign addition BOTH candidate
 # differences are asserted, natural subtraction silently kills the
 # invalid one, and the cmp guards select the matching connect rule.
-# Euclidean division on Z (floor vs. truncation is a genuine design
-# choice) is deliberately left to a follow-up.
+#
+# DIVISION AND MOD are intentionally unspecified over Z, with the
+# ambiguity applying solely to NEGATIVE operands: in that case, floor,
+# truncation, and Euclidean division yield distinct outcomes, making the
+# selection a true design choice. When operands are nonnegative, all
+# three methods produce identical results, and a nonnegative integer is
+# the natural numeral (ONE WORLD; refer to the facade below), hence
+# &7 / &2 = &3 is the natural module's division.
 
 # Default arithmetic substrate; import a different provider of
 # "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
@@ -42,17 +57,18 @@
 
 %
 (defn zelph/int
-  "Signed decimal literal -> canonical zint term, i.e. (pos zint N) or
-  (neg zint N). Input-layer convenience like zelph/number, to which the
-  magnitude is delegated; a -0 literal canonicalizes to (pos zint N)
-  with N = 0."
+  "Signed decimal literal -> canonical integer: the natural numeral for a
+  nonnegative value (one world for the nonnegative integers, see the
+  facade below), (neg zint N) for a negative one. Input-layer
+  convenience like zelph/number, to which the magnitude is delegated; a
+  negative zero such as -0 or -00 canonicalizes to the natural zero."
   [s]
   (if (string/has-prefix? "-" s)
-    (let [m (string/slice s 1)]
-      (if (= m "0")
-        (zelph/fact "pos" "zint" (zelph/number "0"))
-        (zelph/fact "neg" "zint" (zelph/number m))))
-    (zelph/fact "pos" "zint" (zelph/number s))))
+    (let [m (zelph/number (string/slice s 1))]
+      (if (= m (zelph/number "0"))
+        m
+        (zelph/fact "neg" "zint" m)))
+    (zelph/number s)))
 
 # Exclude the module's operators from the self-fact display sugar --
 # same rationale as in the arithmetic modules: value coincidences like
@@ -189,35 +205,257 @@
 
 # ---------------------------------------------------------------------------
 # Uniform operator facade -- Z under the natural modules' user-facing
-# predicates. Rules gated on zint-shaped operands route +, -, * and cmp
-# facts to their z-counterparts and re-expose the results under =, so the
-# query idiom is uniform across N and Z:
+# predicates. Rules gated on signed operands route +, -, * and cmp facts
+# to their z-counterparts and re-expose the results under =, so the query
+# idiom is uniform across N and Z:
 #
-#   ((pos zint &2) + (neg zint &5)) = X        answers (neg zint &3)
+#   (&2 + (neg zint &5)) = X        answers (neg zint &3)
+#   ((neg zint &2) * (neg zint &3)) = X        answers &6
 #
-# The natural modules' triggers DO fire on these facts and create dead
-# internal states (e.g. ((zintA add zintB) ci 0)); they are harmless --
-# digit recursion cannot decompose zint facts, whose predicate is zint,
-# not cons -- and are the price of shared predicates, the same trade
-# symbolic-core.zph documents. The payoff: symbolic-core's knowledge-
-# folding bridge (T red C, C = R) => (T rw R) consumes these = facts
-# with NO Z-specific bridge at all -- constant folding over Z is this
-# facade plus the existing rule. Division/mod are deliberately not
-# routed (Euclidean division on Z is a follow-up); a zint / fact simply
-# derives nothing -- partiality by absence, consistent everywhere.
+# ONE WORLD FOR THE NONNEGATIVE INTEGERS. A nonnegative value is exposed
+# as the natural numeral, never as (pos zint N); zint expressions show
+# up in outcomes solely for negative values. (pos zint N) continues to
+# serve as the INTERNAL operand form for z+, z-, zx, and zcmp -- the
+# facade lifts a natural operand into this form and lowers a nonnegative
+# outcome from it. Having two representations of a single value would
+# make every consumer of = facts two-valued wherever both meet
+# (symbolic-core's neutral and absorbing rules answer in the natural
+# world, so a facade answering in the zint world disagrees with them on
+# every mixed form).
+#
+# One location deliberately keeps (pos zint N) as a parameter instead
+# of a value within this world. polynomial.zph uses it as its
+# coefficient form and calls z+ and zx directly: a constant polynomial
+# persists as a zint term throughout the entire layer, and topoly
+# yields outputs originating from that layer.
+#
+# OPERAND SHAPES routed: two zint terms (incl. an explicitly stated
+# (pos zint N), accepted as input), and a natural numeral paired with a
+# negative zint, in both orders. Each operand undergoes lifting first
+# (refer to "Operand lift" below): it must be a number, it is taken in
+# canonical form, and a signed zero is routed as the zero. Two naturals
+# remain within the natural module -- including its partiality:
+# (&3 - &5) yields nothing in this context. Completing that partiality
+# is the responsibility of symbolic-integers.zph in the simplifier
+# (rules ZP) and of topoly in the polynomial layer; making the facade
+# total on N would make every invalid candidate difference that rules
+# ZA3/ZA4 assert produce a result as well.
+#
+# The natural modules' triggers DO fire on these facts and create
+# internal states (e.g. ((zintA add zintB) ci 0)). They are harmless --
+# none of them produces an incorrect result -- and finite. Upon
+# encountering a zint operand, digit recursion stalls immediately, as it
+# cannot decompose a zint fact, whose predicate is zint, not cons. A
+# natural operand is walked, however, in two roles: as the first factor
+# in * and as the dividend in / and mod. (&123 * (neg zint &5)) leaves a
+# mul state for each suffix of &123 and a stalled dmul state for every
+# distinct digit within it (6 states in base 10); (&123 / (pos zint &5))
+# leaves a dvd state for each suffix of &123 beside one stalled dmul
+# seed for each digit in the alphabet (13 states in base 10).
+# Additionally, the natural / and mod triggers fire on a / or mod fact
+# featuring a zint dividend and a numeral divisor, which completes the
+# divisor's multiples table (pprod) -- correct facts that persist as
+# reusable knowledge. These states represent the cost of shared
+# predicates, the same trade symbolic-core.zph documents. The benefit:
+# symbolic-core's knowledge-folding bridge (T red C, C = R) => (T rw R)
+# consumes these = facts without any Z-specific bridge -- constant
+# folding over Z consists of this facade combined with the existing
+# rule. / and mod are not routed (refer to DIVISION AND MOD above): a /
+# or mod fact with a zint operand yields no result -- partiality by
+# absence, consistently throughout. The simplifier first normalizes an
+# explicit (pos zint N) into N, so there ((pos zint &7) / (pos zint &2))
+# simplifies to &3 through natural division.
 # ---------------------------------------------------------------------------
-((G zint A) + (H zint B)) => ((G zint A) z+ (H zint B))
-((G zint A) + (H zint B), ((G zint A) z+ (H zint B)) = R)
-=> (((G zint A) + (H zint B)) = R)
 
-((G zint A) - (H zint B)) => ((G zint A) z- (H zint B))
-((G zint A) - (H zint B), ((G zint A) z- (H zint B)) = R)
-=> (((G zint A) - (H zint B)) = R)
+# Operand lift. Before being routed, each operand within a routed fact
+# is lifted to the operand form of the z-operations (needszoperand /
+# zoperand, the needscanon pattern). The operand's magnitude must
+# satisfy common-arithmetic's numeral test, because the sign serves only
+# to distinguish numbers, and it is taken in canonical form (canonnum),
+# as z-operations assume their inputs are canonical. A natural numeral N
+# is lifted to (pos zint N), a zint keeps its sign, and a negative zint
+# whose magnitude equals zero -- a signed zero like (neg zint &0) or
+# (neg zint <00>) -- is converted to the zero (pos zint &0). No rule
+# generates a signed zero, yet it is accepted as input and, when routed
+# as it stood, was treated as a negative number: (&0 cmp (neg zint &0))
+# answered gt, and (&3 * (neg zint &0)) answered (neg zint &0). An
+# operand that is not a number is not lifted, hence a fact involving it
+# derives nothing.
+((A cons R) needszoperand (A cons R)) => ((A cons R) needsnumeral (A cons R))
+((A cons R) needszoperand (A cons R), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((A cons R) needszoperand (A cons R), (A cons R) isnumeral true, (A cons R) canonnum N)
+=> ((A cons R) zoperand (pos zint N))
+((G zint (A cons R)) needszoperand (G zint (A cons R)))
+=> ((A cons R) needsnumeral (A cons R))
+((G zint (A cons R)) needszoperand (G zint (A cons R)), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((pos zint (A cons R)) needszoperand (pos zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N)
+=> ((pos zint (A cons R)) zoperand (pos zint N))
+((neg zint (A cons R)) needszoperand (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N, N != &0)
+=> ((neg zint (A cons R)) zoperand (neg zint N))
+((neg zint (A cons R)) needszoperand (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum &0)
+=> ((neg zint (A cons R)) zoperand (pos zint &0))
 
-((G zint A) * (H zint B)) => ((G zint A) zx (H zint B))
-((G zint A) * (H zint B), ((G zint A) zx (H zint B)) = R)
-=> (((G zint A) * (H zint B)) = R)
+# + : zint + zint, natural + negative, negative + natural
+((G zint A) + (H zint B)) => ((G zint A) needszoperand (G zint A))
+((G zint A) + (H zint B)) => ((H zint B) needszoperand (H zint B))
+((G zint A) + (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q) => (P z+ Q)
+((G zint A) + (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P z+ Q) = (pos zint N))
+=> (((G zint A) + (H zint B)) = N)
+((G zint A) + (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P z+ Q) = (neg zint N))
+=> (((G zint A) + (H zint B)) = (neg zint N))
 
-((G zint A) cmp (H zint B)) => ((G zint A) zcmp (H zint B))
-((G zint A) cmp (H zint B), ((G zint A) zcmp (H zint B)) = R)
+((A cons R) + (neg zint B)) => ((A cons R) needszoperand (A cons R))
+((A cons R) + (neg zint B)) => ((neg zint B) needszoperand (neg zint B))
+((A cons R) + (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q) => (P z+ Q)
+((A cons R) + (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P z+ Q) = (pos zint N))
+=> (((A cons R) + (neg zint B)) = N)
+((A cons R) + (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P z+ Q) = (neg zint N))
+=> (((A cons R) + (neg zint B)) = (neg zint N))
+
+((neg zint A) + (B cons S)) => ((neg zint A) needszoperand (neg zint A))
+((neg zint A) + (B cons S)) => ((B cons S) needszoperand (B cons S))
+((neg zint A) + (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q) => (P z+ Q)
+((neg zint A) + (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P z+ Q) = (pos zint N))
+=> (((neg zint A) + (B cons S)) = N)
+((neg zint A) + (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P z+ Q) = (neg zint N))
+=> (((neg zint A) + (B cons S)) = (neg zint N))
+
+# - : the same three shapes
+((G zint A) - (H zint B)) => ((G zint A) needszoperand (G zint A))
+((G zint A) - (H zint B)) => ((H zint B) needszoperand (H zint B))
+((G zint A) - (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q) => (P z- Q)
+((G zint A) - (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P z- Q) = (pos zint N))
+=> (((G zint A) - (H zint B)) = N)
+((G zint A) - (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P z- Q) = (neg zint N))
+=> (((G zint A) - (H zint B)) = (neg zint N))
+
+((A cons R) - (neg zint B)) => ((A cons R) needszoperand (A cons R))
+((A cons R) - (neg zint B)) => ((neg zint B) needszoperand (neg zint B))
+((A cons R) - (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q) => (P z- Q)
+((A cons R) - (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P z- Q) = (pos zint N))
+=> (((A cons R) - (neg zint B)) = N)
+((A cons R) - (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P z- Q) = (neg zint N))
+=> (((A cons R) - (neg zint B)) = (neg zint N))
+
+((neg zint A) - (B cons S)) => ((neg zint A) needszoperand (neg zint A))
+((neg zint A) - (B cons S)) => ((B cons S) needszoperand (B cons S))
+((neg zint A) - (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q) => (P z- Q)
+((neg zint A) - (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P z- Q) = (pos zint N))
+=> (((neg zint A) - (B cons S)) = N)
+((neg zint A) - (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P z- Q) = (neg zint N))
+=> (((neg zint A) - (B cons S)) = (neg zint N))
+
+# * : the same three shapes
+((G zint A) * (H zint B)) => ((G zint A) needszoperand (G zint A))
+((G zint A) * (H zint B)) => ((H zint B) needszoperand (H zint B))
+((G zint A) * (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q) => (P zx Q)
+((G zint A) * (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P zx Q) = (pos zint N))
+=> (((G zint A) * (H zint B)) = N)
+((G zint A) * (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P zx Q) = (neg zint N))
+=> (((G zint A) * (H zint B)) = (neg zint N))
+
+((A cons R) * (neg zint B)) => ((A cons R) needszoperand (A cons R))
+((A cons R) * (neg zint B)) => ((neg zint B) needszoperand (neg zint B))
+((A cons R) * (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q) => (P zx Q)
+((A cons R) * (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P zx Q) = (pos zint N))
+=> (((A cons R) * (neg zint B)) = N)
+((A cons R) * (neg zint B), (A cons R) zoperand P, (neg zint B) zoperand Q,
+ (P zx Q) = (neg zint N))
+=> (((A cons R) * (neg zint B)) = (neg zint N))
+
+((neg zint A) * (B cons S)) => ((neg zint A) needszoperand (neg zint A))
+((neg zint A) * (B cons S)) => ((B cons S) needszoperand (B cons S))
+((neg zint A) * (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q) => (P zx Q)
+((neg zint A) * (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P zx Q) = (pos zint N))
+=> (((neg zint A) * (B cons S)) = N)
+((neg zint A) * (B cons S), (neg zint A) zoperand P, (B cons S) zoperand Q,
+ (P zx Q) = (neg zint N))
+=> (((neg zint A) * (B cons S)) = (neg zint N))
+
+# cmp: two zint terms are routed to zcmp using their lifted operands,
+# and the relational result is restated for the original operands as
+# written -- differing from the lifted versions when a magnitude is not
+# canonical or when zero carries a sign. A natural number compared to a
+# negative integer is resolved based solely on sign, reflecting zcmp's
+# mixed-sign rules; when compared to a signed zero, it is evaluated
+# against &0. If routed through zcmp instead, this scenario would leave
+# zcmp's relational facts concerning the operand form (pos zint N)
+# alongside those regarding N: two nodes for a single value within the
+# shared predicates. The natural side must satisfy the numeral test;
+# failing this, every cons list, including <x c>, would be considered
+# greater than every negative integer.
+((G zint A) cmp (H zint B)) => ((G zint A) needszoperand (G zint A))
+((G zint A) cmp (H zint B)) => ((H zint B) needszoperand (H zint B))
+((G zint A) cmp (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q) => (P zcmp Q)
+((G zint A) cmp (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q,
+ (P zcmp Q) = R)
 => (((G zint A) cmp (H zint B)) = R)
+((G zint A) cmp (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q, P > Q)
+=> ((G zint A) > (H zint B))
+((G zint A) cmp (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q, P < Q)
+=> ((G zint A) < (H zint B))
+((G zint A) cmp (H zint B), (G zint A) zoperand P, (H zint B) zoperand Q, P == Q)
+=> ((G zint A) == (H zint B))
+
+((A cons R) cmp (neg zint B)) => ((A cons R) needsnumeral (A cons R))
+((A cons R) cmp (neg zint B)) => ((neg zint B) needszoperand (neg zint B))
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (neg zint M))
+=> ((A cons R) > (neg zint B))
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (neg zint M))
+=> (((A cons R) cmp (neg zint B)) = gt)
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (pos zint &0))
+=> ((A cons R) cmp &0)
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (pos zint &0), ((A cons R) cmp &0) = X)
+=> (((A cons R) cmp (neg zint B)) = X)
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (pos zint &0), (A cons R) > &0)
+=> ((A cons R) > (neg zint B))
+((A cons R) cmp (neg zint B), (A cons R) isnumeral true,
+ (neg zint B) zoperand (pos zint &0), (A cons R) == &0)
+=> ((A cons R) == (neg zint B))
+
+((neg zint A) cmp (B cons S)) => ((B cons S) needsnumeral (B cons S))
+((neg zint A) cmp (B cons S)) => ((neg zint A) needszoperand (neg zint A))
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (neg zint M))
+=> ((neg zint A) < (B cons S))
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (neg zint M))
+=> (((neg zint A) cmp (B cons S)) = lt)
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (pos zint &0))
+=> (&0 cmp (B cons S))
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (pos zint &0), (&0 cmp (B cons S)) = X)
+=> (((neg zint A) cmp (B cons S)) = X)
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (pos zint &0), &0 < (B cons S))
+=> ((neg zint A) < (B cons S))
+((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
+ (neg zint A) zoperand (pos zint &0), &0 == (B cons S))
+=> ((neg zint A) == (B cons S))

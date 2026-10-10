@@ -26,10 +26,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include "fact_structure.hpp"
+#include "rule_identity.hpp"
 
 #include "zelph_impl.hpp"
 
 #include <algorithm>
+#include <functional>
+#include <unordered_set>
+#include <vector>
 
 using namespace zelph::network;
 
@@ -260,7 +264,8 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
         // rose is a flower. Nobody wrote that rule. Membership is itself a
         // fact, so the container is reached from the doomed PartOf fact --
         // one more step upwards, not a second direction.
-        if (parse_relation(current) == core.PartOf)
+        const Node relation = parse_relation(current);
+        if (relation == core.PartOf)
         {
             adjacency_set containers;
             const Node    member = parse_fact(current, containers, 0);
@@ -281,6 +286,24 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
                     doom(container);
                 }
             }
+            // The container stays, and when it is either a rule's own
+            // collection or a conjunction set, the rule governing it says
+            // something else henceforth: its fingerprint and associated
+            // claim are stale (see the fingerprint index).
+            else if (std::any_of(containers.begin(), containers.end(), [this](const Node c)
+                                 { return holds_rule_text(c); }))
+            {
+                note_rule_text_changed();
+            }
+        }
+        // A negation or conjunction tag is also rule text, and the rule
+        // remains without it: a negated condition transforms into a
+        // positive one, a condition set turns into a collection.
+        else if (relation == core.IsA)
+        {
+            adjacency_set tags;
+            parse_fact(current, tags, 0);
+            if (tags.count(core.Negation) != 0 || tags.count(core.Conjunction) != 0) note_rule_text_changed();
         }
     }
 }
@@ -446,9 +469,18 @@ size_t Zelph::remove_node(Node node, adjacency_set* const deferred_names) const
 // affected, and must not be: `(x + y) ≡ (y + x)` needs `x + y` to be a fact,
 // and `(a p b) q c` needs `a p b`.
 //
-// The corner this cannot reach is a fully GROUND rule that is both asserted
-// and mentioned -- hash-consing makes those one node. A rule with variables
-// is two, because each statement names its own variables.
+// The corner this cannot reach is a rule that is simultaneously asserted and
+// mentioned as a single node. A GROUND rule constitutes one node regardless
+// of where its text appears -- hash-consing ensures this -- unless that text
+// holds a comma list of conditions or a collection of the rule's own, each of
+// which is constructed anew per statement; a rule involving variables counts
+// as two, since each statement names its own variables. A statement that a
+// rule derives from the parts of an asserted rule, however, mentions that
+// rule's own node irrespective of what its text holds, and a rule operating
+// on rules can bind any rule the engine reads as data: specifically, one
+// where var_in_closure finds no variable. A script or program holding a
+// rule's node -- zelph/fact in Janet, zelph_fact in the C ABI -- names that
+// node directly.
 bool Zelph::is_mentioned(const Node node) const
 {
     adjacency_set neighbours = _pImpl->get_right(node);
@@ -675,6 +707,147 @@ void Zelph::rebuild_rule_pattern_index() const
         _pImpl->_rule_patterns.insert(subject);
 
     _pImpl->_has_rule_patterns.store(!_pImpl->_rule_patterns.empty(), std::memory_order_release);
+}
+
+// --- The fingerprint index of the rules -------------------------------------
+// For every rule that is written (zelph/dedup-rule), it is determined whether
+// a rule in force states the same as another rule. rule_shape
+// serves as a fingerprint common to alpha-equivalent rules;
+// rules_alpha_equivalent makes the decision. The index maps a fingerprint to
+// the rules possessing it, enabling a lookup to select among candidates
+// sharing the rule's fingerprint without consulting any other rule.
+//
+// A rule is fingerprinted once, at the moment it becomes complete: fact()
+// queues every new `=>` fact, and a lookup applies a fingerprint to what has
+// been queued before any other action. A fingerprint remains valid as long as
+// the rule's text remains unchanged. Once a rule has been written, its text
+// is no longer modified -- fact() blocks inclusion of a membership within a
+// rule's own collection or conjunction set unless during the process of
+// writing a rule, and a statement that binds one writes into its data term --
+// thus, the text changes when note_rule_text_changed is called: a name merge,
+// which rebuilds rules and merges the members of their templates
+// (rehash_dependents); a variable's membership, a negation tag, or a
+// conjunction tag being taken away from a rule's text (collect_doomed); and a
+// load, which writes rules without invoking fact(). The subsequent lookup
+// then clears the index and fingerprints every rule anew, operating at
+// rule-scale, once per batch of such modifications. Unrecorded: a tag added
+// to a condition afterwards, and a membership inserted into another rule's
+// collection or conjunction set while the template scope remains open -- a
+// Janet program that holds the node and writes into it while constructing a
+// rule of its own -- which changes the other rule's text beneath its
+// fingerprint. An entry for a rule that no longer exists is dropped by the
+// lookup that encounters it; likewise, the rule whose ground member is
+// removed is dropped, since removing a membership of a ground element dooms
+// its container and anything built upon it.
+//
+// Each `=>` fact corresponds to a single entry: the index grows with the
+// rules, not with the data.
+
+void Zelph::note_rule_text_changed() const
+{
+    _pImpl->_rule_index_stale.store(true, std::memory_order_release);
+}
+
+Node Zelph::find_equivalent_rule(const Node rule, const bool mentioned) const
+{
+    std::lock_guard lock(_pImpl->_rule_index_mtx);
+
+    auto& index        = _pImpl->_rule_index;
+    auto& fingerprints = _pImpl->_rule_fingerprints;
+    auto& queue        = _pImpl->_rule_index_queue;
+
+    if (_pImpl->_rule_index_stale.exchange(false, std::memory_order_acq_rel))
+    {
+        index.clear();
+        fingerprints.clear();
+        _pImpl->_claims.clear();
+        const auto& rules = _pImpl->get_left(core.Causes);
+        queue.assign(rules.begin(), rules.end());
+    }
+
+    const auto fingerprint = [&](const Node r) -> std::size_t
+    {
+        if (const auto known = fingerprints.find(r); known != fingerprints.end()) return known->second;
+        if (!exists(r) || predicate_of(r) != core.Causes) return 0;
+
+        const std::string shape = rule_shape(this, r);
+        if (logging_active()) _rules_fingerprinted.fetch_add(1, std::memory_order_relaxed);
+        if (shape.empty()) return 0; // not a rule
+
+        const std::size_t h = std::hash<std::string>{}(shape);
+        fingerprints.emplace(r, h);
+        index.emplace(h, r);
+        return h;
+    };
+
+    for (const Node r : queue)
+        fingerprint(r);
+    queue.clear();
+
+    const std::size_t shape = fingerprint(rule);
+    if (shape == 0) return 0;
+
+    Node only_mentioned = 0;
+    for (auto [it, end] = index.equal_range(shape); it != end;)
+    {
+        const Node candidate = it->second;
+        if (!exists(candidate))
+        {
+            fingerprints.erase(candidate);
+            it = index.erase(it);
+            continue;
+        }
+        ++it;
+
+        if (candidate == rule || !rules_alpha_equivalent(this, rule, candidate)) continue;
+        if (!is_mentioned(candidate)) return candidate;
+        if (only_mentioned == 0) only_mentioned = candidate;
+    }
+
+    return mentioned ? only_mentioned : 0;
+}
+
+uint64_t Zelph::rules_fingerprinted() const
+{
+    return _rules_fingerprinted.load(std::memory_order_relaxed);
+}
+
+void Zelph::reset_rules_fingerprinted() const
+{
+    _rules_fingerprinted.store(0, std::memory_order_relaxed);
+}
+
+// A remembered construction remains exact provided the rule it returned is the
+// same rule it originally was -- still present and in force -- and so long as
+// neither the rule's own text nor the text of the rule whose construction
+// returned it has undergone modification. Every alteration to a rule's text
+// that the fingerprint index is informed about (see there) marks the index
+// stale, and a stale index results in this record being emptied too. A change
+// that the index is not told of leaves the entry standing. The construction
+// itself depends on the text of its statement and its key.
+Node Zelph::claimed_rule(const Node statement, const Node key) const
+{
+    std::lock_guard lock(_pImpl->_rule_index_mtx);
+    if (_pImpl->_rule_index_stale.load(std::memory_order_acquire))
+    {
+        _pImpl->_claims.clear();
+        return 0;
+    }
+
+    const auto it = _pImpl->_claims.find({statement, key});
+    if (it == _pImpl->_claims.end()) return 0;
+
+    const Node rule = it->second;
+    if (exists(rule) && predicate_of(rule) == core.Causes && !is_mentioned(rule)) return rule;
+
+    _pImpl->_claims.erase(it);
+    return 0;
+}
+
+void Zelph::note_claim(const Node statement, const Node key, const Node rule) const
+{
+    std::lock_guard lock(_pImpl->_rule_index_mtx);
+    _pImpl->_claims[{statement, key}] = rule;
 }
 
 bool Zelph::condition_set_members(const Node condition, adjacency_set& out) const
@@ -916,13 +1089,16 @@ void Zelph::rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& re
     invalidate_relation_type_set();
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
+
+    // A rule that has been rebuilt is a new node that the fact() function
+    // never queued, and a rule whose node remains can still hold a
+    // template whose member was merged.
+    note_rule_text_changed();
 }
 
 void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created) const
 {
     if (created.empty()) return;
-
-    const std::unordered_set<Node> fresh(created.begin(), created.end());
 
     // The conditions and the consequences, and inside them every ground fact
     // node at any depth: "((a p b) g c)" leaks `a p b` just as readily as
@@ -932,6 +1108,15 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
     adjacency_set consequences;
     const Node    condition = parse_fact(rule, consequences);
     if (condition == 0) return;
+
+    mark_rule_parts(condition, consequences, created);
+}
+
+void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequences, const std::vector<Node>& created) const
+{
+    if (created.empty() || condition == 0) return;
+
+    std::unordered_set<Node> fresh(created.begin(), created.end());
 
     std::vector<Node>        pending(consequences.begin(), consequences.end());
     std::unordered_set<Node> seen;
@@ -961,25 +1146,30 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         if (nd == 0 || !seen.insert(nd).second) continue;
         if (Impl::is_var(nd)) continue;
 
-        // A SET node carries no structure of its own -- its members hang off
-        // it as PartOf facts, exactly as for the conjunction set above -- and
-        // Zelph::set builds it with create(), so its ID is a COUNTER, not a
-        // triple hash. It therefore failed the is_hash gate below before the
-        // structural descent could even stop at it, and the membership facts
-        // a rule's own set literal created were never marked. They then read
-        // as data: `(X in {a b}) => (X flagged yes)` derived `a flagged yes`
-        // and `b flagged yes`, and `.explain` called `a in {a b}` an axiom,
-        // although the only reason that fact exists is that the rule was
-        // written. Same leak afc0f3e closed for the other shapes.
+        // A COLLECTION carries no intrinsic structure -- its members are
+        // attached via PartOf facts, precisely as for the conjunction set
+        // above -- and its identifier is either a counter or a template's,
+        // not a triple hash. Consequently, it did not pass the is_hash gate
+        // below before the structural descent could even stop at it, and the
+        // membership facts generated by the rule's own collection literal
+        // were never marked. They subsequently functioned as data:
+        // `(X in @{a b}) => (X flagged yes)` derived `a flagged yes` and
+        // `b flagged yes`, and `.explain` labelled `a in @{a b}` as an axiom,
+        // even though the sole reason for that fact's existence is that the
+        // rule was written. The same leak that afc0f3e closed for the other
+        // shapes.
         //
-        // Only a container THIS construction created is walked -- a set the
-        // rule merely refers to keeps its members and its own facts -- so the
-        // adjacency read stays inside what the rule brought into being.
-        // A SET CONSTANT is excluded: its membership is definitional, not
-        // asserted -- `a in {a b}` holds because that is what the set IS --
-        // so a rule quantifying over it with `(X in {a b})` legitimately
-        // binds a and b. Only a COLLECTION the rule itself built carries
-        // members nobody claimed.
+        // Only a container created by THIS construction is walked -- a set
+        // that the rule only references keeps its members and its own facts
+        // -- thus the adjacency read remains within what the rule brought
+        // into being. A SET CONSTANT is excluded: its membership is
+        // determined by definition, not asserted -- `a in {a b}` holds
+        // because that is what the set IS -- hence a rule quantifying over it
+        // using `(X in {a b})` legitimately binds a and b. Only a COLLECTION
+        // that the rule itself constructed holds members that nobody claimed.
+        // Its membership facts belong to the rule regardless of whether they
+        // appear in `created`: a rule that a statement merely mentions lists
+        // only the collections it wrote and nothing else (zelph/rule-text).
         if (fresh.count(nd) != 0 && !is_set_constant(nd))
         {
             for (const Node rel : get_right(nd))
@@ -988,6 +1178,7 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
                 adjacency_set objs;
                 const Node    member = parse_fact(rel, objs, 0);
                 if (member == 0 || objs.count(nd) != 1) continue;
+                fresh.insert(rel);
                 pending.push_back(rel); // the membership fact is the pattern
                 pending.push_back(member);
             }
@@ -996,11 +1187,34 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
         if (!Impl::is_hash(nd)) continue; // an atom has no fact structure
 
         const FactStructure fs = get_preferred_structure(this, nd, 3);
-        if (fs.predicate == 0 || fs.subject == 0) continue;
+        if (fs.predicate == 0 || fs.subject == 0)
+        {
+            // A set constant: its own memberships define what it is and stay
+            // unmarked, yet what the rule wrote within it constitutes the
+            // rule's text, just as the rest does -- the collection in
+            // `{@{c}}`, the fact in `{(k in m)}`.
+            if (is_set_constant(nd))
+            {
+                for (const Node rel : get_right(nd))
+                {
+                    if (parse_relation(rel) != core.PartOf) continue;
+                    adjacency_set objs;
+                    const Node    member = parse_fact(rel, objs, 0);
+                    if (member != 0 && objs.count(nd) == 1) pending.push_back(member);
+                }
+            }
+            continue;
+        }
 
-        // Only what this construction brought into being, and only where
-        // there is no variable to give it away as a template.
-        if (fresh.count(nd) != 0 && !var_in_closure(nd)) patterns.push_back(nd);
+        // Only that which this construction has brought into existence, and
+        // only where no variable serves to give it away as a template. A
+        // variable within the conditions of a rule that the part mentions
+        // does not give it away to the check seeking an earlier witness,
+        // which looks for what a firing writes (VariableReading::Instance):
+        // unmarked, a rule's own consequence
+        // `k about ((A r B, A s B) => (c q d))` would hold there from the
+        // moment the rule is written.
+        if (fresh.count(nd) != 0 && !var_in_closure(nd, VariableReading::Instance)) patterns.push_back(nd);
 
         pending.push_back(fs.subject);
         // The PREDICATE too. It is a named atom for every ordinary rule, so
@@ -1029,6 +1243,59 @@ void Zelph::mark_rule_patterns(const Node rule, const std::vector<Node>& created
     _pImpl->_has_rule_patterns.store(true, std::memory_order_release);
 }
 
+bool Zelph::has_rule_form(const Node node) const
+{
+    adjacency_set deductions;
+    Node          condition = parse_fact(node, deductions);
+
+    // A rule's condition is a STATEMENT that has to hold, and neither
+    // a bare variable nor a bare name is one. `=>` is an ordinary
+    // relation type as well as the rule arrow, which is what makes
+    // both reachable without anybody writing a rule:
+    //
+    //   * `S => O` -- asking which implications exist -- materializes
+    //     that pattern, and it was counted by .stat and listed by
+    //     .list-rules as a rule of the network, permanently;
+    //   * `atom_A => atom_B` is a FACT (pinned by *parsing: arrow
+    //     predicates*), and .remove-rules deleted it as if it were a
+    //     rule -- a command that says it removes rules destroying
+    //     data.
+    //
+    // Neither can fire: nothing binds a condition that is a variable,
+    // and an atom is not something that holds. A conjunction of
+    // conditions is a container with a counter id rather than a
+    // triple hash, so it is admitted by its tag.
+    const bool condition_is_statement =
+        condition != 0
+        && !Impl::is_var(condition)
+        && (Impl::is_hash(condition) || is_condition_set(condition));
+
+    // The consequence side asks the same question: a rule has to be
+    // able to ASSERT something. A container cannot be asserted --
+    // `(X p Y) => {(X q Y)}` was counted and listed and derived
+    // nothing -- and neither can a bare name. `!` is the one atom
+    // that can, and a statement is recognised by having a predicate,
+    // which a container has not. ONE assertable consequence is
+    // enough: a rule may carry several, and it is a rule if it can
+    // derive at all.
+    //
+    // The RECORDED structure, not parse_relation: a consequence whose
+    // predicate has lost its `~ ->` declaration is still a statement,
+    // and deduce still builds it -- as does the renderer, from the
+    // same source.
+    const auto assertable = [this](const Node t)
+    {
+        if (t == core.Contradiction) return true;
+        const FactStructure fs = get_preferred_structure(this, t, 3);
+        return fs.subject != 0 && fs.predicate != 0;
+    };
+
+    const bool derives_something =
+        std::any_of(deductions.begin(), deductions.end(), assertable);
+
+    return condition_is_statement && condition != core.Causes && derives_something;
+}
+
 adjacency_set Zelph::get_rules() const
 {
     const adjacency_set& rule_candidates = _pImpl->get_left(core.Causes);
@@ -1039,62 +1306,9 @@ adjacency_set Zelph::get_rules() const
     {
         // We filter the rule candidates in the same way as Reasoning::apply_rule() does it.
         // Note that a rule candidate with empty deductions is interpreted as a question, see Reasoning::evaluate()
-        if (rule_candidate)
+        if (rule_candidate && has_rule_form(rule_candidate) && !is_mentioned(rule_candidate))
         {
-            adjacency_set deductions;
-            Node          condition = parse_fact(rule_candidate, deductions);
-
-            // A rule's condition is a STATEMENT that has to hold, and neither
-            // a bare variable nor a bare name is one. `=>` is an ordinary
-            // relation type as well as the rule arrow, which is what makes
-            // both reachable without anybody writing a rule:
-            //
-            //   * `S => O` -- asking which implications exist -- materializes
-            //     that pattern, and it was counted by .stat and listed by
-            //     .list-rules as a rule of the network, permanently;
-            //   * `atom_A => atom_B` is a FACT (pinned by *parsing: arrow
-            //     predicates*), and .remove-rules deleted it as if it were a
-            //     rule -- a command that says it removes rules destroying
-            //     data.
-            //
-            // Neither can fire: nothing binds a condition that is a variable,
-            // and an atom is not something that holds. A conjunction of
-            // conditions is a container with a counter id rather than a
-            // triple hash, so it is admitted by its tag.
-            const bool condition_is_statement =
-                condition != 0
-                && !Impl::is_var(condition)
-                && (Impl::is_hash(condition) || is_condition_set(condition));
-
-            // The consequence side asks the same question: a rule has to be
-            // able to ASSERT something. A container cannot be asserted --
-            // `(X p Y) => {(X q Y)}` was counted and listed and derived
-            // nothing -- and neither can a bare name. `!` is the one atom
-            // that can, and a statement is recognised by having a predicate,
-            // which a container has not. ONE assertable consequence is
-            // enough: a rule may carry several, and it is a rule if it can
-            // derive at all.
-            //
-            // The RECORDED structure, not parse_relation: a consequence whose
-            // predicate has lost its `~ ->` declaration is still a statement,
-            // and deduce still builds it -- as does the renderer, from the
-            // same source.
-            const auto assertable = [this](const Node t)
-            {
-                if (t == core.Contradiction) return true;
-                const FactStructure fs = get_preferred_structure(this, t, 3);
-                return fs.subject != 0 && fs.predicate != 0;
-            };
-
-            const bool derives_something =
-                std::any_of(deductions.begin(), deductions.end(), assertable);
-
-            if (condition_is_statement && condition != core.Causes
-                && derives_something
-                && !is_mentioned(rule_candidate))
-            {
-                rules.insert(rule_candidate);
-            }
+            rules.insert(rule_candidate);
         }
     }
 
@@ -1103,32 +1317,50 @@ adjacency_set Zelph::get_rules() const
 
 void Zelph::remove_rules() const
 {
-    adjacency_set rules = get_rules();
-    for (Node rule : rules)
+    // A rule whose only mention is through a removed rule -- the rule located
+    // within a rule generator, at any depth -- becomes a part of nothing once
+    // that rule has vanished, and is therefore in force (is_mentioned).
+    // Consequently, the rules are read again until no rule remains. A pass
+    // that removes nothing also terminates the loop, because the next pass
+    // would read the same rules once more.
+    for (bool removed = true; removed;)
     {
-        invalidate_fact_structures_cache();
+        removed = false;
+        for (Node rule : get_rules())
+        {
+            invalidate_fact_structures_cache();
 
-        _pImpl->remove(rule);
-        // Clean up names
-        for (auto& lang_map : _pImpl->_name_of_node)
-        {
-            lang_map.second.erase(rule);
-        }
-        for (auto& lang_map : _pImpl->_node_of_name)
-        {
-            for (auto it = lang_map.second.begin(); it != lang_map.second.end();)
+            _pImpl->remove(rule);
+            if (!_pImpl->exists(rule)) removed = true;
+            // Clean up names
+            for (auto& lang_map : _pImpl->_name_of_node)
             {
-                if (it->second == rule)
+                lang_map.second.erase(rule);
+            }
+            for (auto& lang_map : _pImpl->_node_of_name)
+            {
+                for (auto it = lang_map.second.begin(); it != lang_map.second.end();)
                 {
-                    it = lang_map.second.erase(it);
-                }
-                else
-                {
-                    ++it;
+                    if (it->second == rule)
+                    {
+                        it = lang_map.second.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
                 }
             }
         }
     }
+
+    // The older engine's rules went with the others, and a save writes the
+    // template-id field again once no text from them remains. Asked again
+    // instead of being cleared: a rule mentioned by a statement is not
+    // removed, and its text might belong to the older engine.
+#ifndef __EMSCRIPTEN__
+    if (_pImpl->_older_rules) _pImpl->_older_rules = rules_written_before_template_ids();
+#endif
 }
 
 size_t Zelph::rule_count() const
@@ -1376,7 +1608,18 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             // Once that accident was corrected the contradiction rule of
             // test_predicate_slice lost its conditions and stopped being a rule
             // at all, which is how the hole showed itself.
-            if (!Impl::is_hash(nd) && !is_condition_set) continue;
+            //
+            // A collection of a rule's own text (is_rule_template, a bit test
+            // on the id) is expanded for the same reason: its adjacency
+            // consists of the memberships the rule wrote and the rule's
+            // statements that name it, and the memberships bring their members
+            // and their rule-pattern marks with them. Without this, the rule
+            // arrives bearing a different text -- its `@{c d}` empty, printed
+            // `(X likes ??)` -- and a firing writes the emptied collection
+            // itself into the data. A term a firing built is data, just like
+            // any other collection: its memberships are facts of `in` and
+            // travel in a slice of `in`.
+            if (!Impl::is_hash(nd) && !is_condition_set && !is_rule_template(nd)) continue;
 
             const auto left_it = _pImpl->_left.find(nd);
             if (left_it != _pImpl->_left.end())
@@ -1403,9 +1646,122 @@ void Zelph::load_from_file(const std::string& filename) const
 {
     invalidate_fact_structures_cache();
 
-    _pImpl->loadFromFile(filename);
+    const bool template_ids = _pImpl->loadFromFile(filename);
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
+    note_rule_text_changed();
+
+    // Only the complete network, and solely one whose file leaves the
+    // template-id field as false: an engine before template IDs wrote it,
+    // or this engine saved a network in which a load detected rules which
+    // that engine had previously saved (their collections keep their
+    // counter IDs throughout the save). A view is not subject to reasoning
+    // (.run rejects it), and might be missing the facts and names that the
+    // test reads.
+    if (!template_ids && rules_written_before_template_ids())
+    {
+        _pImpl->_older_rules = true;
+        out("Note: rules in this network were saved by an older zelph, and their collections are data here; "
+            "rebuild the network from its scripts before reasoning over it.",
+            true);
+    }
+}
+
+// Before the template ids, the engine wrote the collections associated with a
+// rule's text under counter ids, just as it wrote every data collection.
+// Within a network it saved, such a collection is thus a value: a firing
+// names the rule's own collection in the data, and the rule re-typed is a
+// second rule, because its literal is now a template. The older engine also
+// named the rule's own collection for a container the rule writes into and
+// for a literal that has nothing to substitute, yet it rebuilt, for each
+// binding, a literal whose members the binding makes ground; a firing in this
+// context names that literal, including any variable. Only by reconstructing
+// the network from its scripts does it provide those rules with their own
+// collections, as the load says.
+//
+// What gives such a collection away is a membership written as part of the
+// rule's literal: one marked as a rule pattern or holding a variable, and no
+// node of any rule's text itself. A data collection that a generated rule
+// refers to carries the rule's own statements, `X in D` or `k in D`, which
+// are nodes within its text, and its data, which passes while no member of
+// it holds a variable. A member that does -- a rule, for instance -- takes
+// on the shape of a literal's membership, and a literal can contain a rule
+// as well, thus such a data collection gets the note even though it is data
+// for both engines. A named node is a constant across every engine, a
+// conjunction set is read by its tag, and a template along with a value
+// recipe belong to this engine. A rule over a collection made outside every
+// rule scope -- by a Janet program before it builds the rule, or via the C
+// ABI -- exhibits the same shape when that collection holds a variable,
+// which is why only a file whose header lacks the template-id field is
+// asked.
+//
+// A single traversal through the rules' texts, and through the
+// memberships contained within the collections encountered there,
+// once per load.
+bool Zelph::rules_written_before_template_ids() const
+{
+    constexpr int max_depth = 64; // a guard against cycles; the rules are shallow
+
+    std::unordered_set<Node>          text;        // each fact of a rule's text
+    std::vector<Node>                 collections; // the counter collections it holds
+    std::unordered_set<Node>          seen;
+    std::vector<std::pair<Node, int>> pending;
+    for (const Node rule : _pImpl->get_left(core.Causes))
+        if (predicate_of(rule) == core.Causes) pending.emplace_back(rule, 0);
+
+    const auto push_members = [&](const Node container, const int depth)
+    {
+        for (const Node rel : get_right(container))
+        {
+            if (predicate_of(rel) != core.PartOf) continue;
+            adjacency_set objects;
+            const Node    member = parse_fact(rel, objects, 0);
+            if (member != 0 && objects.count(container) == 1) pending.emplace_back(member, depth + 1);
+        }
+    };
+
+    while (!pending.empty())
+    {
+        const auto [n, depth] = pending.back();
+        pending.pop_back();
+        if (n == 0 || Impl::is_var(n) || depth > max_depth || !seen.insert(n).second) continue;
+
+        if (Impl::is_hash(n))
+        {
+            const FactStructure fs = get_preferred_structure(this, n, 3);
+            if (fs.subject == 0 || fs.predicate == 0)
+            {
+                push_members(n, depth); // a set constant
+                continue;
+            }
+            text.insert(n);
+            pending.emplace_back(fs.subject, depth + 1);
+            pending.emplace_back(fs.predicate, depth + 1);
+            for (const Node o : fs.objects)
+                pending.emplace_back(o, depth + 1);
+            continue;
+        }
+
+        if (is_rule_template(n) || check_fact(n, core.IsA, {core.Conjunction}).is_known())
+        {
+            push_members(n, depth);
+            continue;
+        }
+        if (Impl::is_recipe(n) || is_named_any(n)) continue;
+        collections.push_back(n);
+    }
+
+    for (const Node collection : collections)
+    {
+        for (const Node rel : get_right(collection))
+        {
+            if (predicate_of(rel) != core.PartOf || text.count(rel) != 0) continue;
+            if (!is_rule_pattern(rel) && !var_in_closure(rel)) continue;
+            adjacency_set objects;
+            if (parse_fact(rel, objects, 0) != 0 && objects.count(collection) == 1) return true;
+        }
+    }
+    return false;
 }
 
 void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const
@@ -1415,6 +1771,7 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
     _pImpl->loadFromFile(filename, selection, skip_payload);
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
+    note_rule_text_changed();
 }
 
 void Zelph::load_from_manifest(const std::string&       manifest_path,
@@ -1428,6 +1785,7 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
     _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
+    note_rule_text_changed();
 }
 #endif
 

@@ -53,11 +53,11 @@ TEST_CASE("nand-arithmetic: NAF completes the gate table without corrupting the 
         interactive.process(".import binary-nand-arithmetic");
         interactive.run(true, false, false);
 
-        // The axiom row must not acquire a second, NAF-derived output.
-        // This is the ordering catastrophe the module comment warns
-        // about: were rule G0 defined before the axiom fact, a run could
-        // derive ((1 nand 1) out 1), and monotonicity could never
-        // retract it.
+        // The axiom row must not acquire a second output that is derived
+        // from NAF. During .import, the module is evaluated just once,
+        // following complete reading, thus this case pins the end
+        // state only; the order the module comment demands is pinned by
+        // the session case outlined below.
         collector.clear();
         interactive.process("(1 nand 1) out X");
         CHECK(any_output_contains(collector, "( 1 nand 1 ) out 0"));
@@ -74,6 +74,28 @@ TEST_CASE("nand-arithmetic: NAF completes the gate table without corrupting the 
         CHECK_FALSE(any_output_contains(collector, "( 0 nand 0 ) out 0"));
         CHECK_FALSE(any_output_contains(collector, "( 0 nand 1 ) out 0"));
         CHECK_FALSE(any_output_contains(collector, "( 1 nand 0 ) out 0")); });
+}
+
+TEST_CASE("nand-arithmetic: run as a session, the module's own order keeps the axiom row single")
+{
+    // A session runs following each statement, thereby making the
+    // module's line order integral to its meaning: a run that sees rule G0
+    // and the digit 1 before the axiom fact derives ((1 nand 1) out 1),
+    // and no later run retracts a fact that was derived (check mode
+    // reports it as a negation that came to hold).
+    // A copy of the module with G0 moved above the axiom fails this
+    // case yet still passes the .import case mentioned earlier, which
+    // explains the necessity of both. process_file resolves the bare name
+    // via the stdlib and runs the module under the session role, exactly
+    // as `zelph binary-nand-arithmetic` does.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_NOTHROW(interactive.process_file("binary-nand-arithmetic"));
+
+        collector.clear();
+        interactive.process("(1 nand 1) out X");
+        CHECK(any_output_contains(collector, "( 1 nand 1 ) out 0"));
+        CHECK_FALSE(any_output_contains(collector, "( 1 nand 1 ) out 1")); });
 }
 
 TEST_CASE("nand-arithmetic: gate-synthesized digit tables match the hand-written truth tables")

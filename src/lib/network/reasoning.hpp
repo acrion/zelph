@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network_types.hpp"
 #include "neural.hpp"
 #include "reasoning_profiler.hpp"
+#include "unification.hpp"
 #include "zelph.hpp"
 
 #include <zelph_export.h>
@@ -41,8 +42,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -72,12 +75,105 @@ namespace zelph::network
 
     // --- Free helper functions (implemented in reasoning.cpp) ---
 
-    // Recursively substitute variables in a fact pattern to produce a concrete fact.
-    // Used by evaluate and deduce to instantiate rule patterns with current bindings.
-    // rebuild_container = false keeps a container's identity instead of rebuilding
-    // it from the substituted members; the object of a PartOf fact is written INTO
-    // and must stay the same container across bindings.
-    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history, bool rebuild_container = true);
+    // Who instantiates a statement: a firing writes the rule's consequence
+    // into the data, a construction writes the rule that a rule generator
+    // derives.
+    enum class RecipeMode
+    {
+        Firing,
+        Construction
+    };
+
+    // An instantiation of a single statement -- a consequence triggered during
+    // a firing, the rule a construction writes. A collection of the rule's own
+    // text (Zelph::is_rule_template) is a Skolem function symbol: the
+    // instantiation substitutes it with its term, a collection whose
+    // identifier is computed from the template and the key
+    // (Network::recipe_id), ensuring that the same statement, under identical
+    // binding, always resolves to the same node regardless of how frequently
+    // it is instantiated. The key corresponds to the binding of the variables
+    // the instantiation meets (statement_variables in reasoning.cpp), computed
+    // at the first template met; a statement that holds none incurs no cost
+    // for it.
+    struct Recipe
+    {
+        Node                      statement{0};
+        const Variables*          binding{nullptr};
+        RecipeMode                mode{RecipeMode::Firing};
+        Node                      parent{0};        // the rule's condition part, to read the statement as deduce reads it
+        std::vector<Node>*        created{nullptr}; // Construction: what it brought into being, for marking
+        std::unordered_set<Node>* filled{nullptr};  // Firing: the bucket terms the run has filled (bucket_term)
+
+        mutable std::optional<Node> key;
+    };
+
+    // Where an instantiation meets a node within the statement. `Into` is the
+    // object of a membership the statement asserts -- what it writes into.
+    // Within a construction, the object of a membership within a condition of
+    // the written rule is `Member` instead -- a condition performs no writing
+    // -- and `member` serves as the subject of that membership.
+    enum class Position
+    {
+        Value,
+        Into,
+        Member
+    };
+
+    struct Place
+    {
+        Position position{Position::Value};
+        bool     condition{false}; // under a condition of a rule the statement holds
+        Node     member{0};
+    };
+
+    // Replace variables within a fact pattern in a recursive manner to produce a
+    // concrete fact. Used by deduce, during the construction of a derived
+    // rule, and during the record of a contradiction. A container is
+    // instantiated as `recipe` and `place` decide (via container_plan in
+    // reasoning.cpp); if no recipe exists, every container is kept.
+    Node instantiate_fact(Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history, const Recipe* recipe = nullptr, const Place& place = {});
+
+    // The node instantiate_fact would return for `pattern` under `variables`,
+    // calculated without any construction: because node ids are content
+    // hashes and a collection built by a rule has an id equal to its recipe,
+    // the identifier is established before its creation. Returns 0 when the
+    // result would not be ground. It follows exactly the same route as
+    // instantiate_fact and must stay in sync with it: both read
+    // container_plan.
+    //
+    // Using `keep_variables`, a variable lacking a binding remains
+    // unchanged, as instantiate_fact preserves it, instead of making the
+    // result 0: this allows the prediction to encompass patterns that retain
+    // their own variables, such as the parts of a rule constructed by a rule
+    // generator, or the variable that stays a member of a collection created
+    // during a firing.
+    Node ground_instance(const Zelph* z, Node pattern, const Variables& variables, int depth, std::vector<Node>& history, const Recipe* recipe = nullptr, const Place& place = {}, bool keep_variables = false);
+
+    // The variables that an instantiation of the recipe's statement meets:
+    // the ones it substitutes, outside every container it keeps (the
+    // instance walk, reasoning.cpp).
+    std::unordered_set<Node> statement_variables(const Zelph* z, const Recipe& recipe, int depth);
+
+    // The key for the recipe's terms: the binding of statement_variables,
+    // presented as sorted (variable, value) pairs (Network::recipe_key).
+    // Calculated a single time per recipe.
+    Node recipe_key(const Zelph* z, const Recipe& recipe, int depth);
+
+    // The stand-ins a firing of `consequence` has to be matched with
+    // (Unification): a bucket represents its term, while a collection of the
+    // rule's text that the firing replaces with a term of its own
+    // represents any such term -- the specific one becomes clear only within
+    // the whole binding, hence a match via it must be confirmed by the
+    // prediction. `binding` solely indicates what a variable predicate
+    // corresponds to.
+    void firing_stand_ins(const Zelph* z, Node consequence, Node parent, const Variables& binding, StandIns& out);
+
+    // The conjunction set whose members are exactly `members`, or 0.
+    // Deriving a rule that already exists must not build a second set node:
+    // the set node is created, not hash-consed, thus no merging would occur,
+    // the rule would be re-derived in each run, and the fixpoint would never
+    // be reached.
+    Node find_conjunction_set(const Zelph* z, const std::unordered_set<Node>& members);
 
     // Recursively collect all variable nodes from a fact pattern.
     // Used to detect "fresh variables" that appear only in rule consequences.
@@ -85,25 +181,33 @@ namespace zelph::network
 
     // --- Proof reconstruction (reasoning_explain.cpp) --------------------------
     // Rebuild a justification for an asserted fact from the saturated graph.
-    // Nothing is tracked during inference: after quiescence, every derived
-    // fact has at least one rule instantiation whose consequence unifies
-    // with it and whose conditions are all present -- this backward search
-    // finds one, using the same unification machinery that runs forward.
-    // Read-only: no graph structure is created. Cost is irrelevant here by
-    // design; it buys a zero-overhead forward pass.
+    // Nothing is tracked during inference: a derived fact keeps a rule
+    // instantiation whose consequence unifies with it and whose conditions
+    // hold as long as nothing was taken away since -- a premise pruned, the
+    // rule removed, a negated premise that came to hold later -- and this
+    // backward search finds one, using the same unification machinery that
+    // runs forward. Read-only: no graph structure is created. Nothing is
+    // recorded so that the forward pass costs nothing; the search pays
+    // instead, once per fact it enters (see reasoning_explain.cpp).
     struct ProofNode
     {
         enum class Status
         {
-            Derived,     // justified by `rule` via `premises` and `absent`
-            Axiom,       // asserted, and no rule consequence unifies: an input fact
-            Unfounded,   // asserted, rule consequences unify, but no acyclic
-                         // instantiation verifies against the CURRENT graph
-                         // (e.g. a NAF premise that has since become true)
-            RulePattern, // the node exists only because a rule was written
-                         // with this statement as a ground pattern -- nobody
-                         // claimed it, so there is nothing to justify
-            Truncated    // not expanded: depth limit reached
+            Derived,       // justified by `rule` via `premises` and `absent`
+            Axiom,         // asserted, and no rule consequence unifies: an input fact
+            Unfounded,     // asserted, rule consequences unify, yet no
+                           // instantiation satisfies the CURRENT graph (for
+                           // instance, a NAF premise that has subsequently
+                           // turned true), or each one of the search results
+                           // traces back through the fact's own cycle (the
+                           // SCC rule, reasoning_explain.cpp)
+            RulePattern,   // the node exists only because a rule was written
+                           // with this statement as a ground pattern -- nobody
+                           // claimed it, so there is nothing to justify
+            RuleMentioned, // the rule being queried, which a statement
+                           // mentions: not in force, and maybe asserted as
+                           // well (leaf_status)
+            Truncated      // not expanded: depth limit reached
         };
 
         Node                                    fact   = 0;
@@ -120,12 +224,31 @@ namespace zelph::network
         // actually tested.
         std::vector<Node> walked;
 
-        // Whether the search found a SECOND verified instantiation for this
-        // fact. Only the first is reconstructed -- following every one of them
-        // would multiply the work at each level and answer a question nobody
-        // asked. What the flag buys is that the one shown no longer passes for
-        // the only one there is, which is the difference between "the evidence"
-        // and "some evidence". Set at the root only; see reconstruct().
+        // Per path condition in `walked`, the facts its walk steps over that a
+        // rule establishes, along with their proofs. These serve as premises
+        // for the step, just as the others do, and the tree outputs one
+        // beneath its [closure] line when the proof ends at a leaf situated on
+        // a cycle (`cycle_leaf`): such a leaf behind a walk was never
+        // displayed, and the step was interpreted as being inferred from
+        // axioms and a walk whose edge is anchored to the step itself.
+        std::vector<std::vector<std::shared_ptr<ProofNode>>> walk_edges;
+
+        // An Unfounded leaf, generated by the SCC rule within a cycle: the
+        // fact is one of several in its component, or
+        // an instantiation found for it relies on the fact itself, and
+        // each derivation the search found for it runs back through its
+        // own cycle (reasoning_explain.cpp). A leaf of a fact not part of
+        // any cycle -- an axiom, or an asserted fact no instantiation of
+        // which holds -- does not bear it.
+        bool cycle_leaf = false;
+
+        // Whether the search found a SECOND justification for this fact: an
+        // additional instantiation where the premises hold independently of
+        // the fact. Only one is displayed -- pursuing each one would multiply
+        // the effort at every level and answer a query that no one has posed.
+        // The flag enables the displayed one to no longer be considered the
+        // sole available one, distinguishing between "the evidence" and "some
+        // evidence". Set at the root only; see reasoning_explain.cpp.
         bool more_justifications = false;
 
         // The instantiation that justifies this step (Derived only). The
@@ -136,6 +259,39 @@ namespace zelph::network
         // occurring only inside the negation stay unbound: that is what
         // "for no D" means, and it must remain visible as such.
         Variables bindings;
+
+        ProofNode()                            = default;
+        ProofNode(const ProofNode&)            = default;
+        ProofNode(ProofNode&&)                 = default;
+        ProofNode& operator=(const ProofNode&) = default;
+        ProofNode& operator=(ProofNode&&)      = default;
+
+        // Releasing a premise released its premises in turn, one call frame
+        // per level, and relinquishing a proof as deep as a chain of 100 000
+        // facts overflowed the stack. Premises that nothing else holds are
+        // dismantled in a loop instead.
+        ~ProofNode()
+        {
+            std::vector<std::shared_ptr<ProofNode>> pending = std::move(premises);
+            for (auto& edges : walk_edges)
+                for (auto& q : edges)
+                    pending.push_back(std::move(q));
+            while (!pending.empty())
+            {
+                std::shared_ptr<ProofNode> p = std::move(pending.back());
+                pending.pop_back();
+                if (p && p.use_count() == 1)
+                {
+                    for (auto& q : p->premises)
+                        pending.push_back(std::move(q));
+                    p->premises.clear();
+                    for (auto& edges : p->walk_edges)
+                        for (auto& q : edges)
+                            pending.push_back(std::move(q));
+                    p->walk_edges.clear();
+                }
+            }
+        }
     };
 
     class ZELPH_EXPORT Reasoning : public Zelph
@@ -266,6 +422,12 @@ namespace zelph::network
         // switched off is the sentence, not the bookkeeping, so a caller that
         // reports it some other way -- a mark on the prompt -- can.
         void set_deduction_notice(bool on);
+        // When active, a run that prints no deductions still prints the
+        // contradictions it finds. The '?' prefix performs inference
+        // during such a run, ensuring the derivation remains excluded from
+        // the answer, and a contradiction was dropped along with it:
+        // counted, recorded, but never shown.
+        void set_contradictions_printed(bool on) { _contradictions_printed = on; }
         // Deductions the most recent run derived and did not show.
         std::size_t deductions_withheld() const { return _skipped.load(); }
         // Temporarily suppress input capture (modules): begin_input_capture
@@ -285,6 +447,15 @@ namespace zelph::network
 
         void prune_facts(Node pattern, size_t& removed_count);
 
+        /// Is `fact` a condition or a consequence within a rule -- itself, as
+        /// a member within the rule's condition set, or as a statement nested
+        /// inside one of them? Pruning such a fact withdraws the claim while
+        /// preserving the statement as the rule's pattern. `rule_parts` gives
+        /// all of them simultaneously, enabling the pruning of multiple facts
+        /// at once.
+        bool          part_of_rule(Node fact) const;
+        adjacency_set rule_parts() const;
+
         // `target_var` names whose bindings die, and 0 keeps the single-fact
         // reading in which the pattern's one variable does. It is the VARIABLE
         // NODE of this very pattern, not a name: a variable is quantified per
@@ -301,11 +472,77 @@ namespace zelph::network
         bool seminaive() const;
         void set_seminaive_check(bool on);
         bool seminaive_check() const;
+        // Whether an engine built from this point forward begins in check mode.
+        // A setting of the PROCESS, read exclusively by the constructor; the
+        // test binary activates it so that no test can leave check mode through
+        // the manner in which it assembles the engine (see test_seminaive.cpp).
+        static void set_default_seminaive_check(bool on);
 
-        // max_depth 0 = unlimited (terminates via path exclusion and memoization;
-        // hash-consing makes shared subterms shared subproofs, so the result is
-        // a DAG: identical facts share one ProofNode instance).
+        // When max_depth is set to 0, the limit becomes unlimited (the process
+        // ends because each fact is examined just once, and cycles among facts
+        // are resolved as components; hash-consing ensures that shared subterms
+        // become shared subproofs, thus producing a DAG where identical facts
+        // reuse a single ProofNode instance). With a defined max_depth, the
+        // result is the full proof provided the search stays within the explain
+        // budget, and the caller cuts it at max_depth; once the budget is
+        // exceeded, the result is the proof discovered by a search confined to
+        // max_depth (ExplainCounts::limited).
         std::shared_ptr<ProofNode> explain(Node fact, std::size_t max_depth) const;
+
+        // How much work the search to find the complete proof may
+        // expend before a depth-limited explain opts to restrict itself
+        // to the search within its limit (reasoning_explain.cpp,
+        // `charge`); 0 reverts to the default (`default_explain_budget`).
+        void        set_explain_budget(std::size_t work) const;
+        std::size_t explain_budget() const;
+
+        // What the last explain() did: the frequency with which the search
+        // entered a fact, and the number of unique facts it entered. The
+        // search aiming to achieve the complete proof enters each fact
+        // exactly once, making the two values identical unless the budget was
+        // exhausted beneath a depth limit (`limited`). In such a case, the
+        // search operating within the limit also proceeded, and within that
+        // scope, a result that was truncated by the limit is re-examined when
+        // a less deep position arrives at the same fact
+        // (reasoning_explain.cpp, `prepare`). The counts cover both searches.
+        struct ExplainCounts
+        {
+            std::size_t searches{0};
+            std::size_t facts{0};
+            std::size_t most{0};        // the most searches for one fact
+            bool        limited{false}; // the proof is the one found inside the depth limit
+            std::size_t work{0};        // the work conducted by both searches in the budget's units
+        };
+        ExplainCounts last_explain_counts() const;
+
+        // The rules in force, read for explain() and defined
+        // where it is.
+        struct ExplainRules;
+
+        // --- Implemented in reasoning_strata.cpp ---
+
+        // What `negation_levels` identifies within a rule set: for each rule,
+        // parallel to `rules`, and for each strongly connected component in
+        // the graph where every rule directs to the rules that read what it
+        // generates. A component marked with `negation_inside` negates a
+        // predicate it produces and lacks a stratified reading; its negating
+        // rules operate at a single level and alternate there with the
+        // positive rules. One entry for each rule and each component, with no
+        // growth tied to the facts.
+        struct NegationLevels
+        {
+            std::vector<Node>        rules;
+            std::vector<std::size_t> level;           // its level if the rule negates, 0 otherwise
+            std::vector<bool>        negates;         // the rule has a negated condition
+            std::vector<std::size_t> component;       // the rule's component
+            std::vector<bool>        negation_inside; // indexed by component
+            std::size_t              levels{0};       // levels in use, numbered from 0 without gaps
+        };
+
+        // The negation levels of the rule set in its current form: the
+        // rules a run gathers, examined according to how the run
+        // interprets them (.strata).
+        NegationLevels strata();
 
     private:
         // --- Implemented in reasoning.cpp (orchestration) ---
@@ -378,23 +615,65 @@ namespace zelph::network
         // construction. Call it under _mtx_network.
         Node rebuild_rule(Node pattern, const Variables& variables, int depth, Node parent, bool& created);
 
+        // The construction process, as `recipe` instantiates the rule's
+        // collections (none: every container is kept). `kept` reports whether
+        // the rule returned is the one over the parts this construction built
+        // -- created at this moment, or found in force or merely mentioned
+        // beneath them -- rather than a different rule in force that says the
+        // same.
+        Node build_rule(Node pattern, const Variables& variables, int depth, Node parent, bool& created, const Recipe* recipe, bool& kept);
+
+    public:
+        // The rule build_rule returns for `pattern` under `variables`, found
+        // without any construction, or 0 if it is absent from the graph or
+        // merely mentioned there. The read-only twin of build_rule,
+        // analogous to how ground_instance relates to instantiate_fact: it
+        // walks the same way and must remain synchronized with it. It finds
+        // the rule based on the parts a construction keeps, not a rule a
+        // construction claimed. .explain uses it to justify a rule that a
+        // rule generator derived.
+        Node existing_rule(Node pattern, const Variables& variables, int depth, Node parent) const;
+
+        // The fact that a firing of the rule, where the condition part is
+        // `parent`, derives from its consequence `deduction` under
+        // `variables`, found without any instantiation, or 0 if the graph
+        // does not hold it. The read-only twin of what deduce asserts, just
+        // as existing_rule corresponds to build_rule. .explain uses it to
+        // justify a fact over a collection that the firing produced, which
+        // would otherwise be overlooked by identity matching with the
+        // consequence.
+        Node existing_consequence(Node deduction, const Variables& variables, int depth, Node parent) const;
+
+    private:
+        // Whether deduce asserts a fact for the consequence `deduction`: it
+        // is not a contradiction, not a rule, and it possesses precisely
+        // one predicate.
+        bool asserts_fact(Node deduction) const;
+
+        // The subject, the predicate, and the objects that deduce
+        // instantiates for the consequence `deduction` under `variables`, as
+        // predicted by ground_instance; a variable lacking a binding remains
+        // unchanged. nullopt if any component cannot be predicted.
+        struct ConsequenceParts
+        {
+            Node          source{0};
+            Node          relation{0};
+            adjacency_set targets;
+        };
+        std::optional<ConsequenceParts> predict_consequence(Node deduction, const Variables& variables, int depth, Node parent) const;
+
         // Every variable of a rule, conditions and consequences alike. Unlike
         // collect_variables this descends through the conjunction SET node,
         // which carries no structure of its own -- so the variables of a
         // multi-condition rule are reachable at all.
-        std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth);
+        std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth) const;
 
-        // One condition of a derived rule, under the bindings: the
-        // instantiated pattern plus the tags that describe how the engine has
-        // to read it (negation, and a nested conjunction rebuilt as a set).
-        Node rebuild_condition(Node pattern, const Variables& variables, int depth);
-
-        // The conjunction set node whose members are exactly `members`, or 0.
-        // Deriving a rule that is already there must not build a second set
-        // node for it: the set node is created, not hash-consed, so nothing
-        // would collapse the two, the rule would be re-derived on every run,
-        // and the fixpoint would never be reached.
-        Node find_conjunction_set(const std::unordered_set<Node>& members) const;
+        // A condition within a derived rule, given the bindings: its
+        // instance as instantiate_fact builds it within a condition,
+        // restating the pattern's negation tag. A conjunction nested in the
+        // condition is instantiated via the recipe as well
+        // (container_plan); without one, it is kept.
+        Node rebuild_condition(Node pattern, const Variables& variables, int depth, const Recipe* recipe);
 
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
@@ -403,7 +682,55 @@ namespace zelph::network
         void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
+        // --- Implemented in reasoning_strata.cpp ---
+
+        // What a single rule generates and what it examines, in terms of
+        // predicates: every result at every depth level, each dependency, and
+        // separately the conditions it tests under a negation, with the
+        // outcomes of a rule that generates another rule being what the derived
+        // rule will create. `*_any` represents a variable predicate, or a
+        // condition that is not retrieved through facts. `checkable` is false
+        // when check mode cannot re-test the rule's negations, because a
+        // condition can only be verified during the rule's runtime, not later
+        // through reconstruction: a neural condition, a negated path condition,
+        // or a path condition whose endpoints are bound by nothing else.
+        // `transparent` marks a rule that solely expands the predicates it
+        // reads, such as a transitivity rule applied to a predicate variable;
+        // its variable consequence then is not considered `produces_any` (see
+        // footprint in reasoning_strata.cpp).
+        struct RuleFootprint
+        {
+            std::unordered_set<Node> produces;
+            std::unordered_set<Node> reads;
+            std::unordered_set<Node> negates;
+            std::unordered_set<Node> produces_vars; // variables appearing within a predicate position of a consequence
+            std::unordered_set<Node> reads_vars;    // the same under a positive condition, at any depth
+            std::unordered_set<Node> binds_vars;    // the predicate of a plain positive condition
+            std::unordered_set<Node> joined_vars;   // each variable within a plain positive condition or a consequence
+            std::vector<Node>        paths;         // the path patterns associated with positive path conditions
+            bool                     produces_any{false};
+            bool                     reads_any{false};
+            bool                     reads_unnamed{false}; // a neural condition: no predicate says what it reads
+            bool                     negates_any{false};
+            bool                     has_negation{false};
+            bool                     checkable{true};
+            bool                     transparent{false};
+            std::vector<Node>        negated_conditions; // the condition nodes themselves
+        };
+        RuleFootprint footprint(Node rule);
+        void          read_footprint(Node condition, RuleFootprint& f);
+
+        // The level at which each `rules` entry featuring a negated condition
+        // may be evaluated, 0 for the others, the overall count of levels
+        // currently active, and the components they were derived from. A
+        // level runs solely when every lower level fails to generate further
+        // results; consult the file for further information on what this
+        // ensures and where it does not.
+        NegationLevels negation_levels(const std::vector<Node>& rules);
+
         // --- Implemented in reasoning_seminaive.cpp ---
+
+        static bool default_seminaive_check();
 
         // Delta-driven fixpoint loop (semi-naive evaluation). Returns the
         // number of safety-net violations found (always 0 unless
@@ -426,10 +753,21 @@ namespace zelph::network
         // Read after the run by deductions_withheld().
         std::atomic<size_t> _skipped{0};
         bool                _deduction_notice{true};
+        bool                _contradictions_printed{false};
         std::mutex          _mtx_output;
         std::mutex          _mtx_network;
-        std::atomic<int>    _total_matches{0};
-        std::atomic<int>    _total_contradictions{0};
+        // The bucket terms that a firing of this run has given their bucket's
+        // ground members (bucket_term in reasoning.cpp), ensuring subsequent
+        // firings of the run into a bucket skip re-reading that bucket. One
+        // entry per bucket, thus rule-scale; cleared at the start of a run,
+        // written under _mtx_network.
+        std::unordered_set<Node> _filled_terms;
+        // The bindings of the unification search for positive fact conditions,
+        // including the seed for each semi-naive iteration (rules.md, "What the
+        // run summary counts"). As wide as a size, because a run over a bulk
+        // import counts more than an int holds.
+        std::atomic<std::size_t> _total_matches{0};
+        std::atomic<int>         _total_contradictions{0};
         // How many contradiction records the graph HELD when this run began.
         // A run that reports nothing and says nothing else is indistinguishable
         // from a clean graph -- and after a .load of a network that was saved
@@ -464,12 +802,16 @@ namespace zelph::network
 
         // --- Cross-run delta (implemented in reasoning.cpp) ---
         //
-        // Facts created since the last run(), recorded by the same observer
-        // that feeds the input focus. A normal run rebuilds its knowledge of
-        // the graph from scratch (its first iteration is a classic pass), so
-        // it consumes and discards this; .run-delta seeds from it instead,
-        // which is what turns "run again after adding a little" from a cost
-        // in the size of the graph into a cost in the size of the addition.
+        // Facts created after the last run(), recorded by the same observer
+        // responsible for supplying the input focus. A normal run rebuilds
+        // its knowledge of the graph from the beginning (its first iteration
+        // constitutes a classic pass), so it consumes and discards this
+        // data; .run-delta seeds from it instead, transforming
+        // "run again after adding a little" from a cost in the size of the
+        // graph into a cost in the size of the addition --
+        // applicable solely to rules that support seeding. A rule featuring a
+        // negated condition still takes a classic pass at each negation
+        // level, and a delta-unsafe rule performs one in every iteration.
         void                               arm_delta_recorder();
         std::vector<std::pair<Node, Node>> _delta_since_run;
         std::mutex                         _mtx_delta_since_run;
@@ -522,5 +864,63 @@ namespace zelph::network
 
         bool _seminaive{true};
         bool _seminaive_check{false};
+
+        // --- Check mode: a negation that has come to hold ---
+        //
+        // A negation is evaluated just once, and its result is never revisited:
+        // facts only increase over time, implying that a deduction made under
+        // ¬P stays in the graph even if P becomes true later. That is sound
+        // exactly when no subsequent development can make P true -- precisely
+        // the purpose of negation levels within a single run, and precisely
+        // what nothing guarantees across different runs (a statement made after
+        // the question) or inside a program that negates its own derived
+        // conclusions. Classic and semi-naive evaluation produce identical
+        // deductions in this case, so comparing them yields no variation; the
+        // sole difference emerges when questioning whether the negated premise
+        // continues to fail.
+        //
+        // When operating in check mode, every fact generated by a negating rule
+        // is recorded together with its associated rule and bindings. After
+        // each check run concludes, any records whose rule negates a predicate
+        // that has acquired new facts since the last check are re-tested -- all
+        // of them are re-tested following a run that did not note those
+        // predicates (see Reasoning::run) -- unless the rule is marked as not
+        // `checkable` (RuleFootprint). A fact is reported if its negated
+        // condition currently holds AND no other justification exists
+        // (Reasoning::explain). A reported record is then discarded,
+        // guaranteeing that each loss is reported just once. The expense
+        // amounts to a single record per such fact, and this occurs solely in
+        // check mode.
+        struct NegationRecord
+        {
+            Node      fact;
+            Node      rule;   // the => fact
+            Node      parent; // what the rule was evaluated under: its condition set, if it has one
+            Variables bindings;
+        };
+        std::vector<NegationRecord>    _negation_records;
+        std::mutex                     _mtx_negation_records;
+        std::unordered_map<Node, Node> _negating_rules;           // the deferred rules of the current schedule, by rule and by condition part
+        std::unordered_set<Node>       _check_touched;            // predicates that gained facts since the last check
+        bool                           _check_touched_all{false}; // ... or everything: following a bulk load, or a run that did not note them
+        std::vector<NegationRecord>    recheck_negations();
+
+        // Set during the execution of check mode's classic verification
+        // pass; the initial line output by that pass is preceded by the
+        // marker. Controlled by _mtx_output, just as the printing itself
+        // is. The marker heads the line that follows it, making it a
+        // finding if that line qualifies as one.
+        bool _verification_marker_pending{false};
+        void print_pending_verification_marker(bool finding = false);
+
+        // Written by explain(), which is const: a read of the graph that
+        // reports its actions.
+        mutable ExplainCounts _explain_counts;
+
+        // The rules in force as explain() last read them are preserved for
+        // the subsequent call, provided the rules remain unchanged
+        // (reasoning_explain.cpp).
+        mutable std::shared_ptr<const ExplainRules> _explain_rules;
+        mutable std::size_t                         _explain_budget{0}; // 0: the default
     };
 }

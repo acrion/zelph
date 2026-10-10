@@ -116,6 +116,7 @@ ScriptEngine::ScriptEngine(network::Reasoning* reasoning)
 
 ScriptEngine::~ScriptEngine()
 {
+    drop_inline_janet(); // before the VM goes, like the roots ~Impl gives back
     delete _pImpl;
 }
 
@@ -421,54 +422,72 @@ bool ScriptEngine::invoke_keyword(const std::string& keyword, const std::string&
     return true;
 }
 
-bool ScriptEngine::is_expression_complete(const std::string& code)
+// Janet's built-in reader is invoked, not emulated. A scanner capable of
+// recognizing double-quoted strings and '#' comments took a '#' or a
+// bracket within a backtick string as syntactic, causing
+// `%(zelph/out `J # B`)` to remain open and swallow the following lines.
+// Pending signifies unfinished. A form read in full and a syntax error both
+// indicate completeness, so that process_janet reports the error once the
+// code runs.
+//
+// An expression extending across multiple lines is read one line at a time
+// by a single reader, persisting for the duration that the expression
+// remains open. Previously, passing the whole buffer to a new reader for
+// each line caused both time and memory usage to increase proportionally to
+// the square of the expression's length: the reader allocates memory for
+// each segment it reads, and that memory remains unreclaimed until the VM
+// runs again, which does not occur until the expression is complete. The
+// reader is a Janet abstract and remains rooted during its lifetime, since a
+// command embedded between two lines might execute Janet code, and a
+// collection at that point would otherwise free the memory held by the
+// reader.
+namespace
 {
-    int  depth      = 0;
-    bool in_string  = false;
-    bool escape     = false;
-    bool in_comment = false;
-
-    for (char c : code)
+    // A single line along with the newline terminating it, which closes
+    // a symbol or a comment that the line ends with.
+    JanetParserStatus read_line(JanetParser* reader, const std::string& line)
     {
-        if (in_comment)
+        for (const char c : line)
         {
-            if (c == '\n') in_comment = false;
-            continue;
-        }
+            janet_parser_consume(reader, static_cast<uint8_t>(c));
 
-        if (escape)
-        {
-            escape = false;
-            continue;
+            // Upon encountering an error, the reader refuses the subsequent
+            // byte by triggering a panic.
+            if (janet_parser_status(reader) == JANET_PARSE_ERROR) return JANET_PARSE_ERROR;
         }
-
-        if (in_string)
-        {
-            if (c == '\\')
-            {
-                escape = true;
-                continue;
-            }
-            if (c == '"') in_string = false;
-            continue;
-        }
-
-        if (c == '#')
-        {
-            in_comment = true;
-            continue;
-        }
-        if (c == '"')
-        {
-            in_string = true;
-            continue;
-        }
-
-        if (c == '(' || c == '[' || c == '{') depth++;
-        if (c == ')' || c == ']' || c == '}') depth--;
+        janet_parser_consume(reader, '\n');
+        return janet_parser_status(reader);
     }
+}
 
-    return depth <= 0;
+bool ScriptEngine::start_inline_janet(const std::string& line)
+{
+    drop_inline_janet();
+
+    auto* reader = static_cast<JanetParser*>(janet_abstract(&janet_parser_type, sizeof(JanetParser)));
+    janet_parser_init(reader);
+    janet_gcroot(janet_wrap_abstract(reader));
+    _pImpl->_inline_reader = reader;
+
+    return continue_inline_janet(line);
+}
+
+bool ScriptEngine::continue_inline_janet(const std::string& line)
+{
+    if (read_line(_pImpl->_inline_reader, line) == JANET_PARSE_PENDING) return false;
+
+    drop_inline_janet();
+    return true;
+}
+
+void ScriptEngine::drop_inline_janet()
+{
+    if (_pImpl->_inline_reader == nullptr) return;
+
+    // When unrooted, the reader becomes garbage, and the next
+    // collection releases it together with all data it has read.
+    janet_gcunroot(janet_wrap_abstract(_pImpl->_inline_reader));
+    _pImpl->_inline_reader = nullptr;
 }
 
 // Determine whether a zelph statement is complete.
@@ -481,24 +500,22 @@ bool ScriptEngine::is_expression_complete(const std::string& code)
 //   - "Top-level token" = a contiguous non-whitespace chunk at paren/brace depth 0.
 //     Note: < > (list delimiters) and all other chars are treated as plain characters
 //     for token boundaries; only () and {} affect depth.
+//   - `code` is received devoid of its comments (string::strip_comments),
+//     meaning that a '#' here constitutes part of a name, just as it does
+//     within the grammar.
 bool ScriptEngine::is_zelph_complete(const std::string& code)
 {
-    int  depth      = 0;
-    bool in_string  = false;
-    bool escape     = false;
-    bool in_comment = false;
+    int  depth     = 0;
+    bool in_string = false;
+    bool escape    = false;
 
-    int  top_tokens         = 0;
-    bool in_top_token       = false;
-    char second_token_first = '\0';
+    int         top_tokens      = 0;
+    bool        in_top_token    = false;
+    std::size_t second_token_at = std::string::npos; // the first byte of the second top-level token
 
-    for (char c : code)
+    for (std::size_t i = 0; i < code.size(); ++i)
     {
-        if (in_comment)
-        {
-            if (c == '\n') in_comment = false;
-            continue;
-        }
+        const char c = code[i];
 
         if (escape)
         {
@@ -517,11 +534,6 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             continue;
         }
 
-        if (c == '#')
-        {
-            in_comment = true;
-            continue;
-        }
         if (c == '"')
         {
             in_string = true;
@@ -529,7 +541,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
-                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
+                if (top_tokens == 2) second_token_at = i;
             }
             continue;
         }
@@ -542,7 +554,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
-                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
+                if (top_tokens == 2) second_token_at = i;
             }
             depth++;
         }
@@ -561,7 +573,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             {
                 top_tokens++;
                 in_top_token = true;
-                if (top_tokens == 2 && second_token_first == '\0') second_token_first = c;
+                if (top_tokens == 2) second_token_at = i;
             }
         }
     }
@@ -571,6 +583,14 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
 
     const size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
     const char   first_c        = first_char_idx == std::string::npos ? '\0' : code[first_char_idx];
+
+    // Does a token starting at `at` begin with "¬"? Considered across the
+    // entire pair of bytes, C2 AC: the lead byte C2 alone is common to all
+    // characters ranging from U+0080 to U+00BF, so a single name like °C
+    // counted as a finished statement, and the subsequent line commenced a
+    // new one.
+    const auto starts_negation = [&code](const std::size_t at)
+    { return at < code.size() && code.compare(at, 2, "¬") == 0; };
 
     // Result-query prefix "? <statement>": '?' counts as the first
     // top-level token; the remainder must itself look complete -- a full
@@ -594,15 +614,16 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
             && (code[first_char_idx + 1] == '(' || code[first_char_idx + 1] == '$'))
         {
             ++top_tokens;
-            second_token_first = code[first_char_idx + 1];
+            second_token_at = first_char_idx + 1;
         }
+        const char second_token_first = second_token_at < code.size() ? code[second_token_at] : '\0';
 
         if (top_tokens >= 4) return true;
         if (top_tokens == 3 && second_token_first == ':') return true;
         if (top_tokens == 2
             && (second_token_first == '(' || second_token_first == '$'
                 || second_token_first == '{' || second_token_first == '<'
-                || second_token_first == '\xC2'))
+                || starts_negation(second_token_at)))
             return true;
         return false;
     }
@@ -613,10 +634,11 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         if (first_char_idx != std::string::npos)
         {
             char c = code[first_char_idx];
-            // '$' admits a lone inline-keyword island ($( ... )) as a
-            // complete statement -- the calculator idiom. '\xC2' is the first
-            // byte of "¬", which leads a complete statement of its own.
-            if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || c == '\xC2' || c == '$'))
+            // The symbol '$' permits a lone inline-keyword island
+            // ($( ... )) as a complete statement -- the calculator
+            // idiom. The symbol "¬" initiates a standalone complete
+            // statement.
+            if (top_tokens == 1 && (c == '{' || c == '<' || c == '*' || starts_negation(first_char_idx) || c == '$'))
             {
                 return true;
             }

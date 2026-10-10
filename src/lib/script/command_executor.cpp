@@ -85,7 +85,7 @@ namespace zelph::console
 
         if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
         {
-            const std::string buffered = _repl_state->zelph_buffer;
+            const std::string buffered = string::strip_comments(_repl_state->zelph_buffer);
             _repl_state->zelph_buffer.clear();
             _repl_state->accumulating_zelph = false;
 
@@ -110,13 +110,17 @@ namespace zelph::console
         }
         _repl_state->accumulating_zelph = false;
 
-        if (!_repl_state->janet_buffer.empty())
-        {
-            _script_engine->process_janet(_repl_state->janet_buffer, false);
-            _repl_state->janet_buffer.clear();
-        }
+        // The state is left BEFORE the code executes. Left after it, Janet
+        // code that threw stayed open: following a module that concluded
+        // within a `%(` expression or a `%` block, the session's next lines
+        // were appended to the module's code.
+        const std::string janet_code = std::move(_repl_state->janet_buffer);
+        _repl_state->janet_buffer.clear();
         _repl_state->accumulating_inline_janet = false;
         _repl_state->script_mode               = ScriptMode::Zelph;
+        _script_engine->drop_inline_janet();
+
+        if (!janet_code.empty()) _script_engine->process_janet(janet_code, false);
     }
 
     // `sources` is each token in the form the PARSER needs, with the
@@ -154,11 +158,16 @@ namespace zelph::console
     {
         _command_map[".help"] = [this](auto& c)
         { cmd_help(c); };
-        // The REPL loop in main() intercepts the line before it gets here, so
-        // this handler exists for the OTHER readers: a session script, and a
-        // `.quit` reached from Janet. Recording the request rather than acting
-        // on it keeps the decision with the loop that owns the input -- see
-        // ReplState::quit_requested.
+        // A `.quit` encountered in its bare form by the REPL loop within main()
+        // never gets here: main() captures it before process(), enabling it to
+        // function even within a keyword block. This handler deals with the
+        // remaining cases -- `.quit now`, a `.quit` embedded within a session
+        // script, one present in a module, or even in a module loaded via
+        // `zelph/import` from Janet -- and merely records the request, deferring
+        // the decision to the loop responsible for the input: main() respects it
+        // after process() via Interactive::quit_requested(), the session-script
+        // loop does so after processing each line, and the module-reading loop
+        // clears the flag. Refer to ReplState::quit_requested.
         _command_map[".quit"] = [this](auto&)
         { _repl_state->quit_requested = true; };
         _command_map[".lang"] = [this](auto& c)
@@ -201,6 +210,8 @@ namespace zelph::console
 #endif
         _command_map[".list-rules"] = [this](auto& c)
         { cmd_list_rules(c); };
+        _command_map[".strata"] = [this](auto& c)
+        { cmd_strata(c); };
         _command_map[".list-predicate-usage"] = [this](auto& c)
         { cmd_list_predicate_usage(c); };
         _command_map[".list-predicate-value-usage"] = [this](auto& c)

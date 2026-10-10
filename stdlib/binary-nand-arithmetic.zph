@@ -1,16 +1,18 @@
 # Base-2 arithmetic from a SINGLE digit-level primitive: the NAND gate.
 #
-# This module is the discrete transposition of the "single sufficient
-# operator" idea (Odrzywolek 2026, arXiv:2603.21852: eml(x,y) =
-# exp(x) - ln(y) as the Sheffer stroke of continuous elementary
-# functions). eml itself cannot serve here -- its values are
-# transcendental/complex and have no finite cons-list representation --
-# but its Boolean ancestor can: NAND is the classic Sheffer stroke.
-# This script derives ALL digit knowledge of binary-arithmetic.zph
-# (full adder, full subtractor, AND-with-increment, digit comparison)
-# from ONE nand fact, via ordinary forward-chaining rules plus one
-# negation-as-failure completion rule. The recursion layer is untouched:
-# the shared common-arithmetic module runs on top, on identical facts.
+# This module represents the discrete transposition of the "single
+# sufficient operator" idea (Odrzywolek 2026, arXiv:2603.21852:
+# eml(x,y) = exp(x) - ln(y) as the Sheffer stroke among continuous
+# elementary functions). eml is incapable of being employed here -- its
+# values are transcendental or complex and lack a finite cons-list
+# encoding -- yet its Boolean ancestor can: NAND serves as the classic
+# Sheffer stroke. This script derives ALL digit knowledge of
+# binary-arithmetic.zph (full adder, full subtractor, AND-with-increment,
+# digit comparison) using ONE nand fact and the digit alphabet, through
+# standard forward-chaining rules augmented by a single
+# negation-as-failure completion rule. The recursion layer remains
+# unaltered: the shared common-arithmetic module operates above it,
+# relying on identical facts.
 #
 # Digit-level table data in binary-arithmetic.zph: 52 facts.
 # Digit-level table data here: 1 gate fact (plus the digit alphabet).
@@ -80,23 +82,34 @@
 # ---------------------------------------------------------------------------
 # The single gate axiom (1 fact): the only NAND row whose output is 0.
 #
-# ORDER MATTERS: this fact and the isdigit alphabet must be asserted
-# BEFORE rule G0 below is defined. Stratification orders DERIVED facts,
-# not input (see logic.md, "Stratified Evaluation"): a negated pattern
-# that should be blocked by a base fact requires that base fact to be
-# present in the run that evaluates the negation. Defining G0 first
-# would let an intermediate auto-run derive ((1 nand 1) out 1), which
-# monotonicity could never retract.
+# ORDER MATTERS when this file runs as a session (entered directly,
+# passed through a pipe, or referenced by name on the command line),
+# because each statement triggers a session run: this fact must be
+# declared BEFORE the definition of rule G0 below. Stratification orders
+# DERIVED facts, not input (refer to logic.md, "Stratified Evaluation"):
+# a negated pattern that ought to be blocked by a base fact depends on
+# that base fact being available during the run that evaluates the
+# negation. A run that sees G0 and the digit 1 before this fact derives
+# ((1 nand 1) out 1), which no later run will retract (.semi-naive check
+# reports it). When loaded via .import, the module undergoes a single
+# evaluation after complete reading, making order irrelevant; it is kept
+# so both ways of loading agree.
 # ---------------------------------------------------------------------------
 (1 nand 1) out 0
 
 # ---------------------------------------------------------------------------
-# Rule G0 -- NAND completion via negation-as-failure: every digit pair
-# that is not the 0-row outputs 1. The rule is deferred to the negation
-# stratum; its consequences (out-1 facts) feed the positive gate rules,
-# and the strata alternate until quiescence. Sound in a single stratum:
-# no rule in this module or in common-arithmetic ever derives an "out 0"
-# fact, so the negated pattern's extension never grows.
+# Rule G0 -- NAND completion through negation-as-failure: each digit pair
+# that does not correspond to the 0-row outputs 1. The rule operates at
+# the lowest negation level; its out-1 facts serve as input to the
+# positive gate rules, and the two alternate on this level until a stable
+# state is reached. .strata lists G0 alongside the gate rules as
+# non-stratifiable: its analysis compares predicates, G0 negates an out
+# fact, and every gate table except neg contains only out facts (the
+# and/or/xor/mj3 rows include out 0).
+# G0 remains sound despite this because it is locally stratified: no rule
+# derives a ((A nand B) out 0) fact -- G0 exclusively produces out 1 --
+# thus the negated pattern matches only the axiom row above and does not
+# expand.
 # ---------------------------------------------------------------------------
 (A isdigit true, B isdigit true, ¬((A nand B) out 0)) => ((A nand B) out 1)
 
@@ -150,10 +163,12 @@
 
 # ===========================================================================
 # Digit-table synthesis -- derive EXACTLY the facts that
-# binary-arithmetic.zph states by hand, on the same predicates.
-# common-arithmetic sees no difference; only the provenance changes:
-# every table entry now carries a derivation that bottoms out in the
-# single NAND axiom.
+# binary-arithmetic.zph specifies manually, using identical
+# predicates. common-arithmetic sees no distinction; solely the
+# provenance shifts: each table entry now carries a derivation whose
+# leaves are the NAND axiom, the two isdigit facts, and the absences
+# G0 tested -- digit equality, which needs no gate, is grounded purely
+# in the alphabet (refer to the dcmp eq rule below).
 # ===========================================================================
 
 # ---------------------------------------------------------------------------

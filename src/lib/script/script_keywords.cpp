@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/script_engine_impl.hpp"
 
+#include "string/string_utils.hpp"
+
 #include <janet.h>
 
 #include <cstddef>
@@ -71,13 +73,15 @@ namespace zelph
         return HandlerCall::Dispatched;
     }
 
-    // Expand inline keywords ("expression islands") in a zelph statement.
-    // Runs in parse_zelph_to_janet BEFORE the PEG, so every consumer of zelph
-    // syntax (REPL statements, imported scripts, command patterns) gets the
-    // expansion. Each island's handler receives the raw text between the
-    // delimiters and must return a zelph/node; the node is bound to a fresh
-    // Janet name and spliced back via the existing unquote mechanism
-    // (",$inlineN"), which makes islands valid in every value position.
+    // Expand inline keywords ("expression islands") within a zelph statement.
+    // Executes during parse_zelph_to_janet BEFORE the PEG, ensuring that
+    // every consumer of zelph syntax (REPL statements, imported scripts,
+    // command patterns) gets the expansion. For each island, the associated
+    // handler is passed the content enclosed by the delimiters, with zelph's
+    // comments already stripped (see below), and must return a zelph/node;
+    // this node is bound to a fresh Janet name and reinserted through the
+    // existing unquote mechanism (",$inlineN"), enabling islands to function
+    // in any value position.
     //
     // Close-delimiter search is a raw substring scan: the HANDLER owns the
     // island's grammar and arbitrates false splits via the :incomplete veto
@@ -85,8 +89,11 @@ namespace zelph
     // must therefore be side-effect-free until they accept their input --
     // the contract sparql.zph already follows.
     //
-    // Openers are not matched inside quoted atoms or comments (mirroring
-    // is_zelph_complete's scanning rules).
+    // Openers are not matched within quoted atoms (reflecting the
+    // scanning logic of is_zelph_complete). Comments have already been
+    // removed before execution: statements are delivered via
+    // string::strip_comments, while command arguments are processed by
+    // the command tokenizer, which stops at a comment.
     std::string ScriptEngine::Impl::expand_inline_keywords(const std::string& input)
     {
         _scoped_vars_preloaded = false;
@@ -99,23 +106,15 @@ namespace zelph
         std::string out;
         out.reserve(input.size());
 
-        bool   in_string  = false;
-        bool   escape     = false;
-        bool   in_comment = false;
-        size_t island     = 0;
+        bool   in_string = false;
+        bool   escape    = false;
+        size_t island    = 0;
 
         size_t i = 0;
         while (i < input.size())
         {
             const char c = input[i];
 
-            if (in_comment)
-            {
-                if (c == '\n') in_comment = false;
-                out += c;
-                ++i;
-                continue;
-            }
             if (escape)
             {
                 escape = false;
@@ -129,13 +128,6 @@ namespace zelph
                     escape = true;
                 else if (c == '"')
                     in_string = false;
-                out += c;
-                ++i;
-                continue;
-            }
-            if (c == '#')
-            {
-                in_comment = true;
                 out += c;
                 ++i;
                 continue;
@@ -248,6 +240,16 @@ namespace zelph
 
         janet_gcroot(handler);
         s_instance->_keyword_handlers[keyword] = KeywordEntry{handler, inline_mode, close};
+
+        // A node whose name matches a keyword must appear in quotes when
+        // printed, otherwise the output line will be interpreted as the
+        // keyword itself (string::set_keyword_spellings).
+        std::vector<std::string> block_keywords;
+        std::vector<std::string> inline_openers;
+        for (const auto& [spelling, entry] : s_instance->_keyword_handlers)
+            (entry.inline_mode ? inline_openers : block_keywords).push_back(spelling);
+        string::set_keyword_spellings(std::move(block_keywords), std::move(inline_openers));
+
         return janet_wrap_nil();
     }
 }

@@ -184,12 +184,13 @@ namespace zelph
 
     // --- Clusters: the graph as a workspace rather than a store ---
     //
-    // A cluster records the IDs of nodes CREATED while it is active, so
-    // dropping it removes exactly those again. That is the only form of
-    // retraction a monotonic graph can offer, and without it a program that
-    // asserts a fact base, reasons about it and reads the conclusions leaves
-    // every question it ever asked in the graph for good. .explain already
-    // uses a cluster internally for precisely this reason.
+    // A cluster maintains a record of the node IDs CREATED during its active
+    // period, thus dropping it removes exactly those again. That is the sole
+    // mechanism for retraction provided by the Janet API, and in its
+    // absence, a program which asserts a fact base, performs reasoning upon
+    // it, and retrieves outcomes retains every question it ever posed within
+    // the graph permanently. .explain already internally relies on a cluster
+    // for precisely this reason.
     //
     // These do NOT delegate to the REPL commands the way zelph/save and
     // zelph/run do. .cluster and .cluster-drop each print a status line, and

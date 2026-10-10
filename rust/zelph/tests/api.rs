@@ -452,12 +452,48 @@ fn a_rule_derives_what_forward_chaining_makes_of_it() {
     assert_eq!(answers.len(), 1);
     assert_eq!(answers[0], vec![(who, socrates)]);
 
-    // A delta run costs the addition rather than the graph, which is what
-    // decides whether reasoning can happen inside a loop.
+    // When dealing with a positive rule like this one, the expense of a
+    // delta run lies in the addition rather than the graph, which
+    // determines whether reasoning is possible within a loop.
     let plato = z.resolve("plato").unwrap();
     z.fact(plato, is_a, &[human]).unwrap();
     z.run_delta().unwrap();
     assert!(z.exists(plato, is_a, &[mortal]).unwrap());
+}
+
+#[test]
+fn a_rules_condition_set_takes_no_further_condition() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let is_a = z.resolve("~").unwrap();
+    let part_of = z.resolve("in").unwrap();
+    let human = z.resolve("human").unwrap();
+    let greek = z.resolve("greek").unwrap();
+    let mortal = z.resolve("mortal").unwrap();
+
+    let x = z.variable("X").unwrap();
+    let condition = z.fact(x, is_a, &[human]).unwrap();
+    let consequence = z.fact(x, is_a, &[mortal]).unwrap();
+    let conditions = z.rule(&[condition], &[consequence]).unwrap();
+
+    // The node `rule` returns is the rule's condition set. Introducing a
+    // membership into it would impose an additional condition on a rule
+    // that is already active, without a word, hence the engine refuses
+    // it: a rule's text remains immutable once the rule is written.
+    let further = z.fact(x, is_a, &[greek]).unwrap();
+    let err = z
+        .fact(further, part_of, &[conditions])
+        .expect_err("a rule's condition set is its text");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err.message().contains("the condition set of a rule"));
+
+    // The rule continues to carry its single condition: Socrates is
+    // not a Greek in this instance.
+    let socrates = z.resolve("socrates").unwrap();
+    z.fact(socrates, is_a, &[human]).unwrap();
+    z.run().unwrap();
+    assert!(z.exists(socrates, is_a, &[mortal]).unwrap());
 }
 
 #[test]

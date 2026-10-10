@@ -82,6 +82,95 @@ TEST_CASE("? prefix: arithmetic one-liners, quiet pre-pass (all arithmetic modul
         } });
 }
 
+TEST_CASE("? prefix: a contradiction derived in the quiet pass is printed")
+{
+    // The quiet pass drops the Out and Diagnostic channels, and a
+    // contradiction it derived accompanied them: counted, recorded in the
+    // graph, never displayed -- even though `.help .deductions` says that a
+    // contradiction's `!` line appears in every mode except off. These
+    // entries are now marked as findings inside the output event, and the
+    // quiet pass keeps what is marked.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(:p A) => !");
+        interactive.process("(:p A) => (:q A)");
+
+        SUBCASE("a contradiction prints as after any other line")
+        {
+            collector.clear();
+            interactive.process("? :p a");
+            CHECK(any_output_starts_with(collector, "! ⇐ (:p a)"));
+            CHECK(has_contradiction(collector));
+            // What is not a finding stays quiet.
+            CHECK_FALSE(any_output_starts_with(collector, "(:q a) ⇐"));
+            CHECK_FALSE(any_output_contains(collector, "_Result"));
+        }
+        SUBCASE("with .deductions off, as after any other line: the notice only")
+        {
+            interactive.process(".deductions off");
+            collector.clear();
+            interactive.process("? :p a");
+            CHECK(has_contradiction(collector));
+            CHECK_FALSE(any_output_contains(collector, "⇐"));
+        }
+        SUBCASE("after a '?' in the default mode, an ordinary run under off prints the notice only")
+        {
+            // The quiet pass activates contradiction printing for its own run
+            // and must deactivate it afterwards. The subcase mentioned above
+            // deactivates before the '?', thus unable to detect whether that
+            // occurs: in this instance, the '?' comes first, and the
+            // subsequent run would print the '!' line although
+            // `.deductions off` promises only the notice.
+            interactive.process("? :p a");
+            interactive.process(".deductions off");
+            collector.clear();
+            interactive.process(":p b");
+            CHECK(has_contradiction(collector));
+            CHECK_FALSE(any_output_contains(collector, "⇐"));
+        } });
+}
+
+TEST_CASE("? prefix: a declaration that contradicts the simplifier is reported by the query")
+{
+    // The case that made the loss visible: symbolic-core states that simp is
+    // single-valued, (T simp A, T simp B, A != B) => !, and a declaration
+    // conflicting with a rewrite gives the term a second normal form. When
+    // queried with '?', the response returned both normal forms and said
+    // nothing additional.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import symbolic-core");
+        process_lines(interactive, R"(
+x ~ symvar
+z ~ symconst
+(x * &1) = z
+)");
+        collector.clear();
+        interactive.process("? :simplify (x * &1)");
+        CHECK(answers_contain(collector, "(:simplify (x * &1)) = x"));
+        CHECK(answers_contain(collector, "(:simplify (x * &1)) = z"));
+        CHECK(any_output_starts_with(collector, "! ⇐"));
+        CHECK(has_contradiction(collector)); });
+}
+
+TEST_CASE("? prefix: check mode lists the facts it reports, also from the quiet pass")
+{
+    // Check mode ends a run when the outcome includes a fact that the
+    // rules no longer support, triggering an error that cites the facts
+    // "listed above" -- however, during the quiet pass, that list was
+    // excluded, resulting in the error lacking a reference. The program is
+    // the one test_stratified.cpp uses for this report: r is derived via
+    // ¬q, and q is derived via r.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(:p A, ¬(:q A)) => (:r A)");
+        interactive.process("(:r A) => (:q A)");
+        collector.clear();
+        CHECK_THROWS_WITH_AS(interactive.process("? :p w"), doctest::Contains("negated premise"), std::runtime_error);
+        CHECK(any_output_starts_with(collector, "Negation check:"));
+        CHECK(any_output_contains(collector, "w r w")); });
+}
+
 TEST_CASE("? prefix: self-fact requests (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)

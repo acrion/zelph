@@ -118,6 +118,7 @@ namespace zelph::network
         // immutable list.
         if (n->try_get_genuine_structure(fact, out))
         {
+            n->count_genuine_hit();
             n->store_fact_structures_cached(fact, out);
             if (n->should_log(depth))
             {
@@ -565,9 +566,15 @@ namespace zelph::network
         bool&                                     no_predicates,
         FactStructurePtr&                         out)
     {
-        // Logging is a lock, so the lock-free half may only run here with
-        // logging off. It is off on every workload this exists for; when it
-        // is on, the caller falls back to the ordinary entry point.
+        // Logging acts as a lock, meaning the lock-free half can execute here
+        // only when logging is disabled. Logging is disabled across all
+        // workloads this exists for. When logging is enabled, neither the
+        // cache nor the genuine store is accessed, and each candidate
+        // provided by the caller is walked under its scope. This walk is
+        // counted without a prior fs_cache miss, thus the identity `fs_cache
+        // misses == genuine hits + genuine walks` does not hold at a log
+        // depth of `depth` or deeper (the removal cascade passes 3).
+        // Profiling uses `.log -1` for this same reason.
         if (!n->should_log(depth) && try_fact_structures_lock_free(n, fact, depth, out)) return false;
 
         n->count_genuine_walk();

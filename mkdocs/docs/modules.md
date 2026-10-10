@@ -63,11 +63,7 @@ for why re-importing a module after `.load` is both necessary and free.
 
 ### Rules Say Themselves Only Once
 
-Facts are hash-consed: the node _is_ its structure, so asserting the same
-fact twice does nothing. A rule requires one additional step. It includes
-variables, variables are allocated fresh for each statement, and a node built
-from fresh variables is a fresh node – thus, entering the same rule twice would
-yield two rules deriving the same consequences at twice the unification cost.
+Facts are hash-consed: the node *is* its own structure, meaning that asserting the same fact twice results in no change. (Two different facts only share a node when their 62-bit hashes collide; zelph then keeps the first one and records nothing from the second, as detailed in [The Identity Foundation](internals/performance.md#the-identity-foundation).) A rule requires one additional step. It includes variables, which are allocated fresh for every statement, and a node built from newly allocated variables constitutes a fresh node – hence, entering the same rule twice would yield two rules deriving identical consequences, doubling the unification cost.
 
 zelph therefore recognises a rule it already has. A `... => ...` statement
 is compared against the existing rules **up to a renaming of its
@@ -90,13 +86,7 @@ re-importing the module:
 
 Without rule identity that sequence doubled every rule in the file.
 
-Two boundaries: the check runs on parsed `=>` statements, which covers
-`.import` and the REPL, but not [`zelph/rule`](janet.md) — a Janet program
-building rules programmatically owns the nodes it passes in, and zelph does
-not second-guess it. And a rule whose conditions mention a literal set
-(`{...}` in a term position) is never recognised as a duplicate, because
-each such set is a fresh node; the outcome is the old behaviour, never a
-wrong one.
+One boundary: the check operates on `=>` statements that have been parsed, encompassing `.import` and the REPL interface, yet excludes [`zelph/rule`](janet.md), `zelph/rule*`, or `zelph/build-rule` – a Janet program building rules dynamically determines its own output, and zelph does not second-guess it. A rule whose text holds a collection literal (`@{...}`, or `{...}` in a term position) is recognised like any other: the collections within a rule’s text are compared by their members, not by their nodes.
 
 ### Interchangeable implementations: `.provides`
 

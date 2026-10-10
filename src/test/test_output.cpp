@@ -386,6 +386,54 @@ TEST_CASE(".deductions: the mode is reported by name, and an unknown one is refu
                              std::runtime_error); });
 }
 
+TEST_CASE(".deductions all: with .parallel off, two runs print the same lines in the same order")
+{
+    // A fact that a run can attain through multiple paths is printed only
+    // once, accompanied by the premises from the derivation that produced
+    // it. With .parallel enabled, this is whichever thread arrived first,
+    // causing the premises following the arrow and the order of lines to
+    // differ across runs of the same input; rules.md ("Deduction Output
+    // Modes") states this explicitly and promises that with .parallel
+    // disabled, such variation does not occur. This case pins that
+    // guarantee. The default setting of .parallel is deliberately not
+    // compared: it recurs frequently enough that examining its variation
+    // would merely assess the scheduler's behaviour.
+    auto deduction_lines = []()
+    {
+        std::vector<std::string> lines;
+        // Only one session at a time: launching a second live
+        // Interactive within the same process results in sharing the
+        // script engine with the first.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".parallel");
+        interactive.process(".semi-naive check");
+        interactive.process(".deductions all");
+        interactive.process(".auto-run");
+        interactive.process("(X before Y, Y before Z) => (X before Z)");
+        process_lines(interactive, R"(
+a before b
+b before c
+c before d
+d before e
+e before f
+f before g
+)");
+        collector.clear();
+        interactive.process(".run");
+        for (const auto& e : collector.events())
+            if (e.text.find("⇐") != std::string::npos) lines.push_back(normalize(e.text));
+        return lines;
+    };
+
+    const auto first  = deduction_lines();
+    const auto second = deduction_lines();
+    // A chain consisting of seven elements contains 21 ordered pairs, six
+    // of which are provided.
+    CHECK(first.size() == 15);
+    CHECK(first == second);
+}
+
 TEST_CASE(".deductions off: nothing is printed however long the session has been idle" * doctest::test_suite("slow"))
 {
     // The 1000 ms throttle used to let one deduction through per second when
@@ -473,6 +521,18 @@ Germany "is located in" Europe
         CHECK_FALSE(any_output_contains(collector, "Answer: Berlin")); });
 }
 
+TEST_CASE("help: .run names the documentation section rather than linking it")
+{
+    // The help points to the documentation via section name, just like
+    // every other entry; it carries no URL.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .run");
+    CHECK(any_output_contains(collector, "See 'What the run summary counts'"));
+    CHECK(any_output_contains(collector, "the rules documentation."));
+    CHECK_FALSE(any_output_contains(collector, "https://"));
+}
+
 TEST_CASE("commands: an argument a command does not take is an error")
 {
     // Most commands already reject surplus arguments; the ones that did not
@@ -485,6 +545,7 @@ TEST_CASE("commands: an argument a command does not take is an error")
         (void)collector;
         CHECK_THROWS_AS(interactive.process(".auto-run off"), std::runtime_error);
         CHECK_THROWS_AS(interactive.process(".list-rules everything"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".strata all"), std::runtime_error);
         CHECK_THROWS_AS(interactive.process(".remove-rules all"), std::runtime_error);
         CHECK_THROWS_AS(interactive.process(".lang en de"), std::runtime_error);
         CHECK_THROWS_AS(interactive.process(".deductions loud"), std::runtime_error);
@@ -743,6 +804,27 @@ TEST_CASE("commands: a multi-object fact is addressed whole, numeral object and 
         // The shorter fact is genuinely absent, and saying so is the point:
         // it is what leaves the count reading no foothold.
         CHECK_THROWS_AS(interactive.process(".node a rel b"), std::runtime_error); });
+}
+
+TEST_CASE("commands: zelph/fact with several objects builds one fact, as typing it does")
+{
+    // janet.md previously stated that additional arguments in zelph/fact
+    // generate supplementary facts sharing the same subject and predicate.
+    // This is incorrect: instead, they become additional objects linked to
+    // ONE relation node, exactly as occurs when entering
+    // "ann likes tea coffee", and the page now reflects this correction.
+    // Nothing else pinned the Janet path.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"js(%(zelph/fact "ann" "likes" "tea" "coffee"))js");
+
+        collector.clear();
+        interactive.process(".node ann likes tea coffee");
+        CHECK(any_output_contains(collector, "Representation: ann likes tea coffee"));
+
+        // If each object had one fact, that would have made
+        // this one exist.
+        CHECK_THROWS_AS(interactive.process(".node ann likes tea"), std::runtime_error); });
 }
 
 TEST_CASE("commands: a composite predicate is named and counted like any other")

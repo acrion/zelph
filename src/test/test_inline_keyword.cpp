@@ -131,7 +131,16 @@ TEST_CASE("inline keyword: no expansion inside quoted atoms or comments")
         interactive.process(R"js(%(zelph/out (string "IK-CALLS-B-" ik-calls)))js");
         interactive.process(R"js(%(string "IK-REAL-" (zelph/exists "real" "~" "island")))js");
         CHECK(any_output_contains(collector, "IK-CALLS-B-1"));
-        CHECK(any_output_contains(collector, "IK-REAL-true")); });
+        CHECK(any_output_contains(collector, "IK-REAL-true"));
+
+        // An island located within a trailing comment is considered part of
+        // that comment; a '#' found inside a name does not initiate a new
+        // comment, thus the island following it is counted.
+        interactive.process(R"(x p y   # $( not an island ))");
+        interactive.process(R"(x p y#z $( counted ))");
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "IK-CALLS-C-" ik-calls)))js");
+        CHECK(any_output_contains(collector, "IK-CALLS-C-2")); });
 }
 
 TEST_CASE("inline keyword: registration and use from an imported script")

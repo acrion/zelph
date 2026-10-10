@@ -26,7 +26,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <shared_mutex>
 #include <sstream>
+#include <utility>
 
 namespace zelph::string
 {
@@ -187,6 +191,39 @@ namespace zelph::string
         return out;
     }
 
+    namespace
+    {
+        // The spellings associated with registered syntax keywords, see
+        // set_keyword_spellings. Stored when a script registers a keyword,
+        // read wherever a name is rendered, from any thread. A small number
+        // of strings per session; `any_keywords` keeps a session without
+        // keywords off the lock.
+        std::shared_mutex        keyword_mutex;
+        std::vector<std::string> registered_block_keywords;
+        std::vector<std::string> registered_inline_openers;
+        std::atomic<bool>        any_keywords{false};
+
+        bool claimed_by_keyword(const std::string& name)
+        {
+            if (!any_keywords.load(std::memory_order_acquire)) return false;
+
+            std::shared_lock lock(keyword_mutex);
+            for (const std::string& keyword : registered_block_keywords)
+                if (name == keyword) return true;
+            for (const std::string& opener : registered_inline_openers)
+                if (name.find(opener) != std::string::npos) return true;
+            return false;
+        }
+    }
+
+    void set_keyword_spellings(std::vector<std::string> block_keywords, std::vector<std::string> inline_openers)
+    {
+        std::unique_lock lock(keyword_mutex);
+        registered_block_keywords = std::move(block_keywords);
+        registered_inline_openers = std::move(inline_openers);
+        any_keywords.store(!registered_block_keywords.empty() || !registered_inline_openers.empty(), std::memory_order_release);
+    }
+
     // A name that the parser would not read back as ONE atom has to be
     // quoted on output -- zelph's own printed form is meant to be
     // re-enterable. The set is the PEG's reserved characters plus
@@ -196,11 +233,12 @@ namespace zelph::string
     // atoms.
     static bool needs_quotes(const std::string& name)
     {
-        // Names the grammar has a dedicated token for. They consist of
-        // reserved characters yet read back as ONE atom, so quoting them
-        // would be noise -- and worse than noise for `*`, which the
-        // mathematical modules use as a predicate everywhere and which the
-        // term-island parser does not accept in quoted form.
+        // Names that the grammar assigns a specific token to. They are
+        // composed of reserved characters but are read back as a single
+        // atom, making quotation redundant -- particularly in every
+        // product for `*`, which the mathematical modules use as a
+        // predicate universally. Even when quoted, the spelling would
+        // still be read back, within a term island as well.
         static const std::string_view bare_atoms[] = {
             "*", "<", ">", "=>", "->", "-->", "<=>", "<=", ">="};
         for (const auto& atom : bare_atoms)
@@ -212,8 +250,8 @@ namespace zelph::string
         // number literal, ":foo" opens the self-fact sugar, "≈net" a neural
         // condition. A node really named that way exists -- Wikidata has
         // single-letter labels -- and printing it bare made the line read
-        // back as something else. Two of them do so without any complaint:
-        // a variable, and `c rel2 :foo d`, where the sugar swallows the
+        // back as something else. Two of them do so without any complaint: a
+        // variable, and `c rel2 :foo d`, where the sugar swallows the
         // following object and yields a nested self-fact instead.
         //
         // The renderer's own ":pred subject" never reaches this function:
@@ -223,8 +261,48 @@ namespace zelph::string
         if (name.front() == '_' || name.front() == '&' || name.front() == ':') return true;
         if (name.rfind("≈", 0) == 0) return true;
 
-        for (const unsigned char c : name)
+        // Before the grammar sees the line at all, four additional initial
+        // characters are read. The sequence "#tag" starts a comment at the
+        // start of a line or following any blank (as handled by the REPL's
+        // line classifier and strip_comments). The line classifier also
+        // reads the first character of each line: ".x" denotes a command,
+        // "%x" represents inline Janet, and "?" followed by a blank, "(" or
+        // "$" signifies the result-query prefix. These three only apply at
+        // the start of a line, yet the renderer cannot determine where its
+        // output will stand, so they are enclosed in quotes in every
+        // position, just as the grammar's tokens above are. For "?" this
+        // applies solely to the name "?" itself and to names beginning with
+        // "?$": "?x" is read back unchanged (no prefix), as is "??" which
+        // the renderer prints for an unnamed node, while all other cases
+        // contain a character that is already quoted.
+        //
+        // A line is processed starting from its first visible character: the
+        // REPL skips every invisible space whitespace_length recognizes
+        // (U+FEFF, U+2003, and similar) both preceding a command and
+        // preceding a statement, ensuring that a byte order mark is not
+        // glued to the first name of a file. A name commencing with such
+        // whitespace consequently sheds that space when it stands bare at
+        // the start of a line: an em space followed by "p" is parsed as the
+        // node p, a "?" after one acts as the result-query prefix, and "#h"
+        // behind a U+FEFF functions as a comment that drops the line
+        // silently. Hence, every name starting with whitespace is enclosed
+        // in quotes, in any position, just as the prefixes above are.
+        if (whitespace_length(name, 0) != 0) return true;
+        if (name.front() == '#' || name.front() == '.' || name.front() == '%') return true;
+        if (name == "?" || name.starts_with("?$")) return true;
+
+        // A syntax keyword registered by a script is processed before the
+        // grammar sees the line, too: a block keyword serving as the
+        // initial token on a line -- `sparql` opens a block that runs to
+        // the subsequent empty line -- and an inline keyword's opener at
+        // any location outside a quoted name. Thus, a name matching a block
+        // keyword, or containing an opener, is enclosed in quotes in every
+        // position, just as the prefixes above are.
+        if (claimed_by_keyword(name)) return true;
+
+        for (std::size_t i = 0; i < name.size(); ++i)
         {
+            const unsigned char c = static_cast<unsigned char>(name[i]);
             if (c <= ' ') return true; // whitespace and control characters
             switch (c)
             {
@@ -236,11 +314,23 @@ namespace zelph::string
             case '}':
             case '*':
             case ',':
+            case '"':
                 return true;
             default:
                 break;
             }
-            if (c == 0xC2) return true; // UTF-8 lead byte of '¬', '«', '»'
+
+            // The characters U+0080 to U+00BF share the lead byte C2, and
+            // only select ones require quotation: the C1 control characters
+            // and the no-break space, just like their ASCII counterparts
+            // above; `¬`, reserved by the grammar; and `«` `»`, used by the
+            // rendering to mark a name (mark_identifier). `°`, `µ`, or `½`
+            // are read back without quotes.
+            if (c == 0xC2 && i + 1 < name.size())
+            {
+                const unsigned char t = static_cast<unsigned char>(name[i + 1]);
+                if (t <= 0xA0 || t == 0xAB || t == 0xAC || t == 0xBB) return true;
+            }
         }
         return false;
     }
@@ -455,6 +545,8 @@ namespace zelph::string
                 continue;
             }
 
+            if (c == '#' && !in_quotes && current.text.empty() && current.source.empty()) break; // a comment
+
             if (c == '\\')
             {
                 escape = true;
@@ -488,6 +580,60 @@ namespace zelph::string
         flush();
 
         return tokens;
+    }
+
+    std::string strip_comments(const std::string& text)
+    {
+        if (text.find('#') == std::string::npos) return text;
+
+        // The grammar's whitespace (:ws), not the wider set of
+        // whitespace_length: the grammar reads an invisible space like
+        // U+2003 as belonging to a bare name, meaning that a '#' located
+        // behind it lies within that name and does not initiate a comment. A
+        // no-break space is also excluded from being part of any bare name
+        // -- since the grammar explicitly reserves it -- so such a line is
+        // refused as a syntax error.
+        const auto blank = [](const char c)
+        {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\f' || c == '\n' || c == '\0' || c == '\v';
+        };
+
+        std::string out;
+        out.reserve(text.size());
+        bool in_quotes  = false;
+        bool escape     = false;
+        bool in_comment = false;
+        char previous   = '\n'; // the start of the text is the start of a line
+
+        for (const char c : text)
+        {
+            if (in_comment)
+            {
+                if (c != '\n') continue;
+                in_comment = false;
+            }
+            else if (in_quotes)
+            {
+                if (escape)
+                    escape = false;
+                else if (c == '\\')
+                    escape = true;
+                else if (c == '"')
+                    in_quotes = false;
+            }
+            else if (c == '#' && blank(previous))
+            {
+                in_comment = true;
+                continue;
+            }
+            else if (c == '"')
+            {
+                in_quotes = true;
+            }
+            out.push_back(c);
+            previous = c;
+        }
+        return out;
     }
 
     std::vector<std::string> tokenize_quoted(const std::string& input)

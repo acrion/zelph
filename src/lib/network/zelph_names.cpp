@@ -63,6 +63,23 @@ namespace
     private:
         unsigned& _depth;
     };
+
+    // A collection that a rule's text holds forms a component of the rule
+    // itself. When merged with a data node, it would pull the node's facts
+    // into the rule's text, or turn the rule's own collection into a value
+    // along with the rule; when merged with another rule's collection, it
+    // would integrate the texts of both rules. Neither is what giving two
+    // nodes one name means, hence the merge is refused, just as it is when
+    // attempting to merge a variable with a constant.
+    std::string template_merge_refusal(const std::string& name, const zelph::network::Node holder, const std::string& lang, const zelph::network::Node rule_collection)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' is already used by node " << holder
+          << " in language '" << lang
+          << "'. Merging the two nodes is impossible because " << rule_collection
+          << " is a collection of a rule's text.";
+        return s.str();
+    }
 }
 
 using namespace zelph::network;
@@ -154,6 +171,11 @@ bool Zelph::resolve_name_conflict_locked(const Node         node,
               << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
         }
         throw std::runtime_error(s.str());
+    }
+
+    if (is_rule_template(from) || is_rule_template(into))
+    {
+        throw std::runtime_error(template_merge_refusal(name, conflict_node, lang, is_rule_template(from) ? from : into));
     }
 
     return true;
@@ -458,6 +480,21 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         // else: inconsistent reverse entry -> continue into normal conflict handling
     }
 
+    // A merge is refused before any alteration, the names included, when a
+    // collection of a rule's text takes part.
+    {
+        Node other = 0;
+        if (const auto it = node_of_name_cur.find(name_in_current_lang); it != node_of_name_cur.end())
+            other = it->second;
+        else if (const auto core = _core_names_by_name.find(name_in_current_lang); core != _core_names_by_name.end())
+            other = core->second;
+
+        if (other != 0 && other != result_node && (is_rule_template(other) || is_rule_template(result_node)))
+        {
+            throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
+        }
+    }
+
     // Remove old current-language mapping for result_node, if any
     if (!old_current_name.empty())
     {
@@ -682,6 +719,31 @@ std::string Zelph::get_formatted_name(const Node node, const std::string& lang) 
         }
         return name;
     }
+}
+
+bool Zelph::is_named_any(const Node node) const
+{
+    if (_core_names_by_node.count(node) != 0) return true;
+
+    auto impl = [&]() -> bool
+    {
+        for (const auto& [lang, names] : _pImpl->_name_of_node)
+        {
+            if (names.find(node) != names.end()) return true;
+        }
+        return false;
+    };
+
+    // Within a name operation, which holds the map exclusively (refer
+    // to ExclusiveNameAccessScope), taking the shared lock would result
+    // in a deadlock.
+    if (name_of_node_exclusive_depth > 0)
+    {
+        return impl();
+    }
+
+    std::shared_lock lock(_pImpl->_mtx_name_of_node);
+    return impl();
 }
 
 bool Zelph::has_name(const Node node, const std::string& lang) const

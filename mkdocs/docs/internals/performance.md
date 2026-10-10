@@ -9,14 +9,7 @@ soundness arguments that license it. The companion page
 [Measurement Methodology](measurement.md) documents how changes to this
 machinery are validated; treat the two pages as one contract.
 
-For orientation, a snapshot of what the machinery buys (July 2026): the
-symbolic-mathematics case study — nine partial derivatives, simplification,
-and polynomial compilation of a 3×3 Jacobian determinant
-([test_jacobian.cpp](https://github.com/acrion/zelph/blob/main/src/test/test_jacobian.cpp))
-— took 23 and 9 minutes for its two phases when this work began, and takes
-0.9 and 1.2 seconds today (roughly 1500× and 480×), with every semantic
-counter bit-identical and the full test suite permanently running in
-`.semi-naive check` mode. Every subsection below contributed to that factor.
+To provide context, a snapshot from July 2026 shows the performance gains: the symbolic-mathematics case study – involving nine partial derivatives, simplification, and polynomial compilation of a 3×3 Jacobian determinant ([test_jacobian.cpp](https://github.com/acrion/zelph/blob/main/src/test/test_jacobian.cpp)) – took 23 and 9 minutes for its two phases at the start of this effort, but now completes in 0.9 and 1.2 seconds respectively (approximately 1500× and 480× faster), with every semantic counter remaining bit-identical. Each subsection below played a role in achieving this improvement factor.
 
 ## The Identity Foundation
 
@@ -36,6 +29,41 @@ arguments that follow:
    nodes therefore unify only via identity, which is what makes anchoring
    (below) complete.
 4. Hash-consed structures are **acyclic**: no node contains itself.
+
+Fact 3 does not apply in reverse: the identifier is a 62-bit hash of the data, implying that two separate structures share the same ID if their hashes coincide in a collision. For n structured nodes, the birthday bound predicts the expected number of colliding pairs to be about n²/2⁶³: roughly 10⁻⁷ when dealing with a million nodes, no more than approximately 0.0014 in the [`-medium` Wikidata artefact](../binaries.md) containing 1.1·10⁸ nodes, and ranging from 0.1 to 0.3 for a complete import of 10⁹ to 1.6·10⁹ triples. The system refrains from comparing the actual structures, so while a collision is detected, it is not resolved. The `fact()` function detects an ID already assigned to a node that does not hold the new statement and rejects the statement, naming both. During inference, a derived statement rejected in this manner is marked as a contradiction, including the cause; if a nested component of a derived statement is rejected, the run stops with the same notification. In bulk import, such a triple is left unwritten; the system reports the first occurrence during import and delivers the overall count once the process finishes. Either way, the second statement is lost. The `fact()` function determines "does not hold" by checking the subject and every object against the node's edges; regarding the predicate, it only examines the weight of the node's edge to it, which defaults to 0 if no such edge exists. A colliding statement sharing the same subject, where all its objects are part of the node's own set, is thus deemed known. If the predicate matches the node's own, or is any other node the node has an edge to – such as its subject – it goes undetected. For any other predicate, it is treated as known to be false. The `fact()` function then rejects it with the message "this fact is known to be wrong" instead of referencing the collision; during inference, a derived statement becomes a contradiction without an explicit reason stated, and a nested component stops the run with this refusal. The bulk import also performs a lookup on the predicate. Collections that rules construct possess their own identifiers, whose collisions are entirely overlooked; refer to the following section.
+
+## Rule-Built Collections: The Id Is the Recipe
+
+This section stands apart on this page: the subject it describes is semantics, not acceleration. It rests on the identity foundation, though, and it decides what several readers below may assume regarding a node id.
+
+A collection is the sole type of node for which the identifier is not its content – writing `@{a b}` on two separate occasions yields two distinct containers. When a rule builds a collection, the identifier is determined through computation instead of enumeration, and the higher-order bits indicate the origin of the collection:
+
+| Bits 63..60 | Class | Built by |
+| --- | --- | --- |
+| `000x` | counter | `create()`: atoms, witnesses, the core nodes, the conjunction sets of typed rules, each collection written as data |
+| `0010` | value recipe | a firing: the term it builds for a collection of the rule’s text |
+| `0011`, bit 59 clear | written template | a collection written during rule writing: the parser, `zelph/build-rule`, `zelph/rule-text` |
+| `0011`, bit 59 set | construction’s recipe | a construction: the collections of a rule that a generator writes |
+| `01xx` | hash | facts and set constants |
+| `1xxx` | variable | `var()` |
+
+**Authorship constitutes the id class.** A collection is part of a rule's text – it is a _template_ – exactly when its id resides within the template class, making `Zelph::is_rule_template` one bit test, and nothing written later (a claim, a mark, a name, a membership) changes the result. Every other collection is a value, retained uniformly across all instantiations. The sole exception involves a conjunction set: although it is rule text, it is distinguished by its `~ conjunction` tag, not by its id – a typed rule's has a counter id. A firing keeps it, except where it writes a membership into it, which goes to the set's data term; a construction rebuilds it, except where a variable bound to the set occupies the position where a membership is written (refer to _A rule's text is fixed once the rule is written_ below). A recipe is not a hash, so every gate interpreting "not a hash" as "an atom or a collection" reads a recipe as a collection, and neither a fact nor a set constant can land on one.
+
+**The key.** A firing builds `recipe_id(T, key)` for a template `T`, where `key` hashes the binding of variables that the instantiated statement meets (the consequence in a firing, the written rule in a construction), represented as sorted (variable, value) pairs; any variable left unbound by the binding does not appear in it. The collection that a consequence writes to uses the empty key, ensuring all firings of the rule target a single term (`Zelph::bucket_term_id`). `container_plan` (`reasoning.cpp`) is the sole location determining how an instantiation handles a container. The key walk (`statement_variables`) and the prediction of the existential check follow it, meaning the check looks for the node that the firing builds.
+
+**Reuse never compares members.** `Zelph::recipe_collection` creates the node upon detecting a non-existent ID and asserts every missing membership. This mechanism enables a subsequent firing with the same binding to rediscover the collection – explaining why a collision between two recipes remains undetected: the two share one collection. For n terms, approximately n²/2⁶¹ pairs are expected to collide (4·10⁻⁷ at a million rule-built collections, 4·10⁻³ at 10⁸), while among the collections of constructions, n²/2⁶⁰. A collision involving a fact, a set constant, a counter, or the alternate class is impossible by range. During a firing, `recipe_collection` also claims a membership that a rule has specified as a pattern, as a firing claims every fact it derives.
+
+**The counter is protected by guards.** IDs from bit 61 onward are assigned to recipes, so `Network::create` rejects requests once the counter reaches 2⁶¹, and `create_written_template`, which uses the next counter value as payload (`0x3000000000000000 | counter`), refuses once it reaches 2⁵⁹. Neither threshold is reachable in actual use, which is also why no test ever triggers them. `.save` and `.load` keep the counter state, ensuring that a template written after a load gets a fresh payload.
+
+**A construction executes within a scratch cluster** (`ConstructionScratch`, `reasoning_deduce.cpp`). It builds the parts of the rule a generator writes, and keeps them, merged into the active cluster, precisely when the rule governing them is the one it returns. If a rule currently in force already says the identical assertion, the construction returns that rule – the _claim on creation_ – and discards any constructed elements, regardless of exit path, including upon exception throw. This mechanism also applies when a generator settles after a name merge: its next construction under the merged binding claims the rule reconstructed by the merge and leaves no residual artefacts. The rule a construction returns, whether claimed or kept, is remembered (`_claims`: statement and key → rule, one entry per unique construction), ensuring subsequent passes refrain from rebuilding the components; the record is cleared each time the fingerprint index becomes outdated.
+
+**A rule's text is fixed once the rule is written.** A rule governing rules can bind a collection of another rule's text – via rule structure, as in `(G => (S q C)) => ((X r Y) => (X in C))`, which binds the collection of a ground rule, or through an engine marking fact – and a membership it states there would change what that rule says. The variable represents the collection's _data term_ instead (`Zelph::bucket_term_id`), the term a firing of a ground rule writes for that collection: a rule a construction writes names it wherever the collection appears within it, and a firing writes into it wherever it writes a membership. A conjunction set stands for its data term only where a membership is written into it, and a condition `X in C` that a construction writes in the rule is precisely such a membership: the condition is a membership fact, which, if included in the set, would make X a condition of the bound rule. A firing that writes into a conjunction set the rule holds by itself – where the relation was a variable at the time the rule was written, as in `(X R C)` – also writes into the set's data term. The term comes into existence at the first statement that names it, and remains empty until the rule whose collection it represents fires: the members of the rule's literal, and the one its statement writes, arrive with that firing. Three configurations arise depending on where substitution happens and are documented rather than changed: the data term of a collection whose rule contains variables is the term under no binding, which none of that rule's firings ever writes to, so a rule over the engine's marking facts that binds such a collection writes into a term the rule never encounters; a rule re-expressed from its bound parts, `(G => (S q C)) => (G => (S q C))`, is a second rule, over the term, beside the first; and when placed under a switch, that restated rule leaves the typed rule active. A membership written into a rule's own collection or conjunction set while no rule is being written – through Janet, the C ABI, or a name given to the collection – is refused (`Zelph::fact`), also when the collection already contains the member. Within the scope in which a rule is being written – the parser's, `zelph/build-rule`'s, `zelph/rule-text`'s, and a construction's – such a write is how the rule's text is formed. The scope is open only on the thread that opened it, and only on its network: a collection created by another thread meanwhile is considered data. Within the scope, a rule currently being written can still write into another rule's collection, when a Janet program holds the node of that collection; in such a case, the other rule's text is modified.
+
+**The fingerprint index** (`zelph_maintenance.cpp`) maps a fingerprint common to alpha-equivalent rules to the set of rules possessing it, one entry per `=>` fact. It serves both `zelph/dedup-rule` and the claim. A newly introduced rule acquires its fingerprint during the subsequent lookup. Outside the scope a rule is written in, nothing writes into a rule's text after the rule is written (as previously noted), thus ensuring a fingerprint remains accurate for the lifetime of the rule, unless a name merge, deletion from a rule's text, or a load operation alters the text without creating a new rule node; each such event invalidates the whole index, prompting the next lookup to re-fingerprint every rule, performed once per batch of such changes. A membership that a rule being written inserts into another rule's collection is not noted: the target rule keeps its old fingerprint, and if typed again, it is treated as a second rule.
+
+**The rule-text variables of `var_in_closure`** (`_rule_text_vars`, located adjacent to the template-variable store below). The store's closure does not enter a container, thus omitting a variable that exists solely within a rule's condition set, or exclusively among the members of a rule's own collection referenced by a membership. `var_in_closure` reads this set beside the store; `collect_variables` does not, because a firing keeps a condition set and performs no substitutions within it. It maintains a single entry for each such rule and for each fact written over one – a mention, a membership, those a firing writes included – hence its size increases with the firings of rules that write such facts, not merely with the rules themselves. It is reset alongside the store, via `.fact-stores off` among other paths.
+
+**Networks saved by an earlier engine.** Every file generated by this engine includes `templateIds` in its header, with the exception of a network file whose load triggered the message below: the older engine's rules preserve their collections across a save, causing the next load to emit the same message again. `.remove-rules` walks the rules again, and once no fragment of the older engine's rule text remains, a save writes the field again. A rule eliminated via another method, such as using `.remove`, results in the field being omitted until a subsequent load of the saved file walks the rules. If a rule is introduced before that save over a collection that was originally constructed as data and holds a variable, the collection assumes the appearance of the older engine's literal, and every future load will produce the message. A full-file `.load` operation on a file missing the field walks the rule texts and the memberships of counter collections encountered therein exactly once, issuing a message when one of those collections holds a membership that the older engine wrote as the rule's literal – specifically, one marked as a rule pattern or holding a variable – and which is not itself a node within a rule's text. The statements a rule writes into a data collection it names are such nodes, so no message appears for that collection provided its other members hold no variable, nor does any message appear for a rule whose collection holds only what its own statement writes into it, as `@{Y}` does in `(X reported Y) => (Y in @{Y})`. A data collection that also holds a rule, or any other member with a variable, takes on the form of a literal and triggers the message, even though it is treated as data by both engines and a rebuild from the scripts makes no difference to it. No re-identification occurs, so each such collection is a value here, either bearing the message or not. For a data collection, a container a rule writes to, and a literal with no substitutions to make – that is what the older engine accomplished; a literal whose members a binding makes ground it rebuilt for each binding, and a firing here refers to that literal, including any variable (see [A literal a rule derives](../concepts.md#a-literal-a-rule-derives)). A partial view produces no output, as it might lack the elements the walk reads. An older engine that loads a file from this one reads its templates and terms as unnamed collections and writes into a rule's own collection again; when reloaded here, what was written becomes part of that rule's text. Therefore, one network should not switch back and forth between the two engines.
 
 ## The Reconstruction Problem
 
@@ -69,75 +97,18 @@ to make the walk the _exception_.
 
 `get_fact_structures` answers through four layers, cheapest first:
 
-1. **Structureless bit gate (lock-free).** Atoms (sequential IDs) and
-   variables can never decompose, so `!is_hash(n) || is_var(n)` answers with
-   a shared empty list before any lock or cache probe — two bit tests.
-   Soundness: a structure requires a declared relation type among the node's
-   right neighbors; every edge out of a non-hash node leads to a hash fact
-   node by construction of `connect()`, and hash nodes enter the
-   relation-type set only through an explicit `(hashnode ~ ->)` declaration,
-   which neither the parser, the stdlib, nor any import produces. This is an
-   accepted exotic divergence class, backstopped by `.semi-naive check`. The
-   gate is _static_ — it holds after binary loads too, so on a loaded
-   Wikidata graph every Q/P atom answers without touching a lock.
-2. **The fact-structure cache (`_fs_cache`).** A promotion cache mapping
-   node → immutable shared structure list (`FactStructurePtr`). A hit costs
-   one shared-lock pair plus one atomic refcount increment — no deep copy —
-   and a held pointer stays valid across invalidations, referencing a
-   consistent snapshot. All empty results share one static instance, so
-   negative entries (the most frequent lookups on the unify recursion path)
-   allocate nothing.
-3. **The genuine-structure store (`_genuine`).** `Zelph::fact()` records the
-   exact triple of every node it creates as a one-element immutable list,
-   at the moment the triple is known and final (foundation facts 1 and 2).
-   Cache misses consult it before walking; hits are promoted into the
-   fs_cache. Two deliberate exclusions: facts with `subject == predicate`
-   are **not** stored — the reconstruction walk yields _empty_ for those,
-   and unification's atom treatment of them is pinned behavior — and
-   self-facts store `objects == {subject}`, matching the walk's
-   self-referential repair exactly. Because a node's ID pins its triple,
-   store entries can never go stale through graph _growth_; only topology
-   destruction disarms them (next section).
-4. **The reconstruction walk.** The historical semantics, kept verbatim. In
-   normal operation it serves only `subject == predicate` facts; after a
-   store disarm it serves everything — and it is itself fast now, running
-   under a single `ReadScope` (below) instead of paying a lock pair and an
-   adjacency copy per neighborhood probe.
+1. **Structureless bit gate (lock-free).** Atoms (sequential IDs) and variables are incapable of decomposing, so `!is_hash(n) || is_var(n)` returns a shared empty list before any lock acquisition or cache lookup – just two bit tests. Soundness: a structure must have a declared relation type among the node's right neighbours; every edge departing a non-hash node is directed to a hash fact node due to the design of `connect()`, and hash nodes enter the relation-type set exclusively via an explicit `(hashnode ~ ->)` declaration, which is not generated by the parser, the stdlib, or any import. This qualifies as an accepted exotic divergence class, backstopped by `.semi-naive check`. The gate is _static_ – it remains valid after binary loading as well, meaning that on a loaded Wikidata graph every Q/P atom answers without touching a lock.
+2. **The fact-structure cache (`_fs_cache`).** A promotion cache that maps node → immutable shared structure list (`FactStructurePtr`). A successful lookup incurs one shared-lock pair and one atomic reference count increment – no deep cloning – and the acquired pointer remains valid during invalidations, pointing to a consistent snapshot. All empty results share a single static instance, so the most common lookups along the unify recursion path (negative entries) trigger no allocation.
+3. **The genuine-structure store (`_genuine`).** `Zelph::fact()` records the precise triple of every node it creates as a one-element immutable list, at the moment the triple is known and final (foundation facts 1 and 2). Cache misses consult this store before initiating a walk; hits are promoted into the fs_cache. Self-facts maintain `objects == {subject}`, aligning precisely with the walk's self-referential repair mechanism. Since a node's ID pins its triple, entries in the store can never become outdated due to graph _growth_; only topology destruction disarms them (next section).
+4. **The reconstruction walk.** The historical semantics, kept verbatim. On a store-armed workload, it serves only hash nodes that `fact()` did not create, such as a set constant; the Jacobian reference workload looks up none, which explains why `genuine walks` reports zero in that context ([Measurement Methodology](measurement.md)). After the store is disarmed, it serves every node – and it now operates swiftly, executing under a single `ReadScope` (below) rather than incurring a lock pair and an adjacency copy for each neighbourhood query.
 
 ### Per-node cache invalidation
 
-The fs_cache formerly suffered a wholesale clear on _every_ created fact,
-keeping it near-permanently empty on rule-heavy workloads. `fact()` now
-calls `invalidate_fact_structures_for`, which erases only what growth can
-actually affect: the new relation node and its components, plus one
-_bidirectional_ adjacency level around subject and objects (the neighborhood
-the child-fact heuristic inspects). The correctness argument rests on
-monotonicity: growth can only _add_ reconstruction candidates, and hash
-verification prunes any ambiguous set back to the genuine reading. Two
-escape hatches degrade to the wholesale clear: relation-type declarations
-(`P ~ ->`), which can change predicate detection for _any_ entry and also
-invalidate the memoized relation-type set, and neighborhoods exceeding a
-fixed stale budget (hubs). The budget philosophy recurs throughout the
-engine: degradation is never unsound and never worse than the old
-semantics. One residual risk is consciously accepted — entries that no
-candidate hash-verifies (e.g. `subject == predicate` readings) are not
-re-checked on deeper-level growth; the suite-wide `.semi-naive check` net
-backstops it.
+The fs_cache previously underwent a complete reset on _every_ newly created fact, keeping it near-permanently empty during rule-intensive workloads. `fact()` now calls `invalidate_fact_structures_for`, which erases only those elements that growth can actually influence: the newly introduced relation node and its associated parts, along with a single _bidirectional_ adjacency level surrounding both subject and objects (the neighbourhood examined by the child-fact heuristic). The justification for correctness relies on monotonicity: growth can only _introduce_ new reconstruction candidates, and hash verification prunes any ambiguous set, restoring it to the genuine reading. Two exceptions revert to the full reset behaviour: declarations of relation types (`P ~ ->`), which may alter predicate detection for _any_ entry and also invalidate the memoized relation-type set, and neighbourhoods surpassing a fixed stale budget (hubs). The concept of a budget recurs throughout the engine: any degradation remains sound and is never worse than the prior semantic behaviour. One residual risk is deliberately accepted – entries that fail to verify via hash are not re-checked during subsequent deeper-level growth; however, the suite-wide `.semi-naive check` serves as a safety net.
 
 ## The Template-Variable Store
 
-`_template_vars` maps every created node whose structural closure contains
-variables to its **exact variable set**, maintained bottom-up by `fact()`
-from the actual triple arguments. Entries exist _only_ for nonempty sets, so
-while the store is authoritative, **absence means "provably no variables"**
-— `var_in_closure(n)` is a single map probe, and `collect_variables` is
-O(1). This is the criterion separating rule-template nodes from data nodes,
-consumed by the deep template rejection in `extract_bindings`, by anchor
-eligibility, and by bound-pattern grounding. Unlike the former
-reconstruction-based walk, the store cannot be misled by ambiguous adjacency
-readings; it deliberately covers `subject == predicate` facts, whose closure
-variables the walk cannot see — the exact answer is the safer one for
-template-leak prevention (an accepted, documented divergence).
+`_template_vars` associates each node generated whose structural closure includes variables with its **exact variable set**, updated in a bottom-up manner by `fact()` using the actual triple arguments. Records are present _only_ when the set is nonempty; hence, while the store is authoritative, **absence means "provably no variables"** – `var_in_closure(n)` requires just one map probe, and `collect_variables` operates in O(1). This criterion distinguishes rule-template nodes from data nodes, and is applied in `extract_bindings` during deep template rejection, in determining anchor eligibility, and in grounding bound patterns. In contrast to the prior reconstruction-driven walk, the store cannot be misled by ambiguous adjacency readings.
 
 ## Authoritative Bits and the Disarm Funnel
 
@@ -210,21 +181,7 @@ still pass structural unification) and completeness is budget-independent.
 `.anchors off` restores the anchor-free naive reference, decoupled from
 `.parallel`; tests use it as an independent completeness check.
 
-**Semi-naive evaluation** builds a static per-run index (`IndexedRule`):
-each rule's seedable leaf conditions, a predicate → (rule, leaf) index, a
-wildcard list for variable-predicate leaves, and — hoisted out of the
-`Unification` constructor — the rule-static **pattern decomposition**
-(`PatternInfo`: relation, subject, objects, subject-predicate hint), which
-is a pure function of the immutable condition node and is reused by every
-seed. Binding-dependent work (relation-variable resolution, grounding,
-boundness analysis, anchoring, snapshot launches) stays per-instance. The
-delta is captured by the fact-creation observer, and a seeded `Unification`
-has a candidate set of exactly one fact. Rules whose seeding cannot be
-proven complete (nested conjunction elements, ambiguous predicates, neural
-conditions) are classified _delta-unsafe_ and run classically each
-iteration; rules with negation form the deferred stratum. The `check` mode
-appends classic verification passes and names any fact the delta path
-missed — the completeness net everything above is measured against.
+**Semi-naive evaluation** builds a static index for each execution run (`IndexedRule`): the set of seedable leaf conditions for every rule, a mapping from predicate to (rule, leaf) index, a list of wildcards applicable to variable-predicate leaves, and – extracted from the `Unification` constructor – the rule-static **pattern decomposition** (`PatternInfo`: relation, subject, objects, subject-predicate hint), which relies exclusively on the immutable condition node and is shared across all seeds. Work contingent upon binding (relation-variable resolution, grounding, boundness analysis, anchoring, snapshot initiation) remains per-instance. The delta is monitored through the fact-creation observer, and a seeded `Unification` maintains a candidate set containing precisely one fact. Rules whose seeding cannot be established as exhaustive (nested conjunction elements, ambiguous predicates, neural conditions, transitive path conditions, rules lacking a seedable condition) are marked _delta-unsafe_ and execute in the classic manner during every iteration; rules involving negation form deferred strata, excluded from the first classic pass and run classically at each negation level. The `check` mode appends classic verification passes and names any fact overlooked by the delta path – the completeness net used to assess all prior components.
 
 **Join ordering** (`optimize_order`) carries a connectivity term: a
 condition sharing _no_ variable with the current bindings starts an
@@ -237,21 +194,7 @@ dominate the connectivity term.
 
 ## Smaller Fast Paths
 
-A few hot-path rewrites are worth knowing before touching their call sites.
-`check_fact` probes all edge memberships of the exact triple under one lock
-scope on references (`Network::fact_edges_hold`); the expensive
-hash-collision diagnostics are a cold branch that fetches its own copies.
-`create_hash` over an object set skips the copy+sort normalization whenever
-the set's storage mode already iterates ascending (small sets — nearly all
-of them); large unordered storage keeps the normalization so the hash stays
-a pure function of the element _set_. `parse_relation` prefilters right
-neighbors through the memoized relation-type set before running the exact
-probe; its `ReadScope` variant `parse_relation_scoped` uses membership
-(is-known) semantics, documented as exactly equivalent within
-reconstruction. Finally, output streams route their flush through the print
-mutex (`locked_stream`) — a correctness contract, not an optimization: pool
-workers log concurrently, and an unserialized stateful output handler is a
-data race.
+A handful of performance-critical rewrites merit awareness before modifying their call sites. `check_fact` examines every edge membership associated with the precise triple within a single lock scope on references (`Network::fact_edges_hold`) and nothing beyond: a node existing without the subject and object edges of the triple remains unrecognized by it, and `fact()` is where such a scenario is refused ([The Identity Foundation](#the-identity-foundation)). `create_hash` bypasses the copy+sort normalization for an object set whenever the set’s storage mode inherently traverses in ascending order (small sets – nearly all of them); large unordered storage keeps the normalization to ensure the hash stays a pure function of the element _set_. `parse_relation` filters right neighbours via the memoized relation-type set before executing the exact probe; its `ReadScope` variant `parse_relation_scoped` uses membership (is-known) semantics, which are documented as strictly equivalent during reconstruction. Finally, output streams route their flush operations through the print mutex (`locked_stream`) – a correctness contract, not a performance enhancement: pool workers emit logs simultaneously, and an unserialized stateful output handler introduces a data race.
 
 ## What a Save Costs
 

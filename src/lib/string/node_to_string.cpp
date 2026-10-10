@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "node_to_string.hpp"
 
 #include "network/fact_structure.hpp"
+#include "network/rule_identity.hpp"
 #include "network/zelph.hpp"
 #include "string/string_utils.hpp"
 
@@ -88,8 +89,11 @@ bool zelph::string::selffact_sugar_safe(const std::string& name)
         default:
             break;
         }
-        if (c == 0xC2) return false; // UTF-8 lead byte of '¬', '«', '»'
     }
+
+    // The two reserved characters beyond ASCII, matched whole: testing their
+    // common lead byte C2 refused `°` and `µ` as well.
+    if (name.find("¬") != std::string::npos || name.find("\xC2\xA0") != std::string::npos) return false;
 
     return prints_bare(name);
 }
@@ -115,6 +119,11 @@ namespace zelph::string
     {
         _last_node_to_string_node.store(network::Node{}, std::memory_order_relaxed);
     }
+
+    void set_last_node(const network::Node node)
+    {
+        _last_node_to_string_node.store(node, std::memory_order_relaxed);
+    }
 }
 
 namespace
@@ -130,6 +139,18 @@ namespace
         if (zelph::network::Zelph::is_var(node)) return name;
         return zelph::string::mark_identifier(name);
     }
+
+    // What a part prints as when nothing could be rendered for it. It is
+    // not the name of a node, thus it carries no identifier marks: if
+    // marked, it would be judged as the NAME "?" -- the result-query prefix
+    // at the start of a line, which needs_quotes quotes -- and each absent
+    // part would print as `"?"`. The "?" used in the history check is
+    // formatted identically. The "??" for a node lacking any content to
+    // render stays marked: needs_quotes leaves it bare, so it displays
+    // exactly as it has historically, whereas .node, which compares its
+    // rendering against the UNmarked "??", would cease displaying
+    // "Representation: ??" for such a node.
+    const std::string missing_part = "?";
 
     // In-place: dec (MSB-first decimal digit string) := dec * base + add.
     // Pure string arithmetic, so arbitrarily large numbers work. Used to
@@ -386,7 +407,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 // Render right-associatively: (a cons (b cons tail)).
                 std::string tail_str;
                 node_to_string(z, tail_str, lang, current, max_objects, variables, resolved, child_history);
-                if (tail_str.empty()) tail_str = string::mark_identifier("?");
+                if (tail_str.empty()) tail_str = missing_part;
 
                 const std::string cons_name = string::mark_identifier(z->get_formatted_name(z->core.Cons, lang));
 
@@ -394,7 +415,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 {
                     std::string car_str;
                     node_to_string(z, car_str, lang, *it, max_objects, variables, resolved, child_history);
-                    if (car_str.empty()) car_str = string::mark_identifier("?");
+                    if (car_str.empty()) car_str = missing_part;
 
                     tail_str = "(" + car_str + " " + cons_name + " " + tail_str + ")";
                 }
@@ -612,54 +633,61 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 // resolve_var above has already substituted every variable
                 // that HAS a binding.
                 //
-                // Kept aside rather than dropped: while the RULE itself is
-                // displayed there is nothing else in the container, and
-                // `@{Y}` is exactly what that rule says. Only once real
-                // elements exist do the variables step back.
+                // Set apart instead of discarded: within the rule's text, a
+                // rule's own collection prints them with its other members,
+                // and a collection lacking a ground member that no firing
+                // built prints them alone -- the `@{Y}` in
+                // `(X p Y) => (X likes @{Y})` is exactly what that rule says.
+                //
+                // A ground member of a collection a firing built (a value
+                // recipe, see below) whose membership is a pattern of a
+                // rule's text, and that nothing has derived, is no member of
+                // the data either: the `m` in a rule that names the
+                // collection within `(m in C) noted X`. This same principle
+                // applies when the membership is rendered: a value recipe is
+                // the same node regardless of its content, in contrast to a
+                // set constant.
                 if (s != 0 && objs.count(resolved) > 0)
                 {
                     if (network::Zelph::is_var(s))
                         variable_elements.insert(s);
-                    else
+                    else if (!network::Zelph::is_value_recipe(resolved) || !z->is_rule_pattern(rel))
                         elements.insert(s);
                 }
             }
         }
     }
 
-    // Which of the two sets IS the statement depends on what is being
-    // rendered, and the container alone cannot tell -- a rule and the facts
-    // it derives share the very same node, which is the point of a
-    // collection. The parent decides: inside a PATTERN (a rule's condition or
-    // consequence, which carries variables and is therefore never a claim)
-    // the variable members are what the rule says and the accumulated ground
-    // ones are data it has produced; everywhere else it is the other way
-    // round.
+    // A rule's own collection -- a template, as indicated by its id -- holds
+    // what the rule's text has written into it: the members its literal
+    // lists, whether ground or variable, and the subject of each membership
+    // the rule asserts within it, the Y in `(X p Y) => (Y in @{X})`. A firing
+    // writes the collection's term, never the collection itself. Within the
+    // rule's text, those members constitute the statement, and the collection
+    // prints all of them: `(X p Y) => (X likes @{Y k})` prints as `@{k Y}`
+    // and re-enters as the identical rule, where the variables alone, `@{Y}`,
+    // re-entered as another. A statement that binds the collection via rule
+    // structure, as `(G => (S in C)) => (zz in C)` does, writes into the
+    // collection's data term (instantiate_fact), while the rule's text
+    // remains unchanged as originally written. Only a rule authored within
+    // the template scope can still write a member to another rule's
+    // collection -- a Janet program that holds the node and writes `X in`
+    // into it while constructing a rule -- and then the other rule
+    // subsequently prints that member too: `(a p b) => (c in @{d c X})`.
     //
-    // Without this the printed rule DRIFTED as it ran:
+    // Within the rule's text refers to a `=>` fact among the nodes this
+    // rendering descended from, or a parent that is a pattern itself: a
+    // condition or consequence rendered independently. The parent is queried
+    // SYNTACTICALLY -- based on its subject, predicate, and objects -- rather
+    // than through its closure, which reaches variables via any collection
+    // named by a rule. A consequence lacking any variable in any slot, such
+    // as `(P q R) => (a in @{R})`, thus fails to constitute a pattern when
+    // rendered in isolation: it prints like data, as `a in @{a}`, which
+    // mirrors the output of the fact derived by its firings. Within the rule,
+    // it is `a in @{a R}`.
     //
-    //     (X reported Y) => (Y in @{X})
-    //     .list-rules   ->  (X reported Y) => (Y in @{Y X})
-    //     alice reported bug1 ... bob reported bug2
-    //     .list-rules   ->  (X reported Y) => (Y in @{bug1 bug2})
-    //
-    // -- a line that no longer says what the rule does and re-enters as a
-    // DIFFERENT rule, whose container starts out holding two bug reports.
-    // Same ruling as for the negation tag: write it where it is
-    // syntactically part of the statement, report it beside the term
-    // elsewhere.
-    //
-    // "Is the parent a pattern" has to be asked SYNTACTICALLY -- of the
-    // parent's own subject, predicate and objects -- not of its closure. A
-    // derived `bug1 in @{...}` reaches the rule's variables THROUGH the
-    // shared container, so any closure test calls it a pattern too and the
-    // answer line loses its members. The one shape this cannot separate is a
-    // consequence whose every position is ground (`(P q R) => (a in @{R})`):
-    // there the pattern node and the derived fact are literally the same
-    // node, so no rendering can tell them apart.
-    //
-    // Evaluated only when a variable member exists, i.e. never for a
-    // container in ordinary data.
+    // Only evaluated for a collection possessing a variable
+    // member.
     const auto parent_is_pattern = [&]
     {
         if (parent == 0) return false;
@@ -672,14 +700,87 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         return std::any_of(pfs.objects.begin(), pfs.objects.end(), unbound_var);
     };
 
-    // A SET CONSTANT is exempt: its identity IS its members, so they are the
-    // statement in every context, and `(X in {a b})` is precisely how a rule
-    // quantifies over them -- the X that the condition adds to the container
-    // is the artifact there, not the a and b. Only a COLLECTION accumulates
-    // what a rule derives, and only a collection can drift.
-    if (!variable_elements.empty()
-        && (elements.empty() || (parent_is_pattern() && !z->is_set_constant(resolved))))
-        elements = variable_elements;
+    const auto in_rule_text = [&]
+    {
+        for (const network::Node h : *history)
+            if (network::Zelph::is_hash(h) && z->predicate_of(h) == z->core.Causes) return true;
+        return parent_is_pattern();
+    };
+
+    // Only asked of a node that contains members: each unnamed node that
+    // has been rendered, each fact included, arrives at this point.
+    const bool is_conjunction = (!elements.empty() || !variable_elements.empty())
+                             && z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
+
+    // A rule's conjunction set constitutes rule structure, and within a
+    // pattern it prints its variable members alone. A rule over rules that
+    // binds the set and asserts membership within it, such as
+    // `(G => H) => ((X s y) => (X in G))`, names the data term of the set,
+    // and a firing also writes into that term (via instantiate_fact,
+    // container_plan), so the set keeps the conditions with which it was
+    // written. Only a rule authored within the template scope can still write
+    // a variable member into another rule's set -- a Janet program that holds
+    // the set's node and writes `X in` it while constructing a rule -- and
+    // that rule subsequently prints the set as `(X in {X})`, where its ground
+    // members would put the other rule's conditions into its text. As the
+    // subject of a rule, the set is not an object of any pattern, and prints
+    // the conditions. A conjunction set that is a set constant -- what the
+    // explicit form `(*{(a p b) (c q d)} ~ conjunction)` builds from ground
+    // conditions, and what an older engine wrote as the conditions of a rule
+    // it constructed -- prints its ground members everywhere, just as every
+    // set constant does (below).
+    //
+    // Every other collection is data, regardless of position, including a
+    // rule's text, and prints its ground members, displaying variables
+    // only if it contains none -- except for a collection a firing built,
+    // which prints its data (see below). A data collection D that a rule
+    // reads and writes, as in `((X p Y), (X in D)) => (Y in D)`, holds the
+    // rule's X and Y beside its data, and these are no members of the
+    // data: printing them made the rule name a collection of two
+    // variables, `@{Y X}`, where it names D. A SET CONSTANT is read
+    // identically: its identity equals its members, and `(X in {a b})` is
+    // the exact way a rule quantifies over them -- the X that the
+    // condition adds to the set is the artefact there, not the a and b.
+    //
+    // A collection a firing built (a value recipe) constitutes data in any
+    // context, and prints all contents it holds: a variable member is one
+    // that the instantiation left unbound -- `b hates @{k Z}` -- and
+    // omitting it printed a collection that holds less than it does. The
+    // sole exception occurs when a variable is written into the collection
+    // by a rule's statement, as a rule that binds the collection does via
+    // `(X p Y) => (X in C)` or, nested within its consequence, through
+    // `(X p Y) => ((X in C) noted yes)`: in such cases, that X is the other
+    // rule's, not a member of this data, and is excluded even when the
+    // collection contains no other elements. An empty term prints as `@{}`
+    // (as shown below), in that rule as well: printed as `@{X}`, the rule
+    // would name a collection holding its X. Asked solely for a variable
+    // member of such a collection.
+    if (network::Zelph::is_value_recipe(resolved))
+    {
+        if (!variable_elements.empty())
+        {
+            for (const network::Node rel : z->get_right(resolved))
+            {
+                if (z->predicate_of(rel) != z->core.PartOf) continue;
+                network::adjacency_set objs;
+                network::Node          s = z->parse_fact(rel, objs, 0);
+                if (s != 0) s = resolve_var(s);
+                if (s != 0 && objs.count(resolved) > 0 && variable_elements.count(s) != 0 && !network::is_rule_statement(z, rel))
+                    elements.insert(s);
+            }
+        }
+    }
+    else if (!variable_elements.empty())
+    {
+        if (elements.empty())
+            elements = variable_elements;
+        else if (is_conjunction)
+        {
+            if (parent_is_pattern() && !z->is_set_constant(resolved)) elements = variable_elements;
+        }
+        else if (z->is_rule_template(resolved) && in_rule_text())
+            elements.insert(variable_elements.begin(), variable_elements.end());
+    }
 
     if (!elements.empty())
     {
@@ -691,13 +792,6 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
         std::vector<network::Node> sorted_elements(elements.begin(), elements.end());
         std::sort(sorted_elements.begin(), sorted_elements.end());
-
-        // A COLLECTION prints with its own marker, because that is what it
-        // is: a container with an identity, which `{...}` re-entered would
-        // not rebuild. A rule's conjunction set keeps the bare brace -- it
-        // is rule structure rather than a value, and the rule renders around
-        // it.
-        const bool is_conjunction = z->check_fact(resolved, z->core.IsA, {z->core.Conjunction}).is_known();
 
         // A rule's condition set is printed in the SURFACE SYNTAX the parser
         // accepts -- "(A, B) => C" -- whenever it is rendered as that rule's
@@ -722,6 +816,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const bool as_rule_conditions = is_conjunction && !rendered_as_top && parent != 0
                                      && z->parse_relation(parent) == z->core.Causes;
 
+        // A COLLECTION prints with its own marker, because that is what it
+        // is: a container with an identity, which `{...}` re-entered would
+        // not rebuild. A rule's conjunction set keeps the bare brace -- it
+        // is rule structure rather than a value, and the rule renders around
+        // it.
         const bool bare_brace = z->is_set_constant(resolved) || is_conjunction;
 
         result     = as_rule_conditions ? "(" : (bare_brace ? "{" : "@{");
@@ -766,6 +865,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         }
         result += as_rule_conditions ? ")" : "}";
 
+        return;
+    }
+
+    // A term into which nothing has yet been derived holds no member:
+    // the data term of a rule's own collection that a statement binding
+    // the collection names before that rule has fired. It is an empty
+    // collection, not a node lacking a reading, which "??" would claim.
+    if (network::Zelph::is_value_recipe(resolved) && z->exists(resolved))
+    {
+        result = "@{}";
         return;
     }
 
@@ -983,11 +1092,36 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // '¬'), and not shaped like a variable (":A x" would re-parse with
     // variable semantics). Everything else -- including hash-consed numeric
     // self-facts on '*' such as (&9 * &9) -- keeps the verbose "S P S" form.
+    //
+    // Whether the subject and object are identical is determined by
+    // examining the nodes they DENOTE. A premise, a `!` line, or a query
+    // answer is the pattern that was matched, rendered according to its
+    // bindings, and `(T p (X + Y))` where T is bound to (a + b) is the
+    // self-fact (a + b) p (a + b), even though the two pattern nodes differ.
+    // Following the variable bindings (resolve_var) substitutes a side that
+    // is a bare variable with its value, yet preserves a compound side like
+    // (X + Y) as the pattern node it is. By itself, this recognized
+    // `(T p U)` when both T and U are bound to (a + b), but did not
+    // recognize `(T p (X + Y))` or `((X + Y) p T)`, so the same fact printed
+    // in verbose form or as sugar depending on which rule had used it.
+    // Without bindings -- a rule, a plain fact, .list-rules --
+    // resolve_pattern_node returns the pattern itself, and the comparison
+    // remains the one it has always been. A pattern whose instance is absent
+    // (a negated condition that held) denotes nothing and keeps the verbose
+    // form.
+    const auto denotes_self_fact = [&]
+    {
+        if (subject == 0 || objects.size() != 1) return false;
+        const network::Node s_eff = resolve_var(subject);
+        const network::Node o_eff = resolve_var(*objects.begin());
+        if (o_eff == s_eff) return true;
+        return network::resolve_pattern_node(z, o_eff, variables) == network::resolve_pattern_node(z, s_eff, variables);
+    };
+
     bool          self_fact_sugar = false;
     std::string   self_fact_pred;
     network::Node self_fact_rel = 0;
-    if (subject != 0 && objects.size() == 1
-        && resolve_var(*objects.begin()) == resolve_var(subject))
+    if (denotes_self_fact())
     {
         const network::Node rel_node = resolve_var(fact_predicate());
         const std::string   rel_name = z->get_formatted_name(rel_node, lang);
@@ -1065,7 +1199,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         if (needs_parens)
             subject_name = "(" + s_str + ")";
         else
-            subject_name = s_str.empty() ? (is_condition ? "" : string::mark_identifier("?")) : s_str;
+            subject_name = s_str.empty() ? (is_condition ? "" : missing_part) : s_str;
 
         network::Node relation = fact_predicate();
         // Recursion for Relation (usually just get name, but handle complex relations)
@@ -1083,7 +1217,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             // Recurse -> returns marked string
             std::string r_str;
             node_to_string(z, r_str, lang, relation, max_objects, variables, resolved, child_history);
-            relation_name = r_str.empty() ? string::mark_identifier("?") : r_str;
+            relation_name = r_str.empty() ? missing_part : r_str;
 
             // Wrap complex unnamed relations in parens too.
             // For consistency with subject/object, we usually assume relations are simple,
@@ -1139,12 +1273,12 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 }
             }
 
-            if (o_str.empty()) o_str = string::mark_identifier("?");
+            if (o_str.empty()) o_str = missing_part;
 
             if (!objects_name.empty()) objects_name += " ";
             objects_name += o_str;
         }
-        if (objects_name.empty()) objects_name = string::mark_identifier("?");
+        if (objects_name.empty()) objects_name = missing_part;
     }
 
     // An application's head must be a bare name: "f(u)" is readable, a
@@ -1179,9 +1313,22 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // rule's conjunction set. Everywhere else the tag is reported BESIDE the
     // term; see the property line of `.node` and the axiom label of
     // `.explain`.
+    //
+    // The rule serves as the parent to its conclusion as well, meaning that
+    // merely being positioned beneath a rule is not enough: the node must
+    // specifically be the rule's condition part. A rule that derives the
+    // exact pattern one of its conditions negates, (:p A, ¬(:q A)) => (:q A),
+    // printed its conclusion as (¬(:q A)), and the line returned an error --
+    // "¬" means nothing when used as a conclusion.
+    const auto is_condition_of_rule = [&]
+    {
+        if (z->parse_relation(parent) != z->core.Causes) return false;
+        network::adjacency_set conclusions;
+        return z->parse_fact(parent, conclusions) == resolved;
+    };
     if ((refuted && parent == 0)
         || (is_negation && parent != 0
-            && (z->parse_relation(parent) == z->core.Causes
+            && (is_condition_of_rule()
                 || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known())))
     {
         // A refutation is the claim this node stands for rather than a tag on

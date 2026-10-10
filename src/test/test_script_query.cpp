@@ -111,10 +111,10 @@ TEST_CASE("zelph/query: a stored conjunction matches, repeatedly")
 // writing 'B mean two different variables, so a conjunction assembled from
 // conditions built in separate blocks does not join -- it multiplies.
 //
-// Nothing reports that: the query answers, with the cross product. On a
-// Wikidata-sized graph the same mistake turns a two-row answer into hundreds
-// of thousands of rows (400 facts of each condition already give 160 801) and
-// exhausts memory long before it finishes.
+// Nothing reports that: the query yields results through a cross product. On
+// a Wikidata-sized graph, the same error transforms a two-row answer into
+// hundreds of thousands of rows (400 facts per condition alone produce
+// 160 000) and consumes all available memory long before completion.
 //
 // The two cases below are the same three lines of Janet, differing only in
 // how they are split into statements. They are pinned together so the

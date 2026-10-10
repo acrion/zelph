@@ -38,10 +38,7 @@ zelph's inference engine performs **forward chaining** (bottom-up evaluation), s
 When a new fact is asserted or a rule is defined, the engine immediately checks whether any rule conditions are newly satisfied and derives all possible consequences.
 This process repeats until a fixed point is reached — no further facts can be derived.
 
-This is fundamentally different from Prolog's top-down, goal-driven search with backtracking.
-zelph does not search for proofs; it _materializes all derivable facts_ in the graph.
-In formal terms, this is a least-fixed-point computation over the graph's [Herbrand base](https://en.wikipedia.org/wiki/Herbrand_structure): start with the asserted facts, apply all rules to derive new facts, repeat until no iteration produces anything new.
-The trade-off is deliberate: forward chaining integrates naturally with knowledge graphs (where facts arrive incrementally, e.g. from Wikidata imports) and guarantees termination for Datalog-safe rules.
+This is fundamentally different from Prolog's approach of top-down, goal-driven search relying on backtracking. zelph does not seek proofs; instead, it _materializes every fact that can be derived_ within the graph. Formally, this constitutes a least-fixed-point computation on the graph's [Herbrand base](https://en.wikipedia.org/wiki/Herbrand_structure): start with the facts that are asserted, apply all rules to derive new facts, continue iteratively until no further additions emerge. The compromise is deliberate: forward chaining aligns seamlessly with knowledge graphs (where facts are added over time, for instance, via Wikidata imports). The fixpoint remains finite provided no rule introduces new nodes: a rule whose consequence includes neither a [fresh variable](#fresh-variables-generative-rules), a nested term, nor a [collection literal](concepts.md#a-literal-a-rule-derives) only relates nodes that already exist. zelph does not check this constraint. A nested term in a consequence – `(s of X)`, or the arithmetic's `(D cons T)` – acts as a function symbol: the mathematical modules intentionally construct such terms and bound them via gating (refer to the header of `symbolic-core.zph`), whereas a rule that constructs a term from its own condition [runs away](rule-generators.md#what-stays-the-same). A collection literal in a consequence also functions as a function symbol: a firing generates a collection per binding, and a rule whose collection flows back into its own binding [never terminates either](#fresh-variables-generative-rules).
 
 What sets zelph apart from both Prolog and Datalog is the _representation_: rules, predicates, and even the concept of conjunction are themselves nodes in the graph.
 This [homoiconicity](#the-executable-graph) enables meta-reasoning, self-referential structures, and a seamless boundary between knowledge and computation.
@@ -66,9 +63,7 @@ This means the graph doesn't just _describe_ knowledge; it _structures the execu
 
 Every fact in zelph — every subject–predicate–object triple — is represented by a dedicated **relation node**. This node can immediately serve as the subject, the object _or the predicate_ of further facts, enabling statements about statements without any special mechanism.
 
-A **rule** is such a fact too, so it can be talked about like any other — and
-talking about one does not claim it. Only the rule that was stated on its own
-fires; the one that is merely quoted is a part of the sentence quoting it:
+A **rule** qualifies as a fact as well, so it can be talked about – yet discussing it does not claim it. Only the rule that was stated on its own fires; the one that is simply quoted is a part of the sentence containing the quotation:
 
 ```
 zelph> (X p Y) => (X q Y)
@@ -82,6 +77,8 @@ zelph> a p b
 Nothing has to be remembered for this — an asserted rule is a part of no
 other fact, a quoted one is the subject, the predicate or an object of the
 sentence that quotes it — so it survives `.save` and `.load` unchanged.
+
+Being on record does not make it findable: a condition matches solely facts that lack variables, and since alice’s rule includes variables, neither a query like `R "was proposed by" alice` nor a rule can access the statement (refer to [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)).
 
 Predicate position is the least obvious of the three, and it works like the others:
 
@@ -98,6 +95,7 @@ Anything used as a predicate becomes a relation type, so the composite predicate
 zelph> X Y Z
 Answer: (a p b) ~ ->
 Answer: p ~ ->
+...
 Answer: a p b
 Answer: x (a p b) y
 ```
@@ -158,7 +156,7 @@ However, in contrast to standard Datalog, zelph treats predicates as first-class
 
 In Lean, the inference machinery — tactics, the elaboration pipeline, the `MetaM` monad — lives in a **metaprogramming layer** that operates _on_ terms but is not itself expressed as terms in the same way. To reason about a proof as data, you step up to a meta-level (the `Expr` API).
 
-In zelph, there is **no meta-level**. Rules, facts, predicates, and numbers all live in the same graph. A rule about a predicate is written in the same syntax, stored in the same structure, and processed by the same engine as any ordinary fact. The boundary between "data" and "logic" is removed entirely.
+In zelph, there is **no meta-level**. Rules, facts, predicates, and numbers all coexist within the same graph. A rule concerning a predicate is expressed using identical syntax, stored in the same structure, and processed by the same processing engine as any ordinary fact. In terms of representation, the boundary between "data" and "logic" dissolves, with one deliberate exception: a pattern containing a variable constitutes graph structure, not data. Rules live in the same graph as data and can be created by it ([Rules That Write Rules](rule-generators.md)), yet a condition matches only facts that lack variables, meaning a rule involving variables cannot be discovered by a condition (refer to [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)).
 
 Lean unifies through **type theory**. zelph unifies through **graph topology**. These are philosophically very different approaches to the same goal: erasing the boundary between code and data.
 
@@ -214,6 +212,7 @@ A classic example — transitive closure:
 
 ```
 zelph> (R is transitive, A R B, B R C) => (A R C)
+((A R B), (R is transitive), (B R C)) => (A R C)
 zelph> > is transitive
 zelph> 6 > 5
 zelph> 5 > 4
@@ -231,7 +230,9 @@ The comma is the conjunction of _conditions_; on the right-hand side it is refus
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (A is human) => (A has consciousness) (A has mortality)
+(A is human) => (A has mortality) (A has consciousness)
 zelph> tim is human
 (tim has mortality) ⇐ (tim is human)
 (tim has consciousness) ⇐ (tim is human)
@@ -256,6 +257,7 @@ This allows for a class of rules that standard Datalog can only represent via an
 
 ```
 zelph> (R is symmetric, X R Y) => (Y R X)
+((X R Y), (R is symmetric)) => (Y R X)
 zelph> friend is symmetric
 zelph> alice friend bob
 (bob friend alice) ⇐ {(alice friend bob) (friend is symmetric)}
@@ -268,6 +270,7 @@ Declaring `friend is symmetric` is a fact about the predicate `friend`; the rule
 
 ```
 zelph> (R "is opposite of" S, X R Y) => (Y S X)
+((R "is opposite of" S), (X R Y)) => (Y S X)
 zelph> "has part" "is opposite of" "is part of"
 zelph> chimpanzee "has part" hand
 (hand "is part of" chimpanzee) ⇐ {("has part" "is opposite of" "is part of") (chimpanzee "has part" hand)}
@@ -275,6 +278,10 @@ zelph> chimpanzee "has part" hand
 
 Declaring that `"has part"` is opposite of `"is part of"` causes every `has part` fact to automatically generate its inverse.
 The rule is generic: it works for any pair of opposite relations without modification.
+
+The two examples differ in a single aspect that becomes significant when a rule performs negation.
+The symmetric rule creates an `R` fact exclusively for an `R` it has just matched as a predicate; the opposite rule creates an `S` fact based on an `S` discovered within the _object_ of a declaration, meaning the rule does not specify which predicates are involved.
+Regarding [negation levels](#stratified-evaluation), such a rule is considered to create every predicate; [Rules over predicates](#rules-over-predicates) clarifies the consequences and how the [rule-derived form](#rules-that-derive-rules) circumvents this issue.
 
 ### Rules That Derive Rules
 
@@ -288,14 +295,15 @@ Only what the outer rule's conditions bind is substituted; everything else comes
 
 ```
 zelph> (R is transitive) => ((X R Y, Y R Z) => (X R Z))
+(R is transitive) => (((X R Y), (Y R Z)) => (X R Z))
 zelph> before is transitive
 (((Y before Z), (X before Y)) => (X before Z)) ⇐ (before is transitive)
 zelph> a before b
 zelph> b before c
 (a before c) ⇐ {(b before c) (a before b)}
 zelph> c before d
-(a before d) ⇐ {(c before d) (a before c)}
 (b before d) ⇐ {(c before d) (b before c)}
+(a before d) ⇐ {(c before d) (a before c)}
 ```
 
 `R` was bound to `before` and is gone; `X`, `Y` and `Z` were bound by nothing and stayed variables.
@@ -304,6 +312,7 @@ What the second line derives is the transitivity rule _for_ `before`, and one su
 Compare this with the [meta-rule](#meta-rules-predicates-as-first-class-nodes) `(R is transitive, X R Y, Y R Z) => (X R Z)`, which expresses the same closure by quantifying over the predicate at match time.
 The schema instead pays that quantification once, when the relation is declared, and leaves a specialised rule behind.
 Both are available; the schema is the one that can make the _shape_ of a rule depend on data.
+It is also the form that leaves the [negation levels](#rules-over-predicates) intact when a rule takes the predicate it creates from the subject or object of a declaration, as occurs in an inverse or sub-property axiom: every rule it derives explicitly names its predicates.
 
 **Example — a rule under a switch:**
 
@@ -329,7 +338,9 @@ Written once as schemas, every declaration a modeller makes afterwards is ordina
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (P is transitive) => ((X P Y, Y P Z) => (X P Z))
+(P is transitive) => (((X P Y), (Y P Z)) => (X P Z))
 zelph> (P subpropertyof Q) => ((X P Y) => (X Q Y))
 zelph> (C subclassof D) => ((X isa C) => (X isa D))
 zelph> (P domain C) => ((X P Y) => (X isa C))
@@ -382,6 +393,7 @@ This is essential for reasoning about statements-about-statements — a natural 
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> ((A + B) = C) => (test A B)
 zelph> (4 + 5) = 9
 (test 4 5) ⇐ ((4 + 5) = 9)
@@ -390,18 +402,20 @@ zelph> (4 + 5) = 9
 The rule's condition pattern `((A + B) = C)` requires a fact whose _subject_ is itself a fact matching `(A + B)`.
 The engine recursively walks the graph topology, binding `A = 4`, `B = 5`, `C = 9`.
 
-`.deductions all` is necessary here because the derived fact pertains to
-`test`, a node not referenced in the typed statement, so the default `focus`
-mode counts it instead of printing it – see [Deduction Output
-Modes](rules.md#deduction-output-modes). (In `test A B` the variables occupy
-predicate and object position: the derived statement is `test`, related to `5`
-through the predicate `4`.)
+The presence of `.deductions all` is required here since the derived fact is
+associated with `test`, a node that is not referenced in the typed statement,
+causing the default `quiet` mode to suppress it and merely annotate the next
+prompt with `+` – refer to
+[Deduction Output Modes](rules.md#deduction-output-modes). (In `test A B` the
+variables occupy predicate and object position: the derived statement is
+`test`, related to `5` through the predicate `4`.)
 
 This extends to arbitrary depth:
 
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (subj pred (obj is (subj2 A (b test C)))) => (success A C)
 zelph> subj pred (obj is (subj2 a_val (b test c_val)))
 (success a_val c_val) ⇐ (subj pred (obj is (subj2 a_val (b test c_val))))
@@ -412,7 +426,8 @@ Deep unification also works within conjunction conditions, enabling rules that c
 ```
 zelph> ((A + B) = C) => (test A B)
 zelph> (4 + 5) = 9
-zelph> (*{ ((A + B) = C) (B followed-by D) (C followed-by E) } ~ conjunction) => ((A + D) = E)
+zelph+> (*{ ((A + B) = C) (B followed-by D) (C followed-by E) } ~ conjunction) => ((A + D) = E)
+(((A + B) = C), (B followed-by D), (C followed-by E)) => ((A + D) = E)
 zelph> 5 followed-by 42
 zelph> 9 followed-by 43
 ((4 + 42) = 43) ⇐ {((4 + 5) = 9) (5 followed-by 42) (9 followed-by 43)}
@@ -491,6 +506,7 @@ The correct approach uses **ordered lists** to encode the domain–codomain rela
 
 ```
 zelph> (F maps <A B>, G maps <B C>) => ((G compose F) maps <A C>)
+((G maps <B C>), (F maps <A B>)) => ((G compose F) maps <A C>)
 zelph> f maps <item1 item2>
 zelph> g maps <item2 item3>
 ((g compose f) maps <item1 item3>) ⇐ {(g maps <item2 item3>) (f maps <item1 item2>)}
@@ -517,6 +533,7 @@ The idiomatic syntax uses `¬`:
 
 ```
 zelph> (A is yellow, ¬(A is green)) => (A "is not" green)
+((A is yellow), ¬(A is green)) => (A "is not" green)
 zelph> plant is green
 zelph> plant is yellow
 zelph> plant2 is yellow
@@ -539,6 +556,7 @@ zelph> elem3 partoflist mylist
 zelph> elem4 partoflist mylist
 zelph> elem5 partoflist mylist
 zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
+((A partoflist L), ¬(A --> X)) => (A "is last of" L)
 (elem5 "is last of" mylist) ⇐ {(elem5 partoflist mylist) (¬(elem5 --> X))}
 ```
 
@@ -556,8 +574,10 @@ zelph> c ~ interval
 zelph> a before b
 zelph> b before c
 zelph> (A ~ interval, ¬(A before B)) => (A is latest)
+(¬(A before B), (A ~ interval)) => (A is latest)
 (c is latest) ⇐ {(¬(c before B)) (c ~ interval)}
 zelph> (A ~ interval, ¬(B before A)) => (A is earliest)
+((A ~ interval), ¬(B before A)) => (A is earliest)
 (a is earliest) ⇐ {(a ~ interval) (¬(B before a))}
 ```
 
@@ -621,7 +641,10 @@ That reading belongs to the line, not to the prefix, so it does not extend to a 
 
 ```
 zelph> x mentions (¬(a p b))
-Error in line "x mentions (¬(a p b))": "¬" is a condition operator and has no meaning inside a plain statement: it succeeds when a pattern is ABSENT, which only a rule condition can ask. On its own line "¬(a p b)" says that the fact does not hold.
+Error in line "x mentions (¬(a p b))": "¬" is a condition operator and has no
+meaning inside a plain statement: it succeeds when a pattern is ABSENT, which
+only a rule condition can ask. On its own line "¬(a p b)" says that the fact
+does not hold.
 ```
 
 The marking a refutation writes is printed without the prefix for the same reason – `(a p b) ~ refuted` – since the predicate is already saying it, and a `¬` inside the subject would be interpreted as the condition operator when the line is re-entered.
@@ -630,7 +653,10 @@ A rule derives what holds, so a negated _consequence_ still has no reading and i
 
 ```
 zelph> (A p B) => ¬(A q B)
-Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no meaning as a consequence: a rule derives what holds, not what does not. To say that the two may not hold together, write a contradiction rule -- "(A p B, A q B) => !".
+Error in line "(A p B) => ¬(A q B)": "¬" is a condition operator and has no
+meaning as a consequence: a rule derives what holds, not what does not. To say
+that the two may not hold together, write a contradiction rule --
+"(A p B, A q B) => !".
 ```
 
 The [contradiction rule](#contradiction-detection) the message names is what "these two must not hold together" is written as.
@@ -642,7 +668,9 @@ zelph> a P279 b
 zelph> b P279 c
 zelph> c P279 d
 zelph> a P279⁺ d
-Error in line "a P279⁺ d": "⁺" and "∗" are condition operators: reachability is what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b"), or use the path condition in a rule.
+Error in line "a P279⁺ d": "⁺" and "∗" are condition operators: reachability is
+what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b"),
+or use the path condition in a rule.
 zelph> S P279⁺ d
 (S P279 d) closure one-or-more
 Answer: (a P279 d) closure one-or-more
@@ -654,18 +682,29 @@ Writing `¬` in front makes no difference to that. `¬(F)` denies a fact, and ne
 
 ```
 zelph> ¬(a P279⁺ d)
-Error in line "¬(a P279⁺ d)": "⁺" and "∗" are condition operators, and a "¬" in front does not change that: reachability is what the engine WALKS, so there is no claim of it to deny. Use the path condition in a rule, under "¬" if what you want is the absence of a path.
+Error in line "¬(a P279⁺ d)": "⁺" and "∗" are condition operators, and a "¬" in
+front does not change that: reachability is what the engine WALKS, so there is
+no claim of it to deny. Use the path condition in a rule, under "¬" if what you
+want is the absence of a path.
 zelph> ¬≈net(a p b)
-Error in line "¬≈net(a p b)": "≈" is a condition operator, and a "¬" in front does not change that: it asks what a network believes, which a rule condition can read and a statement can neither claim nor deny. Use it in a rule condition, under "¬" for the case the net does not confirm.
+Error in line "¬≈net(a p b)": "≈" is a condition operator, and a "¬" in front
+does not change that: it asks what a network believes, which a rule condition
+can read and a statement can neither claim nor deny. Use it in a rule condition,
+under "¬" for the case the net does not confirm.
 ```
 
 Nor does putting them one argument down. A plain statement has no condition slot at any depth, so all three operators are refused inside one:
 
 ```
 zelph> x mentions (≈net(a p b))
-Error in line "x mentions (≈net(a p b))": "≈" is a condition operator and has no meaning inside a plain statement: it asks what a network believes, which a rule condition can read and a statement cannot claim. Use it in a rule condition.
+Error in line "x mentions (≈net(a p b))": "≈" is a condition operator and has no
+meaning inside a plain statement: it asks what a network believes, which a rule
+condition can read and a statement cannot claim. Use it in a rule condition.
 zelph> x mentions (a P279⁺ d)
-Error in line "x mentions (a P279⁺ d)": "⁺" and "∗" are condition operators and have no meaning inside a plain statement: reachability is what the engine WALKS. On its own line "S p⁺ b" is a question and answers one; inside a rule it is a condition.
+Error in line "x mentions (a P279⁺ d)": "⁺" and "∗" are condition operators and
+have no meaning inside a plain statement: reachability is what the engine WALKS.
+On its own line "S p⁺ b" is a question and answers one; inside a rule it is a
+condition.
 ```
 
 Under `¬` in a rule _condition_ both are ordinary tests, which is the next section.
@@ -674,9 +713,15 @@ Inside a rule the three do have slots – but the slot is a whole condition, and
 
 ```
 zelph> (x q (¬(a p b))) => (c r d)
-Error in line "(x q (¬(a p b))) => (c r d)": "¬" applies to a whole condition, not to something inside one: the tag it writes is read where the condition is, and nowhere below it. Write it in front of the condition -- "(A q B, ¬(A p B)) => ...".
+Error in line "(x q (¬(a p b))) => (c r d)": "¬" applies to a whole condition,
+not to something inside one: the tag it writes is read where the condition is,
+and nowhere below it. Write it in front of the condition --
+"(A q B, ¬(A p B)) => ...".
 zelph> (A p B) => (x q (a P279⁺ d))
-Error in line "(A p B) => (x q (a P279⁺ d))": "⁺" and "∗" mark the predicate of a CONDITION, not of a fact inside one: the closure is walked for the condition itself, and a marker below it tags a fact nothing ever walks. Write the path as its own condition.
+Error in line "(A p B) => (x q (a P279⁺ d))": "⁺" and "∗" mark the predicate of
+a CONDITION, not of a fact inside one: the closure is walked for the condition
+itself, and a marker below it tags a fact nothing ever walks. Write the path as
+its own condition.
 ```
 
 An inner rule is a rule, so a [rule generator](rule-generators.md) writing `(P lifts Q) => ((X P Y, ¬(X Q Y)) => (X flagged Y))` is untouched by this: the `¬` there stands at the top of the inner rule’s own condition.
@@ -695,31 +740,35 @@ and until a fact reaches the rule there is nothing to run.
 zelph> (A prop X, A prop Y, ¬(X != Y)) => (A pair X)
 ((A prop Y), ¬(X != Y), (A prop X)) => (A pair X)
 zelph> a prop v1
-Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to require two terms to be equal.
+Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to
+require two terms to be equal.
 ```
 
 #### Stratified Evaluation
 
-A negated condition asks about _absence_ — but absence _when_? During a
-reasoning run, facts are still being derived; a negation evaluated mid-run
-could succeed merely because the matching fact had not been derived _yet_,
-and by monotonicity the resulting deduction could never be retracted. zelph
-therefore evaluates rules in **strata**:
+A negated condition inquires into _absence_ – but absence _at what time_? While a reasoning run is underway, facts continue to be derived; a negation assessed during the run might succeed merely because the matching fact had not _yet_ been derived, and zelph never retracts a derived fact, meaning the deduction would stand. zelph therefore evaluates rules in **strata**:
 
-1. **Positive stratum:** all rules without negated conditions run to
-   quiescence (fixpoint).
-2. **Deferred stratum:** rules whose conditions contain a negation at any
-   nesting depth are evaluated against that saturated state.
+1. **Positive stratum:** every rule lacking negated conditions proceeds until quiescence (fixpoint) is reached.
+2. **Deferred strata:** rules whose conditions include negation at any level of nesting are processed with respect to that saturated state, advancing one **negation level** at a time.
 
-Consequences of deferred rules may feed positive rules, so the two phases
-alternate until neither derives anything. This schedule is what makes
-negation-as-failure sound in a forward chainer: facts only accumulate, so a
-later derivation can make a negation _fail_ but never make it newly
-_succeed_ — a negation that succeeds at a stratum boundary is final.
-Both evaluation strategies (classic and semi-naive) implement the same
-schedule, and the `.semi-naive check` mode verifies their equivalence.
-How this check anchors engine development is described in
-[Internals: Measurement Methodology](internals/measurement.md).
+Results arising from deferred rules may activate positive rules, leading to alternating phases at one level until no additional derivations can be made; only then does progression to the next level start. This ordering guarantees that negation-as-failure stays sound in a forward-chaining system: facts continuously accumulate, so a later derivation may cause a negation to _fail_ but never cause it to _succeed_ anew – a negation that succeeds at a stratum boundary is final, assuming no subsequent process can derive a fact that the negation had checked for absence. In terms of logic programming, evaluation is _inflationary_ – facts are introduced only, never removed – whereas a program employing ¬ is _non-monotonic_: an additional fact may invalidate a negation and thus necessitate retracting a prior conclusion. The strata serve to harmonize these two aspects; for rules they cannot order, check mode reports a derived fact whose negated condition has come to hold.
+
+The levels guarantee precisely that. A rule depends on another when the latter is capable of generating a fact – anywhere within the depth of its conclusion – by employing a predicate that the former accesses, whether in affirmation or within a negation. A negated rule executes solely after every rule whose facts it tests under negation – either directly or via positive rules in between – has derived all possible derivations. When such facts are accessed solely in affirmation, it runs no lower than the rule that produces them, potentially at the same level, where the two alternate until neither derives anything new. Rules that negate outcomes they contribute to cannot be ordered in any way; they represent the first of the two boundaries mentioned below. In
+
+```
+zelph> (¬(:blockp A), (:start A)) => (:q A)
+((:start A), ¬(:blockp A)) => (:q A)
+zelph> (:q A) => (:blockr A)
+zelph> ((:start A), ¬(:blockr A)) => (:s A)
+(¬(:blockr A), (:start A)) => (:s A)
+zelph> :start w
+(:q w) ⇐ {(:start w) (¬(:blockp w))}
+(:blockr w) ⇐ (:q w)
+```
+
+the third rule tests `blockr`, which comes into existence solely after the first rule has derived `q`. Consequently, the third rule operates at a later level, finds `(w blockr w)`, and derives nothing.
+
+Both evaluation strategies – classic and semi-naive – implement the same execution sequence, incorporating a [rule that another rule derives](#rules-that-derive-rules) during the run: this rule is collected before the subsequent negation level execution. `.semi-naive check` examines the semi-naive aspect of this process. After the run concludes, it applies classic passes to the result and re-tests every negation that could have been invalidated by a newer fact, ensuring that any fact overlooked by delta-driven evaluation, or one dependent on a negation now holding true, is reported as an error. It does not separately execute the classic evaluator and then compare results. The manner in which this check anchors progress in engine development is described in [Internals: Measurement Methodology](internals/measurement.md).
 
 The payoff is that universally quantified conditions can be written the way
 a textbook would state them. The primality rule
@@ -728,23 +777,55 @@ a textbook would state them. The primality rule
 (N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
 ```
 
-is sound as written: it is deferred until every divisor candidate has been
-tested, so the negation quantifies over the _complete_ scan. See
-[Semantic Arithmetic](math/arithmetic.md#from-arithmetic-to-number-theory-primality)
-for the full module.
+is sound in its current form: it is deferred until all potential divisors have been evaluated, thus the negation quantifies over the _entire_ traversal. This is an argument concerning this specific program, and `.strata` does not make it: it lists the rule as non-stratifiable, due to the explanation provided at the end of this section. Refer to [Semantic Arithmetic](math/arithmetic.md#from-arithmetic-to-number-theory-primality) for the full module.
 
 Two boundaries are worth knowing:
 
-- **One negation stratum.** If a deferred rule's consequences can
-  (transitively) grow the extension of a pattern negated by _another_
-  deferred rule, the program is not stratifiable in a single layer, and
-  results within the deferred phase may depend on rule order.
-  Contradiction rules (consequence `!`) are always safe here: they derive
-  no facts.
-- **Stratification orders _derived_ facts, not your input.** Negation is
-  evaluated per run, against asserted facts as they stand. If a negated
-  pattern should be blocked by base facts, assert those facts _before_ the
-  triggering fact.
+- **Rules that negate what they help derive.** If the conclusions of a rule, through supplementary rules, can generate a fact that the rule’s own negation tests – `(A p A, ¬(A q A)) => (A r A)` together with `(A r A) => (A q A)` – the program fails to have any stratified reading. These rules operate at the same level and alternate as previously outlined. This method remains sound only when every negation is settled by facts obtained during the identical positive saturation phase, which is precisely how the identity fallback in the [simplifier](math/symbolic.md) is built; otherwise, the result depends on the order of evaluation, and with `.parallel`, this sequence can differ between runs. Contradiction rules (conclusion `!`) stay fully safe: they derive no facts at all.
+
+- **Stratification arranges _derived_ facts, not your input.** Negation is evaluated during each run, based on the asserted facts currently present. Should a negated pattern need to be blocked by base facts, assert those facts _prior_ to the triggering fact. In a typed or piped session, and in a script specified via the command line, inference runs after each statement; a module imported using `.import` executes just once, following complete reading, meaning the sequence within a module does not matter.
+
+Both boundaries may leave behind the same signature: a fact that was derived under a negation that no longer holds. `.semi-naive check` explicitly looks for this exact scenario. Upon completion of each execution, it re-evaluates every negation that could have been invalidated by a newly introduced fact, and it reports every fact whose negated condition now holds and which is not derived through any alternative route. The fact persists, as facts are only added over time. Each rule continues to be satisfied – the rule that derived the fact now has a condition that fails – but the state contains a fact that none of your rules supports any more: it is not a supported model. Three types of rule are not re-tested, since the test cannot differentiate between a fact that has been lost and one that continues to be derived: a rule featuring a [neural condition](neural.md), a rule that negates a [path condition](#transitive-path-conditions), and a rule whose path condition binds a variable that neither a fact condition nor the conclusion binds. What check mode is unable to identify is a choice between two outcomes, both of which are logically consistent. With `(:p A, ¬(:q A)) => (:r A)` and `(:p A, ¬(:r A)) => (:q A)`, `:p w` ends with either `(w r w)` or `(w q w)`, depending on the order in which the rules execute, and the rules support either outcome.
+
+`.strata` shows the levels of the rules in their current state, without executing any of them. Regarding the three rules from the example above:
+
+```
+zelph> .strata
+2 negation levels:
+Level 1:
+  ((:start A), ¬(:blockp A)) => (:q A)
+Level 2:
+  (¬(:blockr A), (:start A)) => (:s A)
+```
+
+The rule that derives `blockr` carries no negated condition and thus possesses no level; it runs whenever there is pending work. The figures correspond to those a `.run` announces as "negation level 2 of 2" once `.log -1` is active, and the rules appear exactly as `.list-rules` prints them. When rules negate their own derived outcomes, `.strata` names them, alongside the positive rules that close the cycle – before any fact exists, which occurs earlier than check mode is able to indicate:
+
+```
+zelph> (¬(:q A), (:p A)) => (:r A)
+((:p A), ¬(:q A)) => (:r A)
+zelph> (:r A) => (:q A)
+zelph> .strata
+1 negation level:
+Level 1:
+  ((:p A), ¬(:q A)) => (:r A)
+Not stratifiable, on level 1 -- these rules negate what they derive:
+  ((:p A), ¬(:q A)) => (:r A)
+  (:r A) => (:q A)
+```
+
+The analysis examines predicates rather than patterns, which means it also reports a cycle that would only be resolved by the arguments of the facts. Two shipped modules exemplify this behaviour. The gate rule in `binary-nand-arithmetic` negates `((A nand B) out 0)` and derives `((A nand B) out 1)`. The primality rule referenced earlier appears alongside the entire arithmetic set, because the rule that reports its result, `(N testprime N, N isprime N) => ((N testprime N) = prime)`, closes the cycle twice: it creates an `=` fact, which serves as the predicate for every arithmetic result the divisor scan reads, and the `(N testprime N)` within it initiates the scan. Neither element can produce a fact that the negation depends on. The `=` fact features a `testprime` term as its subject, never one of the arithmetic terms the scan reads, and `(N testprime N)` is already present, as it is the rule’s own premise. Consequently, every `hasdivisor` fact is derived before the rule’s level runs, and check mode confirms this during every run.
+
+##### Rules over predicates
+
+A [meta-rule](#meta-rules-predicates-as-first-class-nodes) features a variable in place of the predicate, meaning the analysis cannot determine which predicates it creates.
+When this variable corresponds to the predicate of a fact the rule has matched – `(R is transitive, A R B, B R C) => (A R C)`, and likewise for the symmetric and reflexive rule – the rule only extends predicates that already possess associated facts, and the levels remain unchanged: whatever is awaiting those facts is already awaiting whatever generates them.
+Which predicates the rule extends is determined by the declaration it reads, `(R is transitive)`, hence every negation is positioned after the rules that derive such declarations.
+
+A rule that takes the predicate it creates from the subject or object of a fact – such as the [opposite relations](#meta-rules-predicates-as-first-class-nodes) rule `(R "is opposite of" S, X R Y) => (Y S X)`, or a sub-property axiom `(P subpropertyof Q, X P Y) => (X Q Y)` – or that reads a second predicate variable, is considered to create every predicate.
+This kind of rule joins every negating rule it can reach into a single level, where they alternate as outlined in the first boundary description, and is listed under "Not stratifiable" in `.strata`.
+Expressed as a [rule that derives rules](#rules-that-derive-rules), `(P subpropertyof Q) => ((X P Y) => (X Q Y))`, the identical axiom maintains distinct levels, since each rule it derives explicitly names its predicates.
+
+A rule that derives a rule is considered to create whatever the rule it writes will create, which is stated in the conclusion of that rule before its existence: `(R kind gen) => ((X R Y) => (X qq Y))` is considered to create `qq` facts, hence a rule that negates `qq` depends on it, while other negations do not. When the conclusion contains a variable in the predicate position, as seen in the schemas above, it is treated as creating every possible predicate. After being written, the rule undergoes analysis just like any other, and the levels are recalculated before the subsequent level runs.
 
 ### Inequality Constraints
 
@@ -763,6 +844,7 @@ To require distinct bindings, an explicit `!=` constraint is needed.
 
 ```
 zelph> (A prop X, A prop Y, X != Y) => (A has_pair X Y)
+((A prop Y), (X != Y), (A prop X)) => (A has_pair Y X)
 zelph> a prop v
 ```
 
@@ -783,6 +865,7 @@ every one of them, `v` included, since it too differs from the new values.
 
 ```
 zelph> (P is functional, A P X, A P Y, X != Y) => !
+((A P Y), (A P X), (P is functional), (X != Y)) => !
 zelph> date_of_birth is functional
 zelph> alice date_of_birth 1990
 zelph> alice date_of_birth 1991
@@ -791,6 +874,8 @@ Found one or more contradictions!
 ```
 
 Without `!=`, the rule would also fire when the same value is entered redundantly, which is not a real conflict.
+
+The standard library’s symbolic modules guard their own results with this pattern: `(T simp A, T simp B, A != B) => !` reports a term that has reached two normal forms, and a rule with identical form reports a term possessing two raw derivatives with respect to the same variable (see [The Symbolic Layer](math/symbolic.md)).
 
 **Why `!=` matters — preventing spurious deductions:**
 
@@ -811,6 +896,7 @@ Multiple `!=` constraints can enforce pairwise distinctness, enabling constraint
 
 ```
 zelph> (A adjacent B, A color X, B color X) => !
+((B color X), (A adjacent B), (A color X)) => !
 zelph> r1 adjacent r2
 zelph> r2 adjacent r3
 zelph> r1 color red
@@ -864,14 +950,14 @@ zelph> b prop w
 zelph> a prop v1
 zelph> a prop v2
 zelph> (A prop X, A prop Y, X != Y) => (A ~ several)
+((X != Y), (A prop Y), (A prop X)) => (A ~ several)
 (a ~ several) ⇐ {(v2 != v1) (a prop v1) (a prop v2)}
 zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
+(¬(A ~ several), (A prop X)) => (X ~ sole)
 (w ~ sole) ⇐ {(¬(b ~ several)) (b prop w)}
 ```
 
-Note the order: **the facts come before the rules.** Negation is evaluated per run against the
-facts as they stand, and the graph is monotonic — with `a prop v1` alone in the graph, the
-second rule derives `v1 ~ sole`, and `a prop v2` arriving later cannot take that back.
+Observe the sequence: **facts precede rules**. Evaluation of negation occurs per run based on the current state of the facts, and a derived fact is never revoked – given only `a prop v1` in the graph, the second rule derives `v1 ~ sole`, and the subsequent arrival of `a prop v2` cannot undo this.
 
 ### Fresh Variables: Generative Rules
 
@@ -880,6 +966,7 @@ Variables that appear **only in the consequence** of a rule are treated as fresh
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (A is human) => (B nameof A)
 zelph> tim is human
 (?? nameof tim) ⇐ (tim is human)
@@ -891,12 +978,12 @@ The `??` represents a newly created node — an existential witness materialized
 It is the same node in both lines; a node the engine generated has no name to print.
 
 `.deductions all` is needed here and is not decoration.
-The default mode is `focus`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
+The default mode is `quiet`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
 The fact is derived and stored either way; only the line announcing it is suppressed.
 
-**No duplicate witnesses:** Before generating a new node, zelph checks whether the deduced facts (using the fresh variable as a wildcard) are already present. Should they be, no new deduction takes place, meaning a rule never creates a second witness for facts that already hold.
+**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence counts as present without being a fact: one whose sole variables appear only within a rule it mentions, like `k about ((C r D, C s D) => (c q d))`. A firing would write it exactly as written, which is the rule’s own text, so no firing derives it and no query answers it, and the check focuses solely on the remaining consequences. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
 
-This mechanism is fundamental for constructive reasoning, such as building new cons-list structures during arithmetic (see below).
+The arithmetic that follows requires no such thing: a rule builds a result list like `(D cons T)` using variables its conditions bound, and a fact node built from those identical components is the same node.
 
 The check does not make every generative rule terminate. A rule whose consequence meets its own condition once more, with the newly created node placed in a new position, never stops:
 
@@ -906,6 +993,35 @@ a p b
 ```
 
 derives `b p ??`, followed by a fact concerning that newly created node, then another regarding the subsequent one, indefinitely. Datalog engines employing existential rules face the same limit; preventing these rules from feeding themselves rests with the rule set.
+
+A collection literal within a consequence generates nodes too: during a firing, a collection is built for every binding of the consequence’s variables (refer to [A literal a rule derives](concepts.md#a-literal-a-rule-derives)). Building it again under the identical binding finds the same node, hence such a rule terminates provided that what it builds does not re-enter its own binding. In the rules presented below, it does, so `.run` would not return, nor would a statement typed with auto-run on; single passes illustrate the outcome:
+
+```
+zelph> .auto-run
+Auto-run is now disabled.
+zelph-> .deductions all
+Deduction printing mode: all
+  Every derivation is printed.
+zelph-> (X p Y) => (X likes @{bucket})
+zelph-> (X likes C) => (C p k)
+zelph-> b p k
+zelph-> .run-once
+...
+(b likes @{bucket}) ⇐ (b p k)
+...
+zelph-> .run-once
+...
+(@{bucket} p k) ⇐ (b likes @{bucket})
+(@{bucket} likes @{bucket}) ⇐ (@{bucket} p k)
+...
+zelph-> .run-once
+...
+(@{bucket} p k) ⇐ (@{bucket} likes @{bucket})
+(@{bucket} likes @{bucket}) ⇐ (@{bucket} p k)
+...
+```
+
+The `@{bucket}` printed here represent distinct collections: the one built for `b`, followed by the one built for that collection, and so forth. They print alike because each contains solely `bucket`. Starting from the second pass onward, each pass introduces four nodes – the `p` fact associated with the last collection, the subsequent collection featuring its member `bucket`, and the `likes` fact that refers to it – and no pass constitutes the final one. The rules define precisely this behaviour, as every newly formed collection corresponds to a new binding of `X`, and zelph evaluates them exactly as written; when a shared object is meant, a set constant or a named node explicitly indicates it, and `{bucket}` in the first rule ends the example after three deductions.
 
 ## A Predicate Logic Perspective
 
@@ -917,7 +1033,7 @@ Variables in rule conditions behave like universally quantified variables.
 The transitive-closure rule
 
 ```
-(R ~ transitive, X R Y, Y R Z) => (X R Z)
+(R is transitive, X R Y, Y R Z) => (X R Z)
 ```
 
 reads as:
@@ -926,12 +1042,11 @@ reads as:
 \forall R\, \forall X\, \forall Y\, \forall Z.\; \bigl(\text{transitive}(R) \wedge R(X,Y) \wedge R(Y,Z)\bigr) \to R(X,Z)
 \]
 
-with the caveat that quantification ranges over the current fact base (closed-world evaluation), not over all possible interpretations.
+with the caveat that quantification ranges over the current fact base (closed-world evaluation), rather than over every conceivable interpretation. `R` occupies the predicate position and is quantified, an operation that standard first-order syntax does not allow: in zelph it ranges over nodes, not over relations, thus `R(X,Y)` serves as an abbreviation for `holds(R, X, Y)` – the encoding detailed in [Prolog and Datalog](#prolog-and-datalog) – and under this interpretation the formula is first-order.
 
 ### Existential Quantification
 
-Fresh variables (those appearing only in the consequence) correspond to constructive existential quantification.
-In Skolem-function terms, each fresh variable is implicitly Skolemized relative to the universally quantified condition variables.
+Fresh variables (those present solely in the consequence) represent constructive existential quantification, assessed in the manner of the _restricted chase_ when handling existential rules: a new node is created only if no assignment of the fresh variables already makes the consequence hold (refer to [Fresh Variables](#fresh-variables-generative-rules)). Thus, the witness does not constitute a Skolem term of the condition variables: an existing node may serve as its substitute, and the order in which matches are examined not only determines which node that is but also whether a new node is created at all. With `.parallel`, this sequence differs across executions, meaning two runs on identical input may derive distinct facts (see [Deduction Output Modes](rules.md#deduction-output-modes)). In contrast, a collection constructed by a consequence is a Skolem term: its node is determined by the collection written in the rule and by the binding of the consequence’s variables, so a firing under the same binding will locate it again, and no alternative node can substitute for it.
 
 ### Conjunction
 
@@ -966,22 +1081,13 @@ answers a doubly-justified conclusion exactly once.
 
 ### Unary Predicates and Self-Facts
 
-zelph facts are subject–predicate–object triples; there is no dedicated
-arity-1 fact form. A unary predicate P(x) is therefore expressed as a
-**self-fact** — a fact whose subject and object are the same node:
+A zelph fact establishes a connection from a subject to a single object via a predicate, or to an unordered set of objects (refer to [Facts with Multiple Objects](#facts-with-multiple-objects)); there is no specific form for arity-1 facts. Consequently, a unary predicate P(x) can be expressed as a **self-fact** – a fact in which the subject and object are the identical node:
 
 ```
 x P x
 ```
 
-The term is zelph's own coinage; in graph-theoretic terms a self-fact is a
-loop at `x`, in relational terms it places `x` on the _diagonal_ of the
-binary relation `P` — asserting P(x) via x P x is the classic encoding of
-unary predicates in a formalism whose primitive is a binary relation. The
-standard library uses self-facts as _request markers_: `(N testprime N)`
-triggers the primality test, `(T simplify T)` a simplification. The
-[self-fact prefix `:`](concepts.md#the-self-fact-prefix) makes both directions
-convenient — `:testprime N` on input, and the same compact form on output.
+The term is zelph’s own coinage; in graph-theoretic terms, a self-fact corresponds to a loop at `x`, while in relational terms, it positions `x` along the _diagonal_ of the binary relation `P` – asserting P(x) through x P x represents a standard encoding of unary predicates within a formalism whose primitive is a binary relation. The alternative is class membership, `x ~ P`, which the symbolic modules use for denoting sorts (`x ~ symvar`). The standard library uses self-facts as _request markers_: `(N testprime N)` initiates a primality test, `(T simplify T)` activates simplification. The [self-fact prefix `:`](concepts.md#the-self-fact-prefix) enables bidirectional ease – `:testprime N` as input, and the identical concise form as output.
 
 A natural question, especially from a mathematical perspective: why not
 assign every operator a fixed **arity** — `simplify` unary, `+` binary — so
@@ -1058,9 +1164,7 @@ The key point: `followed-by` is a user-defined relation. zelph has no arithmetic
 
 > **Deep dive:** this section develops the addition module as a proof of concept. The dedicated page [Semantic Arithmetic](math/arithmetic.md) covers the full arithmetic system — subtraction, comparison, and multiplication — the shared architecture behind all four rule modules, the base-independence property, and the engine machinery (bound-pattern grounding, semi-naive evaluation) that makes rule-based computation fast.
 
-zelph can perform **arbitrary-precision addition** purely via graph rules.
-The reference implementation lives in [stdlib/decimal-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph).
-A second reference implementation, [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph), performs the same computation in base 2. Because the digit-level knowledge shrinks to the 16 hand-written facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, it needs no generated lookup table at all — apart from its `zelph/number` definition, it is written in pure native zelph syntax, without the Janet API. The recursion rules are identical in both scripts: they are base-agnostic, which nicely demonstrates that the base is a property of the _data_, not of the _rules_.
+zelph is capable of executing **arbitrary-precision addition** exclusively through graph rules. The rules are located in [stdlib/common-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/common-arithmetic.zph); the digit tables they access originate from a substrate module, [stdlib/decimal-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) for base 10 or [stdlib/binary-arithmetic.zph](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) for base 2. Neither script includes any rule; both import the identical recursion module. In base 2, the addition knowledge shrinks to the 16 facts of a [full adder](<https://en.wikipedia.org/wiki/Adder_(electronics)#Full_adder>) truth table, manually authored, meaning the binary module does not require any generated lookup table – except for a single Janet block at the decimal interface (handling literal conversion and display registration), it is composed entirely in native zelph syntax. The recursion rules are independent of base, clearly illustrating that the base is a property of the _data_, not of the _rules_.
 
 The algorithm consists of three parts:
 
@@ -1068,8 +1172,8 @@ The algorithm consists of three parts:
 
 For all digits `a,b ∈ {0..9}` and carry-in `c ∈ {0,1}`, two facts encode the sum and carry-out:
 
-- `((a d+ b) ci c) sum s` where `s = (a + b + c) mod 10`
-- `((a d+ b) ci c) co e` where `e = ⌊(a + b + c) / 10⌋`
+- `((a d+ b) tci c) sum s` with `s = (a + b + c) mod 10`
+- `((a d+ b) tci c) co e` with `e = ⌊(a + b + c) / 10⌋`
 
 This turns digit arithmetic into ordinary facts in the network — 200 entries total.
 
@@ -1089,7 +1193,7 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 > `<12345>`).
 
 > The intermediate states below are shown with `.deductions all`. The
-> default mode (`focus`) derives them all the same but prints only the
+> default mode (`quiet`) derives them all the same but prints only the
 > final `=` fact — see [Deduction Output Modes](rules.md#deduction-output-modes).
 
 ```
@@ -1100,37 +1204,37 @@ The rules handle three cases each for decomposition (both operands non-nil, left
 **Trigger (Rule A0):** Seeds the internal addition state with carry-in 0:
 
 ```
-((&12345  add  &98765)  ci   0 )
+((&12345 add &98765) ci 0)
 ```
 
 **Decomposition (Rules D1–D3):** Peels off least-significant digits, propagates carry:
 
 ```
-((&1234  add  &9876)  ci   1 )
-((&123  add  &987)  ci   1 )
-((&12  add  &98)  ci   1 )
-((&1  add  &9)  ci   1 )
+((&1234 add &9876) ci 1)
+((&123 add &987) ci 1)
+((&12 add &98) ci 1)
+((&1 add &9) ci 1)
 ```
 
 **Base case:** The recursion ends at `nil + nil` with carry-in 1:
 
 ```
-((( nil   add   nil )  ci   1 )  sum  &1)
+(((nil add nil) ci 1) sum &1)
 ```
 
 **Assembly (Rules As1–As3):** Constructs the result on the way back up, prepending digits via `cons`:
 
 ```
-(((&1  add  &9)  ci   1 )  sum  &11)
-(((&12  add  &98)  ci   1 )  sum  &111)
+(((&1 add &9) ci 1) sum &11)
+(((&12 add &98) ci 1) sum &111)
 ...
-(((&12345  add  &98765)  ci   0 )  sum  &111110)
+(((&12345 add &98765) ci 0) sum &111110)
 ```
 
 **Connection (Rule C0):** Exposes the result under the user-facing `=` predicate:
 
 ```
-((&12345  +  &98765)  =  &111110)
+((&12345 + &98765) = &111110)
 ```
 
 Nothing in the engine is hard-coded for addition.
@@ -1172,27 +1276,21 @@ Knowledge and computation are not separate layers.
 
 ### Comparison and Subtraction
 
-The addition pattern generalizes: both arithmetic scripts also define
-comparison and subtraction, and the recursion rules are again **byte-identical**
-between the decimal and binary script — only the digit tables differ
-(100/400 generated facts in base 10, 4/16 hand-written facts in base 2; the
-subtraction table is the truth table of a
-[full subtractor](https://en.wikipedia.org/wiki/Subtractor)).
+The addition pattern extends further: the shared recursion module additionally establishes comparison and subtraction, both of which remain unaltered across every substrate – only the digit tables vary (100/400 generated facts in base 10, 4/16 manually crafted facts in base 2; the subtraction table corresponds to the truth table of a [full subtractor](https://en.wikipedia.org/wiki/Subtractor)).
 
-**Comparison** (`N cmp M`) walks both lists LSB-first and combines a digit
-table (`dcmp`) with a dominance rule: the more significant rest decides
-unless it is `eq`, in which case the current digit pair decides. Missing
-digits are zero-extended, so lists with leading zeros compare correctly by
-value. The results are ordinary **relational facts** — `N < M`, `N > M`,
-`N == M` — and therefore compose with meta-rules like any declared fact:
+**Comparison** (`N cmp M`) walks both lists LSB-first and combines a digit table (`dcmp`) with a dominance rule: the more significant rest determines the outcome unless it is `eq`, in which case the current digit pair governs the result. In all cases, the current cells must be digits: a list that includes any cell which is not a digit fails to be a number, thus its comparison yields no result: `(<x 1> cmp &0)` does not yield a `<`, `>` or `==` fact, and `(<x 1> cmp &0) = X` returns no answer. Missing digits are zero-extended, ensuring that lists with leading zeros are compared by value accurately. The results are ordinary **relational facts** – `N < M`, `N > M`, `N == M` – and hence can be combined with meta-rules just like any explicitly stated fact:
 
     (R is transitive, A R B, B R C) => (A R C)
     > is transitive
     &30 cmp &20
+    ...
     (&30 > &20) ⇐ {((&30 lcmp &20) res gt) (&30 cmp &20)}
+    ...
     &20 cmp &10
+    ...
     (&20 > &10) ⇐ {((&20 lcmp &10) res gt) (&20 cmp &10)}
-    (&30 > &10) ⇐ {(&30 > &20) (> is transitive) (&20 > &10)}
+    ...
+    (&30 > &10) ⇐ {(> is transitive) (&20 > &10) (&30 > &20)}
 
 Computed order and declared knowledge feed the same inference engine.
 
@@ -1205,11 +1303,13 @@ which no base fact exists — the derivation simply produces no result.
 Undefinedness is encoded as the absence of a fact; no error machinery is
 involved.
 
-**Non-canonical results:** subtraction can yield lists with leading zeros
-(`&105 - &98` produces the list `<007>`). The `&`-display normalizes the
-value (`&7`), and comparison treats such lists as equal by value — but they
-remain distinct nodes. Operands are expected in the canonical form produced
-by `&`-literals.
+**Non-canonical results:** performing digit-wise subtraction may generate
+lists that begin with leading zeros (`&105 - &98` produces the raw
+difference `<007>`). This list keeps its `<...>` presentation, as the
+`&`-display mandates the canonical form; the `=` result is normalized
+(`(&105 - &98) = &7`), and comparisons evaluate such lists as equal by
+value (`(<007> cmp &7) = eq`) – yet they persist as separate nodes.
+Operands are expected in the canonical form produced by `&`-literals.
 
 ### Multiplication: Cross-Module Computation
 
@@ -1229,10 +1329,7 @@ all: rule MA1 _asserts an ordinary `+` fact_, the addition module derives its
 cascades across modules through nothing but shared facts — the same mechanism
 that lets computed comparison facts feed declared meta-rules.
 
-As with the other operations, the recursion rules are byte-identical between
-the decimal and the binary script. Since intermediate states are hash-consed
-graph nodes, partial products that share suffixes are shared automatically —
-memoization is a property of the representation, not a feature.
+Just as with the other operations, the multiplication rules are defined only once, in `common-arithmetic.zph`, and execute unchanged across every substrate. Because intermediate states are represented as hash-consed graph nodes, partial products that have common suffixes are inherently shared – memoization is a property of the representation, not an added capability.
 
 > A schema note for rule authors: all three digit tables are keyed by dedicated
 > table-carry predicates (`tci` for the addition and multiplication tables,
@@ -1257,9 +1354,10 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
 3. **Symmetric output.** The display side mirrors the input side: a script can
    register its digit alphabet via `(zelph/set-number-digits ["0" "1" ...])`
    (digit nodes or names, in ascending order of value). From then on,
-   `node_to_string` renders every properly `nil`-terminated cons list that
-   consists _solely_ of registered digit nodes as a decimal `&`-literal --
-   regardless of the internal base. `stdlib/decimal-arithmetic.zph` registers `0`–`9`,
+   `node_to_string` renders any properly `nil`-terminated cons list that
+   contains _solely_ registered digit nodes and is in canonical form (with no
+   leading zeros) as a decimal `&`-literal – regardless of the internal base.
+   `stdlib/decimal-arithmetic.zph` registers `0`–`9`,
    `stdlib/binary-arithmetic.zph` registers `0` and `1`, so both display `&5`
    for their respective internal lists `<5>` and `<101>`. Any other cons list
    -- including lists of single-character nodes that are not registered digits
@@ -1270,8 +1368,7 @@ This split keeps the philosophy intact: the _representation_ of numbers lives in
 
 ## Beyond Arithmetic
 
-The techniques demonstrated by the addition algorithm — deep unification, recursive decomposition via cons-lists, fresh variable generation, and digit-level lookup tables — are general-purpose.
-They apply whenever computation can be expressed as structure transformation over a graph.
+The methods illustrated by the addition algorithm – deep unification, recursive decomposition using cons-lists, result lists built from bound variables (hash-consed, ensuring identical lists share a single node), and lookup tables operating at the digit level – are general-purpose. They apply whenever computation can be expressed as structure transformation across a graph.
 
 ### Statements About Statements
 
@@ -1334,6 +1431,7 @@ zelph> Q4 P279 Q9
 zelph> alice member Q1
 zelph> bob member Q4
 zelph> (X member C, ¬(C P279⁺ Q3)) => (X clear-of Q3)
+((X member C), ¬((C P279 Q3) closure one-or-more)) => (X clear-of Q3)
 (bob clear-of Q3) ⇐ {(bob member Q4) (¬((Q4 P279 Q3) closure one-or-more))}
 ```
 
@@ -1356,6 +1454,7 @@ Rules with `!` as the consequence detect logical inconsistencies:
 
 ```
 zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
+((X "is opposite of" Y), (A ~ X), (X != Y), (A ~ Y)) => !
 zelph> bright "is opposite of" dark
 zelph> yellow ~ bright
 zelph> yellow ~ dark

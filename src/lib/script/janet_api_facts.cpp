@@ -26,7 +26,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/script_engine_impl.hpp"
 
 #include "network/reasoning.hpp"
-#include "network/rule_identity.hpp"
 #include "string/string_utils.hpp"
 
 #include <janet.h>
@@ -38,9 +37,45 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
+
+namespace
+{
+    // The cluster in which a rule is constructed. A cluster records precisely
+    // the nodes that were CREATED during its active phase, which is what
+    // tells a rule's own parts from the nodes it reuses.
+    const char* const kRuleScratch = "__rule";
+
+    // Whether a thunk concluded in a suspended state instead of
+    // returning a result or encountering an error.
+    bool suspended(const JanetSignal signal)
+    {
+        return signal != JANET_SIGNAL_OK && signal != JANET_SIGNAL_ERROR;
+    }
+
+    // A thunk that writes a rule executes within a C call, within the confines
+    // of the template scope. A thunk that awaits the event loop -- ev/sleep, a
+    // channel, a stream -- or yields becomes suspended at that point, and a C
+    // call cannot be resumed: the rule would vanish without a word. Nor could
+    // the scope remain open during the wait, as every other fibre of the
+    // thread would otherwise write rule text in the interim. Thus, the rule is
+    // refused.
+    [[noreturn]] void refuse_suspended_rule(const char* const caller)
+    {
+#ifdef JANET_EV
+        // The wait is registered for the root fibre: a newly assigned
+        // schedule id voids the wake-up, which would resume that fibre at
+        // whatever it does next, or, once the refusal has ended it, report a
+        // second error.
+        if (JanetFiber* const root = janet_root_fiber()) ++root->sched_id;
+#endif
+        throw std::runtime_error(std::string(caller) + ": the forms that write a rule cannot wait for the event loop or yield. "
+                                                       "Compute what they wait for before the rule, and write the rule from the result.");
+    }
+}
 
 namespace zelph
 {
@@ -144,56 +179,88 @@ namespace zelph
         return res;
     }
 
-    // Create a complete inference rule: conjunction of conditions => consequence(s).
-    // First argument: array or tuple of condition fact nodes.
-    // Remaining arguments: one or more consequence fact nodes.
-    // Returns the condition set node (the rule's identity in the graph).
+    // The rule currently present in the graph that `rule` duplicates, or
+    // 0, retrieved via the fingerprint index
+    // (Zelph::find_equivalent_rule).
     //
-    // Equivalent zelph syntax:
-    //   (*{cond1 cond2 ...} ~ conjunction) => consequence1
-    //   (*{cond1 cond2 ...} ~ conjunction) => consequence2
-    //
-    // Janet usage:
-    //   (zelph/rule [cond1 cond2] consequence1 consequence2)
-    // The rule already in the graph that `rule` duplicates, or 0.
-    //
-    // Linear in the number of rules, but a candidate is dismissed by one
-    // hash lookup and one integer compare, because each rule's fingerprint
-    // is memoized as a 64-bit hash of its shape. A hash collision costs an
-    // alpha-equivalence test that then says no -- it can never make the
-    // answer wrong, since rules_alpha_equivalent is the decision.
-    //
-    // The memo needs no invalidation: a node IS its structure, so a rule's
-    // shape is fixed for the lifetime of the process, and an entry for a
-    // rule that was removed is simply never consulted again -- the scan
-    // iterates the LIVE rule set. That set holds nothing but Causes
-    // relations, and a non-rule would map to shape 0 and be skipped anyway.
-    //
-    // All of this runs while a script is being read, never during
-    // reasoning.
+    // A rule in force takes precedence over one merely mentioned in a
+    // statement, such as the template associated with a switch next to the
+    // copy the switch claimed: the text names both, yet only the claimed one
+    // is the rule that fires. A mention is not at all equivalent to a rule
+    // being written -- removing the new rule as its duplicate would result in
+    // no rule being in force, and a rule typed after a switch that mentions
+    // it would never fire. Only when resolving a pattern (via .explain, the
+    // .prune commands) does the mention get named, since naming it is the
+    // purpose in that context.
     network::Node ScriptEngine::Impl::find_duplicate_rule(const network::Node rule)
     {
-        const auto fingerprint = [this](const network::Node n) -> std::size_t
+        return _n->find_equivalent_rule(rule, _resolving_pattern);
+    }
+
+    // A rule built while another one is being built would activate the same
+    // scratch cluster, merge it into itself upon completion, and forfeit
+    // what the outer build recorded, so the outer rule's parts would never
+    // be marked. zelph/rule* opens no build, yet when invoked there, it
+    // would build a rule of its own, in force by itself, which a failed
+    // outer call would keep. A rule nested in another is part of the outer
+    // rule's text, which the outer build writes.
+    void ScriptEngine::Impl::refuse_nested_rule(const char* const caller) const
+    {
+        if (_building_rule)
+            janet_panicf("%s: a rule cannot be built while another rule is being built. "
+                         "A rule nested in another is a part of the outer rule: write it there as a `=>` fact, "
+                         "(zelph/fact condition \"=>\" consequence), or build it before.",
+                         caller);
+    }
+
+    // The part of a rule build common to zelph/dedup-rule and
+    // zelph/build-rule: execute the thunk responsible for writing the rule
+    // into the scratch cluster, then make the cluster that was active prior
+    // -- returned via `previous` -- active again. The scratch continues to
+    // contain what the thunk created, enabling the caller to read it and
+    // subsequently either merge it into `previous` or drop it.
+    JanetSignal ScriptEngine::Impl::run_rule_build(const char* const caller, JanetFunction* const thunk, std::string& previous, Janet& out)
+    {
+        refuse_nested_rule(caller);
+
+        previous = _n->active_cluster_name();
+        _n->set_active_cluster(kRuleScratch);
+
+        // The thunk builds for the rule a rule STRUCTURE, not a claim -- refer
+        // to the revocation in janet_cfun_zelph_fact, which must remain
+        // excluded from rule construction or else a second rule mentioning the
+        // same ground statement would turn the initial rule's pattern into
+        // data. The caller marks the rule's parts within what the thunk
+        // created, thus any fact the thunk creates alongside the rule stays
+        // unmarked: a claim. A collection it writes is the rule's own, and its
+        // identifier says so for good (Zelph::enter_template_scope).
+        _building_rule = true;
+
+        JanetSignal signal = JANET_SIGNAL_OK;
         {
-            const auto it = _rule_shapes.find(n);
-            if (it != _rule_shapes.end()) return it->second;
-
-            const std::string shape = network::rule_shape(_n, n);
-            const std::size_t h     = shape.empty() ? 0 : std::hash<std::string>{}(shape);
-            _rule_shapes.emplace(n, h);
-            return h;
-        };
-
-        const std::size_t shape = fingerprint(rule);
-        if (shape == 0) return 0; // not a rule
-
-        for (const network::Node candidate : _n->get_left(_n->core.Causes))
-        {
-            if (candidate == rule) continue;
-            if (fingerprint(candidate) != shape) continue;
-            if (network::rules_alpha_equivalent(_n, rule, candidate)) return candidate;
+            const network::Zelph::TemplateScope scope(*_n);
+            signal = pcall_rooted(thunk, 0, nullptr, &out);
         }
-        return 0;
+
+        _building_rule = false;
+
+        // A scratch cluster of our own must not swallow the user's: whatever
+        // survives is handed back to the cluster that was active, so
+        // .cluster-drop still rolls a rule back with the rest of an experiment.
+        if (previous.empty())
+            _n->deactivate_cluster();
+        else
+            _n->set_active_cluster(previous);
+
+        // Nothing from a half-built rule is kept
+        // (refuse_suspended_rule).
+        if (suspended(signal))
+        {
+            _n->drop_scratch_cluster(kRuleScratch);
+            refuse_suspended_rule(caller);
+        }
+
+        return signal;
     }
 
     // Build a rule statement, and keep it only if it says something new.
@@ -212,39 +279,14 @@ namespace zelph
 
         JanetFunction* const thunk = janet_getfunction(argv, 0);
 
-        static const std::string scratch  = "__rule";
-        const std::string        previous = s_instance->_n->active_cluster_name();
-
-        // A scratch cluster of our own must not swallow the user's: whatever
-        // survives is handed back to the cluster that was active, so
-        // .cluster-drop still rolls a rule back with the rest of an experiment.
-        const auto restore = [&previous]
-        {
-            if (previous.empty())
-                s_instance->_n->deactivate_cluster();
-            else
-                s_instance->_n->set_active_cluster(previous);
-        };
-
-        s_instance->_n->set_active_cluster(scratch);
-
-        // Everything the thunk builds is rule STRUCTURE, not a claim -- see
-        // the revocation in janet_cfun_zelph_fact, which must stay out of a
-        // rule construction or a second rule mentioning the same ground
-        // statement would turn the first one's pattern into data.
-        s_instance->_building_rule = true;
-
+        std::string       previous;
         Janet             out    = janet_wrap_nil();
-        const JanetSignal signal = pcall_rooted(thunk, 0, nullptr, &out);
-
-        s_instance->_building_rule = false;
-
-        restore();
+        const JanetSignal signal = s_instance->run_rule_build("zelph/dedup-rule", thunk, previous, out);
 
         if (signal != JANET_SIGNAL_OK)
         {
-            s_instance->_n->merge_cluster(scratch, previous); // keep whatever was built
-            janet_signalv(static_cast<JanetSignal>(signal), out);
+            s_instance->_n->merge_cluster(kRuleScratch, previous); // keep whatever was built
+            janet_signalv(signal, out);
         }
 
         const network::Node rule = zelph_unwrap_node(out);
@@ -256,8 +298,8 @@ namespace zelph
             // brought into being -- which is how a GROUND pattern can be told
             // from the same statement asserted earlier. Read it before the
             // merge, which drops the bookkeeping.
-            const std::vector<network::Node> created = s_instance->_n->cluster_nodes(scratch);
-            s_instance->_n->merge_cluster(scratch, previous);
+            const std::vector<network::Node> created = s_instance->_n->cluster_nodes(kRuleScratch);
+            s_instance->_n->merge_cluster(kRuleScratch, previous);
             if (rule) s_instance->_n->mark_rule_patterns(rule, created);
             return out;
         }
@@ -265,15 +307,126 @@ namespace zelph
         // The scratch drop must not disarm the fact stores: re-entering an
         // existing rule is an ordinary thing to do, and it used to cost the
         // session its genuine-structure store. See drop_scratch_cluster.
-        s_instance->_n->drop_scratch_cluster(scratch);
+        s_instance->_n->drop_scratch_cluster(kRuleScratch);
         return zelph_wrap_node(twin);
     }
 
+    // Build a rule in the manner a parsed rule is constructed, omitting
+    // the check for duplication: the C function behind the zelph/rule
+    // macro, and the scope within which a rule manually written runs.
+    //
+    // Before a function executes, its arguments are evaluated, meaning the
+    // function cannot know which parts of a rule its call built. Instead, the
+    // macro encloses its argument forms within a thunk, which executes here
+    // within the scratch cluster. This cluster records exactly what the thunk
+    // creates -- a helper it calls included -- and the thunk executes within
+    // the template scope, so a collection it writes is the rule's own.
+    // Subsequently, the rule's ground parts are marked in the same manner as
+    // the parser marks a typed rule's: namely, the parts of each `=>` fact
+    // over the rule's condition, which corresponds to the condition set
+    // returned by the thunk (the result of the `zelph/rule` macro's builder,
+    // `janet_cfun_zelph_rule`) or the subject of the `=>` fact that the thunk
+    // returns. A rule featuring multiple consequences consists of one `=>`
+    // fact for each consequence, yet a thunk that writes them by hand returns
+    // only one of them. Any node that predated the call was not created by it
+    // and stays what it was.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_build_rule(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        JanetFunction* const thunk = janet_getfunction(argv, 0);
+
+        std::string       previous;
+        Janet             out    = janet_wrap_nil();
+        const JanetSignal signal = s_instance->run_rule_build("zelph/rule", thunk, previous, out);
+
+        if (signal != JANET_SIGNAL_OK)
+        {
+            s_instance->_n->merge_cluster(kRuleScratch, previous); // keep whatever was built
+            janet_signalv(signal, out);
+        }
+
+        // Read before the merge, which drops the accounting
+        // records.
+        const std::vector<network::Node> created = s_instance->_n->cluster_nodes(kRuleScratch);
+        s_instance->_n->merge_cluster(kRuleScratch, previous);
+
+        const network::Node result = zelph_unwrap_node(out);
+        if (result == 0) return out;
+
+        network::adjacency_set consequences;
+        const network::Node    condition = s_instance->_n->predicate_of(result) == s_instance->_n->core.Causes
+                                             ? s_instance->_n->parse_fact(result, consequences)
+                                             : result;
+
+        for (const network::Node rule : created)
+        {
+            if (s_instance->_n->predicate_of(rule) != s_instance->_n->core.Causes) continue;
+            if (rule == result || (condition != 0 && s_instance->_n->parse_fact(rule, consequences) == condition))
+                s_instance->_n->mark_rule_patterns(rule, created);
+        }
+        return out;
+    }
+
+    // Write a rule that another statement mentions: the parser encloses
+    // every `=>` located within another statement in this. The collections
+    // the thunk writes are that rule's own, just as those of a typed rule
+    // are, and their memberships are rule patterns; thus,
+    // `((X p Y) => (X q @{c})) is noted` does not answer `c in @{c}`. Within
+    // a rule under construction, the enclosing zelph/dedup-rule marks them
+    // with the rest of its parts. The mention's other ground parts retain
+    // their status: a ground rule that is mentioned may be data and a
+    // premise.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_rule_text(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+
+        JanetFunction* const thunk = janet_getfunction(argv, 0);
+
+        Janet       out    = janet_wrap_nil();
+        JanetSignal signal = JANET_SIGNAL_OK;
+        {
+            const network::Zelph::TemplateScope scope(*s_instance->_n);
+            const std::size_t                   mark = s_instance->_n->template_scope_mark();
+
+            signal = pcall_rooted(thunk, 0, nullptr, &out);
+            if (suspended(signal)) refuse_suspended_rule("zelph/rule-text");
+
+            if (signal == JANET_SIGNAL_OK && !s_instance->_building_rule)
+            {
+                const network::Node              rule    = zelph_unwrap_node(out);
+                const std::vector<network::Node> written = s_instance->_n->template_scope_collections_since(mark);
+                if (rule != 0 && !written.empty() && s_instance->_n->predicate_of(rule) == s_instance->_n->core.Causes)
+                    s_instance->_n->mark_rule_patterns(rule, written);
+            }
+        }
+
+        if (signal != JANET_SIGNAL_OK) janet_signalv(static_cast<JanetSignal>(signal), out);
+        return out;
+    }
+
+    // Create a complete inference rule: conjunction of conditions => consequence(s).
+    // First argument: array or tuple of condition fact nodes.
+    // Remaining arguments: one or more consequence fact nodes.
+    // Returns the condition set node (the rule's identity in the graph).
+    //
+    // Equivalent zelph syntax:
+    //   (*{cond1 cond2 ...} ~ conjunction) => consequence1
+    //   (*{cond1 cond2 ...} ~ conjunction) => consequence2
+    //
+    // Janet usage:
+    //   (zelph/rule* [cond1 cond2] consequence1 consequence2)
+    //
+    // The function behind zelph/rule* and the zelph/rule macro. Invoked via
+    // zelph/rule*, it receives its arguments already constructed, thus it
+    // marks nothing, and any collection within them is a value.
     Janet ScriptEngine::Impl::janet_cfun_zelph_rule(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 2, -1); // At least conditions + 1 consequence
         if (!s_instance) return janet_wrap_nil();
-        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, true);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule*", argc, argv, true);
 
         // First argument: indexed collection of condition fact nodes
         const Janet* cond_data;
@@ -306,12 +459,12 @@ namespace zelph
         if (condition_nodes.empty())
         {
             Janet res = janet_wrap_nil();
-            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, false, res);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule*", argc, argv, false, res);
             return res;
         }
 
         // Create condition set and mark as conjunction
-        network::Node condition_set = s_instance->_n->collection(condition_nodes);
+        network::Node condition_set = s_instance->_n->conjunction_collection(condition_nodes);
         s_instance->_n->fact(condition_set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
 
         // Link each consequence via =>
@@ -325,8 +478,18 @@ namespace zelph
         }
 
         Janet res = zelph_wrap_node(condition_set);
-        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule", argc, argv, false, res);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rule*", argc, argv, false, res);
         return res;
+    }
+
+    // `zelph/rule*`, refused while a rule is being built
+    // (`refuse_nested_rule`). The `zelph/rule` macro invokes
+    // `janet_cfun_zelph_rule` without enforcing this refusal, as the rule it
+    // builds there is the one being built.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_rule_star(int32_t argc, Janet* argv)
+    {
+        if (s_instance) s_instance->refuse_nested_rule("zelph/rule*");
+        return janet_cfun_zelph_rule(argc, argv);
     }
 
     // Build a cons list from string characters (for compact <abc> syntax).
@@ -498,7 +661,7 @@ namespace zelph
             conditions.insert(n);
         }
 
-        const network::Node set = s_instance->_n->collection(conditions);
+        const network::Node set = s_instance->_n->conjunction_collection(conditions);
         s_instance->_n->fact(set, s_instance->_n->core.IsA, {s_instance->_n->core.Conjunction});
 
         Janet res = zelph_wrap_node(set);

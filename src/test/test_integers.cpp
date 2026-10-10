@@ -32,10 +32,13 @@ using namespace zelph::test;
 // ---------------------------------------------------------------------------
 // Signed integer arithmetic: integer-arithmetic.zph
 //
-// Assertions are STRUCTURAL, via read-only zelph/exists probes tagged
-// with unique markers (the test_symbolic.cpp pattern): zint terms mix
-// plain atoms (rendered with surrounding spaces) and &-literals
-// (rendered attached), so expected output strings would be brittle.
+// The z-operations are validated using read-only zelph/exists probes,
+// identified by unique markers (following the test_symbolic.cpp
+// pattern), verifying the presence of expected = and relational facts
+// and ensuring the absence of wrong ones. The facade cases add answer
+// lines, compared via answers_contain (which normalizes spacing and
+// the self-fact sugar), and enforce exact answer counts when silence is
+// significant.
 //
 // Everything runs across all three arithmetic modules: the integer
 // layer delegates every magnitude computation to the loaded natural
@@ -310,21 +313,47 @@ TEST_CASE("integers: uniform operator facade on shared predicates (all arithmeti
             interactive.process(R"js(%(let [t (zelph/fact (zp "2") "+" (zn "5"))] (string "ZFAC-ADD-" (zelph/exists t "=" (zn "3")))))js");
             CHECK(any_output_contains(collector, "ZFAC-ADD-true"));
         }
-        SUBCASE("- routes to z-: ((-2) - (-5)) = +3")
+        SUBCASE("- routes to z-: ((-2) - (-5)) = 3, the natural numeral")
         {
+            // A nonnegative result is exposed as the natural numeral, not as
+            // (pos zint N): one node per value spanning N and Z, ensuring
+            // that no consumer of = facts meets the same value more than
+            // once.
             interactive.process("(neg zint &2) - (neg zint &5)");
             interactive.run(true, false, false);
             collector.clear();
-            interactive.process(R"js(%(let [t (zelph/fact (zn "2") "-" (zn "5"))] (string "ZFAC-SUB-" (zelph/exists t "=" (zp "3")))))js");
-            CHECK(any_output_contains(collector, "ZFAC-SUB-true"));
+            interactive.process(R"js(%(let [t (zelph/fact (zn "2") "-" (zn "5"))] (string "ZFAC-SUB-" (zelph/exists t "=" (zelph/number "3")) "-ZP-" (zelph/exists t "=" (zp "3")))))js");
+            CHECK(any_output_contains(collector, "ZFAC-SUB-true-ZP-false"));
         }
-        SUBCASE("* routes to zx: ((-3) * (-4)) = +12")
+        SUBCASE("* routes to zx: ((-3) * (-4)) = 12, the natural numeral")
         {
             interactive.process("(neg zint &3) * (neg zint &4)");
             interactive.run(true, false, false);
             collector.clear();
-            interactive.process(R"js(%(let [t (zelph/fact (zn "3") "*" (zn "4"))] (string "ZFAC-MUL-" (zelph/exists t "=" (zp "12")))))js");
-            CHECK(any_output_contains(collector, "ZFAC-MUL-true"));
+            interactive.process(R"js(%(let [t (zelph/fact (zn "3") "*" (zn "4"))] (string "ZFAC-MUL-" (zelph/exists t "=" (zelph/number "12")) "-ZP-" (zelph/exists t "=" (zp "12")))))js");
+            CHECK(any_output_contains(collector, "ZFAC-MUL-true-ZP-false"));
+        }
+        SUBCASE("a natural next to a negative is routed, in both orders")
+        {
+            // Nonnegative integers ARE identical to natural numerals, hence
+            // mixed arithmetic must recognize them as valid operands for the
+            // z-operations.
+            process_lines(interactive, R"(
+&2 + (neg zint &5)
+(neg zint &2) + &5
+&7 - (neg zint &2)
+(neg zint &2) * &3
+)");
+            collector.clear();
+            interactive.process("(&2 + (neg zint &5)) = X");
+            interactive.process("((neg zint &2) + &5) = X");
+            interactive.process("(&7 - (neg zint &2)) = X");
+            interactive.process("((neg zint &2) * &3) = X");
+            CHECK(collect_answers(collector).size() == 4);
+            CHECK(answers_contain(collector, "(&2 + (neg zint &5)) = (neg zint &3)"));
+            CHECK(answers_contain(collector, "((neg zint &2) + &5) = &3"));
+            CHECK(answers_contain(collector, "(&7 - (neg zint &2)) = &9"));
+            CHECK(answers_contain(collector, "((neg zint &2) * &3) = (neg zint &6)"));
         }
         SUBCASE("cmp routes to zcmp: relational fact plus = bridge")
         {
@@ -336,12 +365,273 @@ TEST_CASE("integers: uniform operator facade on shared predicates (all arithmeti
             CHECK(any_output_contains(collector, "ZFAC-CMPR-true"));
             CHECK(any_output_contains(collector, "ZFAC-CMPB-true"));
         }
+        SUBCASE("a signed zero compares equal to zero, in every shape")
+        {
+            // The value (neg zint &0) arises from no rule but is permitted as
+            // input. It was treated as a negative number, and determining a
+            // comparison with a negative number relies solely on the sign, both
+            // in zcmp and in the facade's former rule for comparing a natural
+            // number against a negative one: (&0 cmp (neg zint &0)) answered
+            // gt, and the relational fact (&0 > (neg zint &0)) was derived. The
+            // facade now lifts a negative operand whose magnitude is zero to
+            // the zero (pos zint &0) before forwarding it. Assessing the
+            // magnitude by value results in (neg zint <0 0>) being zero as
+            // well.
+            process_lines(interactive, R"(
+&0 cmp (neg zint &0)
+(neg zint &0) cmp &0
+(pos zint &0) cmp (neg zint &0)
+(neg zint &0) cmp (neg zint &0)
+&0 cmp (neg zint <0 0>)
+&3 cmp (neg zint &0)
+(neg zint &0) cmp (neg zint &3)
+(neg zint &3) cmp (neg zint &0)
+(pos zint <1 0>) cmp (neg zint &1)
+)");
+            collector.clear();
+            process_lines(interactive, R"(
+(&0 cmp (neg zint &0)) = R
+((neg zint &0) cmp &0) = R
+((pos zint &0) cmp (neg zint &0)) = R
+((neg zint &0) cmp (neg zint &0)) = R
+(&0 cmp (neg zint <0 0>)) = R
+(&3 cmp (neg zint &0)) = R
+((neg zint &0) cmp (neg zint &3)) = R
+)");
+            CHECK(collect_answers(collector).size() == 7);
+            CHECK(answers_contain(collector, "(&0 cmp (neg zint &0)) = eq"));
+            CHECK(answers_contain(collector, "((neg zint &0) cmp &0) = eq"));
+            CHECK(answers_contain(collector, "((pos zint &0) cmp (neg zint &0)) = eq"));
+            CHECK(answers_contain(collector, "((neg zint &0) cmp (neg zint &0)) = eq"));
+            CHECK(answers_contain(collector, "(&0 cmp (neg zint <00>)) = eq"));
+            CHECK(answers_contain(collector, "(&3 cmp (neg zint &0)) = gt"));
+            CHECK(answers_contain(collector, "((neg zint &0) cmp (neg zint &3)) = gt"));
+
+            collector.clear();
+            interactive.process(R"js(%(string "ZFAC-SZ-EQ-" (zelph/exists (zelph/number "0") "==" (zn "0"))))js");
+            interactive.process(R"js(%(string "ZFAC-SZ-GT-" (zelph/exists (zelph/number "0") ">" (zn "0"))))js");
+            interactive.process(R"js(%(string "ZFAC-SZ-PEQ-" (zelph/exists (zp "0") "==" (zn "0"))))js");
+            CHECK(any_output_contains(collector, "ZFAC-SZ-EQ-true"));
+            CHECK(any_output_contains(collector, "ZFAC-SZ-GT-false"));
+            CHECK(any_output_contains(collector, "ZFAC-SZ-PEQ-true"));
+
+            // zcmp derives its relational facts concerning the LIFTED
+            // operands. When the lift equals the written term, that is
+            // already the fact regarding the operands as written; only an
+            // operand whose lift differs -- a signed zero, a magnitude
+            // featuring a leading zero -- depends on the rules of the
+            // zint/zint cmp route, which re-express >, <, and == for the
+            // operands as written. == is pinned above; these pin > and <.
+            // <1 0> constitutes a numeral in every substrate, including
+            // binary.
+            collector.clear();
+            interactive.process(R"js(%(string "ZFAC-SZ-RGT-" (zelph/exists (zn "0") ">" (zn "3"))))js");
+            interactive.process(R"js(%(string "ZFAC-SZ-RLT-" (zelph/exists (zn "3") "<" (zn "0"))))js");
+            interactive.process("(pos zint <1 0>) > X");
+            CHECK(any_output_contains(collector, "ZFAC-SZ-RGT-true"));
+            CHECK(any_output_contains(collector, "ZFAC-SZ-RLT-true"));
+            CHECK(answers_contain(collector, "(pos zint <01>) > (neg zint &1)"));
+        }
+        SUBCASE("arithmetic with a signed zero gives the canonical zero, never (neg zint &0)")
+        {
+            // Routed as it stood, a signed zero remained after applying the
+            // sign rules: (&3 * (neg zint &0)) and ((neg zint &0) + (neg zint
+            // &0)) both answered (neg zint &0), representing a second node for
+            // the value zero.
+            process_lines(interactive, R"(
+&3 * (neg zint &0)
+(neg zint &0) * &3
+(pos zint &3) * (neg zint &0)
+(neg zint &0) + (neg zint &0)
+(neg zint &0) + (neg zint &3)
+(neg zint &0) - (pos zint &0)
+(neg zint &0) - &0
+&5 - (neg zint &0)
+)");
+            collector.clear();
+            process_lines(interactive, R"(
+(&3 * (neg zint &0)) = X
+((neg zint &0) * &3) = X
+((pos zint &3) * (neg zint &0)) = X
+((neg zint &0) + (neg zint &0)) = X
+((neg zint &0) + (neg zint &3)) = X
+((neg zint &0) - (pos zint &0)) = X
+((neg zint &0) - &0) = X
+(&5 - (neg zint &0)) = X
+)");
+            CHECK(collect_answers(collector).size() == 8);
+            CHECK(answers_contain(collector, "(&3 * (neg zint &0)) = &0"));
+            CHECK(answers_contain(collector, "((neg zint &0) * &3) = &0"));
+            CHECK(answers_contain(collector, "((pos zint &3) * (neg zint &0)) = &0"));
+            CHECK(answers_contain(collector, "((neg zint &0) + (neg zint &0)) = &0"));
+            CHECK(answers_contain(collector, "((neg zint &0) + (neg zint &3)) = (neg zint &3)"));
+            CHECK(answers_contain(collector, "((neg zint &0) - (pos zint &0)) = &0"));
+            CHECK(answers_contain(collector, "((neg zint &0) - &0) = &0"));
+            CHECK(answers_contain(collector, "(&5 - (neg zint &0)) = &5"));
+        }
+        SUBCASE("an operand that is not a number is not routed")
+        {
+            // Each operand must pass the numeral test before being lifted. A
+            // sign by itself made &2 compare greater than (neg zint x), and
+            // (pos zint x) compare greater than (neg zint &2); and a signed
+            // zero routed as (pos zint &0) would let z-'s rule for a zero
+            // subtrahend return <x c> for (<x c> - (neg zint &0)).
+            //
+            // An atom magnitude such as the x in (neg zint x) is excluded by
+            // the (A cons R) shape of the lift rules before any test runs; a
+            // LIST magnitude is excluded solely by the numeral test, hence
+            // the four <x 1> comparisons pin the test on the zint side.
+            // Absent this, they answered by sign
+            // ((&2 cmp (neg zint <x 1>)) = gt); a + fact with such an
+            // operand remains silent even then, thus contributing no
+            // pinning here. The empty list is not a numeral either, and no
+            // facade shape accepts it.
+            process_lines(interactive, R"(
+&2 cmp (neg zint x)
+(neg zint x) + &2
+(pos zint x) cmp (neg zint &2)
+<x c> - (neg zint &0)
+(pos zint x) - (neg zint &0)
+&2 cmp (neg zint <x 1>)
+(neg zint <x 1>) cmp &2
+(neg zint <x 1>) cmp (pos zint &2)
+(pos zint <x 1>) cmp (neg zint &2)
+<> + (neg zint &3)
+<> cmp (neg zint &3)
+)");
+            collector.clear();
+            process_lines(interactive, R"(
+(&2 cmp (neg zint x)) = R
+((neg zint x) + &2) = R
+((pos zint x) cmp (neg zint &2)) = R
+(<x c> - (neg zint &0)) = R
+((pos zint x) - (neg zint &0)) = R
+(&2 cmp (neg zint <x 1>)) = R
+((neg zint <x 1>) cmp &2) = R
+((neg zint <x 1>) cmp (pos zint &2)) = R
+((pos zint <x 1>) cmp (neg zint &2)) = R
+X > (neg zint <x 1>)
+(neg zint <x 1>) < X
+(pos zint <x 1>) > X
+(nil + (neg zint &3)) = R
+(nil cmp (neg zint &3)) = R
+)");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a magnitude with a leading zero is read in canonical form")
+        {
+            // The z-operations take their operands as canonical, and z+
+            // performs the addition of two negative magnitudes without
+            // canonnum: the sum of adding (neg zint <1 0>) and (neg zint &1)
+            // appeared as a raw list within the decimal substrate. A natural
+            // <1 0> beside a signed zero lifted only to (pos zint &0) would
+            // take the path of natural addition, which keeps leading zeros.
+            process_lines(interactive, R"(
+(neg zint <1 0>) + (neg zint &1)
+<1 0> + (neg zint &0)
+(neg zint &1) - (pos zint <0 0>)
+)");
+            collector.clear();
+            process_lines(interactive, R"(
+((neg zint <1 0>) + (neg zint &1)) = X
+(<1 0> + (neg zint &0)) = X
+((neg zint &1) - (pos zint <0 0>)) = X
+)");
+            CHECK(collect_answers(collector).size() == 3);
+            CHECK(answers_contain(collector, "((neg zint <01>) + (neg zint &1)) = (neg zint &2)"));
+            CHECK(answers_contain(collector, "(<01> + (neg zint &0)) = &1"));
+            CHECK(answers_contain(collector, "((neg zint &1) - (pos zint <00>)) = (neg zint &1)"));
+        }
+        SUBCASE("a natural compared with a negative leaves no fact about the operand form")
+        {
+            // Routed through zcmp using the operand form (pos zint &2), the
+            // comparison would leave (pos zint &2) > (neg zint &3) beside &2 >
+            // (neg zint &3): two nodes for a single value on the predicates
+            // that rules over N and Z share.
+            interactive.process("&2 cmp (neg zint &3)");
+            interactive.process("(neg zint &3) cmp &2");
+            collector.clear();
+            interactive.process(R"js(%(string "ZFAC-NN-GT-" (zelph/exists (zelph/number "2") ">" (zn "3"))))js");
+            interactive.process(R"js(%(string "ZFAC-NN-LT-" (zelph/exists (zn "3") "<" (zelph/number "2"))))js");
+            interactive.process(R"js(%(string "ZFAC-NN-PGT-" (zelph/exists (zp "2") ">" (zn "3"))))js");
+            interactive.process(R"js(%(string "ZFAC-NN-PLT-" (zelph/exists (zn "3") "<" (zp "2"))))js");
+            CHECK(any_output_contains(collector, "ZFAC-NN-GT-true"));
+            CHECK(any_output_contains(collector, "ZFAC-NN-LT-true"));
+            CHECK(any_output_contains(collector, "ZFAC-NN-PGT-false"));
+            CHECK(any_output_contains(collector, "ZFAC-NN-PLT-false"));
+        }
+        SUBCASE("zelph/int reads every spelling of a negative zero as the natural zero")
+        {
+            // Only the literal -0 was recognised; -00 constructed
+            // (neg zint &0).
+            collector.clear();
+            interactive.process(R"js(%(string "ZINT-M00-" (= (zelph/int "-00") (zelph/number "0"))))js");
+            interactive.process(R"js(%(string "ZINT-M0-" (= (zelph/int "-0") (zelph/number "0"))))js");
+            interactive.process(R"js(%(string "ZINT-M05-" (= (zelph/int "-05") (zn "5"))))js");
+            CHECK(any_output_contains(collector, "ZINT-M00-true"));
+            CHECK(any_output_contains(collector, "ZINT-M0-true"));
+            CHECK(any_output_contains(collector, "ZINT-M05-true"));
+        }
         SUBCASE("division stays unrouted: a zint / fact derives nothing")
         {
+            // The facade lowers a nonnegative outcome to the natural
+            // numeral, meaning a routed quotient of two pos operands would
+            // answer &3, rather than (pos zint &3), and the probe for the
+            // zint form by itself could not detect it. Requesting any
+            // answer pins the silence.
             interactive.process("(pos zint &6) / (pos zint &2)");
+            interactive.process("(pos zint &7) mod (pos zint &2)");
             interactive.run(true, false, false);
             collector.clear();
             interactive.process(R"js(%(let [t (zelph/fact (zp "6") "/" (zp "2"))] (string "ZFAC-DIV-" (zelph/exists t "=" (zp "3")))))js");
             CHECK(any_output_contains(collector, "ZFAC-DIV-false"));
+
+            collector.clear();
+            interactive.process("((pos zint &6) / (pos zint &2)) = X");
+            interactive.process("((pos zint &7) mod (pos zint &2)) = X");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a list that is not a numeral is not compared with a negative")
+        {
+            // A natural number surpasses a negative one based solely on sign,
+            // and the facade took any cons list as a natural: <x c> compared
+            // greater than every negative integer.
+            interactive.process("&2 cmp (neg zint &1)");
+            interactive.process("<x c> cmp (neg zint &1)");
+            interactive.process("(neg zint &1) cmp <x c>");
+            collector.clear();
+            interactive.process("(&2 cmp (neg zint &1)) = R");
+            interactive.process("(<x c> cmp (neg zint &1)) = R");
+            interactive.process("((neg zint &1) cmp <x c>) = R");
+            CHECK(collect_answers(collector).size() == 1);
+            CHECK(answers_contain(collector, "(&2 cmp (neg zint &1)) = gt"));
+        }
+        SUBCASE("/ and mod with a negative operand derive nothing, in either position")
+        {
+            // The floor function, truncation, and Euclidean division yield
+            // identical results when applied to nonnegative operands --
+            // such operands are natural numerals and are divided by the
+            // natural module. Disagreement emerges immediately when either
+            // operand becomes negative, and this decision is intentionally
+            // left unresolved: until such a choice is established, neither
+            // the dividend nor the divisor can be negative.
+            process_lines(interactive, R"(
+(neg zint &7) / &2
+&7 / (neg zint &2)
+(neg zint &7) / (neg zint &2)
+(neg zint &7) mod &2
+&7 mod (neg zint &2)
+(neg zint &7) mod (neg zint &2)
+)");
+            collector.clear();
+            process_lines(interactive, R"(
+((neg zint &7) / &2) = X
+(&7 / (neg zint &2)) = X
+((neg zint &7) / (neg zint &2)) = X
+((neg zint &7) mod &2) = X
+(&7 mod (neg zint &2)) = X
+((neg zint &7) mod (neg zint &2)) = X
+)");
+            CHECK(collect_answers(collector).empty());
         } });
 }

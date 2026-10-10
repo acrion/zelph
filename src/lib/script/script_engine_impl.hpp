@@ -46,7 +46,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 namespace zelph
@@ -66,9 +65,14 @@ namespace zelph
         Janet               _zelph_peg{};
         bool                _log_janet_functions = false;
 
-        // Set while zelph/dedup-rule runs its thunk: the facts built there are a
-        // rule's patterns, not claims, so zelph/fact must not revoke a
-        // pattern marking then.
+        // Set during the execution of a rule's construction -- specifically
+        // while `zelph/dedup-rule` or `zelph/build-rule` (via the
+        // `zelph/rule` macro) runs its thunk: the facts generated within that
+        // context serve as patterns for the rule, not claims, hence
+        // `zelph/fact` must refrain from revoking a pattern marking at that
+        // time. Neither begins while it is set, nor does `zelph/rule*` run
+        // (see refuse_nested_rule), and `zelph/rule-text` leaves the marking
+        // to the build it is in.
         bool _building_rule = false;
 
         // Set while a user's Janet BLOCK runs -- `%(...)` in the REPL or in a
@@ -126,6 +130,11 @@ namespace zelph
         // statements. One buffer, set once, touches no VM state after init.
         JanetBuffer* _err_sink = nullptr;
 
+        // The reader associated with an inline `%` expression that remains
+        // open persists in a rooted state during its lifetime; null between
+        // expressions. See ScriptEngine::start_inline_janet.
+        JanetParser* _inline_reader = nullptr;
+
         // A registered syntax keyword. Two kinds share this entry, the
         // registration API (zelph/register-keyword) and the handler protocol
         // (text in, :incomplete veto, result out):
@@ -166,11 +175,6 @@ namespace zelph
         // Track variables used in the current scope/statement
         std::map<std::string, network::Node> _scoped_variables;
 
-        // Memoized rule fingerprints, see find_duplicate_rule. Keyed by node,
-        // which is a structural hash, so an entry can never go stale. 0 means
-        // "not a rule".
-        std::unordered_map<network::Node, std::size_t> _rule_shapes;
-
         // Guards the script engine's own bookkeeping (_scoped_variables,
         // _neural_nets) against concurrent access from Janet threads
         // (ev/spawn-thread). Calls INTO the reasoning engine are synchronized
@@ -207,6 +211,7 @@ namespace zelph
         void register_zelph_functions() const;
         void setup_module_paths() const;
         void setup_script_runner() const;
+        void setup_rule_macro() const;
         void setup_peg();
         void setup_numbers() const;
 
@@ -247,8 +252,13 @@ namespace zelph
         static Janet  janet_cfun_zelph_cdr(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_negate(int32_t argc, Janet* argv);
         network::Node find_duplicate_rule(const network::Node rule);
+        void          refuse_nested_rule(const char* caller) const;
+        JanetSignal   run_rule_build(const char* caller, JanetFunction* thunk, std::string& previous, Janet& out);
         static Janet  janet_cfun_zelph_dedup_rule(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_build_rule(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_rule(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_rule_star(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_rule_text(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list_chars(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_set(int32_t argc, Janet* argv);

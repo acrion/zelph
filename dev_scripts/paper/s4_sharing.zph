@@ -1,13 +1,14 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s4_sharing.zph
-# Hash-consing: EML trees are canonical DAGs. Two independently built,
-# structurally identical trees are ONE node, and the compiled (ln of x)
-# is literally that node -- shared verbatim inside every compiled tree
-# containing ln x. (If "identical-node" prints false, report back: then
-# Janet's = does not compare node identity and the probe needs rework.)
-# Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and every mode but 'all' shows only deductions
-# anchored to statements of the session, which drops most of them from a log.
+# Hash-consing: EML trees are maximally shared DAGs. When two trees are
+# constructed separately yet have the same structure, they are ONE node, and
+# the compiled (ln of x) is literally that node -- shared verbatim within
+# every compiled tree that includes ln x. (Should "identical-node" print
+# false, notify: this indicates Janet's = does not compare node identity, and
+# the probe must be revised.)
+# Evidence scripts print the FULL derivation trace: the paper quotes specific
+# deduction lines, and each mode except 'all' shows only deductions anchored
+# to session statements, thereby omitting most of them from a log.
 .deductions all
 .import decimal-arithmetic
 .import symbolic-core
@@ -22,5 +23,4 @@ y ~ symvar
 :emlcompile (ln of x)
 :emlcompile (x * y)
 :emlcompile (x / y)
-.run
 %(let [t (zelph/fact "ln" "of" "x")] (print (string "compiled-ln-shared: " (zelph/exists (zelph/fact t "emlcompile" t) "=" (lg "x")))))

@@ -97,6 +97,7 @@ namespace zelph::console
             "  .auto-run                                 – Toggle automatic execution of .run after each input; takes no argument (default: on)",
             "  .deductions [all|focus|quiet|off]         – Set the deduction printing mode (default: quiet)",
             "  .list-rules                               – List all defined inference rules",
+            "  .strata                                   – Show the negation levels of the rules, and the rules that cannot be stratified",
             "  .remove-rules                             – Remove all inference rules",
             "",
             "Editing & Removing",
@@ -144,6 +145,14 @@ namespace zelph::console
             "          statement -- 'a p', or a bare term such as '(a p b)' -- waits,",
             "          and the next statement line is appended to it.",
             "",
+            "Comments: '#' at the start of a line, or after a blank, starts a",
+            "          comment that runs to the end of the line -- behind a",
+            "          statement or a command as well. Inside a name (C#) or a",
+            "          quoted name it is text; a name that begins with '#' is quoted.",
+            "          A continuation line is still classified by its first",
+            "          character, even inside an open quoted name: '#' there",
+            "          makes it a comment line, '.' a command.",
+            "",
             "Queries:  Statements containing variables (A-Z or starting with _).",
             "          Example:",
             "          _who \"is father of\" paul",
@@ -178,11 +187,13 @@ namespace zelph::console
             "          %(zelph/fact \"Berlin\" \"is capital of\" \"Germany\")",
             "          Germany \"is located in\" Europe",
             "          %",
-            "          (let [cond (zelph/collection",
-            "                      (zelph/fact 'X \"is capital of\" 'Y)",
-            "                      (zelph/fact 'Y \"is located in\" 'Z))]",
-            "            (zelph/fact cond \"~\" \"conjunction\")",
-            "            (zelph/fact cond \"=>\" (zelph/fact 'X \"is located in\" 'Z)))",
+            "          (zelph/build-rule",
+            "            (fn []",
+            "              (let [cond (zelph/collection",
+            "                          (zelph/fact 'X \"is capital of\" 'Y)",
+            "                          (zelph/fact 'Y \"is located in\" 'Z))]",
+            "                (zelph/fact cond \"~\" \"conjunction\")",
+            "                (zelph/fact cond \"=>\" (zelph/fact 'X \"is located in\" 'Z)))))",
             "          %",
             "          (Berlin \"is located in\" Europe)",
             "            ⇐ {(Germany \"is located in\" Europe)",
@@ -222,7 +233,7 @@ namespace zelph::console
                       "disappears is re-created under the id its new components give it, folding\n"
                       "into an equal fact where the graph already holds one. Core nodes are never\n"
                       "the ones that disappear, and a variable and a non-variable cannot merge at\n"
-                      "all.\n"
+                      "all, nor can a collection of a rule's text and any other node.\n"
                       "\n"
                       "A name a rule's VARIABLE displays is not in the way: the node takes the\n"
                       "name over, the variable goes on rendering under it, and nothing merges.\n"
@@ -289,7 +300,16 @@ namespace zelph::console
 
             {".run", ".run\n"
                      "Performs full inference: repeatedly applies all rules until no new facts are derived.\n"
-                     "Deductions are printed as they are found."},
+                     "Deductions are printed as they are found.\n"
+                     "A rule that creates nodes -- through a fresh variable, a nested term or a\n"
+                     "collection literal in its consequence -- can keep the run from ending; see\n"
+                     "'Fresh Variables' in the logic documentation.\n"
+                     "The summary at the end counts matches: the bindings the unification search\n"
+                     "delivered for the rules' positive fact conditions, in every pass that scans\n"
+                     "the facts (under .semi-naive check, its safety pass as well) and in every\n"
+                     "seeded iteration. It measures work, not results, and is comparable only\n"
+                     "between runs in one evaluation mode. See 'What the run summary counts' in\n"
+                     "the rules documentation."},
 
             {".run-once", ".run-once\n"
                           "Performs a single inference pass."},
@@ -304,6 +324,14 @@ namespace zelph::console
                            "proportional to everything accumulated so far, not to what was added.\n"
                            ".run-delta removes that term: it seeds the fixpoint with the new facts\n"
                            "and lets semi-naive evaluation take it from there.\n"
+                           "That holds for the rules that can be seeded. A rule with a negated\n"
+                           "condition still takes a classic pass over the facts its positive\n"
+                           "conditions match, at each negation level of the run, and a rule that\n"
+                           "cannot be seeded (a path, neural or nested condition, a condition\n"
+                           "without exactly one predicate, or no positive fact condition at all)\n"
+                           "takes one in every iteration; their cost follows those facts, not the\n"
+                           "addition. With .import math, the simplifier's identity fallback is\n"
+                           "such a rule.\n"
                            "\n"
                            "This is only equivalent to .run when the graph already is a fixpoint of\n"
                            "the current rules -- otherwise the missing pass is exactly the one that\n"
@@ -323,28 +351,127 @@ namespace zelph::console
                          "    ? (&6 + &7)\n"
                          "    .explain\n"
                          "The same three lines work as a script file, because a script\n"
-                         "named on the command line is a session (see '.help .node').\n"
-                         "Nothing is recorded during inference: after quiescence, every\n"
-                         "derived fact has a rule instantiation whose conditions are all\n"
-                         "present, and .explain finds one by backward search (forward\n"
-                         "chaining keeps full provenance in the graph itself). Leaves are\n"
-                         "marked [axiom] (input facts); negation-as-failure premises show\n"
-                         "as ¬(...) [absent] and transitive path premises as [closure],\n"
-                         "both verified against the CURRENT graph -- a path holds by a\n"
-                         "walk, so there is no asserted fact to expand further. A shared\n"
-                         "DERIVED subproof is expanded once and referenced afterwards\n"
-                         "([see above]); repeated axioms stay written out, since [axiom]\n"
-                         "is already their complete expansion.\n"
+                         "named on the command line is a session (see '.help .node'). A\n"
+                         "tree counts as output of its root alone, so a second\n"
+                         "argument-less .explain explains the same fact again.\n"
+                         "A trailing number is max-depth when the rest of the argument\n"
+                         "names a fact the graph holds; otherwise, when the whole argument\n"
+                         "names one, it is the fact's last object. Parenthesise the pattern\n"
+                         "to say which is meant: .explain (y val 7 3) or .explain (y val 7)\n"
+                         "3.\n"
+                         "Nothing is recorded during inference: .explain rebuilds a\n"
+                         "justification by backward search, from the rules in force and the\n"
+                         "facts the graph holds NOW. A derived fact has one as long as its\n"
+                         "premises stay and its negated premises stay absent. It loses it\n"
+                         "when a premise is removed (.prune-facts, .prune-nodes, .remove),\n"
+                         "when its rule is removed (.remove-rules), or when a later fact\n"
+                         "makes a negated premise hold (check mode reports that case); the\n"
+                         "fact itself stays. A rule that a statement only mentions -- the\n"
+                         "template inside a rule generator -- is not in force, here as in\n"
+                         "the forward direction. The labels of a tree:\n"
+                         "  [axiom]  no consequence of a rule in force matches the fact:\n"
+                         "      an input fact, or a derived one whose rule is gone.\n"
+                         "  [axiom; negated by a rule]  the same, for a fact that some\n"
+                         "      rule reads under a negation.\n"
+                         "  [asserted; no derivation found]  the fact holds, a rule's\n"
+                         "      consequence matches it, and the search rebuilt no\n"
+                         "      instantiation that holds: an input fact that a general\n"
+                         "      rule could also derive, a derived fact that lost its\n"
+                         "      justification, or a fact on a cycle (below).\n"
+                         "  [rule pattern; not asserted]  the queried node exists only\n"
+                         "      because a rule was written with it as a ground pattern;\n"
+                         "      such a node is never a premise.\n"
+                         "  [rule mentioned; not in force]  a queried rule that a\n"
+                         "      statement mentions (above). It may have been typed as\n"
+                         "      well, since a statement can name a typed rule itself:\n"
+                         "      (G => H) => ((G => H) is seen) derives one for each typed\n"
+                         "      ground rule, which then no longer fires. As a premise, a\n"
+                         "      mentioned rule is labelled like any fact.\n"
+                         "  ¬(...) [absent]  a negation-as-failure premise, verified\n"
+                         "      against the current graph -- a negated path condition\n"
+                         "      by a walk that finds no path.\n"
+                         "  [closure]  a transitive path premise: it holds by a walk. A fact\n"
+                         "      the walk steps over is printed below it where its proof\n"
+                         "      ends at a member of a cycle (below).\n"
+                         "  [see above]  a derived fact expanded at an earlier line. Where\n"
+                         "      the depth limit cut that expansion, the fact is expanded\n"
+                         "      once more where it stands highest in the tree. Repeated\n"
+                         "      axioms stay written out: [axiom] is their whole expansion.\n"
+                         "  … [depth limit]  a derived fact at the depth limit: not\n"
+                         "      expanded.\n"
+                         "  [one of several justifications]  on the root only (below).\n"
+                         "Facts whose derivations run through each other are resolved\n"
+                         "together. When the fact through which the search entered such a\n"
+                         "cycle has no derivation that does not run back through the cycle,\n"
+                         "it shows the first instantiation found for it on other members,\n"
+                         "and those of them without a derivation of their own end the proof\n"
+                         "as '[asserted; no derivation found]': in this vocabulary\n"
+                         "'asserted' means 'holds in the graph', and every derivation found\n"
+                         "for them runs back through the cycle. Without provenance nothing\n"
+                         "tells which member was asserted, so such a leaf may be a derived\n"
+                         "fact, and an asserted fact asked about shows one step to other\n"
+                         "members. No derivation that travels around a cycle is printed,\n"
+                         "and no tree shows a fact below itself, at any depth.\n"
+                         "A path condition is printed as one '[closure]' line. The facts its\n"
+                         "walk steps over count as premises of the step: one that a rule\n"
+                         "concludes is searched like any premise, and one being searched\n"
+                         "makes the step wait for it, unless a proof of it whose leaves are\n"
+                         "all axioms is found already. Such a fact is printed below the\n"
+                         "[closure] line where its proof ends at a member of a cycle printed\n"
+                         "as '[asserted; no derivation found]' (above), and is not printed\n"
+                         "otherwise. It stands two levels below the step, and the depth\n"
+                         "limit cuts it like any premise. The walk taken is a shortest one\n"
+                         "around the facts being searched. Where every walk needs one of\n"
+                         "them, further instantiations take, for each of them, the walk that\n"
+                         "leaves it out. A walk over a fact that turns out to be searched\n"
+                         "only when the step reaches it, and that makes the step wait, is\n"
+                         "followed by the walk around that fact, as long as there is one, at\n"
+                         "most 32 times for one path condition; several path conditions with\n"
+                         "several walks each make at most 64 instantiations.\n"
+                         "The search stops at the first justification it can rebuild,\n"
+                         "preferring one whose leaves are all axioms. The root line says\n"
+                         "'[one of several justifications]' when a further instantiation\n"
+                         "holds whose premises are grounded without the root. It is never\n"
+                         "said of one that rests on the root. A premise counts when the\n"
+                         "search grounded it without the root, so one that holds only as\n"
+                         "asserted and that the root also derives does not count: nothing\n"
+                         "tells the two apart. Nor is it said where finding the further\n"
+                         "instantiation takes more work than the proof shown took, and at\n"
+                         "least a fixed amount; the root then looks no further.\n"
                          "A rule carrying a neural condition is NOT used by the backward\n"
                          "search: a network confidence is not a structural premise, so\n"
                          "a fact derived only through one is reported as 'no derivation\n"
                          "found'. The forward direction is unaffected -- the deduction\n"
                          "line names the tag fact (pattern nn net) as its premise.\n"
-                         "max-depth defaults to 3 levels below the fact; 0 means\n"
-                         "unlimited. The search stops at the first justification it\n"
-                         "can rebuild; when a second one exists, the root line says\n"
-                         "'[one of several justifications]'. Term islands work inside\n"
-                         "the pattern: .explain $( x*x ) diffby x = D is invalid, but\n"
+                         "max-depth defaults to 4; 0 means unlimited. Under a limit the tree\n"
+                         "is the top of the complete proof: a derived fact max-depth levels\n"
+                         "below the root is printed with '… [depth limit]' and not expanded,\n"
+                         "nothing below it is printed, and every fact above it has the\n"
+                         "derivation and the label it has without the limit. The complete\n"
+                         "proof is searched once per fact. When finding a proof of the\n"
+                         "queried fact whose leaves are all axioms takes more than a fixed\n"
+                         "amount of work -- about 0.2 s, what a proof of 5 000 facts on the\n"
+                         "arithmetic modules takes -- the search runs again within the limit\n"
+                         "instead, and a note above the tree says so. That search does not\n"
+                         "go beyond the limit, and a fact met again higher up than any\n"
+                         "search of it so far is searched again from there, so it is\n"
+                         "expanded as far as the limit allows -- at most max-depth searches\n"
+                         "per fact. Three cases keep a result found deeper down: where every\n"
+                         "derivation the search finds from the higher position runs through\n"
+                         "facts above it; where a result found earlier would show the fact\n"
+                         "being searched below itself and the fact has used up its searches;\n"
+                         "and where an instantiation found while another fact of the same\n"
+                         "cycle was searched holds the earlier result. The fact may then be\n"
+                         "cut above the limit, or, when no other derivation is found,\n"
+                         "printed as '[asserted; no derivation found]' although it has a\n"
+                         "derivation within the limit, in one place of the tree and expanded\n"
+                         "in another. A premise at the limit counts as justified there, also\n"
+                         "when the annotation is decided.\n"
+                         "A proof more than 5000 levels deep is not printed whole: the\n"
+                         "command says so, and a max-depth of 5000 or less prints its top\n"
+                         "levels.\n"
+                         "Term islands work inside the pattern:\n"
+                         ".explain $( x*x ) diffby x = D is invalid, but\n"
                          ".explain ($( x*x ) diffby x) = (x + x) resolves as usual.\n"
                          "A collection literal @{...} is the one printed form that cannot\n"
                          "be pasted back: each literal builds a NEW container, so it can\n"
@@ -374,9 +501,13 @@ namespace zelph::console
                             "and the command still exits as if it had worked. Export from the run that\n"
                             "does the deriving, or start from .new. The same property means only the\n"
                             "FIRST derivation of a fact is written -- one justification per fact, not\n"
-                            "all of them. Contradictions are the exception and repeat, so that a second\n"
-                            "run does not hand back an empty file: count them by deduplicating on the\n"
-                            "premise set, not by counting lines."},
+                            "all of them. Under .parallel, which justification comes first varies between\n"
+                            "runs, and with it the premises in the file; the conclusions do not, unless\n"
+                            "the program has rules that are not stratifiable or a rule with a fresh\n"
+                            "variable. With .parallel off, two runs write the same file.\n"
+                            "Contradictions are the exception and repeat, so that a second run does not\n"
+                            "hand back an empty file: count them by deduplicating on the premise set,\n"
+                            "not by counting lines."},
 #endif
             {".list-rules", ".list-rules\n"
                             "Lists all currently defined inference rules in readable format.\n"
@@ -387,6 +518,35 @@ namespace zelph::console
                             "neither can fire, and neither is listed here or removed by .remove-rules.\n"
                             "Nor is a rule that cannot assert what it concludes -- a container or a\n"
                             "bare name as its consequence."},
+
+            {".strata", ".strata\n"
+                        "Shows the negation levels of the current rules: the order in which the\n"
+                        "rules with a negated condition are evaluated. A level runs once every\n"
+                        "level below it is final, so a negation is tested only after the rules\n"
+                        "below have derived all they can. A rule is placed above another when it\n"
+                        "negates a fact the other can derive -- at any depth of its conclusion,\n"
+                        "and through positive rules in between -- and no lower when it reads such\n"
+                        "a fact positively. Rules without a negated condition have no level: they\n"
+                        "run whenever there is work, and are not listed under a level.\n"
+                        "Rules that negate what they derive themselves have no stratified\n"
+                        "reading. They are listed once more under \"Not stratifiable\", positive\n"
+                        "rules of the cycle included, and alternate within their level, which is\n"
+                        "sound only when each negation is settled within one positive saturation;\n"
+                        ".semi-naive check reports a fact whose negated premise has come to hold.\n"
+                        "The analysis compares predicates, not patterns, so a cycle that only the\n"
+                        "arguments break -- a rule negating (X out 0) that derives (X out 1) --\n"
+                        "is reported as well.\n"
+                        "A variable in predicate position counts as every predicate, except where\n"
+                        "a rule only extends predicates it has read, as (R is transitive, A R B,\n"
+                        "B R C) => (A R C) does: whatever derives (R is transitive) is then placed\n"
+                        "before every negation. An inverse or sub-property rule takes its\n"
+                        "predicate from an argument and counts as every predicate; written as a\n"
+                        "rule that derives rules, it keeps the levels. A rule that derives a rule\n"
+                        "counts as deriving what the conclusion of the rule it writes derives, and\n"
+                        "every predicate where that conclusion has a variable predicate; the\n"
+                        "written rule is placed on its own once it exists.\n"
+                        "The numbers are those a .run announces as \"negation level N of M\" once\n"
+                        ".log -1 is on, and the rules are printed as .list-rules prints them."},
 
             {".list-predicate-usage", ".list-predicate-usage [max_entries]\n"
                                       "Shows how often each predicate (relation type) is used, sorted by frequency.\n"
@@ -406,8 +566,9 @@ namespace zelph::console
 
             {".remove-rules", ".remove-rules\n"
                               "Deletes all inference rules from the network -- exactly what .list-rules\n"
-                              "shows, so a \"=>\" fact that is data rather than a rule stays. See\n"
-                              ".help .list-rules for where the line runs."},
+                              "shows, so a \"=>\" fact that is data rather than a rule stays. A rule\n"
+                              "that only a removed rule mentioned (the rule inside a rule generator)\n"
+                              "goes with it. See .help .list-rules for where the line runs."},
 
             {".remove", ".remove <name_or_id>\n"
                         "Removes the specified node from the network, cleaning all name mappings.\n"
@@ -590,9 +751,11 @@ namespace zelph::console
                              "variables denotes one specific fact and removes exactly that one.\n"
                              "A pattern that matches nothing changes nothing -- in particular it does\n"
                              "not create the fact it describes.\n"
-                             "Both commands remove CLAIMS. A statement that exists only as a rule's own\n"
-                             "condition or consequence is graph structure, not data, and is left alone;\n"
-                             "delete it with .remove <id> if that is really what you mean.\n"
+                             "Both commands remove CLAIMS. A statement that exists only as part of a\n"
+                             "rule's own condition or consequence is graph structure, not data, and is\n"
+                             "left alone; delete it with .remove <id> if that is really what you mean.\n"
+                             "A statement that is a claim AND part of a rule's condition or consequence\n"
+                             "loses the claim and stays as the rule's pattern: the rule stays in force.\n"
                              "Reports how many facts were removed."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
@@ -722,11 +885,13 @@ namespace zelph::console
                             "say it is incomplete.\n"
                             "\n"
                             "All facts are derived and stored regardless of the mode. Query\n"
-                            "answers, contradictions and warnings are always printed. The notice\n"
-                            "is printed on the same channel as the deduction lines it accounts\n"
-                            "for, so a redirected transcript cannot keep the gap and lose it, and\n"
-                            "a deduction written to a file by .run-export is not withheld and is\n"
-                            "not counted.\n"
+                            "answers and warnings are always printed. A contradiction's '!' line\n"
+                            "is printed in every mode but off, whatever its subject; off prints\n"
+                            "only the line \"Found one or more contradictions!\". The notice of\n"
+                            "hidden deductions is printed on the same channel as the deduction\n"
+                            "lines it accounts for, so a redirected transcript cannot keep the\n"
+                            "gap and lose it, and a deduction written to a file by .run-export is\n"
+                            "not withheld and is not counted.\n"
                             "\n"
                             "Heavy computations run several times faster with focus/quiet/off:\n"
                             "rendering large derived terms dominates the cost."},
@@ -762,18 +927,34 @@ namespace zelph::console
                             "Controls the fixpoint evaluation strategy of the reasoning engine.\n"
                             "Without argument: shows the current mode.\n"
                             "  on    – (default) delta-driven semi-naive evaluation: after a classic\n"
-                            "          first pass, each further iteration evaluates rules only against\n"
-                            "          the facts created in the previous iteration. Results are\n"
-                            "          identical to 'off'; typically much faster on rule-heavy\n"
-                            "          workloads such as the arithmetic modules.\n"
+                            "          first pass, each further iteration seeds the rules with the\n"
+                            "          facts created in the previous iteration: one condition is\n"
+                            "          bound to a new fact, the others are matched against the graph.\n"
+                            "          Rules with a negated condition run as classic passes whenever\n"
+                            "          the delta has drained, one negation level at a time (see\n"
+                            "          .strata), and the few rules whose conditions cannot be seeded\n"
+                            "          (path, neural or nested conditions) are applied classically in\n"
+                            "          every iteration. Results are identical to 'off', except where\n"
+                            "          rules negate what they derive (see .strata); typically much\n"
+                            "          faster on rule-heavy workloads such as the arithmetic modules.\n"
                             "  off   – classic naive evaluation: every iteration re-evaluates all\n"
                             "          rules against the whole graph.\n"
                             "  check – like 'on', but after the delta drains, classic verification\n"
                             "          passes run until quiescence. If any of them derives a fact the\n"
                             "          delta path missed, the run completes the fixpoint classically\n"
-                            "          and then fails with a completeness-violation error. Intended\n"
-                            "          for tests and debugging; the test suite always enables it.\n"
-                            "Single-pass runs (.run-once) and queries are unaffected by this setting."},
+                            "          and then fails with a completeness-violation error. It also\n"
+                            "          re-tests every negation a newer fact could have refuted, and\n"
+                            "          fails when a fact rests on a negated premise that now holds\n"
+                            "          and nothing else derives it -- a statement made after the\n"
+                            "          question, or rules that negate what they derive. Not\n"
+                            "          re-tested: a rule with a neural condition, a negated path\n"
+                            "          condition, or a path condition binding a variable that no\n"
+                            "          fact condition or conclusion binds. It does not run 'off'\n"
+                            "          separately and compare. Intended for tests and debugging;\n"
+                            "          the test binary enables it by default.\n"
+                            "Single-pass runs (.run-once) and queries are unaffected by this setting;\n"
+                            "after a .run-once, or a run with check mode or semi-naive evaluation\n"
+                            "off, the next check run re-tests every recorded negation."},
 
             {".contradiction-records", ".contradiction-records [on|off]\n"
                                        "Shows or disables writing each detected contradiction into the graph.\n"

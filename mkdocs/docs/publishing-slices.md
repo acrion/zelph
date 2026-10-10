@@ -20,6 +20,7 @@ next to them:
 ```
 $ cd ~/zelph
 $ zelph
+...
 zelph> .load /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin
 ...
 String pool size after load: 11423140
@@ -32,7 +33,7 @@ Saving: probabilities size=0, left size=26533048, right size=26533048
 Saving: name_of_node outer size=2, node_of_name outer size=2
 Saving: string pool size=11423140
 Saved 1114757 fact(s) of 1 predicate(s) to wikidata-20260309-all-pruned-small-P279.bin
--- 6.4 s --
+-- 6.… s --
 wikidata-> .quit
 ```
 
@@ -41,7 +42,7 @@ The result is 224 MB.
 Several predicates go into one file by listing them:
 
 ```
-wikidata> .save-predicates wikidata-20260309-all-pruned-small-P279-P31.bin P279 P31
+wikidata-> .save-predicates wikidata-20260309-all-pruned-small-P279-P31.bin P279 P31
 ```
 
 What this costs, measured on the small pruned network (26.5 million nodes, 6.0 GiB resident): **six seconds and a fraction of a GiB on top of the loaded network**. The pass is linear in the size of the network and the extra memory is one entry per retained node, so on the complete dump expect minutes rather than seconds, and a few gigabytes on top of the 224 — plan the slice as part of the same session that already has the network loaded, not as a separate load.
@@ -83,7 +84,9 @@ Three checks, in increasing strength. The first two take seconds.
 
 ```
 $ zelph
+...
 zelph> .load wikidata-20260309-all-pruned-small-P279.bin
+Auto-run has been disabled due to loading a large dataset.
 Loading network from generic file wikidata-20260309-all-pruned-small-P279.bin...
 Loading: left chunks=3, right chunks=3, nameOfNode chunks=2, nodeOfName chunks=2
 ...
@@ -111,6 +114,7 @@ Rules: 0
 ```
 zelph-> .import wikidata-classes
 zelph-> %(culprits "Q215627" "Q43229" 5)
+...
 below	class
 14498	Q703534 (employee)
 1761	Q30185

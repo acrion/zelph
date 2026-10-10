@@ -9,75 +9,144 @@
 #   .import symbolic-minus
 #   .import symbolic-integers
 #
-# NUMERIC FOLDING over Z needs no rules here at all: a red form over two
-# zint leaves IS an ordinary +/-/* fact, the facade routes it to
-# z+/z-/zx and re-exposes the result under =, and symbolic-core's SN
-# bridge adopts it -- the exact mechanism of natural constant folding.
-# This module only contributes what the facade cannot: leaf status,
-# neutral/absorbing identities against SYMBOLIC operands, negation of
-# numerals, and the N -> Z promotions.
+# ONE WORLD FOR THE NONNEGATIVE INTEGERS: a nonnegative value is always
+# represented by the natural numeral, a zint term exclusively denotes a
+# NEGATIVE value, (neg zint N) where N > 0. Every normal form generated
+# by this layer adheres to this rule, and an explicit (pos zint N) with
+# a numeral N in the input normalizes to N at the leaf.
 #
-# MIXED WORLDS: the naturals' identity rules (X + &0, X * &1, ...) and
-# the zint rules below coexist -- different zero/one nodes for different
-# number worlds. This is what lets diff.zph's natural &0/&1 seeds work
-# unchanged over Z coefficients: d((neg zint &3) * x)/dx assembles
-# ((&0 * x) + ((neg zint &3) * &1)), and the NATURAL identities reduce
-# it to (neg zint &3).
+# WHY. Using two nodes for zero and one -- &0/&1 and (pos zint &0)/(pos
+# zint &1) -- the neutral and absorbing rules of symbolic-core and their
+# zint equivalents both applied to every mixed form, yielding distinct
+# result nodes: ((pos zint &1) * &1) was rewritten to &1 and also to
+# (pos zint &1), meaning simp was two-valued. With a single node per
+# value, there remains no room for overlap: symbolic-core's rules
+# governing &0 and &1 ARE the rules for the integer zero and one, and
+# this module needs no neutral or absorbing rules of its own.
+#
+# The power's exponent is a subterm just like any other, so an
+# explicit (pos zint N) normalizes in that position as well:
+# (x ^ (pos zint &2)) simplifies to (x ^ &2).
+#
+# NUMERIC FOLDING over Z needs no rules here at all: a red form over two
+# signed numerals IS an ordinary +/-/* fact, the facade routes it to
+# z+/z-/zx and re-exposes the result under = (lowered to the natural
+# numeral when nonnegative), and symbolic-core's SN bridge adopts it --
+# the exact mechanism of natural constant folding. This module only
+# contributes what the facade cannot: leaf status, constant
+# reassociation, negation of numerals, and the N -> Z promotions.
 
 .import integer-arithmetic
 .import symbolic-minus
 
 # ---------------------------------------------------------------------------
-# Rule ZL1 -- zint leaves are their own normal forms (the SB pattern;
-# without this base case, parents of zint children would never reduce)
+# Rules ZL -- leaves, structured akin to symbolic-core's rules SB for
+# cons lists (without this base case, parents of zint children would
+# never undergo reduction). A zint is a leaf bearing its own reduced
+# form, (Z red Z). When its magnitude is a numeral, it rewrites to the
+# canonical integer corresponding to its value, a leaf and thus a
+# normal form:
+#   - (pos zint N) denotes the natural number N and rewrites to N in
+#     canonical form;
+#   - (neg zint N) rewrites to itself with N in canonical form, meaning
+#     (neg zint <01>) and (neg zint &1) represent the same normal form;
+#   - a zero magnitude, (neg zint &0) or (neg zint <00>), constitutes a
+#     zero bearing a sign it cannot possess. No stack rule generates it,
+#     yet as input it was formerly its own normal form, and the neutral
+#     and absorbing rules met it with the natural zero: ((neg zint &0) +
+#     &0) answered both (neg zint &0) and &0. It rewrites to the natural
+#     &0.
+# A zint whose magnitude is not a numeral undergoes no rewrite and
+# remains its own normal form by virtue of the identity fallback, just
+# as a list that is not a numeral does. A zint whose sign is neither pos
+# nor neg lacks a reduced form and a normal form, much like an
+# undeclared atom. The numeral test comes first because canon strips
+# trailing zero cells from any list.
 # ---------------------------------------------------------------------------
-((G zint N) needssimp (G zint N)) => ((G zint N) simp (G zint N))
+((pos zint N) needssimp (pos zint N)) => ((pos zint N) red (pos zint N))
+((neg zint N) needssimp (neg zint N)) => ((neg zint N) red (neg zint N))
+((G zint (A cons R)) needssimp (G zint (A cons R)))
+=> ((A cons R) needsnumeral (A cons R))
+((G zint (A cons R)) needssimp (G zint (A cons R)), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((pos zint (A cons R)) needssimp (pos zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N)
+=> ((pos zint (A cons R)) rw N)
+((neg zint (A cons R)) needssimp (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N, N != &0)
+=> ((neg zint (A cons R)) rw (neg zint N))
+((neg zint (A cons R)) needssimp (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum &0)
+=> ((neg zint (A cons R)) rw &0)
 
 # ---------------------------------------------------------------------------
-# Rule ZD1 -- Shape domain for differentiation (diff.zph rules DS): a zint
-# numeral is a LEAF whose derivative is known to be zero, so the constancy
-# fallback may apply to it. Inert without diff.zph -- no dstate fact exists
-# then -- exactly like symbolic-minus.zph's differentiation extension.
+# Rules ZD1 -- Differentiation leaf (diff.zph rules DB): a zint numeral is
+# a LEAF whose derivative is zero. Inert without diff.zph -- no dstate
+# fact exists then -- exactly like symbolic-minus.zph's differentiation
+# extension.
+#
+# The magnitude has to pass the numeral test defined by
+# common-arithmetic. A zint whose magnitude fails to be a numeral
+# resides beyond the vocabulary; without the guard, it was taken as a
+# constant, and d(x * (pos zint x))/dx answered (pos zint x), where
+# silence is owed -- this was also v1.0.1's answer.
 # ---------------------------------------------------------------------------
-((G zint N) dstate X) => ((G zint N) ddom (G zint N))
+((G zint (A cons R)) dstate X) => ((A cons R) needsnumeral (A cons R))
+
+((pos zint (A cons R)) dstate X, X ~ symvar, (A cons R) isnumeral true)
+=> (((pos zint (A cons R)) wrt X) deriv &0)
+
+((neg zint (A cons R)) dstate X, X ~ symvar, (A cons R) isnumeral true)
+=> (((neg zint (A cons R)) wrt X) deriv &0)
 
 # ---------------------------------------------------------------------------
-# Rules ZSR -- neutral and absorbing elements over Z numerals, both
-# orientations (mirroring symbolic-core's SR block). Conflict-free with
-# the facade fold on every all-numeral overlap: z+/zx results of
-# canonical operands are canonical, so both paths yield the same node.
+# Rules ZX -- constant reassociation over Z, the signed counterpart of
+# symbolic-core's rules SX: (m * (n * u)) folds m and n into a single
+# unit when at least one of them is negative (SX covers two naturals).
+# Signed numerals by PATTERN, as in SX: (A cons R) represents a natural,
+# (neg zint N) denotes a negative. The product K comes from the facade.
+# As in SX, the guard is positioned on the RESULT: K equals &0 precisely
+# when the natural factor does, which is the case the absorbing rules
+# (X * &0) / (&0 * X) already answer.
 # ---------------------------------------------------------------------------
-(T red (X + (pos zint &0))) => (T rw X)
-(T red ((pos zint &0) + X)) => (T rw X)
-(T red (X - (pos zint &0))) => (T rw X)
-(T red (X * (pos zint &1))) => (T rw X)
-(T red ((pos zint &1) * X)) => (T rw X)
-(T red (X * (pos zint &0))) => (T rw (pos zint &0))
-(T red ((pos zint &0) * X)) => (T rw (pos zint &0))
+(T red ((neg zint M) * ((neg zint N) * U)))
+=> ((neg zint M) * (neg zint N))
+(T red ((neg zint M) * ((neg zint N) * U)),
+ ((neg zint M) * (neg zint N)) = K, K != &1)
+=> (T rw (K * U))
 
-# ---------------------------------------------------------------------------
-# Rules ZX -- constant reassociation over Z, the zint counterpart of
-# symbolic-core's rules SX. Those match cons-list numerals by pattern, so
-# they never see a zint; this rule covers the same shape over signed
-# constants. As there, the guard sits on the RESULT: a zero product is
-# exactly the case the absorbing rules above already answer.
-# ---------------------------------------------------------------------------
-((T red ((G zint M) * ((H zint N) * U))))
-=> ((G zint M) * (H zint N))
+# (-1) * ((-1) * u) yields u: with K = &1, the rule above would
+# reconstruct (&1 * u), and that expression is not in normal form --
+# the neutral-element rule would still be applicable to it.
+(T red ((neg zint &1) * ((neg zint &1) * U))) => (T rw U)
 
-((T red ((G zint M) * ((H zint N) * U))),
- ((G zint M) * (H zint N)) = K, K != (pos zint &0))
+(T red ((neg zint M) * ((B cons S) * U)))
+=> ((neg zint M) * (B cons S))
+(T red ((neg zint M) * ((B cons S) * U)),
+ ((neg zint M) * (B cons S)) = K, K != &0)
+=> (T rw (K * U))
+
+(T red ((A cons R) * ((neg zint N) * U)))
+=> ((A cons R) * (neg zint N))
+(T red ((A cons R) * ((neg zint N) * U)),
+ ((A cons R) * (neg zint N)) = K, K != &0)
 => (T rw (K * U))
 
 # ---------------------------------------------------------------------------
-# Rules ZN -- negation of Z numerals. The nonzero case is guarded via an
-# in-system comparison so that (neg zint &0) is never produced and rw
-# stays single-valued (the zero case has its own direct rule).
+# Rules ZN -- the natural magnitude of a negative numeral is obtained by
+# negating it. (neg of (pos zint A)) needs no additional rule: the
+# child simplifies to A first, and the rules ZP that follow handle the
+# natural case.
+#
+# The magnitude must pass the numeral test. A zint whose magnitude
+# fails to be a numeral is its own normal form (rules ZL), not a
+# negative number, yet unwrapping it read it as one after all: (neg of
+# (neg zint x)) simplified to x. A numeral magnitude in the reduced form
+# is the canonical outcome generated by the leaf rules, thus the result
+# is canonical.
 # ---------------------------------------------------------------------------
-(T red (neg of (pos zint A))) => (A cmp &0)
-(T red (neg of (pos zint A)), A > &0) => (T rw (neg zint A))
-(T red (neg of (pos zint &0))) => (T rw (pos zint &0))
-(T red (neg of (neg zint A))) => (T rw (pos zint A))
+(T red (neg of (neg zint (A cons R)))) => ((A cons R) needsnumeral (A cons R))
+(T red (neg of (neg zint (A cons R))), (A cons R) isnumeral true) => (T rw (A cons R))
 
 # ---------------------------------------------------------------------------
 # Rules ZP -- N -> Z promotion: complete natural partiality.

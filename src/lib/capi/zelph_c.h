@@ -306,10 +306,13 @@ extern "C"
        run.
      *   run       - to a fixed point
      *   run_once  - a single pass
-     *   run_delta - seeded by what was created since the previous run, so the
-     *               cost follows the addition rather than the graph. That
-     *               difference is what decides whether reasoning can happen
-     *               inside a loop. */
+     *   run_delta - seeded by what was created since the previous run, meaning
+     *               that for rules able to be seeded, the cost follows the
+     *               addition instead of the graph. This distinction determines
+     *               whether reasoning can occur within a loop. A rule
+     *               featuring a negated condition or one that cannot be seeded
+     *               still takes a pass over the facts that its conditions
+     *               match. */
     ZELPH_EXPORT int32_t zelph_run(zelph_engine* engine);
     ZELPH_EXPORT int32_t zelph_run_once(zelph_engine* engine);
     ZELPH_EXPORT int32_t zelph_run_delta(zelph_engine* engine);
@@ -348,9 +351,9 @@ extern "C"
 
     /* Activate a named cluster, or deactivate tracking with a null name.
      *
-     * Nodes CREATED while a cluster is active are recorded in it, which is
-     * what makes dropping it a rollback - and what turns a monotonic graph
-     * into a workspace. */
+     * When a cluster is active, any nodes CREATED are logged within it,
+     * which is why removing the cluster is a rollback -- and this
+     * transforms a graph that otherwise only grows into a workspace. */
     ZELPH_EXPORT int32_t zelph_cluster(zelph_engine* engine, const char* name);
 
     /* The active cluster's name, or null in *out_name for the default. Free

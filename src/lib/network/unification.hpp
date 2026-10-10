@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <unordered_map>
 
 namespace zelph::network
 {
@@ -64,9 +65,39 @@ namespace zelph::network
 
     ZELPH_EXPORT PatternInfo build_pattern_info(const Zelph* n, Node condition, int log_depth);
 
+    // A node within a pattern that represents what a firing builds in its
+    // place (Reasoning::firing_stand_ins): the `term` contained in a bucket,
+    // which constitutes a single node, or -- `term` 0 -- any term a firing
+    // builds for a collection of the rule's text, a set constant included when
+    // the collection is unable to determine its kind, and the node itself
+    // where a firing might keep it.
+    struct StandIn
+    {
+        bool set_constant{false};
+        Node term{0};
+    };
+    using StandIns = std::unordered_map<Node, StandIn>;
+
     class Unification
     {
     public:
+        // `candidates` refers to the method by which a candidate fact's
+        // variables are read (Zelph::var_in_closure): either as rule text,
+        // meaning a fact whose rule text holds a variable acts as a pattern
+        // and matches nothing, or as a firing writes it -- what the check for
+        // a prior witness of a fresh variable must locate
+        // (Reasoning::consequences_already_exist).
+        //
+        // `stand_ins` names pattern nodes that represent what a firing builds
+        // in their place (StandIn): the pattern functions as a consequence,
+        // and the fact resulting from a firing holds a term where the rule
+        // holds its own collection. A stand-in carrying a term is matched and
+        // anchored on as that term; one lacking a term matches any term
+        // produced by a firing, acts as no anchor, and leaves the caller to
+        // decide by the prediction which match corresponds to the fact derived
+        // by the firing. When no map is present, each node in the pattern
+        // refers to itself. The map must persist beyond the lifetime of the
+        // Unification.
         Unification(
             Zelph*                            n,
             Node                              condition,
@@ -77,7 +108,9 @@ namespace zelph::network
             int                               log_depth,
             ReasoningProfiler*                profiler,
             Node                              seed_fact      = 0,
-            Node                              seed_predicate = 0);
+            Node                              seed_predicate = 0,
+            Zelph::VariableReading            candidates     = Zelph::VariableReading::Text,
+            const StandIns*                   stand_ins      = nullptr);
 
         // Hoisted-pattern overload (semi-naive seeding): consumes a
         // precomputed rule-static decomposition instead of re-deriving it
@@ -96,11 +129,88 @@ namespace zelph::network
             int                               log_depth,
             ReasoningProfiler*                profiler,
             Node                              seed_fact      = 0,
-            Node                              seed_predicate = 0);
+            Node                              seed_predicate = 0,
+            Zelph::VariableReading            candidates     = Zelph::VariableReading::Text,
+            const StandIns*                   stand_ins      = nullptr);
 
         std::shared_ptr<Variables> Next();
         std::shared_ptr<Variables> Unequals();
         bool                       uses_parallel() const { return _use_parallel; }
+
+        // Takes the relations and their associated candidate facts, arranged
+        // according to the sequence of their identifiers; invoke this before
+        // the first Next() call, for a sequential enumeration. If not invoked
+        // beforehand, the order corresponds to the adjacency from which the
+        // data is retrieved, which varies across parallel runs due to
+        // differing construction orders -- the forward pass remains
+        // unaffected, but a proof search that shows the first encountered
+        // instantiation (Reasoning::explain) is sensitive to this. Incurs a
+        // sorting cost for each candidate set before its first fact, unless
+        // the order is already correct. The candidates are then maintained
+        // within a list rather than a set: a set exceeding 128 elements
+        // constructs a hash index, and sorting it built that index a second
+        // time.
+        void enumerate_by_id();
+
+        // Takes, when the candidates are read at a bound node of the pattern
+        // that is an atom, only the facts where that node plays the identical
+        // role: the facts in which a bound subject functions as the subject,
+        // and those in which a bound object functions as an object
+        // (Zelph::collect_anchored_facts). All other facts cannot match:
+        // taken, each is tried and dismissed, and retained while the
+        // enumeration remains active (Reasoning::explain). A bound statement
+        // keeps every candidate: it matches a wider statement in the other
+        // role as well (see increment_fact_index).
+        void skip_candidates_in_other_roles();
+
+        // Next() returns nothing further: no match waits, the relation is
+        // the last, and every remaining candidate it holds yields nothing
+        // (yields_nothing). It inquires solely about the candidates already
+        // contained in the enumeration and reads no adjacency. False when
+        // operating in parallel mode.
+        bool exhausted();
+
+        // At most `at_most` candidate facts remain to be processed: the
+        // relation is the final one, and so many follow the current entry.
+        // False when operating in parallel mode, and before the first
+        // Next().
+        bool few_left(std::size_t at_most);
+
+        // A match of the fact Next() returned last waits (Next() will
+        // deliver it next).
+        bool has_queued();
+
+        // The relation Next() reads its candidates from now, 0 when there is
+        // none.
+        Node current_relation() const;
+
+        // Resumes from where a prior enumeration of the identical pattern
+        // under the same bindings left off: following `fact`, the candidate
+        // from which it last yielded a match, within `relation`. Call it
+        // after enumerate_by_id and before the first Next(); the order of
+        // identifiers is what makes the position one to return to. The
+        // candidates are re-read.
+        void start_after(Node relation, Node fact);
+
+        // The adjacency entries that have been read so far to find the
+        // candidate facts: the anchor's complete adjacency, the relation's
+        // associated facts, and the partial anchor's climb. A caller that
+        // bounds its work charges these elements, and the candidates that
+        // were tried without success (Reasoning::explain).
+        std::size_t scanned() const { return _scanned; }
+
+        // The candidate facts tried so far that failed to match: their
+        // subject, their objects, or their number did not align with the
+        // pattern. A rule's ground pattern and a refuted fact are skipped
+        // without being tested.
+        std::size_t fruitless() const { return _fruitless; }
+
+        // The fact the match Next() returned last was read from, or 0 when
+        // operating in parallel mode, during which multiple facts contribute
+        // matches simultaneously. The bindings do not indicate the
+        // originating fact: `(X p Y)` binds Y to b both from `a p b` and from
+        // `a p b c`.
+        Node matched_fact() const { return !_use_parallel && _fact_index_initialized ? *_fact_index : 0; }
 
         void wait_for_completion()
         {
@@ -112,7 +222,21 @@ namespace zelph::network
         }
 
     private:
-        bool                                    increment_fact_index();
+        bool increment_fact_index();
+        // A node within the pattern that represents any term (see
+        // the constructors).
+        bool matches_any(Node pattern) const;
+
+        // Next() does not accept a match from `fact` within the current
+        // relation: it skips a rule's ground pattern and a refuted fact
+        // untried, it moves past a `=>` reading where the fact holds a
+        // variable in its rule text (as verified by is_rule_text in
+        // unification.cpp), and extract_bindings rejects a reading if its
+        // subject or object includes a variable. A rule's own condition
+        // qualifies as such a fact, and when it names the node at which the
+        // candidates are read, it constitutes one of them.
+        bool                                    yields_nothing(Node fact) const;
+        std::size_t                             snapshot_size() const { return _listed ? _listed_facts.size() : _facts_snapshot.size(); }
         std::vector<std::shared_ptr<Variables>> extract_bindings(const Node subject, const adjacency_set& objects, const Node relation, const int depth) const;
 
         Zelph* const               _n;
@@ -142,6 +266,13 @@ namespace zelph::network
         ReasoningProfiler* const _prof; // nullptr = profiling disabled
         Node                     _current_rel_ctx{};
 
+        // How a candidate's variables are read (see the constructors).
+        const Zelph::VariableReading _candidates;
+
+        // See the constructors; null: each node in the pattern stands for
+        // itself.
+        const StandIns* const _stand_ins;
+
         // Parallel mode
         concurrency::ThreadPool*               _pool{nullptr};
         bool                                   _use_parallel{false};
@@ -154,8 +285,17 @@ namespace zelph::network
         // Sequential fallback
         adjacency_set::iterator _relation_index;
         adjacency_set::iterator _fact_index;
+        adjacency_set::iterator _facts_end;
         adjacency_set           _facts_snapshot;
+        std::vector<Node>       _listed_facts; // the snapshot, where it is taken by id (see enumerate_by_id)
+        bool                    _listed{false};
         bool                    _fact_index_initialized{false};
+        bool                    _by_id{false};       // see enumerate_by_id
+        bool                    _role_filter{false}; // see skip_candidates_in_other_roles
+        std::size_t             _scanned{0};         // see scanned
+        std::size_t             _fruitless{0};       // see fruitless
+        Node                    _resume_relation{0}; // see start_after
+        Node                    _resume_fact{0};
         bool                    _snapshot_prefiltered{false}; // snapshot provably contains no
                                                               // facts that use the relation as
                                                               // their SUBJECT (anchored/partial

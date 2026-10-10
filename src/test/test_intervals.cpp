@@ -149,9 +149,10 @@ TEST_CASE("intervals: what has nothing before it, via negation")
     // result follows from the rows supplied, not from what the relation
     // names suggest.
     //
-    // The negation rules are entered AFTER the facts on purpose. With
-    // auto-run every line starts a run, and a conclusion drawn while the
-    // graph was still empty is never taken back -- the engine is monotonic.
+    // The negation rules are deliberately placed AFTER the facts. Due to
+    // auto-run, each line starts a run, and any conclusion drawn while
+    // the graph remained empty is never undone -- forward chaining never
+    // retracts a fact.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, table);
@@ -191,15 +192,18 @@ TEST_CASE("intervals: a cyclic chain contradicts itself")
 
 TEST_CASE("intervals: the proof names the table row it used")
 {
-    // A derivation through a rule with three variable predicates has to
-    // reconstruct WHICH row fired, or the explanation says nothing.
+    // A derivation using a rule involving three variable predicates must
+    // reconstruct WHICH row fired, otherwise the explanation says
+    // nothing. Two rows derive (a before d) -- via (b before d) and via
+    // (a before c) -- and the search takes the instantiations in the sequence
+    // determined by the facts' ids, so either could be the one shown.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, table);
 
         collector.clear();
         interactive.process(".explain (a before d)");
-        CHECK(any_output_contains(collector, "b before d"));
+        CHECK((any_output_contains(collector, "b before d") || any_output_contains(collector, "a before c")));
         CHECK(any_output_contains(collector, "a meets b"));
         CHECK(any_output_contains(collector, "gives before"));
 

@@ -154,6 +154,7 @@ namespace zelph::console
         void cmd_run_export(const std::vector<std::string>& cmd);
 #endif
         void cmd_list_rules(const std::vector<std::string>& cmd);
+        void cmd_strata(const std::vector<std::string>& cmd);
         void cmd_remove_rules(const std::vector<std::string>& cmd);
         void cmd_auto_run(const std::vector<std::string>& cmd);
         void cmd_deductions(const std::vector<std::string>& cmd);
@@ -192,7 +193,17 @@ namespace zelph::console
 
         void explain_collection_literal(const std::vector<std::string>& parts, const std::size_t first = 1) const;
         void cmd_explain(const std::vector<std::string>& cmd);
-        void render_proof(const std::shared_ptr<network::ProofNode>& p, const std::string& indent, const bool last, std::set<network::Node>& printed, std::string& out) const;
+        // What a proof tree already shows of a derived fact: the level of its
+        // most recent expansion, whether that expansion reached the depth
+        // limit at any point beneath, and whether the fact has been expanded
+        // a second time already.
+        struct ProofExpansion
+        {
+            std::size_t level{0};
+            bool        cut{false};
+            bool        again{false};
+        };
+        void render_proof(const std::shared_ptr<network::ProofNode>& root, const std::size_t max_depth, const std::map<const network::ProofNode*, std::size_t>& shallowest, const std::set<const network::ProofNode*>& cyclic, std::string& out) const;
 
     private:
         // --- Context References ---

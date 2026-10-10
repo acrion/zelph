@@ -163,6 +163,11 @@ void console::Interactive::process_file(const std::string& file, const std::vect
     _pImpl->_command_executor->import_file(file, args, ScriptRole::Session);
 }
 
+bool console::Interactive::quit_requested() const
+{
+    return _pImpl->_repl_state->quit_requested;
+}
+
 bool console::Interactive::had_failure() const
 {
     return _pImpl->_repl_state->failed;
@@ -339,11 +344,21 @@ void console::Interactive::process(std::string line) const
         {
             state->janet_buffer += line + "\n";
 
-            if (zelph::ScriptEngine::is_expression_complete(state->janet_buffer))
+            if (_pImpl->_script_engine->continue_inline_janet(line))
             {
-                _pImpl->_script_engine->process_janet(state->janet_buffer, false);
+                // The state is left BEFORE the code runs, just as in step 5.
+                // Left after it, the code that triggered an exception kept
+                // the REPL collecting: the next line was appended to the
+                // failed code, and the entirety was executed once more,
+                // including a zelph statement. And while the code ran, the
+                // lines from a .zph module that it imported were collected
+                // as Janet code, rather than being read as the module's own
+                // statements.
+                const std::string code = std::move(state->janet_buffer);
                 state->janet_buffer.clear();
                 state->accumulating_inline_janet = false;
+
+                _pImpl->_script_engine->process_janet(code, false);
 
                 if (state->auto_run)
                     _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
@@ -353,8 +368,8 @@ void console::Interactive::process(std::string line) const
 
         std::string trimmed_utf8 = zelph::string::trim(line);
 
-        // --- 5. Mode toggle: bare '%' on a line ---
-        if (trimmed_utf8 == "%")
+        // --- 5. Mode toggle: bare '%' on a line, a comment behind it allowed ---
+        if (trimmed_utf8 == "%" || zelph::string::trim(zelph::string::strip_comments(trimmed_utf8)) == "%")
         {
             if (state->script_mode == ScriptMode::Janet)
             {
@@ -395,7 +410,7 @@ void console::Interactive::process(std::string line) const
 
             if (janet_code.empty()) return;
 
-            if (zelph::ScriptEngine::is_expression_complete(janet_code))
+            if (_pImpl->_script_engine->start_inline_janet(janet_code))
             {
                 _pImpl->_n->profiler_reset_epoch();
                 _pImpl->_script_engine->process_janet(janet_code, false);
@@ -440,22 +455,46 @@ void console::Interactive::process(std::string line) const
         }
 
         // --- 9. zelph mode: accumulate until statement is complete, then parse ---
+        //
+        // A statement commences at the position where the preceding scan
+        // identified the line's first character. Started at byte 0, an
+        // invisible space located before it -- such as a byte order mark --
+        // was incorporated into the first name, meaning the first fact in a
+        // file saved with such a mark referred to a node that no query
+        // seeking its subject could find; a no-break space, which cannot be
+        // present in a bare name, caused the line to be treated as a syntax
+        // error instead. 9a also reads the statement from this point, so a
+        // '?' behind such a space serves as the result-query prefix. The
+        // price: a name that starts with an invisible space retains that
+        // space as the first name of a statement only when enclosed in
+        // quotes; when written bare, it discards the space and refers to a
+        // different node. A continuation line is appended exactly as it
+        // appears, since it might extend a quoted name.
         if (state->accumulating_zelph)
             state->zelph_buffer += "\n" + line;
         else
-            state->zelph_buffer = line;
+            state->zelph_buffer = line.substr(first_char_pos);
 
-        if (!zelph::ScriptEngine::is_zelph_complete(state->zelph_buffer))
+        // Before anything counts the statement's components, the entire
+        // buffer undergoes removal of comments in one go, rather than
+        // processing each line individually: a quoted name can span multiple
+        // lines, and a '#' within such a name is treated as literal text.
+        // Despite this, a continuation line remains categorized by its first
+        // character: a line starting with '#' is never included in this
+        // buffer, while one beginning with '.' runs as a command (steps 1
+        // and 2), even when located within an open quoted name.
+        std::string complete_stmt = zelph::string::strip_comments(state->zelph_buffer);
+        if (!zelph::ScriptEngine::is_zelph_complete(complete_stmt))
         {
             state->accumulating_zelph = true;
             return;
         }
 
-        std::string complete_stmt = state->zelph_buffer;
+        const bool several_lines = state->zelph_buffer.find('\n') != std::string::npos;
         state->zelph_buffer.clear();
         state->accumulating_zelph = false;
 
-        if (complete_stmt != line)
+        if (several_lines)
         {
             // Written as one logical line, which is how the same statement
             // would have been typed without the line breaks.
@@ -473,14 +512,20 @@ void console::Interactive::process(std::string line) const
         // and prints the answers. No answer means no result was derivable:
         // partiality by absence, as everywhere in the stdlib.
         //
-        // Quietness is enforced on the OUTPUT layer, not via run() flags: pass 1
-        // swaps in a handler that drops the Out and Diagnostic channels (echo,
-        // premature answers, deduction traces, skipped summaries) and forwards
-        // everything else, so errors and warnings stay visible. Known trade-off:
-        // a contradiction DERIVED during pass 1 prints its "!" line into the
-        // void; it remains queryable. The echo of the internal rewritten query
-        // is suppressed in both passes via quiet_depth -- the user sees exactly
-        // the Answer lines.
+        // On the OUTPUT layer, silence is enforced without relying on run()
+        // flags: during pass 1, a handler is substituted that drops the Out and
+        // Diagnostic channels (echo, premature answers, deduction traces,
+        // skipped summaries) and routes all other content onward, ensuring that
+        // errors and warnings stay visible -- and likewise, the lines marked as
+        // findings: a contradiction pass 1 derives prints just as it would after
+        // any other line in this deduction mode, and so does check mode's list
+        // of facts that lost their justification. Before being marked, both
+        // entries vanished into the void along with the trace: a `?` over a
+        // declaration assigning a term a second normal form answered with both
+        // forms without a "!", although the simplifier's rule that simp is
+        // single-valued had fired. The echo of the internal rewritten query is
+        // suppressed in both passes through quiet_depth -- the user observes
+        // only the Answer lines and the findings.
         {
             const size_t q = complete_stmt.find_first_not_of(" \t\r\n");
             if (q != std::string::npos && complete_stmt[q] == '?'
@@ -532,7 +577,7 @@ void console::Interactive::process(std::string line) const
                     {
                         network::Reasoning* n;
                         io::OutputHandler   original;
-                        explicit QuietOutput(network::Reasoning* r)
+                        explicit QuietOutput(network::Reasoning* r, const bool contradictions)
                             : n(r)
                             , original(r->get_output_handler())
                         {
@@ -540,14 +585,20 @@ void console::Interactive::process(std::string line) const
                                 [orig = original](const io::OutputEvent& event)
                                 {
                                     if (!orig) return;
-                                    if (event.channel == io::OutputChannel::Out
-                                        || event.channel == io::OutputChannel::Diagnostic)
+                                    if ((event.channel == io::OutputChannel::Out
+                                         || event.channel == io::OutputChannel::Diagnostic)
+                                        && !event.finding)
                                         return;
                                     orig(event);
                                 });
+                            n->set_contradictions_printed(contradictions);
                         }
-                        ~QuietOutput() { n->set_output_handler(std::move(original)); }
-                    } quiet_out{_pImpl->_n.get()};
+                        ~QuietOutput()
+                        {
+                            n->set_contradictions_printed(false);
+                            n->set_output_handler(std::move(original));
+                        }
+                    } quiet_out{_pImpl->_n.get(), state->deduction_mode != DeductionMode::Off};
 
                     // The REQUEST itself is asserted first, not merely
                     // materialized as the subject of the rewritten query.

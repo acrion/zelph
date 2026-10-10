@@ -167,3 +167,28 @@ TEST_CASE("JSON unescaping covers the whole escape set")
     CHECK(unescape("a\\\\\\u0041") == "a\\A");
     CHECK(unescape("a\\\\nb") == "a\\nb");
 }
+
+TEST_CASE("wikidata example: a multi-word name is one node, so the transitivity rule applies")
+{
+    // stdlib/examples/wikidata/wikidata.zph, cited in wikidata.md, stated
+    // that `"has quality" ~ transitive relation`: without quotes, the name
+    // consists of two objects, `transitive` and `relation`, and the rule
+    // applying to `R ~ "transitive relation"` never saw "has quality". The
+    // same applied to `"is for example" is inverse of "~"`, which asserted a
+    // fact using the predicate `is`. The example does not require any
+    // Wikidata data to be loaded.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".import examples/wikidata/wikidata");
+
+    interactive.process("a \"has quality\" b");
+    interactive.process("b \"has quality\" c");
+    collector.clear();
+    interactive.process("a \"has quality\" X");
+    CHECK(collect_answers(collector).size() == 2);
+    CHECK(any_output_contains(collector, "has quality\" c"));
+
+    collector.clear();
+    interactive.process("\"is for example\" \"is inverse of\" X");
+    CHECK(collect_answers(collector).size() == 1);
+}

@@ -56,33 +56,33 @@ which is exactly its value.
 
 ```
 zelph> .import math
-zelph> ? :topoly $( (2+0*0)^3*(-1) + 2*0^2*(2+0*0)*(8+3*0*0) )
+zelph+> ? :topoly $( (2+0*0)^3*(-1) + 2*0^2*(2+0*0)*(8+3*0*0) )
 Answer: … = (neg zint &8)
-zelph> ? :topoly $( 8*0 + 3*0*(2+0*0)^2*(-1) + 6*0*0^2*(8+3*0*0) )
+zelph+> ? :topoly $( 8*0 + 3*0*(2+0*0)^2*(-1) + 6*0*0^2*(8+3*0*0) )
 Answer: … = (pos zint &0)
-zelph> ? :topoly $( 8*0 - (6*0^2*0 + 0^3*(-1)) )
+zelph+> ? :topoly $( 8*0 - (6*0^2*0 + 0^3*(-1)) )
 Answer: … = (pos zint &0)
 ```
 
 G(P₁) = (−8, 0, 0). Now P₂ = (1, −3, 26):
 
 ```
-zelph> ? :topoly $( (2+1*(-3))^3*26 + 2*(-3)^2*(2+1*(-3))*(8+3*1*(-3)) )
+zelph+> ? :topoly $( (2+1*(-3))^3*26 + 2*(-3)^2*(2+1*(-3))*(8+3*1*(-3)) )
 Answer: … = (neg zint &8)
-zelph> ? :topoly $( 8*(-3) + 3*1*(2+1*(-3))^2*26 + 6*1*(-3)^2*(8+3*1*(-3)) )
+zelph+> ? :topoly $( 8*(-3) + 3*1*(2+1*(-3))^2*26 + 6*1*(-3)^2*(8+3*1*(-3)) )
 Answer: … = (pos zint &0)
-zelph> ? :topoly $( 8*1 - (6*1^2*(-3) + 1^3*26) )
+zelph+> ? :topoly $( 8*1 - (6*1^2*(-3) + 1^3*26) )
 Answer: … = (pos zint &0)
 ```
 
 and P₃ = (−1, 3, 26):
 
 ```
-zelph> ? :topoly $( (2+(-1)*3)^3*26 + 2*3^2*(2+(-1)*3)*(8+3*(-1)*3) )
+zelph+> ? :topoly $( (2+(-1)*3)^3*26 + 2*3^2*(2+(-1)*3)*(8+3*(-1)*3) )
 Answer: … = (neg zint &8)
-zelph> ? :topoly $( 8*3 + 3*(-1)*(2+(-1)*3)^2*26 + 6*(-1)*3^2*(8+3*(-1)*3) )
+zelph+> ? :topoly $( 8*3 + 3*(-1)*(2+(-1)*3)^2*26 + 6*(-1)*3^2*(8+3*(-1)*3) )
 Answer: … = (pos zint &0)
-zelph> ? :topoly $( 8*(-1) - (6*(-1)^2*3 + (-1)^3*26) )
+zelph+> ? :topoly $( 8*(-1) - (6*(-1)^2*3 + (-1)^3*26) )
 Answer: … = (pos zint &0)
 ```
 
@@ -105,10 +105,11 @@ sample points.
 The derivatives are ordinary `diffby` requests:
 
 ```
-zelph> <a b c> ~ polyring
-zelph> ? $( (2+a*b)^3*c + 2*b^2*(2+a*b)*(8+3*a*b) ) diffby a
+zelph+> <a b c> ~ polyring
+(:needsring <a b c>) ⇐ (<a b c> ~ polyring)
+zelph+> ? $( (2+a*b)^3*c + 2*b^2*(2+a*b)*(8+3*a*b) ) diffby a
 Answer: … = $( &3 * (&2 + a * b) ^ &2 * b * c + (&2 * b ^ &2 * b * (&8 + &3 * a * b) + &2 * b ^ &2 * (&2 + a * b) * (&3 * b)) )
-zelph> ? $( 8*a - (6*a^2*b + a^3*c) ) diffby c
+zelph+> ? $( 8*a - (6*a^2*b + a^3*c) ) diffby c
 Answer: … = $( &0 - a ^ &3 )
 ```
 
@@ -152,11 +153,19 @@ polynomial recursion uses. A list is needed rather than three objects on
 one fact because a zelph fact carries a *set* of objects, and the row order
 matters.
 
-State the map, and run:
+State the map, and run. Entering the map immediately triggers the derivation and outputs it step by step – several thousand deduction lines, omitted here as `…`:
 
 ```
 zelph> < $( (2+a*b)^3*c + 2*b^2*(2+a*b)*(8+3*a*b) ) $( 8*b + 3*a*(2+a*b)^2*c + 6*a*b^2*(8+3*a*b) ) $( 8*a - (6*a^2*b + a^3*c) ) > jac3 <a b c>
-zelph> .run
+…
+zelph+> .run
+Starting reasoning with 24 worker threads.
+Reasoning complete. Total unification matches processed: 62955. Total
+contradictions found: 0.
+Reasoning summary: 62955 matches processed, 0 contradictions found.
+Parallel unifications activated for 69 distinct fixed relations.
+Reasoning complete in 0h0m…s – 62955 matches processed, 0 contradictions found.
+Ready.
 zelph> _M jdet _P
 Answer: (<($( (&2 + a * b) ^ &3 * c + &2 * b ^ &2 * (&2 + a * b) * (&8 + &3 * a * b) )) ($( &8 * b + &3 * a * (&2 + a * b) ^ &2 * c + &6 * a * b ^ &2 * (&8 + &3 * a * b) )) ($( &8 * a - (&6 * a ^ &2 * b + a ^ &3 * c) ))> jac3 <a b c>) jdet (neg zint &512)
 ```
@@ -167,21 +176,33 @@ term cancelled. Not "cancelled up to the precision I sampled at": the
 normal form of the determinant *is* the node `(neg zint &512)`, and that
 node is not any polynomial in a, b or c.
 
-The sign matters, so check it rather than reading it:
+The sign matters, so check it rather than reading it – a negative value yields a result, whereas a positive one does not:
 
 ```
 zelph> _M jdet (neg zint &512)
-Answer: …                              # one answer
+Answer: … jdet (neg zint &512)
 zelph> _M jdet (pos zint &512)
-zelph>                                 # none
+zelph>
 ```
 
-Total: about 1.8 seconds, cold start included, on a laptop.
+Total: a few seconds, with cold start accounted for.
 
 The whole construction ships with zelph, so you do not have to retype it:
 
 ```
 zelph> .import examples/math/jacobian
+Deduction printing mode: off
+  No derivations are printed; a run says how many it hid and marks the prompt
+with '+' (e.g. "zelph+> ").
+Starting reasoning with 24 worker threads.
+…
+Reasoning complete. Total unification matches processed: 105904. Total
+contradictions found: 0.
+Note: 15406 deductions were hidden.
+Reasoning summary: 105904 matches processed, 0 contradictions found.
+Parallel unifications activated for 63 distinct fixed relations.
+Reasoning complete in 0h0m…s – 105904 matches processed, 0 contradictions found.
+Ready.
 zelph> _M jdet _P
 Answer: … jdet (neg zint &512)
 ```
@@ -230,8 +251,10 @@ be built to make workloads of this size routine rather than intractable.
 
 ## Exercises
 
-1. Run part 2 under `binary-arithmetic` instead of the default and confirm
-   the answer is the same node. Then time both.
+1. Execute part 2 using `decimal-arithmetic` rather than the default
+   `binary-arithmetic` – import it before `math` – and confirm that the
+   result appears identical, `(neg zint &512)`, even though `&512` has now
+   become a list of decimal digits. Then measure the duration of both.
 2. Replace G₃ by `$( 8*a - (6*a^2*b + a^3*c) + a )` and re-run. The
    determinant should no longer be constant — what comes back, and how do
    you read it?

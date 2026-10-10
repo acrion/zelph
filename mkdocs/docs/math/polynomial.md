@@ -15,7 +15,7 @@ identity of nodes*. Everything below serves that.
 
 Recursive, dense, collapsed, variable-tagged.
 
-- A **constant** polynomial is a zint term: `(pos zint N)` / `(neg zint N)`.
+- A **constant** polynomial is a zint term: `(pos zint N)` / `(neg zint N)`. This represents the layer’s intrinsic coefficient form: it keeps the sign tag even for nonnegative constants, and the layer calls `z+` and `zx` directly, bypassing the façade that would otherwise lower a nonnegative result to the natural numeral `N` ([Integers over ℤ](integers.md#representation)). Every result of [`topoly`](topoly.md) is a value of this layer.
 - A **non-constant** polynomial with main variable `V` is `(V poly L)`,
   where `L` is a cons list of canonical polynomials, **least significant
   first**: the V⁰ coefficient is the outermost cell.
@@ -27,13 +27,15 @@ removed.
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> ? :topoly $( 3*x^2 - 5 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? :topoly $( 3*x^2 - 5 )
 Answer: (:topoly $( &3 * x ^ &2 - &5 )) = (x poly <(neg zint &5) (pos zint &0) (pos zint &3)>)
 ```
 
-The `<x> ~ polyring` line is what fixes the variable ORDER, and without it the
-query answers nothing at all — see [Variable order](#variable-order) below.
+The line `<x> ~ polyring` specifies `x` as an indeterminate and fixes the
+variable ORDER; absent this declaration, the query yields nothing whatsoever –
+refer to [Variable order](#variable-order) below.
 
 ⟨−5, 0, 3⟩ is −5 + 0·x + 3·x².
 
@@ -52,7 +54,7 @@ pattern match instead of a structural recursion. And it is what makes
 cancellation fall out:
 
 ```
-zelph> ? ((x poly <(pos zint &1) (pos zint &2)>) padd (x poly <(pos zint &3) (neg zint &2)>))
+zelph+> ? ((x poly <(pos zint &1) (pos zint &2)>) padd (x poly <(pos zint &3) (neg zint &2)>))
 Answer: … = (pos zint &4)
 ```
 
@@ -78,11 +80,7 @@ the module, so adjacent pairs suffice:
 [`math.zph`](frontend.md) derives these from a `<x y z> ~ polyring`
 declaration, outermost first.
 
-The order must be a **strict total order** on the variables in use.
-Declaring both `V pouter W` and `W pouter V` would break single-valuedness,
-exactly like conflicting declared equations in
-[`symbolic-core`](symbolic.md). Two composites with no declared order
-derive nothing — partiality by absence.
+The ordering needs to constitute a **strict total order** across the variables involved. Asserting both `V pouter W` and `W pouter V` would break single-valuedness: the product of those two variables would end up with two distinct normal forms. In contrast to a conflicting declared equation in [`symbolic-core`](symbolic.md), which triggers a contradiction report, this case elicits no such response. When two composites lack any declared ordering, they derive nothing – a manifestation of partiality by absence.
 
 A different order is not wrong, only different; within one session the
 normal form is unique either way:
@@ -103,28 +101,22 @@ normal form is unique either way:
 | `(P ppow N) = R` | exponentiation, `N` a **natural** numeral |
 
 ```
-zelph> ? (:pneg (x poly <(pos zint &1) (pos zint &2)>))
+zelph+> ? (:pneg (x poly <(pos zint &1) (pos zint &2)>))
 Answer: … = (x poly <(neg zint &1) (neg zint &2)>)
-zelph> ? ((x poly <(pos zint &1) (pos zint &2)>) ppow &2)
+zelph+> ? ((x poly <(pos zint &1) (pos zint &2)>) ppow &2)
 Answer: … = (x poly <(pos zint &1) (pos zint &4) (pos zint &4)>)
 ```
 
 (1 + 2x)² = 1 + 4x + 4x².
 
-**Addition** is a flat case analysis on operand shapes. Constant + constant
-delegates to the ℤ façade. Same main variable is elementwise list addition —
-the digit recursion minus the carry — followed by a strip/collapse stage.
-Head adjustment (different main variables, or a constant into a composite)
-touches only the V⁰ coefficient; the tail passes through untouched.
+**Addition** is a flat case analysis on operand structures. A constant plus a constant delegates directly to `z+` instead of to the ℤ façade, which would lower a nonnegative sum to a natural numeral. The same main variable means elementwise list addition – the digit recursion minus the carry – followed by a strip/collapse stage. Head adjustment (involving distinct main variables, or a constant into a composite) affects solely the V⁰ coefficient; the tail remains unaltered.
 
 **Multiplication** needs no strip stage of its own: over ℤ, an integral
 domain, products of nonzero coefficients are nonzero, so elementwise
 scaling preserves canonicity, and the only accumulation — the schoolbook
 recursion — delegates to `padd`, which owns its canonicalisation.
 
-**Exponentiation** is the naive recursion with `pmul` in place of `*`. The
-exponent is not a polynomial; a zint, symbolic or composite exponent
-derives nothing.
+**Exponentiation** arises when `pmul` is used in place of `*` inside a naive recursion. The exponent is not a polynomial; a zint, symbolic or composite exponent derives nothing, except a negative-signed zero such as `(neg zint &0)`, which the façade compares as `&0` and consequently interprets as the exponent zero; `(pos zint &0)` remains silent.
 
 ## The zero test, positively
 
@@ -140,12 +132,7 @@ no `!=` against structured nodes.
 
 ## Canonicity
 
-All rules yield canonical results for canonical operands. Only
-same-main-variable addition can produce a non-canonical raw list
-(cancellation, possibly of the leading coefficient); its results run
-through the strip/collapse stage. Negation maps nonzero coefficients to
-nonzero coefficients elementwise. Applying an operation to non-polynomial
-or non-canonical operands derives nothing.
+Every rule generates a canonical outcome when applied to canonical operands. Only addition involving the same main variable can yield a non-canonical raw list (cancellation, possibly of the leading coefficient); such outcomes proceed through the strip/collapse stage. Negation transforms each nonzero coefficient into another nonzero coefficient, one by one. An operand that is neither a zint nor a `(V poly L)` term derives nothing within `padd`, `pneg`, `psub`, or `pmul`. Outside of this, specifications apply solely to canonical operands: a non-canonical input – for instance, a signed zero like `(neg zint &0)`, a magnitude that fails to be a numeral, or a coefficient list that is not canonical – might still receive a response, and that response need not be canonical.
 
 ## Display note
 

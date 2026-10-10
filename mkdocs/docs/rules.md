@@ -11,7 +11,7 @@ A rule in zelph is formally a statement where the subject is a **set of conditio
 Example rule:
 
 ```
-(*{(R ~ transitive) (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
+(*{(R is transitive) (X R Y) (Y R Z)} ~ conjunction) => (X R Z)
 ```
 
 **Breakdown of the syntax:**
@@ -42,7 +42,10 @@ What matters is what a condition **evaluates to**: it has to be a statement, bec
 
 ```
 zelph> (*A p C, C q b) => (A marked yes)
-Error in line "(*A p C, C q b) => (A marked yes)": condition 1 of the comma list is "A", which is not a statement and can never match. A focus makes its statement evaluate to the focused node, so a condition written "*A p C" is the node A -- write it "A p C" instead.
+Error in line "(*A p C, C q b) => (A marked yes)": condition 1 of the comma list
+is "A", which is not a statement and can never match. A focus makes its
+statement evaluate to the focused node, so a condition written "*A p C" is the
+node A -- write it "A p C" instead.
 ```
 
 A focus one level down stays useful, since the condition still evaluates to a fact: `((*A p c) q b, A r d)` is the condition `A q b`, with `A p c` created on the side.
@@ -50,7 +53,7 @@ A focus one level down stays useful, since the condition still evaluates to a fa
 Practical consequence: you can write the above example rule as
 
 ```
-(R ~ transitive, X R Y, Y R Z) => (X R Z)
+(R is transitive, X R Y, Y R Z) => (X R Z)
 ```
 
 without using the set syntax `{...}` or the `conjunction` core node.
@@ -66,20 +69,20 @@ zelph> (R is transitive, A R B, B R C) => (A R C)
 
 After the entered rule, we see zelph's output, which in this case simply confirms the input of the rule.
 
-Now, let's declare that the relation `>` (greater than) is an instance of transitive relations:
+Now, let us state that the relation `>` (greater than) is transitive:
 
 ```
 zelph> > is transitive
->  is   transitive
+> is transitive
 ```
 
 Next, we provide three elements ("4", "5" and "6") for which the `>` relation applies:
 
 ```
 zelph> 6 > 5
- 6  >  5
+6 > 5
 zelph> 5 > 4
- 5  >  4
+5 > 4
 (6 > 4) ⇐ {(6 > 5) (> is transitive) (5 > 4)}
 zelph>
 ```
@@ -94,9 +97,9 @@ zelph> (X "is opposite of" Y, A ~ X, A ~ Y, X != Y) => !
 zelph> bright "is opposite of" dark
 bright "is opposite of" dark
 zelph> yellow ~ bright
- yellow   ~   bright
+yellow ~ bright
 zelph> yellow ~ dark
- yellow   ~   dark
+yellow ~ dark
 ! ⇐ {(bright "is opposite of" dark) (yellow ~ bright) (bright != dark) (yellow ~ dark)}
 Found one or more contradictions!
 zelph>
@@ -247,7 +250,7 @@ If auto-run is disabled, you can trigger inference manually:
 .run
 ```
 
-This performs full inference: rules are applied repeatedly until no new facts can be derived. New deductions are printed as they are found.
+This executes complete inference: rules are applied iteratively until no new facts can be derived. Newly discovered deductions are printed as soon as they are found. A rule that generates nodes – via a fresh variable, a nested term, or a collection literal in its consequence – can prevent a run from concluding; refer to [Fresh Variables](logic.md#fresh-variables-generative-rules).
 
 For a single inference pass:
 
@@ -263,6 +266,12 @@ To record everything a run derived, for further processing:
 
 See [Exporting Derivations](#exporting-derivations). For normal interactive
 or script use, `.run` is the standard command.
+
+### What the run summary counts
+
+A run ends with a summary line like `Reasoning summary: N matches processed, M contradictions found.` A match refers to a binding provided by the unification search for a positive fact condition within a rule, either by scanning the facts that the condition can match or from the new fact that seeds an iteration of semi-naive evaluation. A pass that performs scanning tallies the bindings of each such condition across every rule it applies. Such passes are the solitary pass in `.run-once`, the initial pass in `.run`, each pass when `.semi-naive off` is active, and the safety pass appended by `.semi-naive check`. Semi-naive evaluation also repeats its first pass whenever a rule has derived a new rule, ensuring the new rule encounters facts older than itself (refer to [Rules That Write Rules](rule-generators.md)), and it still takes classic passes for two rule types: one containing a negated condition, and one whose conditions cannot be fully seeded due to the presence of a path or a `≈` condition, a nested condition set, or a condition without exactly one predicate (see [Reasoning incrementally](janet.md#reasoning-incrementally)). A binding is counted at the moment it is issued, regardless of whether a subsequent condition or the deduction later discards it, and it is counted again each time a later pass delivers it anew. Negated conditions `¬(…)`, `!=` guards, path conditions (`P⁺`, `P∗`) and neural `≈` conditions contribute nothing to the count.
+
+The figure thus quantifies effort, not results. It is comparable across runs within a single evaluation mode, but not across `.semi-naive on`, `off`, and `check`, and under `.parallel` it can vary between two runs of identical input.
 
 ### Deduction Output Modes
 
@@ -287,14 +296,9 @@ run says about the ones it held back:
 
 In `focus` and `quiet` mode, a deduction is printed when its subject stems from a statement of the **session**: the subject is the entered fact itself, or its subject, or one of its objects. The session is everything you type, everything piped in, and every line of a script named on the command line (`zelph script.zph`) – see [Scripts and Modules](modules.md). Anchors accumulate over the session, so a rule entered later still surfaces conclusions about earlier inputs. A **module** loaded with `.import` contributes no anchors – a loaded arithmetic library stays silent about its internals.
 
-**What is printed is deterministic; the order in which it appears is not.**
-The reasoner is parallel (`.parallel`), so two runs of the same input derive
-the same facts and answer the same queries, but the deduction lines, the
-answers of one query, and the bindings of two variables that could be
-exchanged may come out in a different order. Transcripts in this documentation
-are real runs; read them as one of the possible orders.
+**It is deterministic what gets derived, with three exceptions; how it appears in output is not fully deterministic.** Executing identical input twice produces identical facts and identical responses, save for three scenarios. One involves rules that negate their own outcomes, which `.strata` identifies as non-stratifiable (refer to [Stratified Evaluation](logic.md#stratified-evaluation)): here, the outcome may vary based on evaluation sequence, and such sequence can differ across runs. The second occurs when a rule includes a [fresh variable](logic.md#fresh-variables-generative-rules) under `.parallel`, which is active by default: whether a firing reuses an existing node as its witness or creates a new one depends on the sequence of match processing, so distinct runs may derive different facts. In a program lacking negation, `!=`, and `≈`, the two results still align up to homomorphism. The third case is a single pass, `.run-once` or `(zelph/run-once)`, under `.parallel`: it halts before reaching the fixpoint, and the extent of progress depends on whether a match encounters facts derived earlier by other matches in the same pass. With `.parallel` enabled, two runs of the same input may also diverge in the sequence of deduction lines, the sequence of answers to a single query, the assignment of bindings to two variables that could be swapped, the premises named after ⇐ for a fact that can be reached through multiple derivations (the one actually printed corresponds to the derivation that produced it), the timing of when a growing `@{…}` is printed, and the [number of matches](#what-the-run-summary-counts) reported in the run summary. With `.parallel` disabled, two runs output identical deductions in identical order. The transcripts presented in this documentation are actual executions; interpret each as one possible execution path.
 
-The filter affects printing only: **all facts are derived and stored regardless of the mode**, and query answers, contradictions and warnings are always printed. If a result you are interested in is not shown, query it (e.g. `&7 > X`) or switch to `.deductions all`. As a side effect, heavy computations run several times faster in every mode but `all`, because rendering large derived terms dominates the cost.
+The filter affects printing exclusively: **all facts are derived and stored regardless of the mode**, and query answers and warnings are always printed. A contradiction’s `!` line appears in every mode except `off`, regardless of its subject; `off` outputs solely the line `Found one or more contradictions!`. If a result you are interested in is not shown, query it (e.g. `&7 > X`) or switch to `.deductions all`. As a side effect, heavy computations run several times faster in every mode but `all`, because rendering large derived terms dominates the cost.
 
 ### What a filtered run tells you
 
@@ -315,15 +319,18 @@ A deduction written to a file by `.run-export` is not withheld and is not counte
 ### The mark in the prompt
 
 In the default mode a run says nothing and the prompt carries a `+` while the
-most recent one held something back:
+most recent one held something back – this import is already such a run,
+since the module’s derivations are not about anything you entered:
 
 ```
 zelph> .deductions quiet
 Deduction printing mode: quiet
-  Only derivations about statements you entered are printed, and a run that hid any marks the prompt with '+' (e.g. "zelph+> ").
-zelph> $(53 * 12) = X
+  Only derivations about statements you entered are printed, and a run that hid
+any marks the prompt with '+' (e.g. "zelph+> ").
+zelph> .import math-syntax
+zelph+> $(53 * 12) = X
 (&53 * &12) = X
-((&53 * &12) = &636) ⇐ {((&53 mul &12) prod &636) (&53 * &12) (:canonnum &636)}
+((&53 * &12) = &636) ⇐ {((&53 mul &12) prod &636) (:canonnum &636) (&53 * &12)}
 zelph+>
 ```
 
@@ -369,25 +376,14 @@ format:
 
 Two more, which decide how the file may be counted:
 
-- **A derivation the graph already holds is not re-derived, so it is not
-  written.** Deductions are hash-consed: a fact that exists produces no
-  deduction to export. Over a saturated network — one that a `.run` has
-  already completed — the deduction side of the file is therefore EMPTY, and
-  the command still exits as if it had worked. Export from the run that does
-  the deriving, or start from `.new`. The same property means only the FIRST
-  derivation of a fact is ever written: a second rule reaching the same
-  conclusion adds no record, so the file holds one justification per fact and
-  not all of them — the same limit `.help .explain` states for the proof tree.
-- **Contradictions are the deliberate exception, and they repeat.** A
-  contradiction is written every time a run meets it, so that a second
-  `.run-export` does not hand back an empty file — which means the same
-  violation can occupy several lines. Counting violations therefore means
-  deduplicating on the premise set, order-independently, not counting lines.
+- **A derivation already present in the graph is not re-derived, hence it is not written.** Deductions are hash-consed: a fact that is already established does not trigger a new deduction for export. On a saturated network – one that has already undergone a `.run` – the deduction side of the file is therefore EMPTY, yet the command still exits as if it had worked. Export from the run that does the deriving, or begin with `.new`. This same property means that only the FIRST derivation of any fact is ever written: a subsequent instantiation, whether from the same rule or a different one, that arrives at the same conclusion adds no additional entry, meaning the file contains one justification per fact rather than every single derivation. Under `.parallel`, the order in which instantiations occur varies across runs, affecting the premises listed in the file; conclusions remain consistent unless the program includes non-stratifiable rules or a rule involving a fresh variable (refer to [Deduction Output Modes](#deduction-output-modes)). With `.parallel` off, two runs generate identical files.
+- **Contradictions are the deliberate exception, and they are duplicated.** A contradiction is written each time a run meets it, ensuring that a second `.run-export` does not return an empty file – implying that the same violation may appear on multiple lines. Thus, counting violations requires deduplicating based on the premise set, regardless of order, rather than simply counting lines.
 
 A contradiction record carries one more field when the engine **refused** to
 build the deduced fact — a shape it cannot represent — rather than finding the
 knowledge base contradictory. Both stop the rule, and both are reported as
-`!`, so the reason is what tells them apart:
+`!`, thus the reason is what tells them apart (one line of the file, wrapped
+here for reading):
 
 ```json
 {"kind":"contradiction",
@@ -407,13 +403,21 @@ zelph> .lang wikidata
 wikidata> .auto-run
 Auto-run is now disabled.
 wikidata-> Q1 P279 Q2
- Q1   P279   Q2
+Q1 P279 Q2
 wikidata-> Q2 P279 Q3
- Q2   P279   Q3
+Q2 P279 Q3
 wikidata-> (*{(A P279 B) (B P279 C)} ~ conjunction) => (A P279 C)
 ((B P279 C), (A P279 B)) => (A P279 C)
 wikidata-> .run-export /tmp/derivations.jsonl
-Running full inference; derivations are written to /tmp/derivations.jsonl as JSON Lines.
+Running full inference; derivations are written to /tmp/derivations.jsonl as
+JSON Lines.
+Starting reasoning with 24 worker threads.
+Reasoning complete. Total unification matches processed: 5. Total contradictions
+found: 0.
+Reasoning summary: 5 matches processed, 0 contradictions found.
+Parallel unifications activated for 1 distinct fixed relations.
+Reasoning complete in 0h0m0.000s – 5 matches processed, 0 contradictions found.
+Ready.
 ```
 
 Content of `/tmp/derivations.jsonl` (one line, wrapped here for reading):
@@ -440,7 +444,7 @@ dev_scripts/zelph-derivations.py /tmp/derivations.jsonl --format text --out /tmp
 ```
 
 ```
-Q2 P279 Q3, Q1 P279 Q2 => Q1 P279 Q3
+(Q2 P279 Q3), (Q1 P279 Q2) => (Q1 P279 Q3)
 ```
 
 The `text` form is also the starting point for tokenizer-friendly training

@@ -153,10 +153,19 @@ namespace zelph::console
         // the graph, not what the session has already got wrong.
         bool failed{false};
 
-        // `.quit` was read. Honoured by the loop that reads a SESSION script
-        // (see ScriptRole), so a script can end before its last line the way
-        // a piped session can. In the REPL main() intercepts the line before
-        // it ever reaches the command table.
+        // `.quit` arrives at the command table, where its handler merely
+        // records it, leaving the decision to the loop that owns the input.
+        // The REPL loop within main() intercepts a plain `.quit` before
+        // process(), which explains why typing one inside a keyword block
+        // still ends the session; a `.quit` that the check does not recognize,
+        // like `.quit now`, is directed here, and main() respects it following
+        // process() via Interactive::quit_requested(). Similarly, the loop
+        // that reads a SESSION script (refer to ScriptRole) honours it,
+        // enabling a script to conclude before its final line, just as a piped
+        // session can. The loop that reads a module clears it and continues,
+        // as a library does not end the session that loads it -- and this is
+        // precisely where a `.quit` reached from Janet ends up, since
+        // `zelph/import` loads a module.
         bool quit_requested{false};
     };
 

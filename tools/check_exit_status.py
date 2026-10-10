@@ -54,6 +54,59 @@ CASES = [
         1,
         "glued",
     ),
+    (
+        # The exit command ends the session in both formats, including a
+        # comment placed after it: the piped form used to compare the whole
+        # line with the command, read on, and failed on the line immediately
+        # following it.
+        "a .quit with a trailing comment",
+        ".quit   # done\na b x(c d e)\n",
+        0,
+        None,
+    ),
+    (
+        # A line functions as a command exclusively if its first character is
+        # a '.'. The piped form compared the line's tokens following the
+        # elimination of quotation marks, meaning that the quoted name
+        # ".quit" ended the session in the middle of a statement that a
+        # file finished. The phrase constitutes the answer to the
+        # query, since a session concluding prematurely may still exit with a
+        # status of 0.
+        "a quoted \".quit\" that completes a statement",
+        "x p\n\".quit\"\nx p A\n",
+        0,
+        "Answer: x p ",
+    ),
+    (
+        # The same name as a Janet string literal on a line by itself within
+        # a % block: the piped form concluded at that point and reported the
+        # block as unfinished.
+        "a \".quit\" string literal inside a Janet block",
+        "%\n(def s\n  \".quit\"\n)\n(zelph/out (string \"S=\" s))\n%\nk p v\nk p A\n",
+        0,
+        "Answer: k p v",
+    ),
+    (
+        # The name enclosed in quotation marks serves as the subject in a
+        # statement that extends to the next line. The piped form left with
+        # 0 here and executed nothing, so only the answer reveals the
+        # difference. The phrase leaves the name out: the manner of its
+        # printing is not the focus of this case.
+        "a quoted \".quit\" that starts a statement",
+        "\".quit\"\n  p y\nA p y\n",
+        0,
+        "Answer:",
+    ),
+    (
+        # A command line that reaches the .quit handler even though it is
+        # not the bare command. The file ends at that point, since the
+        # handler merely records the request and the loop that reads the
+        # file inspects it; the piped form must also inspect it.
+        "a .quit with an argument",
+        ".quit now\na b x(c d e)\n",
+        0,
+        None,
+    ),
 ]
 
 # Both forms stop at the first failing line, and both say so -- in their own

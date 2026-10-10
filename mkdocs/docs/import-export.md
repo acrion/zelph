@@ -189,22 +189,20 @@ Use `zelph/query` to extract bindings, then build a Janet data structure and enc
 %
 ```
 
-The resulting `mammals.json` will contain both the directly stated and the inferred memberships:
+The `mammals.json` file produced (a single line, wrapped here for readability) includes both the explicitly declared and the logically deduced memberships, arranged according to the sequence in which the query provided its responses:
 
 ```json
-[
-  { "entity": "Wolf", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Red Fox", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Brown Bear", "relation": "member of", "target": "Mammalia" },
-  { "entity": "House Cat", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Canidae", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Ursidae", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Felidae", "relation": "member of", "target": "Mammalia" },
-  { "entity": "Carnivora", "relation": "member of", "target": "Mammalia" }
-]
+[{"relation":"member of","target":"Mammalia","entity":"Brown Bear"},
+ {"relation":"member of","target":"Mammalia","entity":"House Cat"},
+ {"relation":"member of","target":"Mammalia","entity":"Felidae"},
+ {"relation":"member of","target":"Mammalia","entity":"Red Fox"},
+ {"relation":"member of","target":"Mammalia","entity":"Carnivora"},
+ {"relation":"member of","target":"Mammalia","entity":"Ursidae"},
+ {"relation":"member of","target":"Mammalia","entity":"Wolf"},
+ {"relation":"member of","target":"Mammalia","entity":"Canidae"}]
 ```
 
-Note that families and orders appear as well — they were inferred as transitive members of Mammalia.
+Note that the families are also present – they were inferred as transitive members of Mammalia – and likewise the order Carnivora, which stands as a direct one.
 
 ### Exporting a Filtered Subset
 

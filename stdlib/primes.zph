@@ -18,12 +18,13 @@
 #
 # Design note -- no negation: "N is prime" is universally quantified
 # ("ALL candidates leave a remainder"), which naively suggests
-# negation-as-failure over hasdivisor. But NAF tests absence in the
-# CURRENT graph state while hasdivisor facts are still being derived over
-# many fixpoint iterations, and forward chaining is monotonic -- a
-# prematurely derived isprime fact could never be retracted. Primality is
-# therefore built from POSITIVE facts only: a fold (N nodivupto D) grows
-# one verified non-divisor at a time.
+# negation-as-failure applied to hasdivisor. However, negation-as-failure
+# evaluates absence within the CURRENT graph state, whereas hasdivisor
+# facts continue to be derived across multiple fixpoint iterations, and
+# forward chaining never retracts a fact -- thus, an isprime fact derived
+# too early would stand. Primality is therefore established exclusively
+# through POSITIVE facts: a fold (N nodivupto D) advances by one verified
+# non-divisor at a time.
 #
 # Design note -- the fold IS the scheduler: candidate E = D+1 only comes
 # into existence after D has been VERIFIED as a non-divisor. Two

@@ -9,13 +9,12 @@ it has never heard of, in two rules.
 
 ## A term is graph structure, and sorts are facts
 
-There is no expression type. A term is built from the same facts as
-everything else, and its leaves need a declared **sort**:
+No expression type exists. A term is constructed using the same facts as everything else, and its leaves need a declared **sort**, `symvar` for an indeterminate, and `symconst` for an opaque constant:
 
 ```
 zelph> .import math
-zelph> x ~ symvar        # an indeterminate
-zelph> c ~ symconst      # an opaque constant
+zelph+> x ~ symvar
+zelph> c ~ symconst
 ```
 
 Binary operations reuse the *same predicates as the numeric modules*. A
@@ -38,7 +37,7 @@ at all, and the request stays unanswered:
 
 ```
 zelph> ? :simplify undeclared
-zelph>
+zelph+>
 ```
 
 Silence, never a wrong answer — the same discipline as everywhere in the
@@ -49,11 +48,11 @@ standard library.
 `:simplify T` is the request; the answer comes back under `=`:
 
 ```
-zelph> ? :simplify $( (x + 0) * 1 )
+zelph+> ? :simplify $( (x + 0) * 1 )
 Answer: (:simplify ((x + &0) * &1)) = x
-zelph> ? :simplify $( x / 1 + 0 * c )
+zelph+> ? :simplify $( x / 1 + 0 * c )
 Answer: (:simplify $( x / &1 + &0 * c )) = x
-zelph> ? :simplify $( exp(ln(x)) )
+zelph+> ? :simplify $( exp(ln(x)) )
 Answer: (:simplify $( exp(ln(x)) )) = x
 ```
 
@@ -84,7 +83,7 @@ reduces to *itself* — the machinery notices that for free.
 ## Constant folding without an arithmetic bridge
 
 ```
-zelph> ? :simplify $( (2+3) * (4+6) )
+zelph+> ? :simplify $( (2+3) * (4+6) )
 Answer: (:simplify ((&2 + &3) * (&4 + &6))) = &50
 ```
 
@@ -100,16 +99,12 @@ whatever the graph knows:
 Then congruence materialises the fresh fact `(&5 * &10)` *mid-simplification*,
 the numeric cascade answers that too, and the bridge fires again.
 
-The rule is deliberately more general than constant folding: it consumes
-**any** equational fact about the reduced form. An equation imported from a
-knowledge graph drives simplification exactly like a computed one. Knowledge
-and computation are one substrate — this single line is where that stops
-being a slogan.
+The rule is intentionally broader than constant folding: it consumes **any** equational fact concerning the reduced form, and solely that form. An equation imported from a knowledge graph drives simplification in precisely the same way as a computed one, as long as it refers to a reduced form ([why](symbolic.md#knowledge-folding)). Knowledge and computation are one substrate – this one line marks where that unity ceases to be merely a slogan.
 
 Partiality composes through it unchanged:
 
 ```
-zelph> ? :simplify $( 5 / 0 )
+zelph+> ? :simplify $( 5 / 0 )
 Answer: (:simplify (&5 / &0)) = (&5 / &0)
 ```
 
@@ -118,20 +113,14 @@ itself. Undefinedness stays visible instead of folding to a wrong value.
 
 ## Why there is no commutativity rule
 
-A forward-chaining engine is **monotonic**: it never deletes. A rule
-`(X + Y) => (Y + X)` would therefore not *normalise* anything — it would
-double the term space, permanently. Associativity plus congruence would be
-worse.
+A forward-chaining engine exclusively introduces facts: no rule has the ability to remove one. A rule `(X + Y) => (Y + X)` would therefore not *normalize* anything – it would double the term space, in a way that is irreversible. Associativity combined with congruence would lead to an even more severe outcome.
 
 So every rewrite rule in the standard library is directed and
 measure-reducing, both orientations of a symmetric identity are spelled out
 explicitly (`X + &0` *and* `&0 + X`), and the whole machinery is gated
 behind markers so it never touches numeric facts.
 
-The contract for anyone adding a rule: **every rewrite right-hand side must
-already be a normal form** — a leaf, or built from normal children of the
-reduced form. That is what makes one bottom-up pass sufficient and the
-result single-valued. Distributivity violates it and is deliberately absent.
+The contract for anyone adding a rule has two obligations. **Every instance of a rewrite’s right-hand side must itself be a normal form**: either a subterm within the reduced form, a canonical leaf, or one new node built from such components to which no rule applies. This ensures that a single bottom-up pass is sufficient. And **a newly introduced rule must agree with every rule that matches the same reduced form**, otherwise the outcome ceases to be uniquely determined: `(X / X) → &1` meets the first obligation, yet on input `&0 / &0` it overlaps the included rule `(&0 / X) → &0`, and the request gets two answers, which zelph reports as a contradiction. Distributivity violates the first obligation and is intentionally excluded.
 
 Which raises the obvious question: if the simplifier will not expand
 products, how was `(1+x)(1−x) ≡ 1−x²` proven in tutorial 1? It was not
@@ -147,13 +136,14 @@ Take the **circle operation** of ring theory, x ∘ y = x + y + xy. It is the
 operation under which the elements of the Jacobson radical form a group,
 and it is not built into anything.
 
-First give it notation — one call, which registers it with the island
-grammar *and* the island printer:
+In a fresh session, begin by providing it with notation – a single call
+that registers it both with the island grammar *and* the island printer:
 
 ```
 zelph> .import math
-zelph> <x y z> ~ polyring
-zelph> %(math-syntax/operator "circ" 15)
+zelph+> <x y z> ~ polyring
+(:needsring <x y z>) ⇐ (<x y z> ~ polyring)
+zelph+> %(math-syntax/operator "circ" 15)
 ```
 
 `15` is the precedence: between `+` (10) and `*` (20). Then give it
@@ -182,18 +172,18 @@ coefficient is `(y poly ⟨1, 1⟩)` = 1 + y. So x ∘ y = y + x(1 + y) =
 x + y + xy — which you can also just ask:
 
 ```
-zelph> ? $( x circ y ) ≡ $( x + y + x*y )
+zelph+> ? $( x circ y ) ≡ $( x + y + x*y )
 Answer: ((x circ y) ≡ $( x + y + x * y )) = proven
 ```
 
 And the laws come out as theorems, not assumptions:
 
 ```
-zelph> ? $( (x circ y) circ z ) ≡ $( x circ (y circ z) )
+zelph+> ? $( (x circ y) circ z ) ≡ $( x circ (y circ z) )
 Answer: ($( x circ y circ z ) ≡ (x circ (y circ z))) = proven
-zelph> ? $( x circ y ) ≡ $( y circ x )
+zelph+> ? $( x circ y ) ≡ $( y circ x )
 Answer: ((x circ y) ≡ (y circ x)) = proven
-zelph> ? $( x circ 0 ) ≡ $( x )
+zelph+> ? $( x circ 0 ) ≡ $( x )
 Answer: ((x circ &0) ≡ x) = proven
 ```
 
@@ -229,12 +219,9 @@ you contribute three things instead: decompose rules that propagate the
 form, and rewrite rules on reduced forms. `symbolic-core`'s connect stage
 and identity fallback then work unchanged.
 
-That is the **operator extension protocol**, and the standard library uses
-it four times: for `-` and unary negation
-([`symbolic-minus`](symbolic.md#subtraction-and-negation)), for `^`
-([`symbolic-pow`](symbolic.md#exponentiation)), for ℤ numerals
-([`symbolic-integers`](symbolic.md#integers-as-leaves)), and for the EML
-operator ([`eml`](eml.md)). Any of the four is a readable template.
+That is the **operator extension protocol**, and the standard library invokes it three times: for `-` and unary negation ([`symbolic-minus`](symbolic.md#subtraction-and-negation)), for `^` ([`symbolic-pow`](symbolic.md#exponentiation)), and for ℤ numerals ([`symbolic-integers`](symbolic.md#integers-as-leaves)). Each of the three serves as a readable template.
+
+An operator accompanied by a definition may follow a more direct path: the delegation of `circ` above, applied within the simplifier. Its congruence rule states the definition rather than constructing a reduced form, `((U eml V) expandsto ((exp of P) - (ln of Q)))`, where `P` and `Q` represent the normal forms of the operands, and `symbolic-core` simplifies the right-hand side as an ordinary term and hands its normal form back. The operator does not require any rewrite rules of its own. This is how [`eml`](eml.md) is introduced, and its identities follow from the definition.
 
 ## Exercises
 

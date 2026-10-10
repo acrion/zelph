@@ -53,8 +53,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // here are what needs updating, in one line each. A change that moves them by
 // a factor is a regression until proven otherwise.
 //
-// The baselines were taken at commit 9e015af on 3 August 2026, three runs,
-// all of them bit-identical except fs_cache misses (spread 10 out of 455k).
+// On 30 September 2026, the baselines were re-taken for version 1.0.2,
+// involving three runs, all of which were bit-identical except for fs_cache
+// misses (spread of ±10 out of 428k).
 
 #include "test_helpers.hpp"
 
@@ -108,13 +109,18 @@ namespace
 
 TEST_CASE("performance guard: the Jacobian workload does the expected amount of work")
 {
-    // A plain session, NOT run_both_modes: that helper turns on
-    // `.semi-naive check`, which runs both evaluation strategies and would
-    // roughly double every counter below. The baselines belong to one
-    // ordinary parallel run.
+    // A plain session in the DEFAULT mode, which this binary is required
+    // to request: every engine it initializes starts in
+    // `.semi-naive check`, and check mode appends classic verification
+    // passes after the delta fixpoint. These about double the count of
+    // deduce_calls and increase the scan volume by half -- sufficient to
+    // break the ceilings of both -- while facts_created, the fs_cache
+    // counters, and the genuine walks remain unchanged. The baselines
+    // originate from a single ordinary parallel run.
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
 
+    interactive.process(".semi-naive on");
     interactive.process(".log -1");         // counter-only mode: no per-deduction output
     interactive.process(".deductions off"); // the echo is thousands of lines and costs time
     interactive.process(".import examples/math/jacobian");
@@ -133,7 +139,7 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
 
     // Non-vacuity: a failed import would leave every ceiling below satisfied.
     // Deliberately far under the baseline -- this is not a second ceiling.
-    CHECK(deduce_calls > 50000);
+    CHECK(deduce_calls > 30000);
 
     // THE one that mattered. Every fact the math stack creates goes through
     // triple-level construction, so the genuine store answers every
@@ -143,17 +149,17 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     // a quantity: either the store is authoritative or it is not.
     CHECK(walks == 0);
 
-    // Reconstruction requests that the fs_cache could not answer. Rose from
-    // 455644 to 678673 when the store went, so this is the second net under
-    // the same failure -- and it also catches an invalidation storm that
-    // leaves the store armed.
-    CHECK(misses <= ceiling(455644));
-    CHECK(full_clears <= ceiling(1348));
+    // Requests for reconstruction that could not be fulfilled by the
+    // fs_cache. Rose from 455644, the August baseline, to 678673 when the
+    // store went, so this is the second net under the same failure -- and it
+    // also catches an invalidation storm that leaves the store armed.
+    CHECK(misses <= ceiling(427796));
+    CHECK(full_clears <= ceiling(1103));
 
     // Volume of derivation and of candidate scanning: a different regression
     // class from the above (doing more work rather than paying more for it),
     // and the one a rule change shows up in first.
-    CHECK(deduce_calls <= ceiling(59285));
-    CHECK(facts_created <= ceiling(22060));
-    CHECK(scanned_seq + scanned_par <= ceiling(1112352 + 109593));
+    CHECK(deduce_calls <= ceiling(39784));
+    CHECK(facts_created <= ceiling(15393));
+    CHECK(scanned_seq + scanned_par <= ceiling(711111 + 81909));
 }

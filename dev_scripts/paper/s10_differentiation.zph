@@ -1,0 +1,30 @@
+#!/usr/bin/env zelph
+# dev_scripts/paper/s10_differentiation.zph
+# The differentiation examples presented in the paper: two written as term
+# islands, whose answers print as islands wherever that changes the spelling
+# (the derivative of ln(x), (&1 / x), does not), and two additional ones
+# where the raw derivative is refined by the simplifier -- (x + c) by
+# leveraging the neutral element, (x + x) by applying folding &1 + &1 via the
+# numeric module.
+# Evidence scripts print the FULL derivation trace: the paper quotes specific
+# deduction lines, and every mode except 'all' shows only deductions anchored
+# to session statements, thereby omitting most entries from a log.
+.deductions all
+.import decimal-arithmetic
+.import symbolic-core
+.import diff
+.import math-syntax
+x ~ symvar
+c ~ symconst
+
+$( exp(x) * x ) diffby x
+($( exp(x) * x ) diffby x) = D
+
+$( ln(x) ) diffby x
+($( ln(x) ) diffby x) = D
+
+(x + c) diffby x
+((x + c) diffby x) = D
+
+(x + x) diffby x
+((x + x) diffby x) = D

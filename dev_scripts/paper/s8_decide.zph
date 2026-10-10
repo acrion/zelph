@@ -1,11 +1,12 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s8_decide.zph
-# Where a canonical form exists, and where none can: the polynomial layer
-# decides an identity by unification on normal forms, and stays silent on
-# terms it cannot compile. Three outcomes, and the third is the point.
-# Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and every mode but 'all' shows only deductions
-# anchored to statements of the session, which drops most of them from a log.
+# Where the polynomial layer possesses a canonical form, and where its
+# vocabulary ends: it decides an identity through unification on normal
+# forms, and remains silent regarding terms it cannot compile. Three possible
+# results emerge, with the third being the crucial one.
+# Evidence scripts print the FULL derivation trace: the paper quotes specific
+# deduction lines, and every mode except 'all' displays only deductions
+# anchored to session statements, thereby omitting most of them from a log.
 .deductions all
 
 .import math
@@ -25,7 +26,6 @@ $( exp(x) + 1 ) ≡ $( 1 + exp(x) )
 # the normal forms themselves are ordinary retrievable facts
 :topoly $( (x+1)^2 )
 :topoly $( x - x )
-.run
 
 ($( (x+1)^2 ) ≡ $( x^2 + 2*x + 1 )) = R
 ($( (x+y)^2 ) ≡ $( x^2 + 2*x*y + y^2 )) = R

@@ -28,6 +28,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
+#include <array>
 #include <thread>
 #include <vector>
 
@@ -80,7 +82,8 @@ static bool unify_nodes(
     const Variables&                    global_bindings,
     std::vector<std::pair<Node, Node>>& history,
     int                                 depth,
-    ReasoningProfiler* const            _prof)
+    ReasoningProfiler* const            _prof,
+    const StandIns* const               stand_ins)
 {
     if (_prof && _n->logging_active())
     {
@@ -89,6 +92,20 @@ static bool unify_nodes(
     }
 
     if (rule_node == 0 || graph_node == 0) return false;
+
+    // A node in the pattern that represents the outcome a firing produces
+    // (refer to the Unification constructor): the term within a bucket is
+    // compared in its place, and a stand-in for any term matches exactly
+    // the nodes a firing can generate at that location.
+    if (stand_ins != nullptr)
+        if (const auto it = stand_ins->find(rule_node); it != stand_ins->end())
+        {
+            if (it->second.term != 0)
+                rule_node = it->second.term;
+            else
+                return graph_node == rule_node || Zelph::is_value_recipe(graph_node)
+                    || (it->second.set_constant && _n->is_set_constant(graph_node));
+        }
 
     U_LOG(depth, "Comparing " + U_NODE(rule_node) + " vs " + U_NODE(graph_node));
 
@@ -128,7 +145,7 @@ static bool unify_nodes(
                     PROF(unify_var_local_recurse.fetch_add(1, std::memory_order_relaxed));
                     U_LOG(depth, "  Var local bound -> recursing");
                 }
-                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, _prof);
+                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins);
                 break;
             }
             if (global_bindings.count(rule_node))
@@ -144,7 +161,7 @@ static bool unify_nodes(
                     break;
                 }
                 U_LOG(depth, "  Var global bound to " + U_NODE(bound) + " (id=" + std::to_string(bound) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
-                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, _prof);
+                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins);
                 if (_n->should_log(depth) && !result)
                 {
                     u_log(_n, depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
@@ -205,10 +222,10 @@ static bool unify_nodes(
                 Variables attempt = local_bindings;
 
                 // A. Predicate
-                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, _prof)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, _prof, stand_ins)) continue;
 
                 // B. Subject
-                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof)) continue;
+                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof, stand_ins)) continue;
 
                 // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
@@ -226,7 +243,7 @@ static bool unify_nodes(
                     for (Node g_obj : gs.objects)
                     {
                         Variables try_obj = obj_bindings; // allow backtracking per object choice
-                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, _prof))
+                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, _prof, stand_ins))
                         {
                             obj_bindings = std::move(try_obj);
                             found        = true;
@@ -291,9 +308,18 @@ enum class GroundResult
     Missing
 };
 
-static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars, const int depth, Node& out, std::vector<Node>& history)
+static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars, const int depth, Node& out, std::vector<Node>& history, const StandIns* const stand_ins)
 {
     if (pattern == 0) return GroundResult::Unbound;
+
+    // A stand-in associated with a term is grounded to that term; one
+    // intended for any term denotes no single node.
+    if (stand_ins != nullptr)
+        if (const auto it = stand_ins->find(pattern); it != stand_ins->end())
+        {
+            if (it->second.term == 0) return GroundResult::Unbound;
+            pattern = it->second.term;
+        }
 
     if (Zelph::Impl::is_var(pattern))
     {
@@ -325,7 +351,7 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     }
 
     Node         gs = 0;
-    GroundResult r  = ground_pattern(n, fs.subject, vars, depth, gs, history);
+    GroundResult r  = ground_pattern(n, fs.subject, vars, depth, gs, history, stand_ins);
     if (r != GroundResult::Grounded)
     {
         history.pop_back();
@@ -333,7 +359,7 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     }
 
     Node gp = 0;
-    r       = ground_pattern(n, fs.predicate, vars, depth, gp, history);
+    r       = ground_pattern(n, fs.predicate, vars, depth, gp, history, stand_ins);
     if (r != GroundResult::Grounded)
     {
         history.pop_back();
@@ -345,7 +371,7 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     for (Node o : fs.objects)
     {
         Node go = 0;
-        r       = ground_pattern(n, o, vars, depth, go, history);
+        r       = ground_pattern(n, o, vars, depth, go, history, stand_ins);
         if (r != GroundResult::Grounded)
         {
             history.pop_back();
@@ -424,9 +450,19 @@ static void collect_partial_anchors(
     std::unordered_set<Node>&     visited,
     const int                     depth_left,
     const int                     log_depth,
-    std::vector<AnchorCandidate>& out)
+    std::vector<AnchorCandidate>& out,
+    const StandIns* const         stand_ins)
 {
     if (pattern == 0) return;
+
+    // A stand-in defined by a term serves as an anchor as that term; one
+    // for any term is none.
+    if (stand_ins != nullptr)
+        if (const auto it = stand_ins->find(pattern); it != stand_ins->end())
+        {
+            if (it->second.term == 0) return;
+            pattern = it->second.term;
+        }
 
     if (Zelph::Impl::is_var(pattern))
     {
@@ -470,9 +506,9 @@ static void collect_partial_anchors(
         const Node           p  = Zelph::Impl::is_var(fs.predicate) ? Node{0} : fs.predicate;
 
         chain.insert(chain.begin(), p);
-        collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out);
+        collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
         for (Node o : fs.objects)
-            collect_partial_anchors(n, o, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out);
+            collect_partial_anchors(n, o, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
         chain.erase(chain.begin());
     }
 
@@ -481,13 +517,15 @@ static void collect_partial_anchors(
 
 // Climb from the anchor to the condition's candidate facts. Returns false
 // when a budget is exceeded; the caller then keeps the full-scan behaviour.
+// `work`: the adjacency entries the climb accessed, also where it gave up.
 static bool climb_partial_anchor(
     Zelph*                 n,
     const AnchorCandidate& anchor,
     const Node             current_rel,
     const size_t           frontier_budget,
     const size_t           work_budget,
-    adjacency_set&         out)
+    adjacency_set&         out,
+    size_t&                work)
 {
     // ONE lock scope for the whole climb: formerly one full adjacency copy
     // per frontier node plus two locked edge probes per parent.
@@ -495,7 +533,7 @@ static bool climb_partial_anchor(
 
     adjacency_set frontier;
     frontier.insert(anchor.node);
-    size_t work = 0;
+    work = 0;
 
     for (size_t level = 0; level <= anchor.preds.size() && !frontier.empty(); ++level)
     {
@@ -555,6 +593,17 @@ zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, c
     return pi;
 }
 
+// A `=>` fact holding a variable is rule text, not data, regardless of where
+// the variable is located. extract_bindings rejects a candidate based on the
+// closures of its subject and its consequence, which do not extend to the
+// conditions of a rule attached to a container or a set constant; the fact's
+// own flag does (Zelph::var_in_closure, queried during Unification's
+// examination of candidates). Only a `=>` candidate pays the lookup.
+static bool is_rule_text(const Zelph* n, const Node fact, const FactStructure& fs, const Zelph::VariableReading reading)
+{
+    return fs.predicate == n->core.Causes && n->var_in_closure(fact, reading);
+}
+
 Unification::Unification(
     Zelph*                            n,
     Node                              condition,
@@ -565,8 +614,10 @@ Unification::Unification(
     int                               log_depth,
     ReasoningProfiler*                profiler,
     Node                              seed_fact,
-    Node                              seed_predicate)
-    : Unification(n, build_pattern_info(n, condition, log_depth), parent, variables, unequals, pool, log_depth, profiler, seed_fact, seed_predicate)
+    Node                              seed_predicate,
+    Zelph::VariableReading            candidates,
+    const StandIns*                   stand_ins)
+    : Unification(n, build_pattern_info(n, condition, log_depth), parent, variables, unequals, pool, log_depth, profiler, seed_fact, seed_predicate, candidates, stand_ins)
 {
 }
 
@@ -580,7 +631,9 @@ Unification::Unification(
     int                               log_depth,
     ReasoningProfiler*                profiler,
     Node                              seed_fact,
-    Node                              seed_predicate)
+    Node                              seed_predicate,
+    Zelph::VariableReading            candidates,
+    const StandIns*                   stand_ins)
     : _n(n)
     , _parent(parent)
     , _variables(variables)
@@ -589,6 +642,8 @@ Unification::Unification(
     , _seed_predicate(seed_predicate)
     , _log_depth(log_depth)
     , _prof(profiler)
+    , _candidates(candidates)
+    , _stand_ins(stand_ins)
     , _pool(pool)
 {
     if (_n->logging_active())
@@ -600,6 +655,23 @@ Unification::Unification(
         _subject           = pattern.subject;
         _objects           = std::move(pattern.objects); // sink: the by-value parameter is ours
         _subject_pred_hint = pattern.subject_pred_hint;
+
+        // A subject or an object that represents a bucket's term is matched
+        // and anchored on as that term. One that represents any term stays,
+        // and the anchors bypass it (matches_any).
+        if (_stand_ins != nullptr)
+        {
+            const auto in_place = [&](const Node node)
+            {
+                const auto it = _stand_ins->find(node);
+                return it != _stand_ins->end() && it->second.term != 0 ? it->second.term : node;
+            };
+            _subject = in_place(_subject);
+            adjacency_set objects;
+            for (const Node o : _objects)
+                objects.insert(in_place(o));
+            _objects = std::move(objects);
+        }
 
         if (_n->logging_active() && !Zelph::Impl::is_var(relation))
             _current_rel_ctx = relation;
@@ -720,7 +792,7 @@ Unification::Unification(
         {
             Node              grounded = 0;
             std::vector<Node> ground_history;
-            switch (ground_pattern(_n, _subject, *_variables, _log_depth, grounded, ground_history))
+            switch (ground_pattern(_n, _subject, *_variables, _log_depth, grounded, ground_history, _stand_ins))
             {
             case GroundResult::Grounded:
                 _subject_grounded = grounded;
@@ -769,7 +841,7 @@ Unification::Unification(
             // grounded node is a direct get_right() anchor.
             subject_is_bound = true;
         }
-        else if (_subject != 0)
+        else if (_subject != 0 && !matches_any(_subject))
         {
             Node s = _subject;
             if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
@@ -783,6 +855,7 @@ Unification::Unification(
         bool object_is_bound = false;
         for (Node o : _objects)
         {
+            if (matches_any(o)) continue;
             if (!Zelph::Impl::is_var(o))
             {
                 if (get_fact_structures(_n, o, log_depth)->empty())
@@ -833,9 +906,9 @@ Unification::Unification(
                 std::vector<Node>        chain;
                 std::unordered_set<Node> visited;
                 constexpr int            max_anchor_depth = 4;
-                collect_partial_anchors(_n, _subject, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors);
+                collect_partial_anchors(_n, _subject, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors, _stand_ins);
                 for (Node o : _objects)
-                    collect_partial_anchors(_n, o, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors);
+                    collect_partial_anchors(_n, o, _parent, *_variables, chain, visited, max_anchor_depth, _log_depth, anchors, _stand_ins);
             }
 
             if (!anchors.empty())
@@ -867,7 +940,10 @@ Unification::Unification(
                 const size_t work_budget     = std::max<size_t>(1024, 16 * extent);
 
                 adjacency_set candidates;
-                if (climb_partial_anchor(_n, *best, fixed_rel, frontier_budget, work_budget, candidates))
+                size_t        climbed = 0;
+                const bool    climb   = climb_partial_anchor(_n, *best, fixed_rel, frontier_budget, work_budget, candidates, climbed);
+                _scanned += climbed;
+                if (climb)
                 {
                     _partial_snapshot       = std::move(candidates);
                     _partial_snapshot_valid = true;
@@ -956,6 +1032,7 @@ Unification::Unification(
                                        for (const auto& fs : *structs)
                                        {
                                            if (fs.predicate != fixed_rel) continue;
+                                           if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
                                            for (auto& r : extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth))
                                            {
@@ -980,6 +1057,122 @@ Unification::Unification(
     }
 }
 
+void Unification::enumerate_by_id()
+{
+    _by_id = true;
+    if (_relation_list.empty()) return;
+    _relation_list.sort();
+    _relation_index = _relation_list.begin();
+}
+
+void Unification::skip_candidates_in_other_roles()
+{
+    _role_filter = true;
+}
+
+void Unification::start_after(const Node relation, const Node fact)
+{
+    if (_relation_list.empty()) return;
+    while (_relation_index != _relation_list.end() && *_relation_index < relation)
+        ++_relation_index;
+    _resume_relation = relation;
+    _resume_fact     = fact;
+}
+
+Node Unification::current_relation() const
+{
+    return !_relation_list.empty() && _relation_index != _relation_list.end() ? *_relation_index : 0;
+}
+
+bool Unification::has_queued()
+{
+    std::lock_guard<std::mutex> l(_queue_mtx);
+    return !_match_queue.empty();
+}
+
+bool Unification::exhausted()
+{
+    if (_use_parallel) return false;
+    {
+        std::lock_guard<std::mutex> l(_queue_mtx);
+        if (!_match_queue.empty()) return false;
+    }
+    if (_relation_list.empty() || _relation_index == _relation_list.end()) return true;
+    if (!_fact_index_initialized) return false;
+    auto relation = _relation_index;
+    if (++relation != _relation_list.end()) return false;
+    auto fact = _fact_index;
+    while (++fact != _facts_end)
+        if (!yields_nothing(*fact)) return false;
+    return true;
+}
+
+bool Unification::few_left(const std::size_t at_most)
+{
+    if (_use_parallel) return false;
+    if (_relation_list.empty() || _relation_index == _relation_list.end()) return true;
+    if (!_fact_index_initialized) return false;
+    auto relation = _relation_index;
+    if (++relation != _relation_list.end()) return false;
+    std::size_t left = 0;
+    for (auto fact = _fact_index; ++fact != _facts_end;)
+        if (++left > at_most) return false;
+    return true;
+}
+
+bool Unification::yields_nothing(const Node fact) const
+{
+    if (_n->is_rule_pattern(fact) || _n->is_refuted_fact(fact)) return true;
+    if (!_n->var_in_closure(fact, _candidates)) return false;
+    for (const auto& fs : *get_fact_structures(_n, fact, _log_depth))
+    {
+        if (fs.predicate != *_relation_index) continue;
+        if (is_rule_text(_n, fact, fs, _candidates)) continue;
+        if (_n->var_in_closure(fs.subject, _candidates)) continue;
+        if (std::any_of(fs.objects.begin(), fs.objects.end(), [&](const Node o)
+                        { return _n->var_in_closure(o, _candidates); }))
+            continue;
+        return false;
+    }
+    return true;
+}
+
+// Sorts node ids in ascending order, processing one byte at a time starting
+// from the least significant: performs eight passes over the ids, whereas a
+// comparison sort would require as many as the logarithm of their count, and
+// a pass is left out whenever all ids share the same byte -- such as the bits
+// that define an id's class. Using std::sort, a proof search across a chain
+// of a thousand steps, each handling ten thousand candidates sorted by their
+// ids, took 14 to 23 % more time.
+static void sort_ids(std::vector<Node>& ids)
+{
+    if (ids.size() <= 256)
+    {
+        std::sort(ids.begin(), ids.end());
+        return;
+    }
+    std::vector<Node> other(ids.size());
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        std::array<std::size_t, 257> start{};
+        for (const Node n : ids)
+            ++start[((n >> shift) & 0xff) + 1];
+        if (std::find(start.begin() + 1, start.end(), ids.size()) != start.end()) continue;
+        for (std::size_t b = 1; b < start.size(); ++b)
+            start[b] += start[b - 1];
+        for (const Node n : ids)
+            other[start[(n >> shift) & 0xff]++] = n;
+        ids.swap(other);
+    }
+}
+
+bool Unification::matches_any(const Node pattern) const
+{
+    if (_stand_ins == nullptr) return false;
+    const auto it = _stand_ins->find(pattern);
+    return it != _stand_ins->end() && it->second.term == 0;
+}
+
 bool Unification::increment_fact_index()
 {
     if (_relation_index == _relation_list.end())
@@ -996,6 +1189,11 @@ bool Unification::increment_fact_index()
             bool partial_used       = false;
             Node current_rel        = *_relation_index;
             _snapshot_prefiltered   = false;
+            _listed                 = false;
+
+            // The candidates a resumed enumeration has still to come (see
+            // start_after).
+            const Node resume_after = current_rel == _resume_relation ? _resume_fact : 0;
 
             if (_seed_fact != 0)
             {
@@ -1047,7 +1245,7 @@ bool Unification::increment_fact_index()
                 // contains_variable_shallow, exactly as in the full-scan path.
                 auto is_concrete_lookup_node = [&](Node nd) -> bool
                 {
-                    if (nd == 0) return false;
+                    if (nd == 0 || matches_any(nd)) return false;
 
                     if (Zelph::Impl::is_var(nd))
                         nd = string::get(*_variables, nd, nd);
@@ -1065,6 +1263,27 @@ bool Unification::increment_fact_index()
                     return true;
                 };
 
+                // The role the anchor must fulfil within a candidate (see
+                // skip_candidates_in_other_roles). Only an atom matches
+                // nothing but itself; a statement matches a broader one
+                // too, whose objects include its own, thus enabling a fact
+                // to match through a statement in the other role:
+                // ((a p b) bad Z) matches ((a p b c) bad (a p b)).
+                auto anchor_role = [&](const Node anchor, const Zelph::AnchorRole role)
+                {
+                    return _role_filter && !Zelph::Impl::is_hash(anchor) ? role : Zelph::AnchorRole::Any;
+                };
+
+                // Taken by id, the candidates are added to a list
+                // (see enumerate_by_id).
+                auto collect = [&](const Node anchor, const Zelph::AnchorRole role)
+                {
+                    _listed = _by_id;
+                    if (_listed) _facts_snapshot.clear();
+                    _scanned += _listed ? _n->collect_anchored_facts(anchor, current_rel, _listed_facts, anchor_role(anchor, role), resume_after)
+                                        : _n->collect_anchored_facts(anchor, current_rel, _facts_snapshot, anchor_role(anchor, role), resume_after);
+                };
+
                 // Check if Subject is bound
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
@@ -1074,13 +1293,13 @@ bool Unification::increment_fact_index()
                     // Strategy: Subject Driven
                     // One lock scope filters the anchor's adjacency straight
                     // into the snapshot (Zelph::collect_anchored_facts).
-                    _n->collect_anchored_facts(s, current_rel, _facts_snapshot);
+                    collect(s, Zelph::AnchorRole::Subject);
                     optimized_snapshot    = true;
                     _snapshot_prefiltered = true;
                     optimized_snapshot    = true;
                     if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                     {
-                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
                     }
                 }
                 // Check if Object is bound (if Subject wasn't)
@@ -1094,13 +1313,13 @@ bool Unification::increment_fact_index()
                         // Strategy: Object Driven
                         // One lock scope filters the anchor's adjacency straight
                         // into the snapshot (Zelph::collect_anchored_facts).
-                        _n->collect_anchored_facts(o, current_rel, _facts_snapshot);
+                        collect(o, Zelph::AnchorRole::Object);
                         optimized_snapshot    = true;
                         _snapshot_prefiltered = true;
                         optimized_snapshot    = true;
                         if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                         {
-                            u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(_facts_snapshot.size()) : ""));
+                            u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
                         }
                     }
                 }
@@ -1109,7 +1328,7 @@ bool Unification::increment_fact_index()
             if (optimized_snapshot)
             {
                 if (_n->should_log(1))
-                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=YES, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
+                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=YES, _facts_snapshot.size()=" + std::to_string(snapshot_size()));
             }
             else
             {
@@ -1117,16 +1336,38 @@ bool Unification::increment_fact_index()
                     u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=NO, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
 
                 // Fallback: Snapshot entire relation extent (slow for huge relations)
-                if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
+                if (_by_id && _n && _n->_pImpl)
+                {
+                    // Taken by id, the relation's facts are added to a list
+                    // (see enumerate_by_id).
+                    _facts_snapshot.clear();
+                    _listed = true;
+                    _scanned += _n->_pImpl->list_left_of(current_rel, _listed_facts, resume_after);
+                }
+                else if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
                 {
                     return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
                 }
+                else
+                    _scanned += _facts_snapshot.size();
             }
+
+            // Taken by identifier, a snapshot within a set is listed and
+            // sorted; one within a sorted vector, and a list in that order
+            // already, are taken as they are (see enumerate_by_id).
+            if (_by_id && !_listed && !_facts_snapshot.iterates_sorted())
+            {
+                _listed_facts.assign(_facts_snapshot.begin(), _facts_snapshot.end());
+                _facts_snapshot.clear();
+                _listed = true;
+            }
+            if (_listed && !std::is_sorted(_listed_facts.begin(), _listed_facts.end()))
+                sort_ids(_listed_facts);
 
             // If the snapshot is empty,
             // we must not initialize the iterator to begin() and then check *_fact_index,
             // because begin() == end(), and dereferencing end() crashes.
-            if (_facts_snapshot.empty())
+            if (snapshot_size() == 0)
             {
                 return false;
             }
@@ -1135,11 +1376,11 @@ bool Unification::increment_fact_index()
             {
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                 {
-                    u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(_facts_snapshot.size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+                    u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(snapshot_size()) + " candidate facts for relation " + U_NODE(*_relation_index));
                 }
 
                 PROF(relation_snapshots.fetch_add(1, std::memory_order_relaxed));
-                PROF(snapshot_facts_total.fetch_add(_facts_snapshot.size(), std::memory_order_relaxed));
+                PROF(snapshot_facts_total.fetch_add(snapshot_size(), std::memory_order_relaxed));
                 if (partial_used)
                 {
                     PROF(snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed));
@@ -1152,13 +1393,34 @@ bool Unification::increment_fact_index()
                 {
                     PROF(snapshot_full_relation.fetch_add(1, std::memory_order_relaxed));
                 }
-                if (current_rel) PROF(note_relation_scan(current_rel, _facts_snapshot.size()));
+                if (current_rel) PROF(note_relation_scan(current_rel, snapshot_size()));
             }
 
-            _fact_index             = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
+            if (_listed)
+            {
+                const Node* const first = _listed_facts.data();
+                const Node* const last  = first + _listed_facts.size();
+                _fact_index             = adjacency_set::iterator(first, last);
+                _facts_end              = adjacency_set::iterator(last, last);
+            }
+            else
+            {
+                _listed_facts.clear();
+                _fact_index = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
+                _facts_end  = _facts_snapshot.end();
+            }
             _fact_index_initialized = true;
+
+            if (_resume_fact != 0) // see start_after
+            {
+                if (current_rel == _resume_relation)
+                    while (_fact_index != _facts_end && *_fact_index <= _resume_fact)
+                        ++_fact_index;
+                _resume_fact = 0;
+                if (_fact_index == _facts_end) return false;
+            }
         }
-        else if (++_fact_index == _facts_snapshot.end()) // increment and return false if we reached the end, so _relation_index will be incremented
+        else if (++_fact_index == _facts_end) // increment and return false if we reached the end, so _relation_index will be incremented
         {
             return false;
         }
@@ -1246,6 +1508,7 @@ std::shared_ptr<Variables> Unification::Next()
                 {
                     // Filter: Ensure the interpretation matches the relation currently being scanned
                     if (fs.predicate != *_relation_index) continue;
+                    if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
                     for (auto& r : extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth))
                     {
@@ -1260,6 +1523,7 @@ std::shared_ptr<Variables> Unification::Next()
                 }
 
                 if (first) return first;
+                ++_fruitless;
             }
         }
 
@@ -1307,7 +1571,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // --- Subject unification ---
     Variables                          base_result;
     std::vector<std::pair<Node, Node>> history;
-    if (!unify_nodes(_n, _subject, subject, base_result, *_variables, history, _log_depth, _prof))
+    if (!unify_nodes(_n, _subject, subject, base_result, *_variables, history, _log_depth, _prof, _stand_ins))
     {
         if (_n->logging_active())
         {
@@ -1323,11 +1587,11 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // predicate VARIABLE is bound at the end of the enumeration below.
     if (_relation_pattern != 0)
     {
-        if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation))
+        if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation, _candidates))
             return results; // the candidate's predicate is itself a template
 
         history.clear();
-        if (!unify_nodes(_n, _relation_pattern, relation, base_result, *_variables, history, _log_depth, _prof))
+        if (!unify_nodes(_n, _relation_pattern, relation, base_result, *_variables, history, _log_depth, _prof, _stand_ins))
         {
             if (_n->logging_active())
             {
@@ -1359,7 +1623,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // This exact shape slipped through the former shallow check and caused
     // the multiplication junk-fact regression.
     {
-        if (_n->var_in_closure(subject))
+        if (_n->var_in_closure(subject, _candidates))
         {
             if (_n->logging_active())
             {
@@ -1371,7 +1635,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     }
     for (Node o : objects)
     {
-        if (_n->var_in_closure(o))
+        if (_n->var_in_closure(o, _candidates))
         {
             if (_n->logging_active())
             {
@@ -1436,7 +1700,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
             Variables try_b = bindings;
             history.clear();
-            if (unify_nodes(_n, rule_obj_vec[idx], fact_obj_vec[fi], try_b, *_variables, history, _log_depth, _prof))
+            if (unify_nodes(_n, rule_obj_vec[idx], fact_obj_vec[fi], try_b, *_variables, history, _log_depth, _prof, _stand_ins))
             {
                 used[fi] = true;
                 enumerate(idx + 1, std::move(try_b));

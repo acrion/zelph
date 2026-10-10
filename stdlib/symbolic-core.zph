@@ -16,40 +16,76 @@
 #   - symbolic atoms: named nodes with declared sorts
 #       x ~ symvar        (variables)
 #       c ~ symconst      (opaque base constants)
-#   - binary operators: the SAME predicates as the numeric modules
-#     (+, *, /) -- a symbolic (x + y) and a numeric (&2 + &3) are
-#     knowledge about the same + node
-#   - unary application: (F of U) with the function symbol F as a
-#     first-class node; properties of function symbols are ordinary
-#     facts (inverseof below), consumed by ONE generic meta-rule --
-#     arbitrary undeclared function symbols work out of the box and
-#     simply have no rewrites
-#   - numerals: cons lists from the arithmetic module, opaque leaves here
+#   - binary operators: the SAME predicates as those in numeric
+#     modules (+, *, /) -- a symbolic (x + y) and a numeric (&2 + &3) both
+#     encode knowledge about the same + node
+#   - unary application: (F of U) where the function symbol F functions as
+#     a first-class node; properties of function symbols are ordinary facts
+#     (inverseof below), processed by a single generic inverse-pair rule --
+#     any undeclared function symbol operates seamlessly by default and
+#     simply lacks rewrites
+#   - numerals: cons lists originating from the arithmetic module, leaves
+#     here that simplify to their canonical form per the SB rules
 #
 # GATING: nothing fires spontaneously. Work is seeded by the request
 # self-fact (T simplify T) -- the testprime idiom -- and recursion is
-# confined to marked terms (T needssimp T), the needscanon pattern.
-# Numeric facts are never touched. (Conversely, the numeric triggers DO
-# fire on symbolic +, *, / facts and create dead internal states such as
-# ((x add y) ci 0); these are harmless -- digit recursion cannot
-# decompose atoms -- and are the price of the shared predicates that
-# make constant folding (M3) possible.)
+# confined to marked terms (T needssimp T), following the needscanon
+# pattern. Numeric facts remain untouched. (Conversely, the numeric
+# triggers DO fire on symbolic +, *, / facts and create internal states
+# such as ((x add y) ci 0). These are harmless -- whatever they derive
+# is true, and a symbolic operand never leads to an = result -- and
+# remain finite per fact. On atoms, digit recursion stalls immediately:
+# one state for +, -, and *, and for / one seed per digit, keyed by the
+# divisor, plus a dvd state. A numeral operand is traversed, however:
+# the left factor of *, the dividend of /, and the trial products of a
+# numeral divisor, which run to completion. Their count increases with
+# the numeral's length, and the completed multiples table is the one
+# later numeric division by that numeral reuses. They are the price of
+# the shared predicates that make constant folding (M3) possible.)
 #
-# TERMINATION/CONFLUENCE CONTRACT for rewrite authors: every rw
-# right-hand side must already be a normal form -- a leaf or a simp
-# result of a subterm of the reduced form. All rules below satisfy this;
-# hence one bottom-up pass suffices and simp is single-valued. Rules
-# violating the contract (e.g. distributivity) need an iterated design
-# and must NOT be added here casually.
+# NORMAL-FORM CONTRACT for authors of rewrites, in two parts.
+# (1) Each rw right-hand-side INSTANCE must itself be in normal form. A
+# rule meets this when at most the root of its instance is newly
+# introduced: it constitutes a subterm within the reduced form; or it is
+# a canonical leaf (a declared atom, a canonical numeral, a negative
+# zint) -- a non-canonical numeral like <00> does not qualify as its own
+# normal form; or it is a single new node built upon such parts to which
+# no rule applies. SX and ZX fall into the final category, and their
+# guards are specifically intended for precisely this purpose --
+# although a declaration concerning that new node causes a rule to apply
+# to it after all (refer to SX). This requirement is the reason a single
+# bottom-up pass is adequate.
+# (2) simp is single-valued due to an additional constraint: the rule
+# set is conflict-free -- rules that match a given reduced form yield
+# the same node. This is argued beside SR, SX, and SN below, and rule SU
+# reports any violation.
+# All rules listed below satisfy both parts. Rules that breach the
+# contract (for instance, distributivity) need an iterated design and
+# must NOT be added here without careful consideration.
 #
 # NEGATION: the single deferred rule (identity fallback) negates rw. Its
-# consequences can, via congruence, grow rw for OTHER terms -- but only
-# through the positive stratum, and the fallback for a term T is only
-# evaluable once (T red C) exists, which is created in the same positive
-# saturation that also derives T's rw (if any). The alternating
-# stratified schedule therefore evaluates every negation against the
-# complete relevant state; test_symbolic.cpp pins this with chains that
-# force multiple stratum alternations.
+# consequences can, through congruence, grow rw for OTHER terms -- yet
+# solely within the positive stratum, and the fallback for a term T
+# becomes evaluable only once (T red C) is established, which arises
+# during the same positive saturation that also derives T's rw (if any)
+# -- AS LONG AS every negated rule that rw depends on has already
+# finished. The NAND substrate's gate completion is one: its digit tables
+# serve as the foundation for computing (&2 + &3) = &5. The engine's
+# negation levels run such a rule to full completion before triggering
+# the fallback (see reasoning_strata.cpp); up to version 1.0.1, both
+# processes occurred in a single pass, and a request evaluated alongside
+# the NAND bootstrap answered both itself and &5. The alternating
+# stratified schedule therefore evaluates each negation against the fully
+# realized relevant state; test_symbolic.cpp verifies this through chains
+# that force multiple stratum alternations, whereas test_stratified.cpp
+# achieves this via the NAND bootstrap. The levels remain valid as long
+# as no rule within the same evaluation is considered to produce every
+# predicate: a rule that takes the predicate it creates from an argument,
+# like an inverse or sub-property rule concerning predicate variables,
+# recombines the gate rule and the fallback into a single level. A
+# transitivity or symmetry rule involving a predicate variable does not,
+# nor does the inverse rule written as a rule that derives rules
+# (logic.md, "Rules over predicates").
 #
 # DOMAIN CAVEAT: identities are FORMAL. exp inverseof ln (exp(ln u) = u)
 # assumes u > 0 over the reals; &0 / X ignores division by zero. Side
@@ -78,13 +114,32 @@ ln inverseof exp
 ((F of U) needssimp (F of U)) => (U needssimp U)
 
 # ---------------------------------------------------------------------------
-# Rules SB -- Base cases: leaves are their own normal form. Undeclared
-# atoms get no simp at all -- partiality by absence: declare your sorts,
-# or the request stays silently unanswered (never wrongly answered).
+# Rules SB -- Base cases: a declared atom is its own normal form, a
+# numeral simplifies to its canonical form, and every other list is its
+# own normal form. Undeclared atoms get no simp at all -- partiality by
+# absence: declare your sorts, or the request stays silently unanswered
+# (never wrongly answered).
+#
+# A cons list constitutes a leaf whose reduced form is (L red L). A
+# numeral rewrites to its canonical form, thus <01> simplifies to &1;
+# every other list undergoes no rewrite and remains its own normal form
+# via the identity fallback (rules SS). When treated as its own normal
+# form, <01> met rules that match &1 by node and an SN fold returning
+# canonical numerals: (<01> * &1) simplified to both &1 and <01>, and
+# rule SU reported the contradiction. The numeral test comes first
+# because canon strips trailing zero cells from any list, transforming
+# <x 0> into <x>. The cost: each numeral leaf passes the numeral test
+# and canon before obtaining its simp, and a list that is not a numeral
+# gets its simp solely within the negation stratum.
 # ---------------------------------------------------------------------------
 (X needssimp X, X ~ symvar) => (X simp X)
 (X needssimp X, X ~ symconst) => (X simp X)
-((A cons R) needssimp (A cons R)) => ((A cons R) simp (A cons R))
+((A cons R) needssimp (A cons R)) => ((A cons R) red (A cons R))
+((A cons R) needssimp (A cons R)) => ((A cons R) needsnumeral (A cons R))
+((A cons R) needssimp (A cons R), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((A cons R) needssimp (A cons R), (A cons R) isnumeral true, (A cons R) canonnum N)
+=> ((A cons R) rw N)
 
 # ---------------------------------------------------------------------------
 # Rules SC -- Congruence: once the children are normal, build the
@@ -97,11 +152,12 @@ ln inverseof exp
 ((F of U) needssimp (F of U), U simp P) => ((F of U) red (F of P))
 
 # ---------------------------------------------------------------------------
-# Rules SR -- Top-level rewrites on reduced forms. Commutativity is
-# deliberately NOT a rule (a monotonic engine never deletes; free
-# commutativity would double every term) -- both orientations are
-# spelled out instead. The rule set is conflict-free: whenever two rules
-# match one reduced form, they yield the same result node.
+# Rules SR -- Rewrites at the top level applied to reduced forms.
+# Commutativity is deliberately excluded as a rule (rules solely
+# introduce facts, never delete them; free commutativity would duplicate
+# each term) -- both directions are specified individually instead. The
+# rule set is conflict-free: if two rules match a single reduced form,
+# they yield the same result node.
 # ---------------------------------------------------------------------------
 (T red (X + &0)) => (T rw X)
 (T red (&0 + X)) => (T rw X)
@@ -112,18 +168,38 @@ ln inverseof exp
 (T red (X / &1)) => (T rw X)
 (T red (&0 / X)) => (T rw &0)
 
-# Generic inverse-pair rule -- one rule for ALL declared pairs. U is a
-# child of a reduced form and therefore already normal, so the RHS
-# satisfies the normal-form contract.
+# ln 1 = 0 -- exact, no domain caveat. Conflict-free with the inverse-pair
+# rule below: &1 is a numeral, never an (exp of U) application.
+(T red (ln of &1)) => (T rw &0)
+
+# `exp 0 = 1` -- the companion of `ln 1 = 0`, and essential to it:
+# lacking this, `exp(ln 1)` collapses bottom-up into `(exp of &0)` (since
+# `ln 1` fires before the inverse-pair rule can recognize the `ln`), a
+# case that versions up to 1.0.1 answered with &1.
+(T red (exp of &0)) => (T rw &1)
+
+# Generic inverse-pair rule -- one rule for every declared pair. Since
+# U is a subterm of the reduced form, it is already normal; thus, the
+# right-hand side fulfils the normal-form contract.
 (F inverseof G, T red (F of (G of U))) => (T rw U)
 
 # ---------------------------------------------------------------------------
 # Rules SX -- Constant reassociation: (m * (n * u)) folds m and n together.
 #
-# The ONLY associativity in this module, and deliberately so: general
-# associativity plus congruence blows up the term space, but this instance
-# is measure-reducing (two products become one) and its right-hand side is
-# a normal form, so the single bottom-up pass still suffices.
+# The sole associativity within this module, and by design: universal
+# associativity combined with congruence causes the term space to expand
+# uncontrollably, yet this particular instance reduces the measure
+# (transforming two products into one), and its right-hand side introduces
+# a new node to which no rule applies, thus a single bottom-up pass
+# remains sufficient.
+#
+# One exception: a = fact DECLARED regarding (K * U) gives knowledge
+# folding (rule SN) a rewrite for it. A request directed at (K * U) itself
+# then answers the declared value, whereas a term that this rule rewrites
+# into (K * U) keeps (K * U) as its answer -- simplifying that answer once
+# more alters it, and rule SU detects nothing, because each term continues
+# to have one simp. The right-hand side constitutes a normal form solely
+# when nothing is declared about it.
 #
 # It matters because iterated differentiation produces exactly this shape.
 # d3(x^5)/dx3 assembles (&5 * (&4 * (&3 * x ^ &2))) -- every factor correct,
@@ -159,24 +235,36 @@ ln inverseof exp
 => (T rw (K * U))
 
 # ---------------------------------------------------------------------------
-# Rule SN -- Knowledge folding (M3). If the graph knows an equational
+# Rule SN -- Knowledge folding (M3). When the graph knows an equational
 # result for the reduced form, adopt it as the rewrite. For numeral
-# operands this is constant folding without any dedicated machinery: the
-# red fact IS an ordinary +/*// fact, so the arithmetic module's triggers
-# fire on it and derive (C = R) in the same positive stratum -- entirely
-# before the deferred identity fallback is evaluated. The rule is
-# deliberately more general: ANY = fact about the reduced form is
-# consumed, computed or declared. Declared equations must respect the
-# normal-form contract on their right-hand side; conflicting declared
-# equations would break simp's single-valuedness.
+# operands, this constitutes constant folding without specialized
+# infrastructure: the red fact IS an ordinary +/*// fact, prompting the
+# arithmetic module's triggers to fire and derive (C = R) within the same
+# positive stratum -- fully before the deferred identity fallback is
+# evaluated. The rule is intentionally broader: ANY = fact concerning the
+# reduced form is consumed, computed or declared -- yet ONLY = facts
+# regarding the reduced form, never those pertaining to T as originally
+# written. A declaration like ((x + &0) * &2) = c is never read, and no
+# report is issued: the request reduces that term to (x * &2) before this
+# rule engages. The rationale is that the term as written includes the
+# arithmetic's computed = fact as well, and for operands starting with
+# zero, that result is not canonical: (<01> + <010>) = <011>. Reading it
+# would impose a second simp on the term. Declared equations must comply
+# with the normal-form contract on their right-hand side. A declared
+# equation involving the reduced form that conflicts with its rewrite, or
+# that arrives after the request has been resolved, introduces a second
+# simp to the term -- rule SU below identifies this as a contradiction,
+# explicitly naming both.
 #
-# Confluence with the SR rules: on every overlap (e.g. red (&2 + &0),
-# matched by SR and computed numerically) both paths yield the SAME
-# node, because numeric results of canonical operands are canonical --
-# addition by construction; subtraction, multiplication and division
-# via canonnum.
-# Partiality composes: (&5 / &0) gets no = fact, no rw, and falls back
-# to itself as its own normal form.
+# Confluence with the SR rules: at every overlap (for instance, red (&2 +
+# &0), matched by SR and computed numerically), both routes produce the
+# SAME node, since numeric results of canonical operands are canonical --
+# addition by construction; subtraction, multiplication, and division
+# through canonnum. The simplified operands inside a reduced form are
+# simp results, the exponent in ^ among them, and SB rules guarantee that
+# every numeral within is canonical.
+# Partiality composes: (&5 / &0) lacks a = fact, lacks a rw, and falls
+# back to itself as its own normal form.
 # ---------------------------------------------------------------------------
 (T red C, C = R) => (T rw R)
 
@@ -186,6 +274,48 @@ ln inverseof exp
 # ---------------------------------------------------------------------------
 (T red C, T rw S) => (T simp S)
 (T red C, ¬(T rw S)) => (T simp C)
+
+# ---------------------------------------------------------------------------
+# Rules SE -- Definitional extension: an operator defined through its
+# DEFINITION T = R rather than through rewrites. Its congruence rule
+# builds (T expandsto R), where R is formed from the simp outcomes of
+# the operands; R is subsequently simplified as an ordinary term, and
+# its normal form becomes that of T.
+#
+# A defined term is deliberately free of any red fact, thereby
+# preventing the identity fallback referenced earlier from being
+# triggered: T's sole simp is R's, and R's is single-valued just as any
+# term's is (refer to the contract above and rule SU). (An alternative
+# method -- a red form that rw's to R's simp -- would let T's own
+# fallback activate during the same deferred pass in which R first
+# acquires a simp, before T's rw is established: leading to two
+# answers.)
+#
+# CONTRACT for definitional operators: R must not contain the defined
+# operator (as R is processed through an ordinary single pass, any
+# defined operator inside it would fail to have a standalone normal
+# form), and R is built from the operands' simp results, thus
+# re-marking them re-derives the same normal forms. Consequently,
+# normal forms are free of defined operators. Cost: R, and each node
+# within it located above the operands' normal forms, is newly created
+# per T; the normal forms are shared.
+# ---------------------------------------------------------------------------
+(T expandsto R) => (R needssimp R)
+(T expandsto R, R simp S) => (T simp S)
+
+# ---------------------------------------------------------------------------
+# Rule SU -- simp is single-valued. The full framework is designed to
+# ensure this characteristic: a single bottom-up pass, rewrites using
+# normal forms on the right-hand side, and a rule set free of conflicts.
+# Anything the rules cannot exclude originates with the user: a declared
+# equation involving a reduced form that disagrees with its rewrite, or
+# one that arrives after the corresponding request has already been
+# resolved through the fallback mechanism (the engine never retracts its
+# original response). In both cases, a term ends up with a second simp,
+# and this rule reports such a situation as a contradiction by explicitly
+# naming both, in every evaluation mode.
+# ---------------------------------------------------------------------------
+(T simp A, T simp B, A != B) => !
 
 # ---------------------------------------------------------------------------
 # Rule SQ0 -- Connect: expose the result under =, testprime-style.

@@ -65,7 +65,7 @@ Neither "bright", "dark" nor "is opposite of" is know to zelph prior this comman
 It automatically creates the appropiate nodes and edges in the semantic network.
 After doing so, in the second line this topology is parsed and printed to verify the process ran as expected.
 
-Note that when a relation contains spaces, it must be enclosed in quotation marks.
+Note that if a relation contains spaces, it needs to be wrapped in quotation marks, just as a name starting with `#` must be enclosed in quotation marks to avoid initiating a comment.
 
 Predicates are completely generic: symbolic predicates such as `..`, `-->`, or `<=` are treated in the same way as word-like predicates such as `followed-by` or `is capital of`.
 
@@ -117,9 +117,9 @@ and only `@{` is special.
 
 ```
 zelph> A in { elem1 elem2 elem3 }
-A  in  { elem1   elem2   elem3 }
-Answer:   elem2    in  { elem1   elem2   elem3 }
-Answer:   elem1    in  { elem1   elem2   elem3 }
+A in {elem1 elem2 elem3}
+Answer: elem2 in {elem1 elem2 elem3}
+Answer: elem1 in {elem1 elem2 elem3}
 Answer: elem3 in {elem1 elem2 elem3}
 ```
 
@@ -154,7 +154,9 @@ one is refused — and the message names the literal that can be extended:
 
 ```
 zelph> x in {a b}
-Error in line "x in {a b}": fact(): a set constant cannot be extended -- {a b} IS its members. Write the collection literal @{...} for a container that membership can grow.
+Error in line "x in {a b}": fact(): a set constant cannot be extended -- {a b}
+IS its members. Write the collection literal @{...} for a container that
+membership can grow.
 ```
 
 Saying what already holds is not an extension: `a in {a b}` is true by
@@ -170,7 +172,8 @@ zelph> z rel {a b}
 zelph> q p r
 zelph> (X p Y) => (X in {a b})
 ! ⇐ (q p r)
-   └─ refused: a set constant cannot be extended -- {a b} IS its members. Write the collection literal @{...} for a container that membership can grow.
+   └─ refused: a set constant cannot be extended -- {a b} IS its members. Write
+the collection literal @{...} for a container that membership can grow.
 Found one or more contradictions!
 ```
 
@@ -181,7 +184,9 @@ A collection is built fresh by each literal, so two of them are two containers
 
 ```
 zelph> x in @{a b}
+x in @{a b x}
 zelph> y in @{a b}
+y in @{a b y}
 zelph> S in O
 Answer: a in @{a b y}
 Answer: x in @{a b x}
@@ -202,27 +207,43 @@ zelph> alice reported bug1
 zelph> bob reported bug2
 zelph> (X reported Y) => (Y in @{X})
 (X reported Y) => (Y in @{Y X})
+(bug1 in @{bug1}) ⇐ (alice reported bug1)
+(bug2 in @{bug1 bug2}) ⇐ (bob reported bug2)
 zelph> S in O
 Answer: bug1 in @{bug1 bug2}
 Answer: bug2 in @{bug1 bug2}
 ```
 
-(The two deductions are printed as well; which of them comes first varies with
-the run, and so does the order of the answers – see
-[Querying](queries.md#key-features).)
+(Which of the two deductions appears initially depends on the execution –
+along with the member that the initial deduction reveals – and so does the
+sequence of the responses; refer to [Querying](queries.md#key-features).)
 
-The rule and the facts it derives name **one and the same** container, so what
-counts as its members depends on which of the two you are looking at. Inside
-the rule the variables are the statement; in the data the gathered members
-are. The rule therefore keeps saying what it says, however much it has
-gathered:
+That container is not the collection written in the rule, though, but instead a node constructed by the rule for it: the collection’s **term**, a single node into which every firing of the rule writes. The rule names its own collection, the facts it derives name the term, and whatever the rule derives never ends up within the rule’s own collection. The rule thus continues to assert the same content, regardless of how much the term has gathered:
 
 ```
 zelph> .list-rules
+Listing all rules:
+------------------------
 (X reported Y) => (Y in @{Y X})
+------------------------
 ```
 
 (`Y` is a member because `Y in @{X}` puts it there.)
+
+The term begins with the ground members of the rule’s collection, represented as data, and accumulates the outputs produced by the rule. A rule that writes to `@{bug1 bug2}` thus accumulates into a term that holds `bug1` and `bug2` from the start, and queries answer them like the members it gathered:
+
+```
+zelph> alice reported bug3
+zelph> (X reported Y) => (Y in @{bug1 bug2})
+(X reported Y) => (Y in @{bug1 bug2 Y})
+(bug3 in @{bug3 bug1 bug2}) ⇐ (alice reported bug3)
+zelph> S in O
+Answer: bug3 in @{bug3 bug1 bug2}
+Answer: bug1 in @{bug3 bug1 bug2}
+Answer: bug2 in @{bug3 bug1 bug2}
+```
+
+A membership written inside another statement, such as `(X p Y) => ((Y in @{X}) is noted)`, writes into the term in the same manner, since a nested fact is also asserted.
 
 Note the asymmetry, and that it is the point: quantify over a **set constant**
 to read its members, write into a **collection** to gather results.
@@ -239,7 +260,9 @@ zelph> a in O
 Answer: a in @{a b x}
 zelph> .explain (a in @{a b x})
 Fact is not asserted -- nothing to explain.
-A collection literal @{...} builds a NEW container, so it cannot name an existing one. Address the fact by its ID (.node without an argument reports the last answer's node), or use a set constant {...}, whose identity IS its members.
+A collection literal @{...} builds a NEW container, so it cannot name an
+existing one. Address the fact by its ID (.node without an argument reports the
+last answer's node), or use a set constant {...}, whose identity IS its members.
 zelph> .explain
 a in @{a b x}  [axiom]
 ```
@@ -272,12 +295,21 @@ This is also what keeps the engine's own conjunction form working, whose
 members are condition patterns and therefore never ground — see
 [the rule section](rules.md#rules-and-inference) for `*{...} ~ conjunction`.
 
+A rule is considered a member with a variable wherever its variables appear, within its conditions as well, thus making both of these literals collections. Neither serves as an answer to a query regarding its member, because a rule containing variables constitutes rule text, not data:
+
+```
+zelph> x has {((A r B) => (c q d))}
+x has @{((A r B) => (c q d))}
+zelph> y has {((A r B, A s B) => (c q d))}
+y has @{(((A s B), (A r B)) => (c q d))}
+zelph> S in O
+```
+
 #### A literal a rule derives
 
-While the rule is being read its members are unknown, but a *binding* makes
-them known — so a container in a **consequence** is rebuilt from the
-substituted members, as a set constant. The rule keeps showing its own
-collection; each derived fact carries a set of its own:
+A collection written in a rule belongs to the rule: it forms part of the rule’s text, just as the rule’s variables do, and no firing places it into the data. That holds exactly for a collection written with the rule – entered directly in its text, also present in a rule that another statement merely mentions, constructed within the argument forms of [`zelph/rule`](janet.md#zelphrule), or built by a generator for the rule it writes – and no subsequent writing alters it. A collection built as data – by a Janet program before rule construction, via `zelph/rule*`, whose arguments are built before execution, or through the C ABI – is a value that the rule refers to, and it receives what the rule writes.
+
+Instead of a collection of the rule’s text, each firing writes one constructed specifically for that firing (the container a rule writes *into* is the exception, see below). While the rule is being read, the members of `@{Y}` remain unknown, yet a *binding* makes them known – thus, a literal in a **consequence** containing a member that is a variable, or a fact holding one, is reassembled using the substituted members, and becomes a set constant once the binding eliminates all variables within it. A collection among the members does not count: `@{@{Y}}` derives `@{{b}}`, a collection around a set constant. The rule continues to display its own collection; each derived fact carries its own set:
 
 ```
 zelph> a p b
@@ -290,15 +322,50 @@ Answer: c likes {d}
 Answer: a likes {b}
 ```
 
-Set constants are hash-consed, which is what makes this safe: re-deriving
-lands on the same node, so the run reaches a fixpoint. A fresh collection per
-binding would be a new node on every run and never converge.
+Set constants are hash-consed, meaning that re-deriving results in the same node. A literal that has nothing to substitute, like `@{bucket}`, or one whose members keep a variable following the binding, such as `@{(Z q Y)}` with its `Z`, stays a collection. The firing builds one for every binding of the consequence’s variables, holding the substituted members as data:
 
-Two containers are deliberately **not** rebuilt. One is the container a rule
-writes *into*: `Y in @{X}` says something about that container, so its
-identity survives substitution and the accumulator above keeps naming one
-bucket. The other is a literal with nothing to substitute — `{red green}` or
-`@{bucket}` — which is already what it will be.
+```
+zelph> a p b
+zelph> c p d
+zelph> (X p Y) => (X likes @{bucket})
+(a likes @{bucket}) ⇐ (a p b)
+(c likes @{bucket}) ⇐ (c p d)
+zelph> S in O
+Answer: bucket in @{bucket}
+Answer: bucket in @{bucket}
+```
+
+These are two collections that print alike, just as two typed `@{a b}` do. Each is identified by the collection in the rule and the binding it was built for, rather than by a counter, meaning that deriving the same fact again under the same binding targets the same node, and the run attains a fixpoint – **unless what the rule builds flows back into its own binding**. In that case, every pass generates a new collection, and the run never concludes:
+
+```
+(X p Y) => (X likes @{bucket})
+(X likes C) => (C p k)
+b p k
+```
+
+`b p k` builds a collection for `b`, the second rule makes that collection the subject of a `p` fact, which in turn generates a collection for it, and so on: `b likes C1`, `C1 likes C2`, `C2 likes C3`, …, four nodes per pass, and the same applies to `@{(Z q Y)}`. That is what the rules state – each collection is a new binding of `X` – and this is also the limit a rule that creates nodes via a [fresh variable](logic.md#fresh-variables-generative-rules) has. A set constant, or a named node, is the way to say that one shared object is intended: using `{bucket}` in the first rule, the example ends after three deductions. The same advice applies to memory: every collection produced by a firing is a node with a membership fact for each member, which the rules require and which no switch omits.
+
+The container a rule writes *into* is not built per binding: `Y in @{X}` conveys information about that container, and each fact derived by the rule names its single term (refer to [Collections](#collections)). A collection literal in **predicate** position is built per binding just like any other: `(X p Y) => (X @{b} Y)` with `a p c` and `d p e` derives `a @{b} c` and `d @{b} e` across two relations that print alike. Insert a named relation, or the set constant `{b}`, when only one relation is meant.
+
+A network saved by a prior version of zelph loads in the state it was stored, yet the collections within its rules are treated as data here, because that earlier zelph stored them just as it stored data: a firing names the rule’s own collection, the identical node for each binding. This is precisely how the older zelph handled a collection the rule writes to and a literal that has nothing to substitute. A literal grounded by a binding, like `@{Y}` above, it built for each binding as a set constant; here, the literal is included in the data with its variable. A rule re-typed here becomes a second rule beside the loaded one, since its literal now functions as a template. Saved by an older zelph after `a p b` and the rule, the example above proceeds as follows:
+
+```
+zelph> .load liked.bin
+...
+Note: rules in this network were saved by an older zelph, and their collections are data here; rebuild the network from its scripts before reasoning over it.
+...
+zelph-> c p d
+zelph-> .run
+...
+(c likes @{Y}) ⇐ (c p d)
+...
+zelph+-> S likes O
+Answer: c likes @{Y}
+Answer: a likes {b}
+Answer: a likes @{Y}
+```
+
+The older zelph derived `c likes {d}`, and `a likes {b}` is the fact it saved. In such a network, a generator writes its rules identically, using its own variable: following `then go m`, `(G go H) => ((X p H) => (X likes @{H}))` writes `(X p m) => (X likes @{H})`. Rebuild such a network from its scripts prior to conducting reasoning on it. The load prints a note requesting this action, except when a rule’s collection contains only what the rule’s own statement writes into it, as `@{Y}` does in `(X reported Y) => (Y in @{Y})`; in such cases, the rule derives as before.
 
 #### Topology
 
@@ -309,13 +376,9 @@ the elements to it via the `in` (`PartOf`) relation.
   - `A in SuperNode`
   - `B in SuperNode`
 
-They differ only in how the super-node gets its identity: a set constant hashes
-its members, a collection is a fresh node. Nothing else in the graph
-distinguishes them, which is why the printed form does: `{...}` versus `@{...}`.
+They vary solely in the method by which the super-node gets its identity: a set constant hashes its members, a collection is a fresh node – or, when a rule builds it, the node that the collection within the rule and the binding jointly determine. No other aspect of the graph distinguishes them, which is precisely why their printed representation makes the distinction: `{...}` versus `@{...}`.
 
-The empty literal of either kind — `{}` and `@{}` — is the node `nil`. There is
-nothing for a super-node to collect, and `nil` is what an empty collection is
-throughout zelph.
+The node `nil` is the empty literal of either kind – `{}` and `@{}`. No content exists for a super-node to collect, and `nil` is what an empty collection is across all of zelph. The sole exception is the data term of a collection in another rule’s text, which a rule binding that collection names before anything is derived into it (refer to [what is substituted](rule-generators.md#reference-what-is-substituted)): while it is empty, it prints as `@{}`, and typed back, that is `nil`, not the term itself.
 
 ### Angle Brackets: Lists
 
@@ -413,7 +476,7 @@ the inverse of the `&`-input syntax, not a spacing variant of `<...>`:
 
 ```
 zelph> .import decimal-arithmetic
-zelph> <3 1> is prime
+zelph+> <3 1> is prime
 &13 is prime
 zelph> <a b c> is x
 <a b c> is x
@@ -450,10 +513,10 @@ The focus operator lets you create a fact and use its subject in an outer statem
 
 ```
 zelph> (*tim ~ human) ~ male
-  tim    ~   male
+tim ~ male
 zelph> tim _predicate _object
 Answer: tim ~ male
-Answer:   tim    ~   human
+Answer: tim ~ human
 ```
 
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
@@ -489,30 +552,30 @@ In the predicate position, it also carries a
 and inquires whether `X` reaches itself, which is the manner in which a cycle
 is detected.
 
-> The term _self-fact_ is zelph's own: graph-theoretically a loop, relationally
-> a point on the diagonal of the predicate — the classic way to encode unary
-> predicates over a binary-relation substrate. For the logic-side perspective,
-> and for why zelph does not assign operators a fixed arity instead, see
+> The term _self-fact_ is unique to zelph: in graph-theoretic terms, it represents a loop, and in relational terms, it corresponds to a point on the diagonal within the predicate – a conventional method for encoding unary predicates on a binary-relation substrate. For the viewpoint from logic, and for the rationale behind zelph’s decision not to assign operators a fixed arity instead, refer to
 > [Unary Predicates and Self-Facts](logic.md#unary-predicates-and-self-facts).
 
 ```
 zelph> .deductions off
 Deduction printing mode: off
-  No derivations are printed; a run says how many it hid and marks the prompt with '+' (e.g. "zelph+> ").
+  No derivations are printed; a run says how many it hid and marks the prompt
+with '+' (e.g. "zelph+> ").
 zelph> .import decimal-arithmetic
 Note: 1 deduction was hidden.
 zelph+> .import primes
 zelph> :testprime &13
 Note: 328 deductions were hidden.
-zelph> (:testprime &13) = X
+zelph+> (:testprime &13) = X
 Answer: (:testprime &13) = prime
 zelph> (:isprime N, N hasdivisor D) => !
-((:isprime N), (N hasdivisor D)) => !
+((N hasdivisor D), (:isprime N)) => !
 ```
 
-`.deductions off` is what keeps this transcript short: the primality test is a
-computation, and the 328 derivations it takes are printed line by line in the
-default mode (see [Deduction Output Modes](rules.md#deduction-output-modes)).
+Using `.deductions off` shortens this transcript: the primality test involves
+a computation comprising 328 derivations. In default mode, 74 of these are
+displayed while the remainder are concealed; with `.deductions all`, each
+derivation appears individually, one per line (refer to
+[Deduction Output Modes](rules.md#deduction-output-modes)).
 
 A lone `:pred` on a line is an incomplete statement; the operand may follow on
 the next line, so multi-line input works as usual. A variable token as

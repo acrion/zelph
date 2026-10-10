@@ -86,6 +86,12 @@
 # dominates; only if it is eq does the current digit pair decide. Missing
 # digits of the shorter operand are treated as 0 (zero extension), so
 # non-canonical lists with leading zeros compare correctly by value.
+#
+# A result carried over from the rest still demands that the current cells
+# consist of digits. Absent this, a list whose less significant cells fail
+# to be digits was evaluated solely based on its more significant cells:
+# (<x 1> cmp &0) answered gt, and each rule reading a comparison took such
+# a list as a number.
 # ---------------------------------------------------------------------------
 ((A cons R) lcmp (B cons S),
  (R lcmp S) res eq,
@@ -94,7 +100,9 @@
 
 ((A cons R) lcmp (B cons S),
  (R lcmp S) res X,
- X != eq)
+ X != eq,
+ A isdigit true,
+ B isdigit true)
 => (((A cons R) lcmp (B cons S)) res X)
 
 ((A cons R) lcmp nil,
@@ -104,7 +112,8 @@
 
 ((A cons R) lcmp nil,
  (R lcmp nil) res X,
- X != eq)
+ X != eq,
+ A isdigit true)
 => (((A cons R) lcmp nil) res X)
 
 (nil lcmp (B cons S),
@@ -114,7 +123,8 @@
 
 (nil lcmp (B cons S),
  (nil lcmp S) res X,
- X != eq)
+ X != eq,
+ B isdigit true)
 => ((nil lcmp (B cons S)) res X)
 
 # ---------------------------------------------------------------------------
@@ -132,6 +142,44 @@
 # The relational facts (CC1-CC3) remain the primary, composable output.
 # ---------------------------------------------------------------------------
 (N cmp M, (N lcmp M) res X) => ((N cmp M) = X)
+
+# ===========================================================================
+# Test for numerals (L isnumeral true) -- invoked as needed, for the modules
+# that read a cons list as a number: diff.zph (constant leaves), topoly.zph
+# (constant polynomials), symbolic-core.zph (numeral leaves),
+# symbolic-integers.zph (zint leaves), and the integer facade.
+#
+# A consumer marks the list with (L needsnumeral L), utilizing the needssimp
+# idiom, and evaluation applies solely to those tagged lists: cons lists
+# remain general-purpose, and no interpretation regards one as a number
+# unless a rule explicitly requests it. A list satisfies the status of a
+# numeral precisely when it is non-empty, ends with nil, and every
+# constituent element is a digit in the substrate, which means it fulfils
+# the condition (D isdigit true). The engine displays a list as an &-literal
+# based on the same criterion (node_to_string; zelph/set-number-digits
+# registers the identical digits) and an additional requirement: the output
+# must be in canonical form, so <007>, including leading zeros, counts as a
+# numeral here yet prints as <007>.
+#
+# The empty list nil is not a numeral (the base case below is (A cons
+# nil)), and it falls beyond the scope of the arithmetic contract. Serving
+# as the exhausted tail where every digit recursion ends, it is read as
+# zero all the same by the operations +, -, and cmp, by the exponent in ^
+# (via cmp), and by * when acting as the second factor in a number having
+# multiple digits in the substrate's base: (&12 * nil) = &0. When
+# functioning as the first factor in *, as either operand in / or mod, or
+# beneath the integer facade, it derives nothing. Likewise, a result that
+# would be nil itself does not transform into &0: (nil + nil) answers nil,
+# and (nil - nil) derives nothing.
+# ===========================================================================
+((A cons (B cons S)) needsnumeral (A cons (B cons S)))
+=> ((B cons S) needsnumeral (B cons S))
+
+((A cons nil) needsnumeral (A cons nil), A isdigit true)
+=> ((A cons nil) isnumeral true)
+
+((A cons R) needsnumeral (A cons R), A isdigit true, R isnumeral true)
+=> ((A cons R) isnumeral true)
 
 # ===========================================================================
 # Subtraction (N - M) -- base-agnostic, exact mirror of addition with
@@ -267,17 +315,19 @@
 => (((A cons R) mul M) prod T)
 
 # ---------------------------------------------------------------------------
-# Rule MC0 -- Connect: expose the CANONICAL result, mirroring SC0/VC0.
-# Products of two nonzero factors are canonical by construction (the
-# top digits stem from the nonzero leading-digit product plus carries),
-# and canonnum is the identity on canonical lists -- nothing changes on
-# that path. A ZERO factor, however, yields a zero-extended raw list:
-# binary &3 * &0 accumulates <0> + <00> = <00>, and a zero FIRST factor
-# emits one zero digit per digit of M. That raw list is value-correct
-# but a different node than &0 -- and rendered indistinguishably as &0,
-# since the display converts digit lists by value. The canonnum bridge
-# restores the module contract that = always carries the canonical
-# node (the same number is always the same node).
+# Rule MC0 -- Connect: expose the CANONICAL result, reflecting SC0/VC0.
+# Products formed from two nonzero factors are canonical by
+# construction (the top digits stem from the nonzero leading-digit
+# product combined with carries), and canonnum acts as the identity for
+# canonical lists -- no transformation occurs along this route. A ZERO
+# factor, however, yields a zero-extended raw list: binary &3 * &0
+# accumulates <0> + <00> = <00>, and a zero FIRST factor emits one zero
+# digit for each digit in M. This raw list is value-correct yet
+# represents a distinct node compared to &0, and the display presents
+# it in raw form as <00>: only canonical digit lists render as
+# &-literals. The canonnum bridge restores the module contract that =
+# always refers to the canonical node (the same number is always the
+# same node).
 # ---------------------------------------------------------------------------
 (N * M, (N mul M) prod T, T canonnum S) => ((N * M) = S)
 
@@ -405,14 +455,17 @@
 (N mod M, (N dvd M) rem R, R canonnum S) => ((N mod M) = S)
 
 # ===========================================================================
-# Canonicalization -- connect derived number lists with their canonical
-# form (no leading zeros in the displayed number; in LSB-first storage
-# those are the INNERMOST cells, so canonicalization is plain structural
-# recursion). Nothing is rewritten or reinterpreted: <007> keeps existing
-# as a node; canon merely CONNECTS it to <7>. Cons lists stay
-# general-purpose -- there is deliberately NO universal (A cons R) trigger;
-# only lists arriving as results of the non-canonical producers
-# (subtraction, division) enter the recursion.
+# Canonicalization -- connect derived number lists to their canonical form
+# (where the displayed number has no leading zeros; in LSB-first storage,
+# these correspond to the INNERMOST cells, making canonicalization a
+# straightforward structural recursion). Nothing is rewritten or
+# reinterpreted: <007> remains as a node; canon merely CONNECTS it to <7>.
+# Cons lists remain general-purpose -- there is deliberately NO universal
+# (A cons R) trigger; only lists that emerge as results from non-canonical
+# producers (subtraction, division, multiplication) enter the recursion, as
+# do the numeral leaves that topoly and the simplifier read, and the
+# operands that the integer facade lifts, once the numeral test has
+# accepted them.
 #
 # Base-agnostic and table-free: the only digit knowledge is the zero atom,
 # which the rule blocks reference anyway (D2, CU3, MD1, ...).
@@ -497,9 +550,16 @@
 # canonicalization block already writes (0 cons nil). Every base has the
 # digits 0 and 1, so both forms are canonical in all three substrates.
 #
-# N ^ &0 is &1 for every N including &0 (the empty-product convention the
-# polynomial layer needs). Non-numeral exponents derive nothing --
-# partiality by absence, as everywhere.
+# The expression N ^ &0 equals &1 for every N, including &0, due to the
+# empty-product convention required by the polynomial layer. Exponents that
+# are not numerals derive nothing -- partiality by absence, as everywhere
+# -- with two exceptions, both decided by the comparison below: the empty
+# list nil is interpreted as the exponent zero (refer to the numeral test
+# mentioned earlier), and so is a signed zero like (neg zint &0) after
+# integer-arithmetic has been loaded, since its facade compares it to a
+# natural number as if it were zero: (&2 ^ (neg zint &0)) = &1. The facade
+# does not compare (pos zint &0) to a natural number, so that exponent
+# remains silent.
 # ===========================================================================
 
 %(zelph/no-selffact-sugar "^")

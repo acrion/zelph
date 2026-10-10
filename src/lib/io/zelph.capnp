@@ -31,6 +31,12 @@ struct ZelphImpl {
   rightChunkCount @8 :UInt32;
   nameOfNodeChunkCount @9 :UInt32;
   nodeOfNameChunkCount @10 :UInt32;
+  # True in every file an engine writes that gives the collections written
+  # with a rule ids of their own (template ids). An older engine wrote them
+  # under counter ids, as data, and leaves this false. So does a save of a
+  # network in which a whole-file load found rules an older engine saved:
+  # they keep those ids.
+  templateIds @11 :Bool;
 }
 
 struct NamePair {

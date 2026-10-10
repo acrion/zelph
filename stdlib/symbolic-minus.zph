@@ -1,6 +1,7 @@
 # Simplifier and differentiation support for subtraction (-) and unary
-# negation (neg of ...) -- the follow-up anticipated in eml.zph's header,
-# which introduced both as term formers for the compiler only.
+# negation (neg of ...). eml.zph extends this foundation: the definition
+# of eml is expressed as a difference, and its compiler uses both as term
+# formers.
 #
 # PREREQUISITES:
 #   .import decimal-arithmetic # or binary-arithmetic / binary-nand-arithmetic
@@ -22,12 +23,17 @@
 # integer-arithmetic + symbolic-integers COMPLETES this partiality: the
 # same term then folds to (neg zint &2).
 #
-# DELIBERATE OMISSION: no (T red (X - X)) => (T rw &0) rule. With the Z
-# facade loaded, red ((pos zint A) - (pos zint A)) folds to the zint
-# zero via z-; an X - X rule would additionally rewrite to the natural
-# zero -- two rw values for one red form, breaking simp's single-
-# valuedness. Cancellation of equal SYMBOLIC terms is the polynomial
-# normal-form layer's job, not a local rewrite's.
+# CANCELLATION: X - X equals &0 for each term, and x - (x - a) results in
+# a. Both expressions are single-valued because nonnegative integers
+# possess a single node each (integer-arithmetic.zph, ONE WORLD): at any
+# location where the SN fold also answers X - X -- two equal numerals,
+# either natural or signed -- the outcome is consistently the natural &0.
+# Prior versions up to 1.0.1 left X - X out, as a zint difference folded
+# to the zint zero (pos zint &0), and a rule would have added the natural
+# &0 as an additional result; cancellation of symbolic terms was left to
+# the polynomial layer. topoly continues to normalize entire polynomials,
+# a task this local rule does not attempt: (x + y) - (y + x) remains
+# unchanged here.
 #
 # Identities are FORMAL (domain caveats as in symbolic-core.zph).
 
@@ -57,23 +63,28 @@ neg inverseof neg
 (T red (X - &0)) => (T rw X)
 (T red (neg of &0)) => (T rw &0)
 
+# X - X equals 0. Conflict-free with (X - &0) -- both yield &0 when
+# applied to &0 - &0 -- and with the SN fold, which produces the natural
+# &0 for identical numerals as well (refer to CANCELLATION above).
+(T red (X - X)) => (T rw &0)
+
+# x - (x - a) = a. A is a child of a child within the reduced form, hence
+# normal (normal forms are closed under subterms), meaning the right-hand
+# side fulfils the contract. Conflict-free: (X - &0) needs the subtrahend
+# to be &0, not a - node; X - X would require X to equal (X - A); and the
+# SN fold remains silent, as a numeric - fact needs two numerals. An
+# inner difference that remains unfolded, like (&2 - &5) over the
+# naturals, is not an exception: (&2 - (&2 - &5)) evaluates to &5.
+(T red (X - (X - A))) => (T rw A)
+
 # ---------------------------------------------------------------------------
 # Differentiation extension: d(u - v)/dx = du/dx - dv/dx and
-# d(-u)/dx = -(du/dx). neg's dstate and containment come from diff.zph's
-# generic (F of U) rules; only - needs its own. neg gets a dedicated
-# assemble rule (like ln): its derivative is not of the form G(u) for a
-# named symbol G.
+# d(-u)/dx = -(du/dx). neg's dstate comes from diff.zph's generic
+# (F of U) rule; only - needs its own. neg gets a dedicated assemble rule
+# (like ln): its derivative is not of the form G(u) for a named symbol G.
 # ---------------------------------------------------------------------------
 ((U - V) dstate X) => (U dstate X)
 ((U - V) dstate X) => (V dstate X)
-
-# Shape domain (diff.zph rules DS): - is a form whose derivative is known,
-# so the constancy fallback may apply to it. neg needs no entry -- it is an
-# ordinary (F of U) application, covered there.
-((U - V) dstate X) => ((U - V) ddom (U - V))
-
-((U - V) dstate X, U contains X) => ((U - V) contains X)
-((U - V) dstate X, V contains X) => ((U - V) contains X)
 
 ((U - V) dstate X,
  (U wrt X) deriv P,

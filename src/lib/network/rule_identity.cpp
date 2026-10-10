@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <memory>
 #include <unordered_set>
@@ -99,16 +100,18 @@ namespace zelph::network
             // node may be a hub -- `nil` and the digits are, throughout the
             // math stack.
             //
-            // A HASH node is a set constant (or a fact), and a set constant
-            // hash-conses, so identity already decides it correctly; only a
-            // COLLECTION, whose id is a counter, can be the same container
-            // under two different nodes. And a container has no NAME: nothing
-            // that builds one gives it one, while every constant a rule
-            // mentions has one. Naming a container by hand costs the dedup,
-            // not correctness -- the pair is then compared by identity, which
-            // is what it was before.
+            // A HASH node functions as a set constant (or a fact), and since a
+            // set constant is hash-consed, identity already decides it
+            // correctly; only a COLLECTION, whose identifier stems from a
+            // counter or a template, may represent the same container across
+            // two different nodes. And a container lacks a NAME: no mechanism
+            // that builds one gives it one, whereas every constant referenced
+            // by a rule possesses one, within a given language. Manually
+            // naming a container incurs a loss of deduplication, not of
+            // correctness -- the pair is then compared by identity, just as it
+            // was previously.
             if (Zelph::is_hash(n)) return false;
-            if (!z->get_name(n).empty()) return false; // current language, no fallback walk
+            if (z->is_named_any(n)) return false;
 
             for (const Node rel : z->get_right(n))
             {
@@ -120,6 +123,40 @@ namespace zelph::network
             return false;
         }
 
+        bool is_conjunction(const Zelph* const z, const Node n)
+        {
+            return z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known();
+        }
+
+        // Whether the rule's own collection or a conjunction set is positioned
+        // beneath the fact or set constant `n`, accessed via facts and set
+        // constants. The template-variable store retains only the variables
+        // from a fact's hash components, and those two hold theirs in
+        // membership facts: a variable-free fact or set constant with one of
+        // them beneath it, like the inner rule `((X q H), (X p H)) => !` in a
+        // generator or `{@{c}}`, must be compared by its structure, because
+        // each statement in the rule builds a distinct node there. A value
+        // located beneath it is irrelevant: it represents the same node across
+        // all statements, so the hash of what holds it already determines the
+        // outcome.
+        bool template_below(const Zelph* const z, const Node n, const int depth)
+        {
+            if (depth >= max_depth || n == 0 || Zelph::is_var(n)) return false;
+            if (!Zelph::is_hash(n)) return z->is_rule_template(n) || is_conjunction(z, n);
+
+            const FactStructure fs = get_preferred_structure(z, n, 3);
+            if (fs.subject != 0 && fs.predicate != 0)
+            {
+                if (template_below(z, fs.subject, depth + 1) || template_below(z, fs.predicate, depth + 1)) return true;
+                return std::any_of(fs.objects.begin(), fs.objects.end(), [&](const Node o)
+                                   { return template_below(z, o, depth + 1); });
+            }
+
+            const std::vector<Node> members = set_members(z, n);
+            return std::any_of(members.begin(), members.end(), [&](const Node m)
+                               { return template_below(z, m, depth + 1); });
+        }
+
         // Where a node sits in the rule decides which questions are worth
         // asking about it -- and which ones the ENGINE asks. Only a
         // condition can be a conjunction or be negated (collect_conditions
@@ -128,7 +165,7 @@ namespace zelph::network
         // every atom the walk passes.
         enum class Role
         {
-            Condition, // the => subject, and every member of a condition set
+            Condition, // the => subject, also of a nested rule, and each member of a condition set
             Term       // subject / predicate / object inside a condition
         };
 
@@ -142,9 +179,10 @@ namespace zelph::network
         enum class Kind
         {
             Var,
-            Set,       // a container the ENGINE reads as a set of conditions
-            Container, // ... and one it does not: several members, no tag
+            Set,       // compared by its members: a set of conditions, a rule's own collection
+            Container, // a container in condition position the engine does not read as a set: several members, no tag
             Fact,
+            SetConst, // a set constant that incorporates a rule's own collection or a conjunction set positioned beneath it
             Opaque
         };
 
@@ -154,25 +192,49 @@ namespace zelph::network
             if (role == Role::Condition && z->is_condition_set(n))
                 return Kind::Set;
 
-            // A container is checked BEFORE the template-var store is asked.
-            // That store answers about the node itself, and a container holds
-            // its variables in its membership FACTS -- so it reports "no
-            // variables" for `@{Y}` and the node used to leave as Opaque.
-            //
-            // In CONDITION position the two kinds have to stay apart: a
-            // container of several members WITHOUT the conjunction tag is not
-            // read as a set of conditions and cannot fire, while the tagged
-            // one does. Rendering both as a set made them alpha-equivalent,
-            // so entering the tagged rule after the untagged one was
-            // recognised as a duplicate and silently rolled back -- the
-            // correction of a rule that does not work could not be entered.
-            if (is_container(z, n))
-                return role == Role::Condition ? Kind::Container : Kind::Set;
+            if (!Zelph::is_hash(n))
+            {
+                // In the CONDITION position, the two kinds of container must
+                // remain distinct: a container containing multiple members
+                // WITHOUT the conjunction tag is not read as a set of
+                // conditions and cannot fire, whereas the tagged version
+                // does. Rendering both as a set made them alpha-equivalent,
+                // causing the system to identify the entry of the tagged rule
+                // after the untagged one as a duplicate and silently roll it
+                // back -- the correction of a rule that does not function
+                // could not be entered.
+                if (role == Role::Condition) return is_container(z, n) ? Kind::Container : Kind::Opaque;
 
-            if (variables_in(z, n) == Vars::None) return Kind::Opaque;
+                // Elsewhere the id decides, and no membership is read for it:
+                // a rule's own collection forms a component of the rule's
+                // text and is compared by its members, whereas every other
+                // collection serves as a value -- data a rule refers to --
+                // and functions as the identical term solely as the same
+                // node, akin to an atom. A conjunction set is read by its tag
+                // regardless of position: the conditions within a nested
+                // rule.
+                return z->is_rule_template(n) || is_conjunction(z, n) ? Kind::Set : Kind::Opaque;
+            }
+
+            // A hash node that the store designates as variable-free is
+            // identified by its id, except when a rule's own collection or a
+            // conjunction set is positioned beneath it (template_below).
+            bool below = false;
+            if (variables_in(z, n) == Vars::None)
+            {
+                below = template_below(z, n, 0);
+                if (!below) return Kind::Opaque;
+            }
 
             const FactStructure fs = get_preferred_structure(z, n, 3);
             if (fs.predicate != 0 && fs.subject != 0) return Kind::Fact;
+
+            // A term of type set constant and a term of type collection
+            // represent two distinct kinds of term, despite sharing identical
+            // members: `{@{c}}` and `@{@{c}}` derive two different facts.
+            // Thus, it constitutes a kind of its own, never matched to a
+            // collection.
+            if (below || template_below(z, n, 0)) return Kind::SetConst;
 
             return Kind::Opaque;
         }
@@ -186,32 +248,63 @@ namespace zelph::network
                 && z->check_fact(n, z->core.IsA, {z->core.Negation}).is_known();
         }
 
+        // When a rule is nested in another rule, it transforms into a rule
+        // upon derivation, so its subject is read as a condition, with the
+        // tags the engine reads at that location. Treated as a plain term,
+        // it lost its negation tag, and `(G go H) => (¬(X p H) => (X q H))`
+        // was the same rule as the one lacking the `¬`.
+        Role subject_role(const Zelph* const z, const FactStructure& fs)
+        {
+            return fs.predicate == z->core.Causes ? Role::Condition : Role::Term;
+        }
+
+        // A condition set containing one member is equivalent to that
+        // condition: the engine reads it in this way (collect_conditions),
+        // and a rule whose condition set holds one member is displayed as
+        // `((X p Y)) => ...`, which re-enters as the rule with the single
+        // condition `(X p Y)` and no set.
+        Node single_condition(const Zelph* const z, const Node n, const Role role)
+        {
+            if (role != Role::Condition || Zelph::is_hash(n) || Zelph::is_var(n)) return n;
+
+            adjacency_set members;
+            if (!z->condition_set_members(n, members) || members.size() != 1) return n;
+            return *members.begin();
+        }
+
         // Variable-agnostic rendering. Unordered collections (set members,
         // object sets) are sorted by their own rendering, so the result
         // does not depend on adjacency iteration order.
-        std::string canon(const Zelph* const z, const Node n, const int depth, const Role role)
+        std::string canon(const Zelph* const z, Node n, const int depth, const Role role)
         {
             if (depth >= max_depth) return "…";
+            n = single_condition(z, n, role);
 
-            switch (classify(z, n, role))
+            const Kind kind = classify(z, n, role);
+            switch (kind)
             {
             case Kind::Var:
                 return "v";
 
             case Kind::Container:
             case Kind::Set:
+            case Kind::SetConst:
             {
                 // A conjunction set holds conditions, a term container holds
                 // terms -- so the members inherit the role of the node they
                 // hang off rather than being assumed to be conditions.
+                const bool conditions = role == Role::Condition || (kind == Kind::Set && is_conjunction(z, n));
+
                 std::vector<std::string> parts;
                 for (const Node m : set_members(z, n))
-                    parts.push_back(canon(z, m, depth + 1, role));
+                    parts.push_back(canon(z, m, depth + 1, conditions ? Role::Condition : Role::Term));
                 std::sort(parts.begin(), parts.end());
 
-                // The brace tells the two kinds apart: same members, but one
-                // of them is a rule and the other is not.
-                std::string out = classify(z, n, role) == Kind::Set ? "{" : "@{";
+                // The brace tells the kinds apart: identical members, yet
+                // one is a rule while the other is not, or one is a set
+                // constant whereas the other is a collection.
+                std::string out = kind == Kind::SetConst ? "{=" : kind == Kind::Set ? "{"
+                                                                                    : "@{";
                 for (const auto& p : parts)
                     out += p + " ";
                 return out + "}";
@@ -228,7 +321,7 @@ namespace zelph::network
                 std::sort(objs.begin(), objs.end());
 
                 std::string out = (negated(z, n, role) ? "!(" : "(")
-                                + canon(z, fs.subject, depth + 1, Role::Term) + " "
+                                + canon(z, fs.subject, depth + 1, subject_role(z, fs)) + " "
                                 + canon(z, fs.predicate, depth + 1, Role::Term) + " ";
                 for (const auto& o : objs)
                     out += o + " ";
@@ -249,9 +342,26 @@ namespace zelph::network
             // variables of `a` cannot collapse onto one variable of `b`.
             using Bijection = std::map<Node, Node>;
 
-            bool match(Node a, Node b, Bijection& ab, Bijection& ba, int depth, Role role)
+            // What must match following the present pair, based on the
+            // bijection the match has established up to now. The act of
+            // pairing members of a set or objects of a fact is a choice, and a
+            // choice that fits all previously matched components might still
+            // fail when confronted with what follows -- in
+            // (A p B, B p A) => (A q B), the conditions pair up under A -> A
+            // as well as under A -> B, yet only one of the two holds for the
+            // conclusion. Each choice is therefore tried against the WHOLE
+            // rest of the rule. Pairing the conditions first and keeping that
+            // pairing caused the answer to rely on the order in which the set
+            // held its members -- on node identifiers -- leading to an
+            // equivalent rule being treated as a new one on some entries and
+            // recognized on others.
+            using Then = std::function<bool(Bijection&, Bijection&)>;
+
+            bool match(Node a, Node b, Bijection& ab, Bijection& ba, int depth, Role role, const Then& then)
             {
                 if (depth >= max_depth) return false;
+                a = single_condition(z, a, role);
+                b = single_condition(z, b, role);
 
                 const Kind ka = classify(z, a, role);
                 if (ka != classify(z, b, role)) return false;
@@ -261,19 +371,26 @@ namespace zelph::network
                 case Kind::Var:
                 {
                     const auto ia = ab.find(a);
-                    if (ia != ab.end()) return ia->second == b;
+                    if (ia != ab.end()) return ia->second == b && then(ab, ba);
                     if (ba.find(b) != ba.end()) return false;
-                    ab[a] = b;
-                    ba[b] = a;
+                    Bijection ab2 = ab;
+                    Bijection ba2 = ba;
+                    ab2[a]        = b;
+                    ba2[b]        = a;
+                    if (!then(ab2, ba2)) return false;
+                    ab = std::move(ab2);
+                    ba = std::move(ba2);
                     return true;
                 }
 
                 case Kind::Opaque:
                     // Variable-free and hash-consed: identity settles it.
-                    return a == b;
+                    return a == b && then(ab, ba);
 
                 case Kind::Container:
                 case Kind::Set:
+                case Kind::SetConst:
+                {
                     // The SAME container node is the same term, whatever the
                     // bijection says about the variables inside it. Two rules
                     // share one only when the second was alpha-renamed out of
@@ -284,9 +401,22 @@ namespace zelph::network
                     // to itself, which it cannot after the rename, and the
                     // generator would write another copy of its rule on every
                     // run.
-                    if (a == b) return true;
+                    if (a == b) return then(ab, ba);
 
-                    return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, role);
+                    if (ka != Kind::Set || role == Role::Condition)
+                        return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, role, then);
+
+                    // Outside the condition position, a set of conditions
+                    // constitutes the condition part of a rule nested in a
+                    // term, compared as conditions, while a rule's own
+                    // collection forms part of the rule's text, compared by its
+                    // members as terms.
+                    {
+                        const bool conditions = is_conjunction(z, a);
+                        if (conditions != is_conjunction(z, b)) return false;
+                        return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, conditions ? Role::Condition : Role::Term, then);
+                    }
+                }
 
                 case Kind::Fact:
                 default:
@@ -296,15 +426,12 @@ namespace zelph::network
                     const FactStructure fa = get_preferred_structure(z, a, 3);
                     const FactStructure fb = get_preferred_structure(z, b, 3);
                     if (fa.objects.size() != fb.objects.size()) return false;
-                    if (!match(fa.predicate, fb.predicate, ab, ba, depth + 1, Role::Term)) return false;
-                    if (!match(fa.subject, fb.subject, ab, ba, depth + 1, Role::Term)) return false;
 
-                    return match_multiset(std::vector<Node>(fa.objects.begin(), fa.objects.end()),
-                                          std::vector<Node>(fb.objects.begin(), fb.objects.end()),
-                                          ab,
-                                          ba,
-                                          depth + 1,
-                                          Role::Term);
+                    const std::vector<Node> oa(fa.objects.begin(), fa.objects.end());
+                    const std::vector<Node> ob(fb.objects.begin(), fb.objects.end());
+                    return match(fa.predicate, fb.predicate, ab, ba, depth + 1, Role::Term, [&](Bijection& ab1, Bijection& ba1)
+                                 { return match(fa.subject, fb.subject, ab1, ba1, depth + 1, subject_role(z, fa), [&](Bijection& ab2, Bijection& ba2)
+                                                { return match_multiset(oa, ob, ab2, ba2, depth + 1, Role::Term, then); }); });
                 }
                 }
             }
@@ -314,10 +441,10 @@ namespace zelph::network
             // conditions of one rule, the objects of one fact), and a wrong
             // pairing is rejected by the recursive match immediately, so the
             // backtracking never gets wide in practice.
-            bool match_multiset(std::vector<Node> as, std::vector<Node> bs, Bijection& ab, Bijection& ba, int depth, Role role)
+            bool match_multiset(std::vector<Node> as, std::vector<Node> bs, Bijection& ab, Bijection& ba, int depth, Role role, const Then& then)
             {
                 if (as.size() != bs.size()) return false;
-                if (as.empty()) return true;
+                if (as.empty()) return then(ab, ba);
 
                 const Node a0 = as.back();
                 as.pop_back();
@@ -329,8 +456,8 @@ namespace zelph::network
                     std::vector<Node> rest(bs);
                     rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i));
 
-                    if (match(a0, bs[i], ab2, ba2, depth + 1, role)
-                        && match_multiset(as, rest, ab2, ba2, depth, role))
+                    if (match(a0, bs[i], ab2, ba2, depth + 1, role, [&](Bijection& ab3, Bijection& ba3)
+                              { return match_multiset(as, rest, ab3, ba3, depth, role, then); }))
                     {
                         ab = std::move(ab2);
                         ba = std::move(ba2);
@@ -381,13 +508,57 @@ namespace zelph::network
         Matcher::Bijection ab;
         Matcher::Bijection ba;
 
-        if (!m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition)) return false;
+        const std::vector<Node> ca(fa.objects.begin(), fa.objects.end());
+        const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
+        return m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
+                       { return m.match_multiset(ca, cb, ab1, ba1, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
+                                                 { return true; }); });
+    }
 
-        return m.match_multiset(std::vector<Node>(fa.objects.begin(), fa.objects.end()),
-                                std::vector<Node>(fb.objects.begin(), fb.objects.end()),
-                                ab,
-                                ba,
-                                0,
-                                Role::Term);
+    bool rule_text_below(const Zelph* const z, const Node n)
+    {
+        return template_below(z, n, 0);
+    }
+
+    bool is_rule_statement(const Zelph* const z, const Node rel)
+    {
+        // Climbs from `rel` through what holds it. The facts that hold a node
+        // are its neighbours on both sides: a subject is joined to its fact
+        // in both ways, an object in one direction only. A set constant that
+        // holds it is also climbed; any membership in a different collection
+        // is considered data, and the climb ends there.
+        std::vector<Node>        pending{rel};
+        std::unordered_set<Node> seen{rel};
+        while (!pending.empty())
+        {
+            const Node n = pending.back();
+            pending.pop_back();
+            for (const adjacency_set& side : {z->get_left(n), z->get_right(n)})
+            {
+                for (const Node r : side)
+                {
+                    if (!Zelph::is_hash(r) || r == n) continue;
+
+                    adjacency_set objects;
+                    const Node    subject = z->parse_fact(r, objects, 0);
+                    if (subject != n && objects.count(n) == 0) continue;
+
+                    const Node predicate = z->predicate_of(r);
+                    if (predicate == z->core.Causes) return true;
+                    if (predicate == z->core.PartOf)
+                    {
+                        if (subject != n) continue;
+                        for (const Node o : objects)
+                        {
+                            if (is_conjunction(z, o) || z->is_rule_template(o)) return true;
+                            if (Zelph::is_hash(o) && seen.insert(o).second) pending.push_back(o);
+                        }
+                        continue;
+                    }
+                    if (seen.insert(r).second) pending.push_back(r);
+                }
+            }
+        }
+        return false;
     }
 }

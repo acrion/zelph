@@ -438,6 +438,20 @@ namespace zelph::network
             return _mode != Mode::Set;
         }
 
+        // Makes Set storage iterate in ascending order too, up to the next
+        // insertion or removal. In all other cases, it iterates in the
+        // order of insertion: unordered_dense keeps its elements within a
+        // single vector, and that vector is sorted and the table rebuilt
+        // over it. All alternative storages inherently iterate ascending
+        // anyway.
+        void sort()
+        {
+            if (_mode != Mode::Set) return;
+            auto values = std::move(*_storage.set_ptr).extract();
+            std::sort(values.begin(), values.end());
+            _storage.set_ptr->replace(std::move(values));
+        }
+
         void insert(Node n)
         {
             if (n == 0) return; // invalid sentinel

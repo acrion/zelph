@@ -504,8 +504,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             // by writing the rule, so the conclusion appeared to be there.
             // A QUERY keeps the old reading: asking for a ground pattern is
             // zelph/exists' job and stays a no-op (rule.node is 0 there).
-            // A QUERY keeps the old reading: asking for a ground pattern is
-            // zelph/exists' job and stays a no-op (rule.node is 0 there).
             if (joined->empty() && (rule.node == 0 || var_in_closure(condition)))
             {
                 if (should_log(depth))
@@ -611,7 +609,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
             u->wait_for_completion(); // ensures all producer tasks finished scanning/pushing
 
-            int local_matches = 0;
+            std::size_t local_matches = 0;
             while (std::shared_ptr<Variables> match = u->Next())
             {
                 ++local_matches;
@@ -694,16 +692,18 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
     return result;
 }
 
-// Recursively checks whether a rule condition contains a negated condition
-// at any depth: the condition itself, or -- for conjunction sets -- any
-// element, including nested conjunctions. Rules for which this holds form
-// the DEFERRED STRATUM: they are evaluated only when the positive rules
-// have reached quiescence, so that negation-as-failure tests absence
-// against the saturated positive fact base (stratified semantics) instead
-// of racing against in-flight derivations. Soundness rests on monotonicity:
-// facts only accumulate, so later derivations can make a negation FAIL but
-// never make it newly SUCCEED -- a negation that succeeds at a stratum
-// boundary is final with respect to the positive stratum.
+// Recursively checks whether a rule's condition contains a negated
+// condition at any depth: the condition directly, or -- within conjunction
+// sets -- any element, even those embedded within further conjunctions.
+// Rules meeting this criterion constitute the DEFERRED STRATUM: their
+// evaluation occurs solely after positive rules have reached quiescence,
+// ensuring that negation-as-failure tests absence against a fully
+// saturated positive fact base (stratified semantics) rather than racing
+// against in-flight derivations. Soundness rests on the invariant that
+// facts only accumulate: subsequent derivations may cause a negation to
+// FAIL, but never enable it to SUCCEED anew -- a negation that succeeds at
+// a stratum boundary remains definitive with respect to the positive
+// stratum.
 bool Reasoning::condition_contains_negation(Node condition, int depth)
 {
     if (!_pImpl->exists(condition)) return false;

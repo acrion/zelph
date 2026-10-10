@@ -6,10 +6,10 @@ This page describes the complete arithmetic system: the number representation, t
 
 The modules live in the standard library. Three of them supply the digit level, and one supplies the recursion that runs on top of any of them:
 
-- [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) — internal base 10, from a generated 100-entry table
-- [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) — internal base 2, from 16 hand-written full-adder axioms
-- [`stdlib/binary-nand-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-nand-arithmetic.zph) — internal base 2, derived from a **single NAND axiom**
-- [`stdlib/common-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/common-arithmetic.zph) — the base-agnostic recursions, shared by all three
+- [`stdlib/decimal-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/decimal-arithmetic.zph) – internal base 10, constructed from 2,700 digit-table facts generated automatically
+- [`stdlib/binary-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-arithmetic.zph) – internal base 2, built from 52 digit-table facts written by hand (full adder 16, full subtractor 16, digit multiplication 16, digit comparison 4)
+- [`stdlib/binary-nand-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/binary-nand-arithmetic.zph) – internal base 2, derived from a **single NAND axiom**
+- [`stdlib/common-arithmetic.zph`](https://github.com/acrion/zelph/blob/main/stdlib/common-arithmetic.zph) – the base-agnostic recursions, reused across all three
 
 All three digit-level modules claim the module ID `arithmetic` via [`.provides`](../modules.md#interchangeable-implementations-provides), so anything built on top of arithmetic — [integers](integers.md), [polynomials](polynomial.md), the [symbolic layer](symbolic.md) — imports whichever substrate you loaded first and is otherwise indifferent.
 
@@ -17,27 +17,23 @@ They expose the identical user interface:
 
 ```
 zelph> .import decimal-arithmetic
-zelph> ? &128 + &53
+zelph+> ? &128 + &53
 Answer: (&128 + &53) = &181
-zelph> ? &42 cmp &9
+zelph+> ? &42 cmp &9
 Answer: (&42 cmp &9) = gt
-zelph> ? &105 - &98
+zelph+> ? &105 - &98
 Answer: (&105 - &98) = &7
-zelph> ? &12 * &34
+zelph+> ? &12 * &34
 Answer: (&12 * &34) = &408
-zelph> ? &17 / &5
+zelph+> ? &17 / &5
 Answer: (&17 / &5) = &3
-zelph> ? &17 mod &5
+zelph+> ? &17 mod &5
 Answer: (&17 mod &5) = &2
-zelph> ? &3 ^ &4
+zelph+> ? &3 ^ &4
 Answer: (&3 ^ &4) = &81
 ```
 
-The [`?` prefix](../quickstart.md#two-statement-prefixes) is what keeps that
-transcript to seven lines: it asserts the request, runs the inference quietly
-and asks for the result. Written as a plain statement and a query, the same
-computation prints every step it took – and the last of them carries its
-derivation:
+The [`?` prefix](../quickstart.md#two-statement-prefixes) ensures that each of those seven computations produces just one line of output: it asserts the request, runs the inference quietly and asks for the result. Written as a plain statement and a query, the identical calculation prints the derived fact, along with the conditions that led to it; `.deductions all` prints every intermediate step as well:
 
 ```
 zelph> .import decimal-arithmetic
@@ -52,15 +48,34 @@ A computation in zelph is not a black box returning a value – it is a set of o
 
 A number is a cons-list of digit nodes, stored least-significant digit first: `<42>` is the structure `2 cons (4 cons nil)`. Cons cells are relation nodes — triples with `cons` as the predicate — so a number is nothing but nested statements, the same S-P-O material everything else in zelph is made of (see the [Lisp comparison](../logic.md#lisp-and-s-expressions)). The LSB-first order is an algorithmic choice: carries and borrows propagate from the least significant digit, so the recursion of every arithmetic rule simply follows the list. It also makes multiplication by the base a single cons: in LSB-first representation, `base * X` is just `(0 cons X)` — the "shift" of schoolbook multiplication is free.
 
-The engine core knows exactly one convention about numbers: the `&` prefix means _decimal_, on input and on output. Everything else is defined by scripts. On input, the parser turns `&42` into the Janet call `(zelph/number "42")` — a hook each arithmetic script redefines to build its internal representation. The decimal script maps the literal one-to-one onto digit nodes; the binary script converts by pure string arithmetic (so arbitrarily large literals work) into a base-2 list. On output, the script registers its digit alphabet via `(zelph/set-number-digits ...)`; `node_to_string` then renders any nil-terminated cons-list consisting solely of registered digit nodes as a decimal `&`-literal — the exact inverse of the input conversion. Any other list keeps the generic `<...>` display, so cons-lists remain general-purpose and nothing globally reinterprets them.
+The engine core knows exactly one convention about numbers: the `&` prefix means _decimal_, on input and on output. Everything else is defined by scripts. On input, the parser turns `&42` into the Janet call `(zelph/number "42")` — a hook each arithmetic script redefines to build its internal representation. The decimal script maps the literal one-to-one onto digit nodes; the binary script converts by pure string arithmetic (so arbitrarily large literals work) into a base-2 list. On output, the script registers its digit alphabet via `(zelph/set-number-digits ...)`; `node_to_string` subsequently renders any nil-terminated cons-list in canonical form (without a leading zero) composed exclusively of registered digit nodes as a decimal `&`-literal – precisely the reverse operation of the input conversion. Any other list keeps the generic `<...>` display, so cons-lists remain general-purpose and nothing globally reinterprets them.
 
-The consequence: a binary session reads and writes decimal (`&5` in, `&5` out) while internally computing on `<101>`. Lists with leading zeros are tolerated as non-canonical values — `&105 - &98` internally yields the list `<007>`, which the `&`-display normalizes to `&7` and which the comparison module treats as equal to `<7>` by value.
+The consequence: a binary session reads and writes decimal (`&5` in, `&5` out) while internally computing on `<101>`. Lists with leading zeros are tolerated as non-canonical values — `&105 - &98` internally yields the list `<007>`, which the subtraction module associates with its canonical form, resulting in `&7`, and which the comparison module treats as equal to `<7>` by value.
+
+Only digits constitute a number, whether according to the rules or in the display. The digit tables contain no entry for a cell that is not a digit, hence `+`, `-`, `*`, `/`, and `mod` yield no result for such a list, and comparison checks every individual cell (see [The Four Operations](#the-four-operations)). The sole exception is exponentiation by zero: `X ^ &0` returns `&1` for any base, thus `<x 1> ^ &0` answers `&1` as well.
+
+For the modules built on top, `common-arithmetic` offers the criterion as a numeral test upon request: a rule preparing to read a list as a number marks it with `(L needsnumeral L)` and reads `(L isnumeral true)`. A list meets the criteria of a numeral when it is non-empty, ends with nil, and each element is a digit. The output applies the same condition during the rendering of a list as an `&`-literal, and additionally requires canonical form: `<007>` is recognized as a numeral, though it prints as `<007>`. Only lists that are explicitly marked are subject to this verification, thereby maintaining cons lists as general-purpose. [Differentiation](symbolic.md#differentiation), the [simplifier](symbolic.md#the-simplification-core) for its list leaves, [`topoly`](topoly.md), [`symbolic-integers`](symbolic.md#integers-as-leaves), and the [integer façade](integers.md#the-uniform-operator-facade), for the magnitude of every operand of `+`, `-`, `*` and `cmp` it routes, apply the test before interpreting a list as a numeric value:
+
+```
+zelph> .import decimal-arithmetic
+zelph+> :needsnumeral &123
+(&123 isnumeral true) ⇐ {(3 isdigit true) (:needsnumeral &123) (&12 isnumeral true)}
+zelph+> :needsnumeral <x 1>
+zelph> L isnumeral true
+Answer: &12 isnumeral true
+Answer: &1 isnumeral true
+Answer: &123 isnumeral true
+```
+
+The test proceeds by examining the suffixes in the list, which is why `&12` and `&1` yield responses; `<x 1>` does not, even though its suffix `&1` qualifies as a numeral.
+
+The empty list `nil` (typed `<>`) does not qualify as a numeral and falls beyond the scope of the arithmetic contract. Since it represents the exhausted tail at which every digit recursion ends, certain operations read it as zero regardless: `+`, `-`, `cmp`, the exponent in `^`, and `*` when `nil` appears as the second factor and the first operand contains more than a single digit in the base of the substrate (`(&3 - nil) = &3`, `(nil cmp &3) = lt`, `(&2 ^ nil) = &1`, `(&12 * nil) = &0`). When `nil` serves as the first factor of `*`, as either operand in `/` and `mod`, or when viewed through the integer façade, it derives nothing. Likewise, a result that would otherwise be the empty list does not become `&0`: `(nil + nil)` answers `nil`, and `(nil - nil)` derives nothing.
 
 Janet's role ends at load time: it generates the digit tables, a macro-like input-time job (see [Scripting with Janet](../janet.md)). During inference, only the reasoning engine runs.
 
 ## The Anatomy of an Arithmetic Module
 
-All four operations — about forty rules in total — follow the same architecture, visible at a glance in the scripts.
+The same architectural design underpins all four operations, clearly evident within the scripts.
 
 **Digit knowledge as facts.** All single-digit arithmetic lives in lookup tables of ordinary facts. For base 10 they are generated by short Janet loops at load time; the largest is the multiplication table `((a dx b) tci c) pd d` / `((a dx b) tci c) mco e`, which covers all digit pairs with a running carry `c ∈ {0..8}` — 1,800 facts, and the carry range is closed since `floor((81+8)/10) = 8`. For base 2 the tables are written by hand and are recognizable classics: the 16-fact full-adder truth table, the full subtractor, and an AND gate with increment.
 
@@ -80,7 +95,7 @@ The internal state facts — `((<A> add <B>) ci C)` and friends — are themselv
 
 **Table space vs. state space.** The digit tables are keyed by dedicated predicates (`tci` for the carry, `tbi` for the borrow) that differ from the recursion-state predicates (`ci`, `bi`, `mci`). This schema separation guarantees that table facts are only ever reached through fully bound lookups and never appear in the extensions the recursion rules scan — a design decision that turned out to matter enormously for performance (see below).
 
-**Partiality by absence.** Subtraction on the naturals is a partial function, and the module encodes this without any error machinery: there is deliberately no base fact for a net borrow (`((nil sub nil) bi 1)` does not exist), so `&5 - &7` simply derives nothing. Absence of a fact encodes undefinedness — the natural failure mode of a monotonic forward-chaining system.
+**Partiality by absence.** Subtraction over the natural numbers forms a partial function, and the module encodes this trait without relying on error-handling mechanisms: there is deliberately no base fact for a net borrow (`((nil sub nil) bi 1)` is absent), hence `&5 - &7` derives nothing. The lack of a fact encodes undefinedness – the natural failure mode in a forward-chaining system.
 
 ## The Four Operations
 
@@ -89,19 +104,31 @@ The internal state facts — `((<A> add <B>) ci C)` and friends — are themselv
 **Comparison** (`N cmp M`) is an LSB-first state machine. Decomposition rules derive an `lcmp` state for every suffix pair; compute-upward rules then resolve them from the inside out — the more significant rest dominates unless it is `eq`, in which case the current digit pair decides via the `dcmp` table. Missing digits of the shorter operand count as 0, so non-canonical lists compare correctly by value. The results are _relational_ facts — `N < M`, `N > M`, `N == M` — which compose with meta-rules like any declared knowledge:
 
 ```
-zelph> (R is transitive, A R B, B R C) => (A R C)
+zelph> .import decimal-arithmetic
+zelph+> (R is transitive, A R B, B R C) => (A R C)
+((R is transitive), (B R C), (A R B)) => (A R C)
 zelph> > is transitive
 zelph> &30 cmp &20
 (&30 > &20) ⇐ {((&30 lcmp &20) res gt) (&30 cmp &20)}
-zelph> &20 cmp &10
+zelph+> &20 cmp &10
 (&20 > &10) ⇐ {((&20 lcmp &10) res gt) (&20 cmp &10)}
-(&30 > &10) ⇐ {(&30 > &20) (> is transitive) (&20 > &10)}
+(&30 > &10) ⇐ {(> is transitive) (&20 > &10) (&30 > &20)}
 ```
 
-(Each `cmp` prints the states of its own recursion as well; only the lines
-that matter here are shown.)
+(Each `cmp` additionally outputs the states generated by its own recursive
+calls along with its `= gt` result; only the lines relevant to this
+context are shown.)
 
 The derived `&30 > &10` was never computed digit-wise; it follows from the transitivity meta-rule applied to two computed facts. Computation and reasoning are literally the same operation.
+
+The more significant rest exerts control, though it does not decide independently: passing its outcome upward remains contingent upon the current cells being digits. Consequently, comparison interprets a non-empty list as a number only if every constituent cell holds a digit, and derives nothing for any other non-empty list, no matter what the more significant cells hold (the empty list constitutes a unique scenario [as detailed here](#numbers-are-graph-structure)). `<x 1>` represents the list `x cons (1 cons nil)`, where `x` resides in the least significant cell:
+
+```
+zelph> .import decimal-arithmetic
+zelph+> ? <x 1> cmp &0
+zelph+> ? &123 cmp &45
+Answer: (&123 cmp &45) = gt
+```
 
 **Subtraction** mirrors addition with borrow in place of carry — the rule blocks are the structural mirror image — plus the deliberate partiality described above.
 
@@ -144,7 +171,7 @@ quotient digit is ever selected -- `&5 / &0` derives nothing, exactly as
 
 ## One Rule Set, Any Base
 
-The rule blocks of the decimal and the binary script are byte-identical; only the digit tables (and the input conversion) differ. This is a checked property of the code base, and it makes a satisfying point: the recursion rules are base-agnostic theorems about digit sequences, and the tables are the only place where "ten" or "two" appears. Loading the binary module gives you full adders, full subtractors, and AND gates as facts, with the identical algorithms running on top — a semantic network computing like digital hardware, while reading and writing decimal at the boundary.
+The decimal and binary substrates lack recursion rules: each imports the same module, `common-arithmetic.zph`, and varies solely in its digit tables (and the input conversion); the NAND module’s own rules merely derive its tables from a single gate fact and the digit alphabet. This makes a coherent insight: recursion rules are base-agnostic theorems concerning digit sequences, and the tables are the sole locations where "ten" or "two" occurs. Loading the binary module yields full adders, full subtractors, and AND gates as facts, with the same algorithms operating atop – a semantic network performing computations akin to digital hardware, while interfacing with decimal at the boundary.
 
 ## Asserting and Querying
 
@@ -164,7 +191,7 @@ Queries are always evaluated; once the result fact exists, they answer from the 
 Because numbers are lists, there is no word size:
 
 ```
-zelph> ? &3495734893 * &92348793847
+zelph+> ? &3495734893 * &92348793847
 Answer: (&3495734893 * &92348793847) = &322826900977421603371
 ```
 
@@ -174,7 +201,7 @@ That is an exact 21-digit result. For comparison, asking the embedded Janet runt
 
 The comparisons in [Logic and Computation](../logic.md#comparisons-with-other-systems) position zelph relative to Prolog and Datalog, Lean, Gödel numbering, and Lisp. Arithmetic is where those comparisons stop being philosophical.
 
-In [Lean](../logic.md#lean-and-curry-howard), numbers, proofs, and the inference machinery live on different levels; reasoning _about_ the machinery requires stepping up to a meta-level. In zelph there is no meta-level to step up to: the number `<42>`, the rule that adds it, the fact that records the sum, the derivation that justifies the fact, and a meta-rule quantifying over the predicates involved are all nodes in one graph, processed by one engine. When the multiplication module asserts a `+` fact for the addition module to answer, object level and meta level have collapsed into plain fact flow.
+In [Lean](../logic.md#lean-and-curry-howard), numerical values, proofs, and the mechanisms governing inference exist on distinct levels; reasoning *concerning* these mechanisms necessitates ascending to a meta-level. In zelph, there is no meta-level to ascend into: the number `<42>`, the rule responsible for its addition, the fact documenting the sum, the facts from which `.explain` rebuilds its derivation, and a meta-rule that quantifies over the predicates in play are all nodes within a single graph, processed by one engine. When the multiplication module asserts a `+` fact for the addition module to answer, the distinction between object level and meta level dissolves into plain fact flow.
 
 Where Gödel numbering encodes formulas _as_ numbers to make arithmetic self-referential, zelph runs the arrow in the other direction and makes numbers _structural_: no encoding, no decoding — the digit list _is_ the number, and it participates in statements directly. And against Datalog: computed facts are indistinguishable from declared ones, predicates are first-class, and therefore arithmetic results feed meta-rules (`> is transitive`) that standard Datalog can only represent via an encoding.
 
@@ -197,7 +224,7 @@ query idiom:
 ```
 .import decimal-arithmetic            # or: .import binary-arithmetic
 .import primes                # or: .import primes-naf
-(:testprime &113) = X
+? :testprime &113
 Answer: (:testprime &113) = prime
 ```
 
@@ -209,16 +236,7 @@ them all. A single primality test is the deepest cross-module cascade in the
 standard library, with division itself internally cascading through
 multiplication, subtraction, and comparison.
 
-**The negation-free version: the fold is the scheduler.** "N is prime" is a
-universally quantified statement — _all_ candidates leave a remainder —
-which a monotonic engine cannot answer with a single lookup. `primes.zph`
-builds the universal from positive facts: a fold `(N nodivupto D)` grows one
-verified non-divisor at a time, and the next candidate E = D+1 only comes
-into existence after D has been verified. The chain that constitutes the
-proof simultaneously throttles the search: for composite N the recursion
-halts at the smallest divisor — no work is performed past the verdict, and
-`hasdivisor` names exactly one witness, which is necessarily the smallest
-prime factor.
+**The version excluding negation: the fold serves as the scheduler.** "N is prime" constitutes a universally quantified statement – _every_ candidate produces a remainder – a claim that cannot be resolved by any single lookup among positive facts. `primes.zph` builds the universal from positive facts: a fold `(N nodivupto D)` progressively gathers one verified non-divisor at a time, and the next candidate E = D+1 only appears after D has been verified. The sequence forming the proof simultaneously controls the search: for composite N, recursion halts at the smallest divisor – no additional computation takes place past the verdict – and `hasdivisor` detects exactly one witness, which must be the smallest prime factor.
 
 **The NAF version: the definition itself, executable.** Under
 [stratified evaluation](../logic.md#stratified-evaluation) the textbook
@@ -228,11 +246,7 @@ formulation is sound as written:
 (N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
 ```
 
-The rule is deferred until the positive rules — the full candidate scan —
-have reached quiescence, so the negation tests absence against the complete
-scan. The trade-offs mirror the fold version: enumeration is eager
-(composites pay the full scan, no early exit), and in return `hasdivisor`
-lists _all_ divisors up to the square bound.
+The rule remains deferred until the positive rules – the full candidate scan – achieve quiescence, ensuring that negation tests absence against the complete scan, and nothing its conclusion leads to can add a divisor afterwards. [Primality](primality.md#primes-naf-the-textbook-formulation) explains why `.strata` continues to classify the rule as not stratifiable. The trade-offs mirror the fold version: enumeration proceeds eagerly (composites pay the full scan, without early exit), and in exchange, `hasdivisor` produces a list of _all_ divisors up to the square bound.
 
 Shared properties: 0 and 1 receive no verdict at all — neither prime nor
 composite, partiality by absence as everywhere in the stdlib. And the
@@ -251,7 +265,7 @@ Naively, "arithmetic as rules" sounds hopeless: a fixpoint engine re-evaluates r
 
 ### Semi-naive Evaluation
 
-The engine's default fixpoint strategy is _delta-driven_. After one classic pass over the whole graph, every further iteration evaluates rules only against the facts created in the previous iteration: for each new fact, the engine looks up which rule conditions could match it, binds that condition directly against the single fact — no scan at all — and evaluates only the remaining conditions of the rule, which, thanks to the fresh bindings, are then mostly direct lookups.
+The engine’s default fixpoint strategy is _delta-driven_. Following a single classic pass across the whole graph, each subsequent iteration is driven by the facts created in the previous iteration: for every newly introduced fact, the engine identifies which rule conditions might match it, directly binds that condition to the singular fact – entirely eliminating the need for scanning – and then evaluates only the remaining conditions of the rule, which, thanks to the newly established bindings, typically become direct lookups. Two kinds of rule are not processed in this seeded manner. Rules that include a negated condition are excluded from the first pass and instead execute as classic passes whenever the delta has completely drained, progressing incrementally through each negation level ([Stratified Evaluation](../logic.md#stratified-evaluation)). A limited set of rules whose conditions cannot be entirely seeded – nested conditions, path conditions like `P279⁺`, neural conditions, or conditions lacking exactly one predicate – are processed via classic passes in every iteration.
 
 This is a general evaluation strategy, not an arithmetic feature — it is how mature Datalog engines operate. Its payoff is largest for deeply _iterative_ rule systems: workloads with many fixpoint iterations that each add only a few facts while the internal state relations keep growing. Naive evaluation re-scans all of that state in every pass, so its cost per new fact grows as the computation proceeds. Arithmetic recursion is the extreme case of this shape, which is why the effect is dramatic here: multi-digit multiplications run several times faster than under naive evaluation, and the gap widens super-linearly with operand size — a ten-by-eleven-digit binary multiplication completes in seconds semi-naively, while the equivalent naive run had to be aborted after minutes. One-shot workloads that reach their fixpoint in a pass or two — applying a constraint rule once over an imported Wikidata graph, say — see correspondingly less benefit.
 
@@ -263,4 +277,4 @@ The strategy is exposed as a command:
 .semi-naive check  delta-driven, followed by classic verification passes
 ```
 
-Results are identical in all modes — `check` exists to enforce that. After the delta drains, it re-runs classic passes until quiescence and turns any fact the delta path missed into a hard error. The entire zelph test suite runs in `check` mode permanently, so every test doubles as an equivalence proof between the two evaluation strategies.
+The objective of the modes is to produce identical results, with `check` verifying the segment managed by the delta path. Once the delta has fully drained, it re-runs classic passes repeatedly until no further changes occur, and turns any fact overlooked by the delta path into a hard error. Likewise, it raises an error if a fact rests on a negated premise that has become true and is not derived by any other means ([Stratified Evaluation](../logic.md#stratified-evaluation)). It does not separately execute the classic evaluator and then contrast the outcomes. The test binary sets every engine to `check` mode by default, implying that every test that does not explicitly choose a mode also checks the delta-driven fixpoint against classic passes.

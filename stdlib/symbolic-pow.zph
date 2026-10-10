@@ -8,9 +8,14 @@
 #   .import diff               # OPTIONAL -- the differentiation rules below
 #   .import symbolic-pow       # are inert without it (no dstate facts exist)
 #
-# THE EXPONENT IS NOT A SUBTERM. (U ^ N) decomposes only its base: N is a
-# numeral literal, and rewriting it would be meaningless. That also keeps
-# the congruence rule single-conditioned.
+# THE EXPONENT IS A SUBTERM. In the expression (U ^ N), the
+# decomposition yields base and exponent, with the reduced form preserving
+# both in simplified state: an exponent written as a non-canonical
+# numeral, as a composite that undergoes folding, or in the zint operand
+# form arrives at the node where its canonical spelling resides, and
+# subsequently the rewrites and numeric folding below are enacted upon it.
+# Differentiation and topoly read the exponent by value and remain
+# unaffected.
 #
 # NUMERIC FOLDING is inherited, not implemented: a red form (&2 ^ &10) IS
 # an ordinary ^ fact, common-arithmetic derives its = result, and the SN
@@ -31,14 +36,15 @@
 .import symbolic-core
 
 # ---------------------------------------------------------------------------
-# Simplifier extension (1): decompose -- base only
+# Simplifier extension (1): decompose -- base and exponent
 # ---------------------------------------------------------------------------
 ((U ^ N) needssimp (U ^ N)) => (U needssimp U)
+((U ^ N) needssimp (U ^ N)) => (N needssimp N)
 
 # ---------------------------------------------------------------------------
 # Simplifier extension (2): congruence
 # ---------------------------------------------------------------------------
-((U ^ N) needssimp (U ^ N), U simp P) => ((U ^ N) red (P ^ N))
+((U ^ N) needssimp (U ^ N), U simp P, N simp M) => ((U ^ N) red (P ^ M))
 
 # ---------------------------------------------------------------------------
 # Simplifier extension (3): rewrites on reduced forms
@@ -50,25 +56,37 @@
 # ---------------------------------------------------------------------------
 # Differentiation extension: the power rule,
 #   d(u^n)/dx = n * u^(n-1) * du/dx
-# The exponent-zero case gets its own rule: n-1 has no natural value
-# there, so the general rule stays silent, and the constant fallback
-# cannot step in either -- (x ^ &0) does contain x structurally. The
-# in-system comparison makes the two cases mutually exclusive, so deriv
-# stays single-valued.
+# The rule for exponent-zero is distinct: since n-1 lacks a natural value
+# in that scenario, the general rule stays silent. The in-system
+# comparison makes the two cases mutually exclusive, thereby maintaining
+# deriv's single-valued nature. An exponent that fails to qualify as a
+# numeral does not satisfy either comparison, resulting in (c ^ x) having
+# no derivative -- this is silence, not an incorrect &0. Two cases where
+# the exponent is not a numeral still satisfy N == &0 and thus invoke the
+# exponent-zero rule: the empty list nil, which lies outside the
+# arithmetic contract yet is read as zero by cmp, being the exhausted
+# tail of its digit recursion; and a negative signed zero like (neg
+# zint &0), which the facade compares as &0. The canonical (pos zint &0)
+# remains silent: adjacent to a natural, it does not form a shape that
+# the facade routes.
+#
+# The exponent-zero rule still requires the derivative of the base, even
+# though it does not actually employ it: (u ^ &0) is classified as a
+# composite, and a composite is subject to differentiation through its
+# constituent parts. Without this condition, a power whose base is outside
+# the vocabulary -- an undeclared atom, a foreign predicate, a list that
+# is not a numeral -- would be assigned &0, whereas every other term
+# containing such a component remains silent.
 #
 # n = 1 needs no special rule: it composes. The assembled derivative
 # carries (U ^ &0), which the rewrite above reduces to &1, and the
 # surrounding (&1 * ...) falls to symbolic-core's neutral-element rule.
 # ---------------------------------------------------------------------------
 ((U ^ N) dstate X) => (U dstate X)
-((U ^ N) dstate X, U contains X) => ((U ^ N) contains X)
-
-# Shape domain (diff.zph rules DS): ^ is a form whose derivative is known.
-((U ^ N) dstate X) => ((U ^ N) ddom (U ^ N))
 
 ((U ^ N) dstate X) => (N cmp &0)
 
-((U ^ N) dstate X, N == &0) => (((U ^ N) wrt X) deriv &0)
+((U ^ N) dstate X, N == &0, (U wrt X) deriv P) => (((U ^ N) wrt X) deriv &0)
 
 ((U ^ N) dstate X, N > &0) => (N - &1)
 

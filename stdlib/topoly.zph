@@ -19,19 +19,27 @@
 #
 # VOCABULARY and leaf handling:
 #   - symvar X            compiles to (X poly ((pos zint &0) cons
-#                         ((pos zint &1) cons nil))) -- the polynomial X
-#   - symconst C          compiles the same way: opaque constants are
-#                         INDETERMINATES here (identities hold in the
-#                         polynomial ring Z[C, X, ...]); like every
-#                         variable, C must appear in the pouter order
-#   - zint numerals       are their own constant polynomials
-#   - natural numerals    promote to (pos zint N) -- so subtraction that
-#                         is partial over the naturals is total here:
+#                         ((pos zint &1) cons nil))) -- representing the
+#                         polynomial X
+#   - symconst C          compiles identically: opaque constants are
+#                         treated as INDETERMINATES in this context
+#                         (identities hold within the polynomial ring
+#                         Z[C, X, ...]); just like any variable, C must
+#                         be listed in the pouter order; declared
+#                         equations for C are ignored (refer to the TI
+#                         rules below)
+#   - zint numerals       compile to themselves with the magnitude in
+#                         canonical form, (neg zint &0) maps to the zero
+#                         polynomial (pos zint &0)
+#   - natural numerals    promote to (pos zint N), with N in canonical
+#                         form -- thus, subtraction that is partial over
+#                         naturals becomes total here:
 #                         (:topoly (&3 - &5)) = (neg zint &2)
 #   - (U + V), (U - V), (U * V), (U ^ N), (neg of U)
-#                         delegate to padd / psub / pmul / pneg
-# Anything else -- division, other function applications, undeclared
-# atoms -- gets no aspoly fact, and the request stays silently
+#                         are routed to padd / psub / pmul / ppow / pneg
+# Any other case -- division, other function applications, undeclared
+# atoms, cons lists not representing numerals, zints whose magnitude is
+# not a numeral -- gets no aspoly fact, and the request stays silently
 # unanswered: partiality by absence.
 #
 # REQUEST IDIOM (testprime pattern, repeatable):
@@ -40,10 +48,11 @@
 # IDENTITY CHECKING: canonical forms are unique hash-consed nodes, so
 # proving a polynomial identity means compiling both sides and
 # comparing NODE IDENTITY -- e.g. ((&1 + x) * (&1 - x)) and
-# (&1 - (x * x)) compile to the same node. This also closes the loop
-# that symbolic-minus deliberately left open: (:topoly (x - x)) is
-# (pos zint &0) -- cancellation of equal symbolic terms IS the
-# polynomial layer's job, and here it happens.
+# (&1 - (x * x)) compile to the same node. Consequently, the elimination
+# of equal symbolic terms occurs here, across entire polynomials:
+# (:topoly ((x + y) - (y + x))) yields (pos zint &0), a term that
+# symbolic-minus's local X - X rule preserves unchanged, as it only
+# cancels identical nodes.
 #
 # VARIABLE ORDER: as in polynomial.zph, cross-variable results require
 # a declared strict total pouter order over all indeterminates in use;
@@ -88,10 +97,41 @@
 (X needstopoly X, X ~ symconst)
 => (X aspoly (X poly ((pos zint &0) cons ((pos zint &1) cons nil))))
 
-((G zint N) needstopoly (G zint N)) => ((G zint N) aspoly (G zint N))
+# A zint serves as its own constant polynomial when its
+# magnitude meets the criteria of a numeral, as determined by the numeral
+# test in common-arithmetic, and the magnitude is taken in its canonical
+# form (canonnum): the numeral <01> is equivalent to &1, and an identity
+# between the two is established as proven, not disproven. The expression
+# (neg zint &0) yields zero with a sign it cannot possess, and it compiles
+# to the zero polynomial; the simplifier, in the same manner, transforms it
+# into &0. If taken at face value, 0 and (neg zint &0) would have generated
+# distinct nodes, resulting in an identity that is disproven.
+((G zint (A cons R)) needstopoly (G zint (A cons R)))
+=> ((A cons R) needsnumeral (A cons R))
+((G zint (A cons R)) needstopoly (G zint (A cons R)), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((pos zint (A cons R)) needstopoly (pos zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N)
+=> ((pos zint (A cons R)) aspoly (pos zint N))
+((neg zint (A cons R)) needstopoly (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum N, N != &0)
+=> ((neg zint (A cons R)) aspoly (neg zint N))
+((neg zint (A cons R)) needstopoly (neg zint (A cons R)), (A cons R) isnumeral true,
+ (A cons R) canonnum &0)
+=> ((neg zint (A cons R)) aspoly (pos zint &0))
 
-((A cons R) needstopoly (A cons R))
-=> ((A cons R) aspoly (pos zint (A cons R)))
+# A cons list qualifies as a constant precisely when it constitutes a
+# numeral, as determined by common-arithmetic's numeral test, and it
+# compiles to its canonical form, just as a zint magnitude does. Any list
+# that fails to be a numeral acquires no aspoly fact, therefore a request
+# concerning it remains unanswered, and an identity involving it gets no
+# verdict. The numeral test is applied first since the canonical form
+# strips trailing zero cells from any list, such as <x 0> becoming <x>.
+((A cons R) needstopoly (A cons R)) => ((A cons R) needsnumeral (A cons R))
+((A cons R) needstopoly (A cons R), (A cons R) isnumeral true)
+=> ((A cons R) needscanon (A cons R))
+((A cons R) needstopoly (A cons R), (A cons R) isnumeral true, (A cons R) canonnum N)
+=> ((A cons R) aspoly (pos zint N))
 
 # ---------------------------------------------------------------------------
 # Rules TA -- Assemble: delegate to the data layer (MA1/MA2 pattern --
@@ -140,6 +180,15 @@
 # Hence a three-way outcome: proven, disproven, or silence. The two
 # verdicts are mutually exclusive by construction, so = stays
 # single-valued.
+#
+# Both verdicts pertain to polynomials: each symvar and symconst
+# functions as an independent indeterminate, and a declared equation
+# like (r * r) = &2 remains unexamined, even though symbolic-core's
+# knowledge folding draws upon it. Thus, disproven says that the two
+# sides are distinct as polynomials, not that they differ for the
+# values the indeterminates stand for. Proven remains sound under any
+# such equation: an identity in the free ring continues to hold in
+# every quotient of it.
 # ---------------------------------------------------------------------------
 (A ≡ B) => (:topoly A)
 (A ≡ B) => (:topoly B)

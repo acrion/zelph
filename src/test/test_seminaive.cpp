@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -66,6 +68,36 @@ TEST_CASE("semi-naive: .semi-naive command reports and switches modes")
         CHECK(any_output_contains(collector, "Semi-naive evaluation: on"));
 
         CHECK_THROWS_AS(interactive.process(".semi-naive banana"), std::runtime_error); });
+}
+
+namespace
+{
+    // Before the execution of main(), meaning before the first test
+    // constructs anything.
+    [[maybe_unused]] const bool check_mode_is_the_default = []
+    {
+        zelph::network::Reasoning::set_default_seminaive_check(true);
+        return true;
+    }();
+}
+
+TEST_CASE("semi-naive: an engine a test constructs by itself is in check mode too")
+{
+    // run_both_modes switches check mode on, and for a prolonged duration
+    // this was understood to mean the suite operating within it. That
+    // understanding was mistaken: 173 out of the 799 test cases at the time
+    // built their Interactive directly -- the polynomial-identity pipelines,
+    // the cross-check between the two primality modules, the paper scripts
+    // -- and the 55 of these that executed inference all ran in the default
+    // mode. The default configuration of THIS binary is check mode, which
+    // guarantees no test case can leave the net through its engine
+    // construction. A case that must not run in this mode declares it
+    // explicitly using `.semi-naive on`, and specifies the justification at
+    // the declaration site.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".semi-naive");
+    CHECK(any_output_contains(collector, "Semi-naive evaluation: check"));
 }
 
 TEST_CASE("semi-naive: classic mode (off) still computes full results (all arithmetic modules)" * doctest::test_suite("slow"))

@@ -1,10 +1,13 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s3_macro_chain.zph
-# Macro-chain compilation (-,+,*,/) and the Table-S2 witness recovery:
-# simplifying the compiled x - y tree yields eml(ln x, exp y).
-# Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and every mode but 'all' shows only deductions
-# anchored to statements of the session, which drops most of them from a log.
+# Macro-chain compilation (-,+,*,/) and the compile/simplify round trip: the
+# resulting compiled x - y tree is the Table-S2 witness eml(ln x, exp y), with
+# ln and exp expanded into their EML macros; simplifying it gives (x - y)
+# back.
+# Evidence scripts print the FULL derivation trace: the paper quotes specific
+# deduction lines, and each mode except 'all' shows only deductions anchored
+# to statements from the session, thereby omitting the majority of entries in
+# a log.
 .deductions all
 .import decimal-arithmetic
 .import symbolic-core
@@ -13,23 +16,18 @@ x ~ symvar
 y ~ symvar
 
 :emlcompile (x - y)
-.run
 (:emlcompile (x - y)) = F
 (:emlcompile (x - y)) = F
 
 :emlcompile (x + y)
-.run
 (:emlcompile (x + y)) = F
 
 :emlcompile (x * y)
-.run
 (:emlcompile (x * y)) = F
 
 :emlcompile (x / y)
-.run
 (:emlcompile (x / y)) = F
 
 :simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))
-.run
 (:simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) = X
 (:simplify ((&1 eml ((&1 eml x) eml &1)) eml (y eml &1))) = X

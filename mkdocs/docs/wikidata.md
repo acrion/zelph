@@ -73,14 +73,14 @@ The following script demonstrates how zelph connects with Wikidata data:
 .name "transitive relation" wikidata Q18647515
 
 # The following facts are part of wikidata:
-#"is subclass of" ~ transitive relation
-#"has part"       ~ transitive relation
-#"is facet of"    ~ transitive relation
-#"is part of"     ~ transitive relation
-#"is part of"     is inverse of "has part"
+#"is subclass of" ~ "transitive relation"
+#"has part"       ~ "transitive relation"
+#"is facet of"    ~ "transitive relation"
+#"is part of"     ~ "transitive relation"
+#"is part of"     "is inverse of" "has part"
 
 # The following facts are not part of wikidata:
-"has quality" ~ transitive relation
+"has quality" ~ "transitive relation"
 
 (X "is facet of" Y, Y ~ C) => (X ~ C)
 (X "is facet of" Y, Y "is subclass of" C) => (X "is subclass of" C)
@@ -89,7 +89,7 @@ The following script demonstrates how zelph connects with Wikidata data:
 (X "is facet of" Y, Y "has quality" Q) => (X "has quality" Q)
 
 # The following fact is not part of wikidata. Wikidata only includes the fact "is subclass of" "subject item of this property" "is for example"
-"is for example"  is inverse of "~"
+"is for example"  "is inverse of" "~"
 
 (R ~ "transitive relation", X R Y, Y R Z) => (X R Z)
 (P ~ "transitive relation", P "is inverse of" Q) => (Q ~ "transitive relation")
@@ -196,8 +196,7 @@ Here is a step-by-step example of zelph’s inference process when working with 
 
 Rules in zelph are encoded in the same semantic network as facts, using the special relation `=>` (which corresponds to [logical consequence (Q374182)](https://www.wikidata.org/wiki/Q374182) in Wikidata).
 
-This approach enables tight integration between the fact base and the rules, allowing rules to be reasoned about in the same way as facts.
-This makes zelph particularly powerful for applications such as Wikidata, where the knowledge base itself contains statements about relations, including properties such as [transitivity](https://www.wikidata.org/wiki/Q18647515).
+This method facilitates close coupling between the fact base and the rules, allowing facts to drive them: a rule can quantify over relations, and a statement concerning a relation determines its scope of applicability. This makes zelph especially effective for use cases like Wikidata, where the knowledge base itself includes statements about relations, such as properties like [transitivity](https://www.wikidata.org/wiki/Q18647515).
 
 A rule is simply a special case of a fact that uses the relation `=>`. In the application of zelph to Wikidata data, this relation corresponds to [logical consequence](https://www.wikidata.org/wiki/Q374182).
 

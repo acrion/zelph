@@ -27,9 +27,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 #include <filesystem>
 
 using namespace zelph::test;
+using zelph::network::adjacency_set;
+using zelph::network::Node;
 
 // ---------------------------------------------------------------------------
 // Giving a node a name another node already holds in that language MERGES the
@@ -72,20 +76,6 @@ namespace
     {
         interactive.process(".name " + first + " en shared");
         interactive.process(".name " + second + " en shared");
-    }
-
-    std::size_t node_count(zelph::io::OutputCollector&        collector,
-                           const zelph::console::Interactive& interactive)
-    {
-        collector.clear();
-        interactive.process(".stat");
-        for (const auto& event : collector.events())
-        {
-            const std::string text = normalize(event.text);
-            const auto        pos  = text.find("Nodes: ");
-            if (pos != std::string::npos) return std::stoul(text.substr(pos + 7));
-        }
-        return 0;
     }
 }
 
@@ -271,6 +261,94 @@ precedes coinedBy someone
         interactive.process(".explain (p1 precedes p3)");
         CHECK(any_output_contains(collector, "p1 precedes p2"));
         CHECK_FALSE(any_output_contains(collector, "[axiom]\n   └─ (p1 precedes p3)")); });
+}
+
+TEST_CASE("name merge: a collection of a rule's text is not merged with another node")
+{
+    // Merging a rule's own collection with a data node either pulls the data
+    // node's facts into the rule's text -- the rule became `(X p Y) =>
+    // (X likes zz)` and derived `a likes zz` -- or turns the rule's
+    // collection into data. That is not two names for one thing,
+    // hence the merge is refused in both directions, just as with a variable
+    // and a constant, and both nodes keep their facts and their names.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+zz q yy
+(X p Y) => (X likes @{d})
+)");
+        auto* const z = interactive.graph();
+
+        Node rule       = 0;
+        Node collection = 0;
+        for (const Node r : z->get_rules())
+        {
+            adjacency_set consequences;
+            z->parse_fact(r, consequences);
+            adjacency_set objects;
+            z->parse_fact(*consequences.begin(), objects);
+            rule       = r;
+            collection = *objects.begin();
+        }
+        REQUIRE(z->is_rule_template(collection));
+        const Node data = z->get_node("zz");
+
+        SUBCASE("the data node takes the name the collection holds")
+        {
+            interactive.process(".name " + std::to_string(collection) + " en tname");
+            CHECK_THROWS_WITH_AS(interactive.process(".name zz en tname"),
+                                 doctest::Contains("is a collection of a rule's text"),
+                                 std::runtime_error);
+            CHECK(z->get_name(collection, "en") == "tname");
+        }
+        SUBCASE("the collection takes the name the data node holds")
+        {
+            interactive.process(".name zz en zzz");
+            interactive.process(".name " + std::to_string(collection) + " tname");
+            CHECK_THROWS_WITH_AS(interactive.process(".name tname en zzz"),
+                                 doctest::Contains("is a collection of a rule's text"),
+                                 std::runtime_error);
+            CHECK(z->get_name(data, "en") == "zzz");
+            CHECK(z->get_name(collection) == "tname");
+        }
+        // The library's set_name(name, name in another language, that
+        // language) merges the node referenced by the second name into the
+        // holder associated with the first name, and this operation is
+        // refused there before any modification of a name.
+        SUBCASE("the library gives the data node the name the collection holds")
+        {
+            interactive.process(".name zz en zzz");
+            interactive.process(".name " + std::to_string(collection) + " tname");
+            CHECK_THROWS_WITH_AS(z->set_name("tname", "zzz", "en"),
+                                 doctest::Contains("is a collection of a rule's text"),
+                                 std::runtime_error);
+            CHECK(z->get_name(data, "en") == "zzz");
+            CHECK(z->get_name(collection) == "tname");
+        }
+        SUBCASE("the library gives the collection the name the data node holds")
+        {
+            interactive.process(".name " + std::to_string(collection) + " en tname");
+            CHECK_THROWS_WITH_AS(z->set_name("zz", "tname", "en"),
+                                 doctest::Contains("is a collection of a rule's text"),
+                                 std::runtime_error);
+            CHECK(z->get_name(collection, "en") == "tname");
+        }
+
+        CHECK(z->exists(collection));
+        CHECK(z->exists(rule));
+        CHECK(z->get_node("zz") == data);
+        collector.clear();
+        interactive.process("zz q O");
+        CHECK(answers_contain(collector, "zz q yy"));
+
+        // The rule continues to output its own collection, rather than
+        // the data node.
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).size() == 1);
+        CHECK_FALSE(answers_contain(collector, "a likes zz")); });
 }
 
 TEST_CASE("name merge: the repaired graph survives a save/load round trip")

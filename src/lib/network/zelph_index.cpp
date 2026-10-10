@@ -411,21 +411,25 @@ void Zelph::Impl::invalidate_relation_type_set() const
 // been scanned - hub nodes blow the budget immediately, signalling
 // the caller to switch to the predicate index. On false, `result`
 // is partial and must be discarded.
-bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result) const
+bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result, const Node stop_at, ankerl::unordered_dense::map<Node, std::pair<Node, Node>>* via, const adjacency_set* skip2, size_t* const scanned_out) const
 {
+    size_t  scanned_here = 0;
+    size_t& scanned      = scanned_out != nullptr ? *scanned_out : scanned_here;
     // Same lock order as writers (connect): left before right.
     std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
     std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
 
     ankerl::unordered_dense::set<Node> seen;
     std::vector<Node>                  frontier{start};
-    size_t                             scanned = 0;
+    scanned = 0;
 
     if (include_start)
     {
         seen.insert(start);
         result.insert(start);
+        if (stop_at != 0 && start == stop_at) return true;
     }
+    bool stopped = false;
 
     auto expand = [&](const Node n, std::vector<Node>& next) -> bool
     {
@@ -441,6 +445,7 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
             // Not an edge of the closure: nobody claimed it. Same
             // snapshot as the index build above.
             if (skip != nullptr && skip->count(rel) != 0) continue;
+            if (skip2 != nullptr && skip2->count(rel) != 0) continue;
 
             const auto rl_it = _left.find(rel);
             if (rl_it == _left.end()) continue;
@@ -507,6 +512,8 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
                     {
                         result.insert(obj);
                         next.push_back(obj);
+                        if (via != nullptr) via->emplace(obj, std::make_pair(rel, n));
+                        if (obj == stop_at) stopped = true;
                     }
                 }
             }
@@ -518,6 +525,8 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
                 {
                     result.insert(subject);
                     next.push_back(subject);
+                    if (via != nullptr) via->emplace(subject, std::make_pair(rel, n));
+                    if (subject == stop_at) stopped = true;
                 }
             }
         }
@@ -530,7 +539,15 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
         for (const Node n : frontier)
         {
             if (!expand(n, next)) return false;
+            if (stopped) return true;
         }
+        // A walk is recorded by the node that arrives at each node first,
+        // with this determination based on the order of the frontier -- the
+        // order in which facts were inserted, a sequence altered by a
+        // parallel run. When recording a walk, the frontier goes in the
+        // order of node identifiers, ensuring the walk reflects the graph's
+        // intrinsic structure.
+        if (via != nullptr) std::sort(next.begin(), next.end());
         frontier = std::move(next);
     }
     return true;

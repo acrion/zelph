@@ -35,14 +35,28 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <capnp/common.h>
 #endif
 
-#if __has_include(<mimalloc.h>)
-    #include <mimalloc.h>
-#endif
-
+#include <atomic>
 #include <sstream>
+
+namespace
+{
+    // mimalloc is linked into the app and into nothing beyond -- neither
+    // into this library, nor into the test executable, nor into a program
+    // that interfaces with zelph via its C ABI. Thus, determining which one
+    // runs is solely the application's responsibility, resolved during
+    // startup. A header cannot: this line previously was compiled from
+    // whichever <mimalloc.h> the compiler found, which was the SYSTEM's, and
+    // it referred to an allocator that the binary lacks.
+    std::atomic<int> linked_mimalloc{0};
+}
 
 namespace zelph
 {
+    void set_linked_mimalloc(const int version)
+    {
+        linked_mimalloc = version;
+    }
+
     std::string get_version_description()
     {
         std::ostringstream oss;
@@ -77,13 +91,9 @@ namespace zelph
         oss << "bzip2 (v" << bz2_version << ") - bzip2 License (BSD-style)\n";
 #endif
 
-        // mimalloc
-#if defined(MI_MALLOC_VERSION)
-        int mi_major = MI_MALLOC_VERSION / 1000;
-        int mi_minor = (MI_MALLOC_VERSION / 100) % 10;
-        int mi_patch = MI_MALLOC_VERSION % 100;
-        oss << "mimalloc (v" << mi_major << "." << mi_minor << "." << mi_patch << ") - MIT License\n";
-#endif
+        // mimalloc, encoded as major * 10000 + minor * 100 + patch
+        if (const int mi = linked_mimalloc; mi != 0)
+            oss << "mimalloc (v" << mi / 10000 << "." << mi / 100 % 100 << "." << mi % 100 << ") - MIT License\n";
 
         oss << "------------------------------------------------------\n";
         oss << "For full license texts and copyright notices, please refer to the\n";

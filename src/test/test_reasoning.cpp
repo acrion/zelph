@@ -27,7 +27,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <chrono>
 #include <filesystem>
+#include <string>
+#include <vector>
 
 using namespace zelph::test;
 
@@ -50,8 +53,11 @@ TEST_CASE("parsing: dot-dot predicate")
     run_both_modes([](const auto& collector, const auto& interactive)
                    {
         process_lines(interactive, "g .. h\nh .. i");
-        CHECK(any_output_starts_with(collector, "g .. h"));
-        CHECK(any_output_starts_with(collector, "h .. i")); });
+        // A name beginning with '.' prints enclosed in quotes:
+        // positioned at the start of a line, it would be read as a
+        // command. See needs_quotes.
+        CHECK(any_output_starts_with(collector, "g \"..\" h"));
+        CHECK(any_output_starts_with(collector, "h \"..\" i")); });
 }
 
 TEST_CASE("parsing: arrow predicates")
@@ -64,6 +70,111 @@ atom_C <= atom_D
 )");
         CHECK(any_output_starts_with(collector, "atom_A => atom_B"));
         CHECK(any_output_starts_with(collector, "atom_C <= atom_D")); });
+}
+
+TEST_CASE("parsing: a bare name may contain any character but the reserved ones")
+{
+    // The grammar's reserved set is a Janet PEG `set` that matches single
+    // BYTES, and `¬` corresponds to the two-byte sequence C2 AC. Listed in
+    // the set, it reserved both: each character from U+0080 to U+00BF
+    // begins with C2, and numerous others carry AC as a continuation byte
+    // -- for instance, `€` is encoded as E2 82 AC, and the 京 in 北京 appears
+    // as E4 BA AC. Consequently, a bare name ended at `°C`, `µ`, `½`, `€`,
+    // or 北京, causing the line to fail parsing. The grammar now reserves the
+    // CHARACTER `¬`, and these are treated as ordinary names in every
+    // position.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_NOTHROW(interactive.process("°C µ €"));
+        CHECK_NOTHROW(interactive.process("€ ½ °C"));
+        CHECK_NOTHROW(interactive.process("½ µ 北京"));
+        CHECK_NOTHROW(interactive.process("北京 µg/m³ ½"));
+
+        collector.clear();
+        interactive.process("S µ O");
+        std::vector<std::string> printed = collect_answers(collector);
+        std::sort(printed.begin(), printed.end());
+        CHECK(printed == std::vector<std::string>{"°C µ €", "½ µ 北京"});
+
+        collector.clear();
+        interactive.process("北京 P O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"北京 µg/m³ ½"});
+
+        collector.clear();
+        interactive.process("S P °C");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"€ ½ °C"});
+
+        // The `¬` symbol is still reserved, precisely as the character it is:
+        // when positioned at the start of a value, it turns the condition
+        // into a negated form, and similarly when placed after a name made of
+        // the aforementioned characters. The negated condition holds only for
+        // ½ and 北京, since `€ ½ °C` is there.
+        interactive.process("(X µ Y, ¬(Y ½ X)) => (X ok Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("X ok Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"½ ok 北京"});
+
+        // ... and it continues to terminate a bare name at any location it
+        // occupies, furthermore immediately after a character that starts
+        // with the same byte C2.
+        CHECK_THROWS_AS(interactive.process("x¬y rel z"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process("°C¬ rel z"), std::runtime_error);
+
+        // The no-break space U+00A0 also starts with C2. It stays
+        // reserved: a line typed or copied with it instead of a blank
+        // is refused, not read as a single name containing the blanks.
+        // Likewise, a name positioned before it is not reported as glued
+        // to the parenthesis located behind it -- a blank in that spot
+        // would not make the line parse.
+        CHECK_THROWS_AS(interactive.process("x\xC2\xA0y rel z"), std::runtime_error);
+        std::string message;
+        try
+        {
+            interactive.process("x\xC2\xA0(a b c) rel z");
+        }
+        catch (const std::runtime_error& e)
+        {
+            message = e.what();
+        }
+        CHECK(message.find("Could not parse") != std::string::npos);
+        CHECK(message.find("glued") == std::string::npos); });
+}
+
+TEST_CASE("parsing: a statement continues on the next line behind a name such as °C")
+{
+    // A statement is considered complete when it contains three tokens at
+    // the top level, or when it consists of a single token that stands as a
+    // value in itself: a set, a list, a focus, or a negation `¬(...)`. The
+    // negation was identified by its first BYTE, C2, which is shared by
+    // every character in the range U+0080 to U+00BF, meaning that a line
+    // holding only the name °C was treated as a fully formed statement, and
+    // the subsequent line initiated a new one. A bare name remains pending
+    // until the rest of its statement is provided, regardless of what its
+    // first character may be.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("°C");
+        interactive.process("µ €");
+        collector.clear();
+        interactive.process("S µ O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"°C µ €"});
+
+        // The identical case applies to the second token located after
+        // the result-query prefix.
+        interactive.process("? °C");
+        interactive.process("µ €");
+        collector.clear();
+        interactive.process("S µ O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"°C µ €"});
+
+        // A lone negation remains a statement in its own right: the line
+        // following it constitutes a fact, not the rest of the negation.
+        interactive.process("¬(°C q €)");
+        interactive.process("½ q µ");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"½ q µ"}); });
 }
 
 TEST_CASE("rules: asking which implications exist does not create a rule")
@@ -126,6 +237,101 @@ TEST_CASE("rules: asking which implications exist does not create a rule")
         collector.clear();
         interactive.process(".stat");
         CHECK(any_output_contains(collector, "Rules: 0")); });
+}
+
+TEST_CASE("rules: .remove-rules also removes the rules that only removed rules mentioned")
+{
+    // The rule contained within a rule generator is a mention, not a rule in
+    // force: it is an object of the generator (Zelph::is_mentioned). After
+    // the generator ceases to exist, nothing mentions it anymore, and a `=>`
+    // fact that is a part of nothing is a rule. Removing solely the rules
+    // listed when the command starts would bring it into force: .list-rules
+    // would show it, and it would fire, following a command that says it
+    // removes every rule.
+    const auto nothing_left = [](auto& collector, auto& interactive)
+    {
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        collector.clear();
+        process_lines(interactive, "now go k\nb p k");
+        CHECK_FALSE(any_deduction_of(collector, "likes"));
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).empty());
+    };
+
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a generator that has not fired")
+        {
+            interactive.process("(G go H) => ((X p H) => (X likes H))");
+            interactive.process(".remove-rules");
+            nothing_left(collector, interactive);
+        }
+        SUBCASE("a generator that has fired")
+        {
+            // The firing's instance constitutes a rule in force and goes
+            // with the generator; the rule the generator mentions goes
+            // after both.
+            process_lines(interactive, "(G go H) => ((X p H) => (X likes H))\nnow go k");
+            collector.clear();
+            interactive.process(".list-rules");
+            REQUIRE(any_output_contains(collector, "(X p k) => (X likes k)"));
+
+            interactive.process(".remove-rules");
+            nothing_left(collector, interactive);
+        }
+        SUBCASE("a generator of generators")
+        {
+            // Each rule removal frees the rule one level deeper, so the
+            // rules are read again until no rule remains, not merely one
+            // additional time.
+            interactive.process("(A on B) => ((G go H) => ((X p H) => (X likes H)))");
+            interactive.process(".remove-rules");
+            nothing_left(collector, interactive);
+        } });
+}
+
+TEST_CASE("rules: .remove-rules leaves a rule that a statement mentions")
+{
+    // Reading the rules once more following a removal must stop at the
+    // rules that only removed rules mentioned. A `=>` fact that a
+    // statement about it mentions is not in force, and that statement is
+    // not a rule, so it continues to mention the `=>` fact after the
+    // removal: the fact is neither included in the list nor removed, and
+    // it does not fire. The generator beside it makes the command read the
+    // rules a second time.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+((X p H) => (X likes H)) is noted
+(G go H) => ((X q H) => (X hates H))
+)");
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(any_output_contains(collector, "(G go H) => ((X q H) => (X hates H))"));
+        CHECK_FALSE(any_output_contains(collector, "(X likes H)"));
+
+        interactive.process(".remove-rules");
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "(X likes H)"));
+
+        collector.clear();
+        interactive.process(".explain ((X p H) => (X likes H))");
+        CHECK(any_output_contains(collector, "[rule mentioned; not in force]"));
+
+        collector.clear();
+        interactive.process("b p k");
+        CHECK_FALSE(any_deduction_of(collector, "likes"));
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 // NOTE: there is no biconditional arrow in the grammar. `<=>` is read as the
@@ -225,6 +431,592 @@ TEST_CASE("parsing: deep nesting")
         process_lines(interactive, R"(deep_nesting ~ ( Level1 ( Level2 ( Level3 predicate "Level3Object" ) Level2Object) Level1Object))");
         CHECK(any_output_contains(collector, "Level1"));
         CHECK(any_output_contains(collector, "Level1Object")); });
+}
+
+TEST_CASE("parsing: a term nested 20 deep is read once, not twice per enclosing group")
+{
+    // A parenthesized group consists of either a single statement or a comma
+    // list of conditions, with the grammar determining the correct form by
+    // testing both options in sequence: first the comma list, and if no comma
+    // was detected, then the whole group as a statement. Each attempt read
+    // every internal group identically, meaning a term nested n levels deep
+    // was read 2^n times -- and since Janet does not discard intermediate
+    // results during a match, each of those evaluations remained in memory
+    // until the line completed. At a nesting depth of 20, this single line
+    // took six seconds and one gigabyte in the REPL; a term nested 30 levels
+    // deep had already used 68 GB before being terminated. No external data
+    // needed to be loaded: the parser alone was responsible for this
+    // behaviour.
+    //
+    // The parser does not count its work, making this a time bound,
+    // positioned far from either side: this test recorded 8.6 s before the
+    // fix and no more than 5 ms afterwards, both measurements pinned to an
+    // efficiency core.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    std::string term = "x";
+    for (int depth = 0; depth < 20; ++depth)
+        term = "(exp of " + term + ")";
+
+    const auto start = std::chrono::steady_clock::now();
+    interactive.process(term + " p q");
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+    CHECK(any_output_contains(collector, term + " p q"));
+    CHECK(elapsed.count() < 1.0);
+}
+
+TEST_CASE("parsing: < and <= between nested terms are not read as a list first")
+{
+    // The same duplication occurring through an alternate entry point. "<"
+    // also opens a node list, < a b >, and the grammar first tried
+    // interpreting it this way: the effort to parse the rest of the
+    // statement, including groups, ended in failure because of the missing
+    // closing ">", leading to a renewed reading of the statement where "<"
+    // functions as the predicate. Thus, (a < (a < ... x)) p q underwent
+    // doubling at every level, just as <= did, since both begin with the
+    // same character -- 12 s and 2 GB at depth 22 after groups were read
+    // only once. A list is now considered exclusively at positions where ">"
+    // concludes it before the enclosing group ends. Both are real
+    // predicates: integer comparison produces facts via <, and rules utilize
+    // it for comparison.
+    //
+    // A test limited by time, as justified by the rationale given in the
+    // previous test. Depth 22 instead of 20: at depth 20 the line required
+    // approximately 3 s without the probe, nearing the bound too closely to
+    // be sure of failing on a fast machine.
+    for (const std::string op : {"<", "<="})
+    {
+        CAPTURE(op);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        std::string term = "x";
+        for (int depth = 0; depth < 22; ++depth)
+            term = "(a " + op + " " + term + ")";
+
+        const auto start = std::chrono::steady_clock::now();
+        interactive.process(term + " p q");
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        CHECK(any_output_contains(collector, term + " p q"));
+        CHECK(elapsed.count() < 1.0);
+    }
+
+    // A node list keeps its reading, positioned adjacent to < as a
+    // predicate on a single line.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("<a b c> r (x < y)");
+        collector.clear();
+        interactive.process("<a b c> r Y");
+        CHECK(answers_contain(collector, "<a b c> r (x < y)")); });
+}
+
+TEST_CASE("parsing: the list probe refuses a bracket that does not close inside it")
+{
+    // The probe skipped balanced groups and sets, yet encountered a "(" or
+    // "{" that remained unclosed within it, treating it as a plain
+    // character. A line where brackets balance in number but differ in
+    // type consequently passed the probe at every level: each level tried
+    // the list, failed, and proceeded to read the remainder again,
+    // interpreting "<" as an operator. All three lines below remain
+    // unparsable either way; determining this took roughly 10 s
+    // for the first at depth 24 and 8 s for the second at depth 26. The
+    // third line is the set counterpart of the second, a run
+    // of "{" where the innermost set closes with a ")", and required a
+    // similar duration. A group or set that successfully parses is
+    // balanced, hence the probe now refuses such a bracket.
+    //
+    // A limit on time, similar to the tests shown earlier.
+    // Since no line costs memory, the depths can be
+    // selected for a wide margin.
+    std::string chain = "x";
+    for (int depth = 0; depth < 24; ++depth)
+        chain = "(a < " + chain + ")";
+    chain += " p q";
+    chain[chain.find(')')] = '}'; // the most deeply nested group closes with an incorrect bracket
+
+    const std::string open_run  = "a p < " + std::string(26, '(') + "} " + std::string(25, ')');
+    const std::string brace_run = "a p < " + std::string(26, '{') + ") " + std::string(25, '}');
+
+    for (const std::string& line : {chain, open_run, brace_run})
+    {
+        CAPTURE(line);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const auto start = std::chrono::steady_clock::now();
+        CHECK_THROWS_AS(interactive.process(line), std::runtime_error);
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        CHECK(elapsed.count() < 1.0);
+    }
+}
+
+TEST_CASE("parsing: the list probe stops at a comma between two conditions")
+{
+    // The expression (x < a, b > c) holds two comparisons, yet the probe
+    // from the "<" discovered the ">" situated after the comma. The list
+    // attempt proceeded to read the rest of the group, including a nested
+    // one, until it encountered the comma and failed. Subsequently,
+    // :stmt-any re-read the entire segment with "<" serving as the operator,
+    // consuming 5 seconds and 800 MB at depth 20. A node list never holds a
+    // comma that separates conditions, hence the probe now stops there.
+    //
+    // A time bound, similar to the tests
+    // mentioned above.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    std::string term = "y";
+    for (int depth = 0; depth < 20; ++depth)
+        term = "(x < " + term + ", b > c)";
+
+    const auto start = std::chrono::steady_clock::now();
+    interactive.process(term + " => (x p q)");
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+    // The echo prints the conditions according to node order, thus it is
+    // not the input once more; the innermost comparison and the conclusion
+    // show the reading.
+    CHECK(any_output_contains(collector, "(x < y)"));
+    CHECK(any_output_contains(collector, "=> (x p q)"));
+    CHECK(elapsed.count() < 1.0);
+}
+
+TEST_CASE("parsing: the list probe skips a node list nested in the probed one")
+{
+    // A node list after "<", as in (a < <b c> T), gave the probe a ">" to
+    // find: the one that closes <b c>. Thus, the list attempt read T,
+    // encountered failure at the ")" marking the group, and :stmt-any read T
+    // again with "<" functioning as an operator -- 6 seconds and 1.1 GB at
+    // depth 20, with similar consumption for the list following T. zelph
+    // prints such expressions autonomously, so its own output re-entered
+    // that slowly. The probe now counts every "<" it passes, and
+    // the ">" of a nested list now terminates that nested list rather than
+    // the one being probed.
+    //
+    // A time bound, similar to the tests
+    // mentioned above.
+    for (const std::string shape : {"(a < <b c> T)", "(a < T <b c>)"})
+    {
+        CAPTURE(shape);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const std::size_t hole = shape.find('T');
+        std::string       term = "x";
+        for (int depth = 0; depth < 20; ++depth)
+            term = shape.substr(0, hole) + term + shape.substr(hole + 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        interactive.process(term + " p q");
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        // The echo outputs the two objects of each group in node order,
+        // thus it is not the input once more; each <b c> within it shows
+        // the list reading.
+        const std::string echo  = normalize(last_out_text(collector));
+        std::size_t       lists = 0;
+        for (std::size_t at = echo.find("<b c>"); at != std::string::npos; at = echo.find("<b c>", at + 1))
+            ++lists;
+        CHECK(lists == 20);
+        CHECK(echo.find(") p q") != std::string::npos);
+        CHECK(elapsed.count() < 1.0);
+    }
+
+    // The probe counts rather than diving deeper via each "<": a
+    // recursive probe goes one level deeper per "<", and on this line, 400
+    // operators in length, it exceeded the recursion limit of peg/match,
+    // which refused the line.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string line = "x p";
+        for (int i = 0; i < 400; ++i)
+            line += " a <";
+        CHECK_NOTHROW(interactive.process(line + " b"));
+        collector.clear();
+        interactive.process("x p W");
+        CHECK(answers_contain(collector, "x p <"));
+        CHECK(answers_contain(collector, "x p b")); });
+}
+
+TEST_CASE("parsing: the list probe skips an arrow that begins a value")
+{
+    // The arrows ->, --> and => hold a ">", and the probe originating from
+    // a "<" took that ">" for the termination point of the list. Thus,
+    // in (a < -> T) the list attempt read T, encountered failure at the ")"
+    // marking the end of the group, and :stmt-any re-read T using "<" as
+    // the operator -- 4 to 8 s at depth 20 for each shape below, regardless
+    // of whether the arrow precedes or follows T. A value commencing with
+    // one of these arrows is read as the arrow itself, so the probe now
+    // skips an arrow wherever the reading process is positioned at the
+    // start of a value: after a blank that cannot be part of an atom, and
+    // after a string, a group, a set, a list, or another arrow. A form feed
+    // also serves to separate values in such contexts.
+    //
+    // In the last four shapes, a form feed stands right before the last
+    // arrow, ensuring the arrow does not come immediately after a blank,
+    // and each shape holds its own skip: x \f-> represents the arrow behind
+    // a blank and a form feed, "q"\f-> denotes the arrow behind a string,
+    // <b c>\f-> signifies the arrow behind a nested list, and ->\f->
+    // indicates the arrow behind another arrow. Without the skip it holds,
+    // a shape doubles per level again: x \f-> and "q"\f-> took 7 to 9 s,
+    // while the probe skipped an arrow only when it was directly behind a
+    // blank.
+    //
+    // A time bound, similar to the tests
+    // above.
+    for (const auto& [shape, arrow] : {std::pair<std::string, std::string>{"(a < -> T)", "->"},
+                                       {"(a <= => T)", "=>"},
+                                       {"(a < T ->)", "->"},
+                                       {"(a < --> T)", "-->"},
+                                       {"(a < x \f-> T)", "->"},
+                                       {"(a < \"q\"\f-> T)", "->"},
+                                       {"(a < <b c>\f-> T)", "->"},
+                                       {"(a < ->\f-> T)", "->"}})
+    {
+        CAPTURE(shape);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const std::size_t hole = shape.find('T');
+        std::string       term = "x";
+        for (int depth = 0; depth < 20; ++depth)
+            term = shape.substr(0, hole) + term + shape.substr(hole + 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        interactive.process(term + " p q");
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        // The echo outputs the objects of each group according to node
+        // order, thus it does not always reproduce the input; it holds a
+        // single arrow per group, as the two arrows in ->\f-> constitute a
+        // single node.
+        const std::string echo   = normalize(last_out_text(collector));
+        std::size_t       arrows = 0;
+        for (std::size_t at = echo.find(arrow); at != std::string::npos; at = echo.find(arrow, at + 1))
+            ++arrows;
+        CHECK(arrows == 20);
+        CHECK(echo.find(") p q") != std::string::npos);
+        CHECK(elapsed.count() < 1.0);
+    }
+
+    // A form feed constitutes whitespace separating values, yet an atom
+    // consumes one that follows it: within this line, a\f- is an atom
+    // and the ">" closes the list. A probe that skipped an arrow after any
+    // whitespace skipped \f-> as well, found no ">", and refused a line
+    // that parses.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_NOTHROW(interactive.process("y q < a\f->"));
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(answers_contain(collector, "y q < \"a\f-\" >")); });
+}
+
+TEST_CASE("parsing: the list probe reads a run of blanks once")
+{
+    // The probe looks for an arrow positioned behind every run of blank
+    // characters. As it processed the remaining portion of each run again
+    // from every blank it traversed, detecting no arrow each time, a run of
+    // n blanks incurred a cost of n²: this valid line took 7 to 8 s,
+    // compared to less than 0.01 s when using a probe that did not look for
+    // arrows. The probe now reads such a run in full, regardless of whether
+    // an arrow appears afterwards.
+    //
+    // A time bound, similar to the tests
+    // above.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto start = std::chrono::steady_clock::now();
+    interactive.process("x p < " + std::string(64000, ' ') + "b c>");
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+    CHECK(elapsed.count() < 1.0);
+    collector.clear();
+    interactive.process("x p Y");
+    CHECK(answers_contain(collector, "x p <b c>"));
+}
+
+TEST_CASE("parsing: the list probe skips the operand of a prefix form")
+{
+    // A prefix form reads its operand as a value, and an operand commencing
+    // with a ">" carries it along: in ¬-> the ¬ negates the arrow ->, in
+    // :p > the self-fact sugar holds the atom >, and in :p-> the name
+    // becomes p- while the operand is the atom > once more. The probe
+    // originating from a "<" took that ">" for the end of the list. Thus in
+    // (a < ¬-> T) the list attempt read T, failed upon encountering the ")"
+    // of the group, and :stmt-any read T again with "<" serving as the
+    // operator -- 4 to 6 s and 0.8 to 0.9 GB at depth 20 for each of the
+    // first five shapes below, with time and memory doubling at each level.
+    // Where a value starts, the probe now skips a run of prefixes and the
+    // arrow, ">=" or ">" that the operand begins with.
+    //
+    // The next four shapes put the prefix where the initial five are unable
+    // to. In the first three, it resides immediately after the "<" of a
+    // nested list, a location where a value also commences, or it is glued
+    // to an atom inside a nested list, where ¬ and * start a value of their
+    // own because both are reserved; these required 10 to 12 s and 1.3 to
+    // 1.5 GB at depth 20. In the fourth, it is glued to the "<" from which
+    // the probe originates, and this shape required 4 to 5 s and 0.8 GB at
+    // depth 20. That "<" does not represent a list, as :p claims the ">",
+    // and it remains a member of the set. A set is essential here: within a
+    // group, a "<" glued to what comes after is not a predicate, and the
+    // line lacks a reading. The four shapes that follow place the prefix
+    // after something the probe has just read, where a value starts again:
+    // after the blanks following an atom, after a string, which the probe
+    // reads like a group, a set, or a compact list, after the ">" of a
+    // nested list, and after a * glued to an atom inside a nested list; a
+    // blank comes after that *, making it the atom *. The probe skips a
+    // prefix at each of these positions individually, and each of the four
+    // shapes took 5 to 14 s and 1.2 to 1.9 GB at depth 20 when the skip at
+    // its respective location was absent. The final two shapes hold what
+    // the probe reads alongside a prefix. A ¬ reads the blanks preceding
+    // its operand, so in ¬ > the ">" serves as that operand, and the probe
+    // skips those blanks in tandem with the ¬. In :q >=:p > the operand of
+    // :q is >=, and :p > comes after it without a blank in between. The
+    // probe skips the >= as a whole, thus standing at the start of a value
+    // where :p begins; a probe that skipped only the ">" of >= read the "="
+    // as a plain character, and the ">" of :p > ended the list. Each of the
+    // two took 4 to 8 s at depth 20 while the probe was missing the
+    // component it holds.
+    //
+    // ¬ and ≈ operate on an entire rule condition and on nothing contained
+    // within it, thus a line containing them here is refused -- following
+    // the parse, which is what the time bound measures, and before anything
+    // is written. The remaining lines consist of statements, and their echo
+    // shows the reading: a group prints its objects and a set lists its
+    // members in node order, with each self-fact or list appearing once per
+    // level, and * makes each group represent its focus, so the line with
+    // *-> transforms into -> p q.
+    //
+    // A time bound, similar to the tests
+    // above.
+    const std::string negation = "\"¬\" is a condition operator";
+    const std::string approx   = "\"≈\" is a condition operator";
+    const std::string none;
+
+    // shape, the refusal it meets (none for a statement), and what its echo
+    // holds once per level
+    for (const auto& [shape, refusal, per_level] : {std::tuple<std::string, std::string, std::string>{"(a < ¬-> T)", negation, ""},
+                                                    {"(a < *-> T)", none, ""},
+                                                    {"(a < :p-> T)", none, "(:p- >)"},
+                                                    {"(a < :p > T)", none, "(:p >)"},
+                                                    {"(a < ≈n-> T)", approx, ""},
+                                                    {"(a < <:p > b> T)", none, "<(:p >) b>"},
+                                                    {"(a < <b x¬-> c> T)", negation, ""},
+                                                    {"(a < <b x*-> c> T)", none, "->"},
+                                                    {"{a <:p > T}", none, "(:p >)"},
+                                                    {"(a < b :p > T)", none, "(:p >)"},
+                                                    {"(a < \"q\" :p > T)", none, "(:p >)"},
+                                                    {"(a < <b c> :p > T)", none, "(:p >)"},
+                                                    {"(a < <b x* :p > c> T)", none, "(:p >)"},
+                                                    {"(a < ¬ > T)", negation, ""},
+                                                    {"{a < :q >=:p > T}", none, "(:q >=)"}})
+    {
+        CAPTURE(shape);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const std::size_t hole = shape.find('T');
+        std::string       term = "x";
+        for (int depth = 0; depth < 20; ++depth)
+            term = shape.substr(0, hole) + term + shape.substr(hole + 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        if (refusal.empty())
+        {
+            CHECK_NOTHROW(interactive.process(term + " p q"));
+        }
+        else
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(term + " p q"), doctest::Contains(refusal), std::runtime_error);
+        }
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        CHECK(elapsed.count() < 1.0);
+        if (!refusal.empty())
+            continue;
+
+        const std::string echo = normalize(last_out_text(collector));
+        if (per_level.empty())
+        {
+            CHECK(echo == "-> p q");
+            collector.clear();
+            interactive.process("a < -> X");
+            CHECK(answers_contain(collector, "a < -> x"));
+            continue;
+        }
+        std::size_t levels = 0;
+        for (std::size_t at = echo.find(per_level); at != std::string::npos; at = echo.find(per_level, at + 1))
+            ++levels;
+        CHECK(levels == 20);
+        CHECK(echo.find(shape.substr(hole + 1) + " p q") != std::string::npos);
+    }
+
+    // Where the probe must not skip. * reads its operand without a blank
+    // intervening, so a form feed immediately following it begins an atom:
+    // on the first line \f- constitutes that atom, and the list represents
+    // its focus. A * followed directly by a blank forms the atom *, as seen
+    // in the second line. A ":" or "≈" embedded within an atom does not
+    // trigger a prefix: in the third and fourth lines, x:p and x≈n are
+    // atoms. Nor does a ":" or "≈" lacking a name after it: in the last two
+    // lines, it is an atom of its own. In every line, the ">" closes the
+    // list, and a probe that skips it finds no other and refuses a line
+    // that parses.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_NOTHROW(interactive.process("y q <a *\f->"));
+        CHECK_NOTHROW(interactive.process("y q <a * >"));
+        CHECK_NOTHROW(interactive.process("y q <b x:p >"));
+        CHECK_NOTHROW(interactive.process("y q <b x≈n >"));
+        CHECK_NOTHROW(interactive.process("y q <a : >"));
+        CHECK_NOTHROW(interactive.process("y q <a ≈ >"));
+        collector.clear();
+        interactive.process("y q X");
+        CHECK(answers_contain(collector, "y q \"\f-\""));
+        CHECK(answers_contain(collector, "y q <b x:p>"));
+        CHECK(answers_contain(collector, "y q <b x≈n>"));
+        CHECK(answers_contain(collector, "y q <a \":\">"));
+        CHECK(answers_contain(collector, "y q <a \"≈\">"));
+
+        // The second line is verified using the quoted spelling of the
+        // atom * instead of comparing it to a printed answer, meaning the
+        // check is unaffected by how the printer spells a bare * in a list:
+        // y answers next to y2 only when both lines hold the identical list.
+        interactive.process("y2 q <a \"*\">");
+        collector.clear();
+        interactive.process("X q <a \"*\">");
+        const std::vector<std::string> answers = collect_answers(collector);
+        CHECK(answers.size() == 2);
+        CHECK(std::any_of(answers.begin(), answers.end(), [](const std::string& a)
+                          { return a.rfind("y q ", 0) == 0; }));
+        CHECK(std::any_of(answers.begin(), answers.end(), [](const std::string& a)
+                          { return a.rfind("y2 q ", 0) == 0; })); });
+}
+
+TEST_CASE("parsing: a prefix whose operand fails is not read again as an atom")
+{
+    // :pred X, ≈net X, *X, and @{...} are each evaluated before considering
+    // the atom that the prefix might also be read as. If the operand failed
+    // to parse, the prefix was treated as an atom instead, leaving the same
+    // operand for the next value. That value then processed it -- and every
+    // prefix form contained within it -- a second time, resulting in the same
+    // failure, since the line lacks any valid reading. Consequently, a
+    // MALFORMED line incurred double the cost per nesting level,
+    // approximately half a second at depth 18 for each of the four forms;
+    // well-formed input never follows this route. The atom is now rejected
+    // when no content after the prefix can end a value.
+    //
+    // A time bound, similar to the nesting tests above.
+    for (const std::string shape : {"(:p T)", "(≈n T)", "{*T}", "{@{T}}"})
+    {
+        CAPTURE(shape);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const std::size_t hole = shape.find('T');
+        std::string       term = "()";
+        for (int depth = 0; depth < 22; ++depth)
+            term = shape.substr(0, hole) + term + shape.substr(hole + 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        CHECK_THROWS_AS(interactive.process("a p " + term), std::runtime_error);
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        CHECK(elapsed.count() < 1.0);
+    }
+
+    // When a value concludes immediately following the prefix, the prefix
+    // continues to be interpreted as an atom.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::pair<std::string, std::string> cases[] = {
+            {"{a :p} r b", R"({a ":p"} r b)"},
+            {"{a ≈n} r b", R"({a "≈n"} r b)"},
+            {"{a *} r b", "{a *} r b"},
+            {"{@ {a}} r b", "{@ {a}} r b"}};
+        for (const auto& [line, echo] : cases)
+        {
+            CAPTURE(line);
+            collector.clear();
+            interactive.process(line);
+            CHECK(any_output_starts_with(collector, echo));
+        } });
+}
+
+TEST_CASE("parsing: a node list whose content fails is not read again with < as an operator")
+{
+    // The identical doubling via a node list. :list-probe found the closing
+    // ">", the list's content failed due to a malformed operand, and "<"
+    // was subsequently interpreted as an operator: the atom "<" left the
+    // same content to the next value, which failed the same way. Each level
+    // doubled the workload, consuming several seconds at depth 22 for each
+    // of the two shapes. When the content stops at a position that serves
+    // neither to close the list nor to terminate a value, no reading
+    // exists, and the parse ceases at that point.
+    //
+    // A time bound, similar to the nesting tests previously shown.
+    for (const std::string shape : {"<a T>", "<*T >"})
+    {
+        CAPTURE(shape);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+
+        const std::size_t hole = shape.find('T');
+        std::string       term = "()";
+        for (int depth = 0; depth < 22; ++depth)
+            term = shape.substr(0, hole) + term + shape.substr(hole + 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        CHECK_THROWS_AS(interactive.process("a p " + term), std::runtime_error);
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+        CHECK(elapsed.count() < 1.0);
+    }
+
+    // When the content stops at a comma separator, "<" keeps its reading as
+    // an operator: two distinct comparisons, not a list.
+    //
+    // The same applies when the content stops at ")", "}" or the end of the
+    // line. In :p > the ">" functions as the operand within self-fact
+    // sugar, meaning none of the three subsequent lines contains a list
+    // capable of closing, and each must read "<" as an operator: aborting
+    // the parse where a list attempt stopped at one of these three refused
+    // a line that has a reading. The probe skips such an operand and
+    // refuses the list before it is read; a list attempt that stops at one
+    // of the three still reverts to the operator.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(x < a, b > c) => (x p q)");
+        interactive.process("x < a");
+        interactive.process("b > c");
+        collector.clear();
+        interactive.process("x p Q");
+        CHECK(answers_contain(collector, "x p q"));
+
+        CHECK_NOTHROW(interactive.process("a < :p >"));
+        collector.clear();
+        interactive.process("a < Q");
+        CHECK(answers_contain(collector, "a < (:p >)"));
+
+        CHECK_NOTHROW(interactive.process("(a < :p >) r s"));
+        collector.clear();
+        interactive.process("X r s");
+        CHECK(answers_contain(collector, "(a < (:p >)) r s"));
+
+        // A set prints its members according to node order, hence no
+        // exact answer.
+        CHECK_NOTHROW(interactive.process("{a < :p >} t s"));
+        collector.clear();
+        interactive.process("X t s");
+        const auto answers = collect_answers(collector);
+        CHECK(std::ranges::any_of(answers, [](const std::string& a)
+                                  { return a.starts_with("{") && a.ends_with("} t s") && a.find("(:p >)") != std::string::npos; })); });
 }
 
 TEST_CASE("parsing: set with facts")
@@ -1383,6 +2175,452 @@ TEST_CASE("rules: two consequences are two objects, not a conjunction")
         collector.clear();
         interactive.process(".list-rules");
         CHECK(any_output_contains(collector, "=>")); });
+}
+
+// ---------------------------------------------------------------------------
+// Fresh variables: a firing creates a witness solely when no prior
+// instance is present
+// ---------------------------------------------------------------------------
+//
+// A variable that only a consequence names is considered fresh: firing the
+// rule creates a node for it, provided no existing nodes already make every
+// consequence a fact (logic.md, "No duplicate witnesses"). The check was
+// implemented as a manually coded walk over the graph, and each scenario
+// listed below reflects a shape it got wrong. In three instances, the old
+// walk allowed the rule to produce a witness on every pass, causing check
+// mode -- repeating classic passes until no further changes occur -- to
+// never terminate. These tests are executed with `.semi-naive on`, ensuring
+// the outdated implementation fails them rather than entering an infinite
+// loop.
+
+TEST_CASE("fresh variables: a witness the search meets later is still found")
+{
+    // `a q mk` and `mk r b` jointly serve as a witness for (X q N) (N r Y)
+    // at a p b. The walk bound N to the first node it encountered via a
+    // single consequence and did not attempt any alternative. In the first
+    // shape shown, six nodes reside within `r b` while only one of them
+    // lies within `a q`, and within this graph the walk overlooked the
+    // witness for every k and generated new ones. The second shape, being
+    // the mirror image, never encountered failure here. It stays because
+    // the walk commenced with whichever consequence the rule's set listed
+    // first, and that order is not subject to the rule's discretion.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X p Y) => (X q N) (N r Y)");
+
+        for (const int shape : {1, 2})
+            for (int k = 1; k <= 6; ++k)
+            {
+                const std::string id = std::to_string(shape) + std::to_string(k);
+                for (int i = 1; i <= 6; ++i)
+                {
+                    const std::string m = "m" + id + "_" + std::to_string(i);
+                    interactive.process(shape == 1 ? m + " r b" + id : "a" + id + " q " + m);
+                }
+                const std::string mk = "m" + id + "_" + std::to_string(k);
+                interactive.process(shape == 1 ? "a" + id + " q " + mk : mk + " r b" + id);
+            }
+
+        for (const int shape : {1, 2})
+            for (int k = 1; k <= 6; ++k)
+            {
+                const std::string id = std::to_string(shape) + std::to_string(k);
+                interactive.process("a" + id + " p b" + id);
+            }
+        interactive.process("u v w");
+
+        for (const char* query : {"X q Y", "X r Y"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            for (const std::string& answer : collect_answers(collector))
+                CHECK(answer.find("??") == std::string::npos);
+        } });
+}
+
+TEST_CASE("fresh variables: a self-fact is a witness")
+{
+    // `a q a` makes (A q B) a fact when A equals a and B equals a. The
+    // walk sought an object distinct from the subject, thus never counted
+    // a self-fact and created `a q ??` beside it -- and from the object
+    // side `?? t c` beside `c t c`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A is p) => (A q B)");
+        interactive.process("(A is s) => (B t A)");
+        interactive.process("a q a");
+        interactive.process("c t c");
+        interactive.process("a is p");
+        interactive.process("c is s");
+        interactive.process("u v w");
+
+        for (const char* query : {"A q B", "A t B"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            const auto answers = collect_answers(collector);
+            CHECK(answers.size() == 1);
+            for (const std::string& answer : answers)
+                CHECK(answer.find("??") == std::string::npos);
+        } });
+}
+
+TEST_CASE("fresh variables: a head whose variables are all fresh holds through any fact")
+{
+    // In (A is human) => (N knows M), the consequence remains unconnected
+    // to A, meaning every `knows` fact serves as a witness, and after one
+    // such fact comes into existence, no human adds another. The walk gave
+    // up upon both subject and object being fresh, thus each firing
+    // created a pair, and each subsequent input line fired the rule anew
+    // for every human: five pairs in total by the end of this test.
+    //
+    // `.semi-naive on`: refer to the note located
+    // directly above this group.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+
+        interactive.process("(A is human) => (N knows M)");
+        interactive.process("k knows l");
+        interactive.process("tim is human");
+        interactive.process("bob is human");
+        interactive.process("u v w");
+
+        collector.clear();
+        interactive.process("N knows M");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"k knows l"});
+
+        // Without such a fact, the first firing generates a single pair,
+        // and this pair serves as the witness for the subsequent one.
+        interactive.process("(A is cat) => (N likes M)");
+        interactive.process("felix is cat");
+        interactive.process("tom is cat");
+        interactive.process("u v w");
+
+        collector.clear();
+        interactive.process("N likes M");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"?? likes ??"}); });
+}
+
+TEST_CASE("fresh variables: a rule's own consequence pattern is no witness")
+{
+    // The consequence of a rule is a pattern within the graph, and the
+    // walk took it for a fact: `k likes N` -- this rule's own -- satisfied
+    // k likes ??, and `a q W` from a different rule satisfied a q ??.
+    // Neither rule was ever fired. A pattern carries variables and holds
+    // nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A is human) => (k likes N)");
+        interactive.process("(Z r t) => (a q W)");
+        interactive.process("(A is p) => (A q B)");
+        interactive.process("s is human");
+        interactive.process("a is p");
+
+        collector.clear();
+        interactive.process("k likes N");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"k likes ??"});
+
+        collector.clear();
+        interactive.process("a q B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q ??"}); });
+}
+
+TEST_CASE("fresh variables: a consequence whose instance is its own pattern with a variable counts as there for every binding")
+{
+    // The sole variables within `k about ...` sit in the conditions of the
+    // rule it mentions, so a firing writes it precisely as written: its
+    // instance is the rule's own consequence pattern containing variables,
+    // which constitutes rule text, and a firing does not derive it. It is
+    // counted as present, and the check for an earlier witness asks for N
+    // alone, which `z near g` and `y near h` supply. An engine whose first
+    // firing claims that node counts it as missing for the first binding
+    // only: `g is m` makes a second witness beside `z near g`, and
+    // `h is m`, firing afterwards, creates none.
+    //
+    // Single passes, as counts_over_passes runs them: an engine that counts
+    // the pattern as missing for each binding makes a new witness on every
+    // pass, and a run to the fixpoint would not end.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive off");
+        interactive.process(".auto-run"); // a toggle: off
+        process_lines(interactive, R"(
+(A is m) => (k about ((C r D, C s D) => (c q d))) (N near A)
+z near g
+y near h
+g is m
+.run-once
+h is m
+.run-once
+.run-once
+)");
+
+        collector.clear();
+        interactive.process("X near g");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"z near g"});
+
+        collector.clear();
+        interactive.process("X near h");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"y near h"}); });
+}
+
+TEST_CASE("fresh variables: a witness whose fact mentions a rule with variables in its conditions is found")
+{
+    // A firing keeps the condition set of a rule its consequence refers to,
+    // so the first rule writes `w about R` with A and B still present in R's
+    // conditions, while the second rule, acting as a generator, produces
+    // `R' noted w` with X, G, and Y still part of the conditions of R'. For
+    // a query, such a fact is regarded as rule text, not data
+    // (Zelph::var_in_closure reads a rule's conditions), and the check for
+    // an earlier witness read its candidates in the same way: it never found
+    // the fact the firing had generated, either via its object or its
+    // subject, and each pass created a new witness. Under `.semi-naive off`,
+    // the run never ended. In the one-condition twins, A and B, or X and Y,
+    // are fresh and the fact is ground, meaning it was found all along.
+    //
+    // `.semi-naive on`, and the first passes behind REQUIRE: an engine with
+    // the defect fails at this stage rather than causing a hang during the
+    // classic run that follows.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".auto-run"); // off: the rules fire upon the first .run
+        process_lines(interactive, R"(
+(X p Y) => (W about ((A r B, A s B) => (c q d)))
+(G go H) => (((X G Y, X r Y) => (c q H)) noted W)
+a p b
+t go k
+)");
+
+        const std::size_t before = node_count(collector, interactive);
+        interactive.process(".run");
+        const std::size_t after = node_count(collector, interactive);
+        // Two witnesses and the facts that name them; the second rule
+        // additionally writes the rule it refers to, along with its
+        // consequence `c q k`.
+        CHECK(after == before + 6);
+
+        for (const char* pass : {".run", ".run-once"})
+        {
+            INFO(pass);
+            interactive.process(pass);
+            REQUIRE(node_count(collector, interactive) == after);
+        }
+
+        interactive.process(".semi-naive off");
+        interactive.process(".run");
+        CHECK(node_count(collector, interactive) == after);
+
+        // Once the variable store is switched off, the walk that
+        // answers does so by reading the candidates in the same way.
+        interactive.process(".fact-stores off");
+        interactive.process(".run-once");
+        CHECK(node_count(collector, interactive) == after); });
+}
+
+TEST_CASE("fresh variables: a fresh variable nested in a consequence is created once")
+{
+    // ((A f N) q b) holds as long as there is at least one instance of
+    // `(a f n) q b`. The walk examined solely the outermost layer of a
+    // consequence and never located N within its subject, thus each
+    // input line generated a new (a f ??) q b.
+    //
+    // `.semi-naive on`: refer to the note located
+    // directly above this group.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+
+        interactive.process("(A is p) => ((A f N) q b)");
+        interactive.process("a is p");
+        interactive.process("c d e");
+
+        collector.clear();
+        interactive.process("X q b");
+        // "?\?" instead of "??": "??)" would constitute a
+        // trigraph.
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(a f ?\?) q b"}); });
+}
+
+TEST_CASE("fresh variables: the consequence that can bind a witness is joined first")
+{
+    // The check joins the consequences sequentially, and Unification
+    // compares a container through its node, thus binding no variable within
+    // one. It took the consequences in the order of their node ids, and a
+    // fresh W located in a collection of one consequence and outside in
+    // another was identified solely when the latter appeared first;
+    // otherwise, each firing made a new witness. The precedence of which one
+    // comes first depends on the ids of the rules' collections, making the
+    // order unreliable to rely on.
+    //
+    // `.semi-naive off` and single passes: an engine afflicted by the
+    // defect accumulates a witness with each pass, rather than never
+    // ending the run.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string rule;
+        SUBCASE("a membership binds it") { rule = "(X p Y) => (X likes @{(W s Y)}) (W in @{k})"; }
+        SUBCASE("an ordinary fact binds it") { rule = "(X p Y) => (X likes @{(W s Y)}) (X r W)"; }
+        SUBCASE("two collections hold it") { rule = "(X p Y) => (X likes @{(W s Y)} @{(W t Y)}) (W r X)"; }
+        SUBCASE("it is a member itself") { rule = "(X p Y) => (W in @{k}) (X likes @{W})"; }
+
+        interactive.process(".semi-naive off");
+        interactive.process(".auto-run"); // off: each pass is run below
+        interactive.process(rule);
+        interactive.process("a p b");
+        interactive.process(".run-once");
+
+        const std::size_t after = node_count(collector, interactive);
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            interactive.process(".run-once");
+            CHECK(node_count(collector, interactive) == after);
+        } });
+}
+
+TEST_CASE("fresh variables: a fresh predicate is matched like any other position")
+{
+    // The walk gave up immediately upon encountering a consequence
+    // predicate that was fresh, plain or nested within a composite
+    // predicate, causing such a rule to fire anew with each input line.
+    //
+    // `.semi-naive on`: refer to the note located
+    // directly above this group.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+
+        interactive.process("(A is p) => (A N b)");
+        interactive.process("(A is p) => (A (N r s) c)");
+        interactive.process("a is p");
+        interactive.process("u v w");
+
+        for (const char* query : {"a R b", "a R c"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).size() == 1);
+        } });
+}
+
+TEST_CASE("fresh variables: each binding of the conditions gets its own witness")
+{
+    // On the opposite side of the check: the witness for tim provides no
+    // information regarding bob, hence each gets one, and no firing is
+    // duplicated. logic.md shows this rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(A is human) => (B nameof A)");
+        interactive.process("tim is human");
+        interactive.process("bob is human");
+        interactive.process("u v w");
+
+        collector.clear();
+        interactive.process("X nameof Y");
+        auto answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == std::vector<std::string>{"?? nameof bob", "?? nameof tim"}); });
+}
+
+TEST_CASE("fresh variables: the fact that triggers the rule can be its witness")
+{
+    // (X p Y) => (X p Z) at a p b holds when Z equals b, hence the rule
+    // creates nothing. If the fact were not a witness, each newly
+    // created node would trigger the rule once more, causing it to run
+    // indefinitely.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X p Y) => (X p Z)");
+        interactive.process("a p b");
+        interactive.process("u v w");
+
+        collector.clear();
+        interactive.process("X p Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"}); });
+}
+
+TEST_CASE("fresh variables: a witness inside a rule's own collection is found again")
+{
+    // A fresh variable that also stands in a collection of the rule's text
+    // uniquely identifies the term that the firing constructs there, meaning
+    // the fact containing the term can only be predicted once the witness is
+    // bound: the check binds it from the consequence that contains it
+    // externally to the collection first, and a collection matches each term
+    // a firing builds until the join confirms the specific term this firing
+    // produces. Predicted before, the term referred to a collection lacking
+    // the witness, which does not exist, and the rule made a new witness on
+    // each pass.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("beside it in the same consequence")
+        {
+            const auto counts = counts_over_passes(collector, interactive, "(X p Y) => (X likes @{(W s Y)} W)\nb p k");
+            CHECK(counts == std::vector<std::size_t>(4, counts.front()));
+
+            collector.clear();
+            interactive.process("S likes O");
+            CHECK(collect_answers(collector).size() == 2);
+        }
+        SUBCASE("in two consequences")
+        {
+            const auto counts = counts_over_passes(collector, interactive, "(X p Y) => (X likes @{(W s Y)}) (W r @{(W s Y)})\na p b");
+            CHECK(counts == std::vector<std::size_t>(4, counts.front()));
+        }
+        SUBCASE("written into")
+        {
+            for (const std::string rule : {"(X p Y) => (W likes @{W})", "(X p Y) => (W likes @{X W})"})
+            {
+                CAPTURE(rule);
+                interactive.process(".new");
+                const auto counts = counts_over_passes(collector, interactive, rule + "\na p b\nc p d");
+                CHECK(counts == std::vector<std::size_t>(4, counts.front()));
+            }
+        } });
+}
+
+TEST_CASE("fresh variables: shapes with a witness and a rule's own collection end")
+{
+    // Each shape puts a fresh variable into a collection within the rule's
+    // text at a different location: inside, outside, both, nested, written
+    // into. Each ends, with a node count that the third pass no longer
+    // changes.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const std::string shape : {"(X p Y) => (X likes @{W}) (W r Y)\na p b",
+                                        "(X p Y) => (X likes {W}) (W r Y)\na p b",
+                                        "(X p Y) => (X likes @{W Y}) (W r Y)\na p k\nb p k",
+                                        "(X p Y) => (X likes {W Y}) (W r Y)\na p k\nb p k",
+                                        "(X p Y) => (X likes @{(W s @{Y})}) (W r X)\na p b",
+                                        "(X p Y) => (W in @{X}) (W r Y)\na p b\nc p d",
+                                        "(X p Y) => ((W in @{Y}) is noted) (W r X)\na p b\nc p b",
+                                        "(X p Y) => (X likes @{@{W}}) (W r X)\na p b",
+                                        "(X p Y) => (X likes @{(W s Y)} @{(W t Y)}) (W r X)\na p b",
+                                        "(G go H) => ((X G Y) => (X likes @{(W s H)}) (W r X))\nt go k\na t b",
+                                        "(X p Y) => (W in @{W Y})\na p b\nc p b",
+                                        "(X p Y) => (X likes {(W s Y)}) (W r X)\na p b",
+                                        "(X p Y) => (W in @{k}) (X likes @{W})\na p b",
+                                        "(X p Y) => (W in @{(W s Y)})\na p b",
+                                        "(G go H) => ((X G Y) => (W in @{H}) (X r W))\nt go k\na t b\nc t d",
+                                        "(G go H) => (((X G Y) => (Y q @{(W s H)})) noted W)\nt go k\nu go m",
+                                        "(X p Y) => (X likes @{(W s Y)} W) (W in @{k})\na p b",
+                                        "(X p Y) => (X likes @{(W s Y)}) (W r k)\na p b\nk r k",
+                                        "(X p Y) => (((W r X, W s Y) => (c q d)) is noted) (W t X)\na p b",
+                                        "(X p Y) => (X likes @{((W r X, W s Y) => (c q d))}) (W t X)\na p b",
+                                        "(X p Y) => (W in @{((A r X, A s Y) => (c q d))}) (W t X)\na p b"})
+        {
+            CAPTURE(shape);
+            interactive.process(".new");
+            // A shape that generates its rule fires it solely during the
+            // second pass, thus allowing the count to stabilize from that
+            // point onward.
+            const auto counts = counts_over_passes(collector, interactive, shape);
+            CHECK(counts[2] == counts[1]);
+            CHECK(counts[3] == counts[1]);
+        } });
 }
 
 TEST_CASE("rules: a condition that is not a pattern is refused, not carried")

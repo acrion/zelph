@@ -31,8 +31,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
+#include <algorithm>
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph;
@@ -108,6 +111,80 @@ namespace zelph::console
             _n->out(string::unmark_identifiers(output), true);
         }
         _n->out("------------------------", true);
+    }
+
+    void CommandExecutor::Impl::cmd_strata(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() != 1) throw std::runtime_error("Command .strata takes no arguments");
+
+        if (_n->get_rules().empty())
+        {
+            _n->out("No rules found.", true);
+            return;
+        }
+
+        const network::Reasoning::NegationLevels strata = _n->strata();
+        if (strata.levels == 0)
+        {
+            _n->out("No rule has a negated condition, so there are no negation levels.", true);
+            return;
+        }
+
+        // Rendered as .list-rules renders them, ensuring that a rule
+        // appears identically in both listings. The text serves as the sort
+        // key: rules are drawn from a hash set, and the listing must remain
+        // consistent across every call.
+        const auto render = [this](const network::Node rule)
+        {
+            std::string output;
+            string::node_to_string(_n, output, _n->lang(), rule, 3);
+            return string::unmark_identifiers(output);
+        };
+
+        std::vector<std::vector<std::string>>                                   by_level(strata.levels);
+        std::map<std::size_t, std::pair<std::size_t, std::vector<std::string>>> cycles; // component -> (level, rules)
+        for (std::size_t i = 0; i < strata.rules.size(); ++i)
+        {
+            const std::size_t c      = strata.component[i];
+            const bool        cyclic = strata.negation_inside[c];
+            if (!strata.negates[i] && !cyclic) continue;
+
+            const std::string text = render(strata.rules[i]);
+            if (strata.negates[i])
+            {
+                by_level[strata.level[i]].push_back(text);
+                if (cyclic) cycles[c].first = strata.level[i];
+            }
+            if (cyclic) cycles[c].second.push_back(text);
+        }
+
+        const std::size_t levels = strata.levels;
+        _n->out(std::to_string(levels) + (levels == 1 ? " negation level:" : " negation levels:"), true);
+        for (std::size_t level = 0; level < levels; ++level)
+        {
+            std::sort(by_level[level].begin(), by_level[level].end());
+            _n->out("Level " + std::to_string(level + 1) + ":", true);
+            for (const std::string& rule : by_level[level])
+                _n->out("  " + rule, true);
+        }
+
+        // A component that contains a negation negates what it itself
+        // derives. Each is presented in full, as its positive rules
+        // constitute just as integral a part of the cycle as those that
+        // perform the negation.
+        std::vector<std::pair<std::size_t, std::vector<std::string>>> unstratified;
+        for (auto& [c, entry] : cycles)
+        {
+            std::sort(entry.second.begin(), entry.second.end());
+            unstratified.push_back(std::move(entry));
+        }
+        std::sort(unstratified.begin(), unstratified.end());
+        for (const auto& [level, rules] : unstratified)
+        {
+            _n->out("Not stratifiable, on level " + std::to_string(level + 1) + " -- these rules negate what they derive:", true);
+            for (const std::string& rule : rules)
+                _n->out("  " + rule, true);
+        }
     }
 
     void CommandExecutor::Impl::cmd_remove_rules(const std::vector<std::string>& cmd)

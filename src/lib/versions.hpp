@@ -32,4 +32,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 namespace zelph
 {
     ZELPH_EXPORT std::string get_version_description();
+
+    // The version of mimalloc that this process is linked to, as reported by
+    // mi_version() (calculated as major * 10000 + minor * 100 + patch). Only
+    // the app links the allocator, thus only the application calls this
+    // function; in all other cases, the description names none.
+    ZELPH_EXPORT void set_linked_mimalloc(int version);
 }

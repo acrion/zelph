@@ -27,6 +27,9 @@ set(ZELPH_APP_LIBS project_options)
 
 if(TARGET zelph_mimalloc_override)
     list(APPEND ZELPH_APP_LIBS zelph_mimalloc_override)
+    # The `main()` function informs the library about the allocator
+    # currently in use by the process.
+    target_compile_definitions(zelph PRIVATE ZELPH_LINKS_MIMALLOC)
 endif()
 
 message(STATUS "CMAKE_CXX_COMPILER_ID = ${CMAKE_CXX_COMPILER_ID}")

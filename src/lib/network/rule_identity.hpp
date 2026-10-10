@@ -27,15 +27,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 // Recognising a rule one has already got.
 //
-// Everything in zelph is hash-consed, so entering the same FACT twice is a
-// no-op: the node IS its structure. Rules are the one exception, and not by
-// accident. A rule contains variables, variables are freshly allocated per
-// statement, and a node built from fresh variables is a fresh node -- so the
-// second occurrence of a rule is a second rule that derives exactly what the
-// first one derives, at exactly twice the unification cost. (Variables used
-// to be shared by name, which made rules hash-cons like facts; that stopped
-// working when rules gained nested terms, because the shared subterm no
-// longer had an unambiguous parent.)
+// In zelph, facts are hash-consed, meaning that entering the same FACT twice
+// is a no-op: the node IS its structure. Rules stand as the sole exception,
+// and this is intentional. A rule contains variables, which are freshly
+// allocated for each statement, and a node built from these newly created
+// variables constitutes a fresh node -- thus, the second occurrence of a
+// rule is a second rule that derives exactly what the first one does, but at
+// exactly twice the unification cost. (Previously, variables were shared by
+// name, which caused rules to hash-cons like facts; however, this approach
+// ceased to function when rules began incorporating nested terms, as the
+// shared subterm then lacked an unambiguous parent.)
 //
 // The pair below restores the missing identity WITHOUT touching node
 // identity: rule_shape() is a cheap filter, rules_alpha_equivalent() the
@@ -69,4 +70,18 @@ namespace zelph::network
 
     // The decision: same rule up to a bijective renaming of the variables.
     bool rules_alpha_equivalent(const Zelph* z, Node a, Node b);
+
+    // Whether a rule's own collection or a conjunction set appears
+    // beneath the fact or set constant `n`, accessed via facts and set
+    // constants: the part of a rule's text that the template-variable
+    // store omits, and that an instantiation reconstructs even though no
+    // variable from the store is substituted.
+    bool rule_text_below(const Zelph* z, Node n);
+
+    // Whether the fact `rel` constitutes a statement of a rule or forms part
+    // of one, nested at any depth: it serves as the condition or a
+    // consequence within a `=>` fact, as a member of a conjunction set or of
+    // a rule's own collection, or as the subject or an object of a fact, or
+    // as a member of a set constant, that is one of these.
+    bool is_rule_statement(const Zelph* z, Node rel);
 }

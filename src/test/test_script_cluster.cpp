@@ -32,13 +32,14 @@ using namespace zelph::test;
 // ---------------------------------------------------------------------------
 // zelph/cluster, zelph/cluster-drop, zelph/clusters
 //
-// The graph is monotonic, so a program that asserts a fact base, reasons about
-// it and reads the conclusions has no way to take the fact base back out
-// again: every question it ever asked stays. Clusters are the answer the
-// engine already has -- nodes CREATED while one is active are recorded in it,
-// and dropping it removes exactly those -- but until now they existed only as
-// REPL commands, which meant the capability was unreachable from a program
-// driving zelph as a library.
+// No element of the Janet API removes a fact unless a cluster is dropped,
+// meaning that without one a program which asserts a fact base, reasons
+// about it, and reads the conclusions cannot take the fact base back out
+// afterwards: each query it has ever posed remains. Clusters represent the
+// answer the engine already possesses -- nodes CREATED while one is active
+// are logged within it, and dropping it eradicates precisely those -- yet
+// until now they were accessible only via REPL commands, rendering the
+// functionality inaccessible to a program that uses zelph as a library.
 //
 // These tests pin the three properties that make a cluster usable as scratch
 // space: what is created inside it goes away, what existed before it does not,

@@ -32,9 +32,12 @@ Without property IDs, **all** qualifiers are imported. With property IDs, only q
 The intended workflow is:
 
 ```zelph
-.load wikidata-20260309-all.bin                            # 1. load the base network
-.wikidata-qualifiers wikidata-20260309-all.json.bz2 P11260 # 2. add the statement layer
-.save wikidata-20260309-all-P11260.bin                     # 3. persist the combined network
+# 1. load the base network
+.load wikidata-20260309-all.bin
+# 2. add the statement layer
+.wikidata-qualifiers wikidata-20260309-all.json.bz2 P11260
+# 3. persist the combined network
+.save wikidata-20260309-all-P11260.bin
 ```
 
 Loading the base network first is important: it ensures that subjects and entity values attach to the existing nodes via their `wikidata` names instead of creating disconnected duplicates.

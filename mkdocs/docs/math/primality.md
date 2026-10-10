@@ -12,11 +12,11 @@ standard library's worked comparison of the two.
 
 ```
 zelph> .import primes
-zelph> ? :testprime &97
+zelph+> ? :testprime &97
 Answer: (:testprime &97) = prime
-zelph> ? :testprime &91
+zelph+> ? :testprime &91
 Answer: (:testprime &91) = composite
-zelph> &91 hasdivisor _D
+zelph+> &91 hasdivisor _D
 Answer: &91 hasdivisor &7
 ```
 
@@ -36,12 +36,7 @@ which seeds the whole computation — exactly like `(&12 + &34) = X`.
 
 ## `primes` — the positive fold
 
-"N is prime" is universally quantified — *all* candidates leave a remainder
-— which naively suggests negation-as-failure over `hasdivisor`. It would be
-wrong here. NAF tests absence in the **current** graph state, while
-`hasdivisor` facts are still being derived over many fixpoint iterations,
-and forward chaining is monotonic: a prematurely derived `isprime` fact
-could never be retracted.
+The statement "N is prime" is universally quantified – *all* potential divisors yield a non-zero remainder – which might superficially imply using negation-as-failure with `hasdivisor`. This would be incorrect here. Negation-as-failure evaluates absence within the **current** graph state, yet `hasdivisor` facts continue to be derived across multiple fixpoint iterations. Forward chaining never retracts a fact once established: thus, an `isprime` fact derived too early would stand.
 
 So primality is built from positive facts only. A fold `(N nodivupto D)`
 grows one verified non-divisor at a time:
@@ -72,19 +67,30 @@ rule is deferred until the positive rules, candidate enumeration and all
 `mod` computations, have reached quiescence, so the negation tests absence
 against the complete divisor scan.
 
+`.strata` lists the rule as not stratifiable nonetheless, together with the
+whole arithmetic. The analysis compares predicates, and the rule delivering
+the verdict, `(N testprime N, N isprime N) => ((N testprime N) = prime)`,
+creates an `=` fact – the predicate for every arithmetic result the scan
+reads – and contains `(N testprime N)`, which starts the scan. Neither can
+produce a fact that the negation relies upon: the `=` fact has a
+`testprime` term as its subject, never one of the arithmetic terms the scan
+reads, and `(N testprime N)` is already established, being the rule’s own
+premise. Thus, every `hasdivisor` fact for N is derived before the negation
+is tested, and `.semi-naive check` verifies this in every run.
+
 It scans eagerly up to √N, because the negation needs the full scan. In
 return it finds **all** divisors ≤ √N, not just the smallest:
 
 ```
 zelph> .import primes-naf
-zelph> &60 testprime &60
-zelph> .run
-zelph> &60 hasdivisor _D
-Answer: &60 hasdivisor &2
+zelph+> ? :testprime &60
+Answer: (:testprime &60) = composite
+zelph+> &60 hasdivisor _D
 Answer: &60 hasdivisor &3
-Answer: &60 hasdivisor &4
-Answer: &60 hasdivisor &5
 Answer: &60 hasdivisor &6
+Answer: &60 hasdivisor &5
+Answer: &60 hasdivisor &4
+Answer: &60 hasdivisor &2
 ```
 
 ## Choosing between them
@@ -92,10 +98,10 @@ Answer: &60 hasdivisor &6
 | | `primes` | `primes-naf` |
 |---|---|---|
 | Technique | positive fold | negation-as-failure |
-| Needs stratification | no | yes |
-| Composite N | halts at the smallest divisor | scans to √N |
-| `hasdivisor` | one witness | all divisors ≤ √N |
-| Reads like the definition | no | yes |
+| Defers a negation | no | yes |
+| Composite N | halts at the smallest divisor | examines up to √N |
+| `hasdivisor` | one witness | every divisor ≤ √N |
+| Resembles the definition | no | yes |
 
 Neither is the "right" one. `primes` is the better computation; `primes-naf`
 is the better statement of the mathematics. That both are expressible, in
@@ -104,18 +110,11 @@ the standard library.
 
 ## Node-identity guards
 
-The guards `R != &0`, `&2 == N`, `P == N` and the bound comparisons compare
-**nodes**, via the comparison module's relational facts. This is sound
-because all involved numbers are canonical and canonical numbers are
-hash-consed: one value, one node.
+The guards `R != &0`, `&2 == N`, `P == N` and the bound comparisons compare **nodes** using the relational facts from the comparison module. This approach is sound since every number involved is canonical, and canonical numbers are hash-consed: a single value corresponds to a single node, and distinct values produce distinct nodes, barring a hash collision, which zelph refuses ([details](../internals/performance.md#the-identity-foundation)).
 
 ## Cross-module cascade
 
-Neither module computes anything itself. `(N mod D)`, `(D + &1)`,
-`(E * E)`, `(P cmp N)` are ordinary facts asserted for the arithmetic
-modules to answer. `.explain` on a verdict therefore descends through the
-division and multiplication recursions all the way to the digit tables —
-and, under `binary-nand-arithmetic`, to a single NAND axiom.
+No module performs computation independently. The expressions `(N mod D)`, `(D + &1)`, `(E * E)`, and `(P cmp N)` are ordinary facts asserted for the arithmetic modules to resolve. When `.explain` is applied to a `primes` verdict, or to a composite verdict from `primes-naf`, it therefore traverses the division and multiplication recursions down to the digit level. At this level, the leaves consist of digit-table entries and alphabet facts under `decimal-arithmetic` and `binary-arithmetic`, while under `binary-nand-arithmetic` they include the single NAND axiom, the two alphabet facts, and the `[absent]` leaves resulting from gate completion. On every substrate, the leaves also include the `:testprime N` request and structural base cases such as `(nil lcmp nil) res eq`. A prime verdict from `primes-naf` does not go through division at all: the scan stands behind its leaf `¬(N hasdivisor D) [absent]`.
 
 ## Testing
 

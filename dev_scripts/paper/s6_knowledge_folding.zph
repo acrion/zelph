@@ -10,7 +10,6 @@
 x ~ symvar
 
 :simplify ((&2 + &3) * (&4 + &6))
-.run
 (:simplify ((&2 + &3) * (&4 + &6))) = X
 (:simplify ((&2 + &3) * (&4 + &6))) = X
 
@@ -19,11 +18,9 @@ b ~ symconst
 c ~ symconst
 (a + b) = c
 :simplify (a + b)
-.run
 (:simplify (a + b)) = X
 (:simplify (a + b)) = X
 
 :simplify (&5 / &0)
-.run
 (:simplify (&5 / &0)) = X
 (:simplify (&5 / &0)) = X

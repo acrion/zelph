@@ -11,19 +11,20 @@ straight back in.
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> c ~ symconst
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> c ~ symconst
 zelph> ? $( x*x ) diffby x
 Answer: ((x * x) diffby x) = (x + x)
-zelph> ? $( x + c ) diffby x
+zelph+> ? $( x + c ) diffby x
 Answer: ((x + c) diffby x) = &1
-zelph> ? $( x^5 ) diffby x
+zelph+> ? $( x^5 ) diffby x
 Answer: ((x ^ &5) diffby x) = $( &5 * x ^ &4 )
-zelph> ? $( x^3 - 2*x + 7 ) diffby x
+zelph+> ? $( x^3 - 2*x + 7 ) diffby x
 Answer: ($( x ^ &3 - &2 * x + &7 ) diffby x) = $( &3 * x ^ &2 - &2 )
-zelph> ? $( exp(x*x) ) diffby x
+zelph+> ? $( exp(x*x) ) diffby x
 Answer: ($( exp(x * x) ) diffby x) = $( exp(x * x) * (x + x) )
-zelph> ? $( ln(x) ) diffby x
+zelph+> ? $( ln(x) ) diffby x
 Answer: ($( ln(x) ) diffby x) = (&1 / x)
 ```
 
@@ -36,15 +37,15 @@ post-processing pass.
 
 ## Function derivatives are facts
 
-`exp` and `ln` are not privileged. There are two facts and two rules behind
+`exp` and `ln` are not privileged. There is one fact and two rules behind
 them, and the mechanism is open:
 
 ```
-zelph> sinh hasderivative cosh
+zelph+> sinh hasderivative cosh
 zelph> cosh hasderivative sinh
 zelph> ? $( sinh(x) ) diffby x
 Answer: ($( sinh(x) ) diffby x) = $( cosh(x) )
-zelph> ? $( cosh(x*x) ) diffby x
+zelph+> ? $( cosh(x*x) ) diffby x
 Answer: ($( cosh(x * x) ) diffby x) = $( sinh(x * x) * (x + x) )
 ```
 
@@ -61,45 +62,37 @@ the form `g(u)` for any named symbol `g`.
 
 ## Constancy, and an honest boundary
 
-"A term not containing x is constant with respect to x" is the textbook
-rule, and zelph states it that way — as a **negation**:
+"A term not containing x is constant with respect to x" is the textbook rule. zelph avoids expressing it in this negative form, since a negation holds validity only when the corresponding positive condition is complete: a rule "not contains x, hence constant" would erroneously classify every shape that the containment check cannot traverse as constant, solely because nothing could ever have derived its containment. Constancy is defined exclusively at the **leaves**, each established by a positive rule:
 
 ```
-(T dstate X, X ~ symvar, T ddom T, ¬(T contains X)) => ((T wrt X) deriv &0)
+(X dstate X, X ~ symvar) => ((X wrt X) deriv &1)
+(T dstate X, X ~ symvar, T ~ symvar, T != X)   => ((T wrt X) deriv &0)
+(T dstate X, X ~ symvar, T ~ symconst, T != X) => ((T wrt X) deriv &0)
+((A cons R) dstate X, X ~ symvar, (A cons R) isnumeral true)
+=> (((A cons R) wrt X) deriv &0)
 ```
 
-`contains` is a positive recursion; the negation is deferred by
-[stratified evaluation](../logic.md#stratified-evaluation) until that
-recursion has reached quiescence, so absence is tested against a complete
-state. Numerals need no rule at all: nothing derives `(&n contains x)`, so
-they are constant *by absence*.
-
-The `T ddom T` condition is the interesting part. A negation is only as
-sound as the positive recursion it tests, and `contains` only walks the
-forms that differentiation knows — `+`, `*`, `f(u)`, and whatever the
-operator modules add (`-`, `neg`, `^`). Any other shape would fail the
-containment test for the trivial reason that no rule could ever have
-derived it, and would then be declared constant. So membership in the known
-shapes is asserted **positively**, and the fallback is gated on it. The
-effect:
+A constant composite needs no rule of its own. `c * c` is differentiated like any other product; its raw derivative is assembled from the `&0` of its leaves, and the simplifier reduces it to `&0`:
 
 ```
-zelph> ? (x / c) diffby x
-zelph>
-zelph> ? (x foo c) diffby x
-zelph>
+zelph+> ? $( c*c ) diffby x
+Answer: ((c * c) diffby x) = &0
 ```
 
-Silence, not zero. There is no quotient rule in the standard library, so
-`d(x/c)/dx` has no answer — and a term built from a predicate zelph knows
-nothing about has none either. Both are honest. Contrast this with what a
-missing gate would produce: a confident `&0` for a term that plainly
-contains `x`.
+A list is recognized as a numeral solely if the following condition holds: the list is not empty, terminates with nil, and every individual element qualifies as a digit based on the loaded arithmetic module. This verification occurs only when requested, specifically for lists undergoing differentiation.
 
-Adding the quotient rule is a five-line exercise following the
-[operator extension protocol](tutorial-terms.md#extending-the-simplifier-instead);
-it needs a decompose rule, two containment rules, a `ddom` declaration and
-the assemble rule.
+The effect is an honest boundary:
+
+```
+zelph+> ? (x / c) diffby x
+zelph+> ? (x foo c) diffby x
+zelph+> ? <x c> diffby x
+zelph+>
+```
+
+Silence, not zero. The standard library lacks a quotient rule, thus `d(x/c)/dx` yields no result; a term built from a predicate zelph knows nothing about has none either; and `<x c>`, a list comprising two symbols, fails to be a numeric value. All three are honest. No rule applies to them, hence nothing can claim they are constant.
+
+Adding the quotient rule involves a brief task aligned with the [operator extension protocol](tutorial-terms.md#extending-the-simplifier-instead): two decompose rules that pass the request on to the operands, and one assemble rule. No declaration of constancy is required – a constant numerator undergoes structural differentiation, just as `c * c` above.
 
 ## Higher and mixed derivatives
 
@@ -107,10 +100,12 @@ Since a derivative is an ordinary fact exposed under `=`, iterating is just
 chaining. `diff.zph` provides that as a list walk:
 
 ```
-zelph> <x y> ~ polyring
-zelph> ? $( x^5 ) diffalong <x x>
+zelph+> <x y> ~ polyring
+(:needsring <x y>) ⇐ (<x y> ~ polyring)
+(x pouter y) ⇐ (:needsring <x y>)
+zelph+> ? $( x^5 ) diffalong <x x>
 Answer: ((x ^ &5) diffalong <x x>) = $( &20 * x ^ &3 )
-zelph> ? $( x^3*y + x*y^2 ) diffalong <x y>
+zelph+> ? $( x^3*y + x*y^2 ) diffalong <x y>
 Answer: ($( x ^ &3 * y + x * y ^ &2 ) diffalong <x y>) = $( &3 * x ^ &2 + &2 * y )
 ```
 
@@ -133,7 +128,7 @@ would be the *same node*. Order has to live in the data.
 Which makes the symmetry of mixed partials checkable rather than assumed:
 
 ```
-zelph> ? $( x^3*y + x*y^2 ) diffalong <x y>
+zelph+> ? $( x^3*y + x*y^2 ) diffalong <x y>
 Answer: … = $( &3 * x ^ &2 + &2 * y )
 zelph> ? $( x^3*y + x*y^2 ) diffalong <y x>
 Answer: … = $( &3 * x ^ &2 + &2 * y )
@@ -144,8 +139,19 @@ cons lists — reaching one and the same answer node. You can confirm the
 node identity rather than trusting the printed text:
 
 ```
-zelph> %(let [t (zelph/fact (zelph/fact (zelph/fact "x" "^" (zelph/number "3")) "*" "y") "+" (zelph/fact "x" "*" (zelph/fact "y" "^" (zelph/number "2")))) a (zelph/fact t "diffalong" (zelph/list "x" "y")) b (zelph/fact t "diffalong" (zelph/list "y" "x"))] (string "SCHWARZ-distinct-requests-" (not (= a b)) "-same-answer-" (= (get (get (zelph/query (zelph/fact a "=" '_D)) 0) '_D) (get (get (zelph/query (zelph/fact b "=" '_D)) 0) '_D))))
+zelph+> %(let [t (zelph/fact (zelph/fact (zelph/fact "x" "^" (zelph/number "3")) "*" "y") "+" (zelph/fact "x" "*" (zelph/fact "y" "^" (zelph/number "2")))) a (zelph/fact t "diffalong" (zelph/list "x" "y")) b (zelph/fact t "diffalong" (zelph/list "y" "x"))] (string "SCHWARZ-distinct-requests-" (not (= a b)) "-same-answer-" (= (get (get (zelph/query (zelph/fact a "=" '_D)) 0) '_D) (get (get (zelph/query (zelph/fact b "=" '_D)) 0) '_D))))
 "SCHWARZ-distinct-requests-true-same-answer-true"
+```
+
+Here the two orders meet at a single node since their simplified forms happen to align. This alignment need not happen in general, as the simplifier normalizes neither commutativity nor associativity: although the two orders yield the same value, they may produce distinct arrangements of identical terms, and deciding that such arrangements are equivalent falls within the responsibility of the polynomial layer:
+
+```
+zelph> ? $( (x*y)*(x+y) ) diffalong <x y>
+Answer: ($( x * y * (x + y) ) diffalong <x y>) = $( x + y + y + x )
+zelph+> ? $( (x*y)*(x+y) ) diffalong <y x>
+Answer: ($( x * y * (x + y) ) diffalong <y x>) = $( x + y + x + y )
+zelph+> ? $( x + y + y + x ) ≡ $( x + y + x + y )
+Answer: ($( x + y + y + x ) ≡ $( x + y + x + y )) = proven
 ```
 
 ## The one associativity there is
@@ -156,9 +162,9 @@ whole thing unreadable. So the simplifier carries exactly one associativity
 rule — the case where a numeral meets a numeral one level down:
 
 ```
-zelph> ? $( x^5 ) diffalong <x x x>
+zelph+> ? $( x^5 ) diffalong <x x x>
 Answer: ((x ^ &5) diffalong <x x x>) = $( &60 * x ^ &2 )
-zelph> ? $( x^6 ) diffalong <x x x x>
+zelph+> ? $( x^6 ) diffalong <x x x x>
 Answer: ((x ^ &6) diffalong <x x x x>) = $( &360 * x ^ &2 )
 ```
 
@@ -171,7 +177,7 @@ numerals. A term like `$( y * (4*x) )` is left exactly as written.
 The equality question still belongs to the polynomial layer:
 
 ```
-zelph> ? :topoly $( 60*x^2 )
+zelph+> ? :topoly $( 60*x^2 )
 Answer: (:topoly $( &60 * x ^ &2 )) = (x poly <(pos zint &0) (pos zint &0) (pos zint &60)>)
 ```
 
@@ -184,17 +190,17 @@ If f is homogeneous of degree n, then x·∂f/∂x + y·∂f/∂y = n·f. Take
 f = x³ + x²y + y³, homogeneous of degree 3. Differentiate:
 
 ```
-zelph> <x y> ~ polyring
+zelph+> <x y> ~ polyring
 zelph> ? $( x^3 + x^2*y + y^3 ) diffby x
 Answer: … = $( &3 * x ^ &2 + &2 * x * y )
-zelph> ? $( x^3 + x^2*y + y^3 ) diffby y
+zelph+> ? $( x^3 + x^2*y + y^3 ) diffby y
 Answer: … = $( x ^ &2 + &3 * y ^ &2 )
 ```
 
 and assemble the claim:
 
 ```
-zelph> ? $( x*(3*x^2 + 2*x*y) + y*(x^2 + 3*y^2) ) ≡ $( 3*(x^3 + x^2*y + y^3) )
+zelph+> ? $( x*(3*x^2 + 2*x*y) + y*(x^2 + 3*y^2) ) ≡ $( 3*(x^3 + x^2*y + y^3) )
 Answer: … = proven
 ```
 
@@ -207,7 +213,7 @@ You can also let a *rule* do the assembling, so the theorem is checked for
 any f you declare:
 
 ```
-zelph> (F eulertest (X then Y)) => (F diffby X)
+zelph+> (F eulertest (X then Y)) => (F diffby X)
 zelph> (F eulertest (X then Y)) => (F diffby Y)
 zelph> (F eulertest (X then Y), (F diffby X) = P, (F diffby Y) = Q) => (((X * P) + (Y * Q)) ≡ (&3 * F))
 ```
@@ -218,28 +224,21 @@ up.
 
 ## Exercises
 
-1.  `sin hasderivative cos` is easy; the other half is not, because
-    d(cos u)/du = −sin(u) is not of the form g(u) for a named symbol `g`.
-    Give `cos` a dedicated assemble rule, in the shape `ln` uses:
+1.  `sin hasderivative cos` is easy; the other half, however, is not, since d(cos u)/du = −sin(u) does not conform to the form g(u) for any named symbol `g`. Give `cos` a dedicated assemble rule, structured similarly to how `ln` is handled:
 
     ```
     ((cos of U) dstate X, (U wrt X) deriv P)
     => (((cos of U) wrt X) deriv ((neg of (sin of U)) * P))
-    ((cos of U) dstate X, U contains X) => ((cos of U) contains X)
     ```
 
-    Then check that `$( sin(x) ) diffalong <x x x x>` closes the cycle back
-    to `sin(x)`. Why is the second rule needed as well?
+    Next verify that `$( sin(x) ) diffalong <x x x x>` closes the cycle back to `sin(x)`, and that `$( cos(c) ) diffby x` answers `&0`. Why is it unnecessary for `cos` to have a rule that passes the request to `u`, or one that makes `cos(c)` constant?
 
 2.  Verify Euler's theorem for a homogeneous polynomial of degree 4 in three
     variables.
 
 3.  `? $( x^2 ) diffalong <x x x>` — predict the answer, then check it.
 
-4.  Write the quotient rule as an operator extension and confirm that
-    `((ln of x) diffalong <x x>)` then answers. You will need a `ddom`
-    declaration for `/`; without it the constancy fallback stays gated and
-    your rule will look correct but never fire on a constant numerator.
+4.  Write the quotient rule in the form of an operator extension and confirm that `((ln of x) diffalong <x x>)` subsequently yields the correct result. Next, attempt `(c / x) diffby x`: the constant numerator requires no more than the three rules you wrote.
 
 ## Next
 

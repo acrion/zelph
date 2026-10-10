@@ -25,8 +25,9 @@ repeatable, like every result query in the standard library.
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> ? :topoly $( (x+1)^2 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? :topoly $( (x+1)^2 )
 Answer: (:topoly ((x + &1) ^ &2)) = (x poly <(pos zint &1) (pos zint &2) (pos zint &1)>)
 ```
 
@@ -36,33 +37,38 @@ Answer: (:topoly ((x + &1) ^ &2)) = (x poly <(pos zint &1) (pos zint &2) (pos zi
 |---|---|
 | `X ~ symvar` | the polynomial X: `(X poly <(pos zint &0) (pos zint &1)>)` |
 | `C ~ symconst` | the same — an opaque constant is an **indeterminate** here |
-| zint numeral | itself, a constant polynomial |
-| natural numeral | promoted to `(pos zint N)` |
+| zint numeral | itself, in its canonical form, a constant polynomial: a leading zero is discarded, meaning `(pos zint <01>)` compiles like `(pos zint &1)`; `(neg zint &0)` compiles to the zero polynomial `(pos zint &0)` |
+| natural numeral | promoted to `(pos zint N)`, with `N` in its canonical form |
 | `(U + V)`, `(U - V)`, `(U * V)` | `padd` / `psub` / `pmul` |
 | `(U ^ N)`, `N` a natural numeral | `ppow` |
 | `(neg of U)` | `pneg` |
 
-Anything else — division, other function applications, undeclared atoms —
-gets no result, and the request stays silently unanswered.
+Anything else – division, other function applications, undeclared atoms, cons lists that are not numerals like `<x c>`, zint terms whose magnitude is not a numeral such as `(pos zint x)` – gets no result, and the request remains unanswered without notice.
 
 Two consequences worth stating.
 
-**Constants are indeterminates.** `c ~ symconst` compiles like a variable,
-because an identity that holds in ℤ[c, x, …] holds for every value of c.
-Like any variable, `c` must appear in the `pouter` order.
+**Constants are indeterminates.** The expression `c ~ symconst` compiles like a variable: an identity that holds in ℤ[c, x, …] holds for every value of `c`. Just like any variable, `c` needs to appear in the `pouter` ordering. However, the converse does not hold: `disproven` says that the two sides differ as polynomials in independent indeterminates, not that they differ for the particular value represented by `c`. A declared equation such as `(r * r) = &2` is disregarded both for constants and for variables, but the simplifier’s [knowledge folding](symbolic.md#knowledge-folding) does consider it: within a single session, `:simplify (r * r)` answers `&2`, while `(r * r) ≡ &2` results in `disproven`. A `proven` verdict stays sound under any such equation, since an identity in the free ring holds in every quotient of that ring.
 
 **Promotion makes subtraction total.** Natural subtraction is partial, but
 here the operands are promoted to ℤ first:
 
 ```
-zelph> ? :topoly (&3 - &5)
+zelph+> ? :topoly (&3 - &5)
 Answer: (:topoly (&3 - &5)) = (neg zint &2)
 ```
 
-This also closes the loop that
-[`symbolic-minus`](symbolic.md#subtraction-and-negation) deliberately left
-open: `(:topoly (x - x))` is `(pos zint &0)`. Cancelling equal symbolic
-terms is the polynomial layer's job, and here it happens.
+Here, cancellation operates across entire polynomials. [`symbolic-minus`](symbolic.md#subtraction-and-negation) performs local elimination of `X - X` when both operands simplify to the same node, so that `(:simplify (x - x))` yields `&0`. Operands that are equivalent only in the polynomial sense are not impacted by this rule; instead, the compiler transforms both into the same canonical form:
+
+```
+zelph+> <x y> ~ polyring
+(:needsring <x y>) ⇐ (<x y> ~ polyring)
+zelph+> ? :simplify ((x + y) - (y + x))
+Answer: (:simplify $( x + y - (y + x) )) = $( x + y - (y + x) )
+zelph+> ? :topoly ((x + y) - (y + x))
+Answer: (:topoly $( x + y - (y + x) )) = (pos zint &0)
+```
+
+A constant result is a zint term – `(pos zint &0)` in this instance, rather than the natural `&0`. `topoly` generates outputs that reside within the polynomial layer, which keeps `(pos zint N)` as its [coefficient form](polynomial.md#representation). Outside that layer, a nonnegative integer is expressed as the natural numeral; `(pos zint N)` persists as the operand form for `z`-operations, which likewise generate it ([Integers over ℤ](integers.md#representation)).
 
 ## Architecture
 
@@ -110,14 +116,14 @@ compilations reached the identical node. There is no equality checker.
 
 | Answer | Means |
 |---|---|
-| `proven` | both sides compiled to the same normal form |
-| `disproven` | both sides compiled, to different normal forms |
+| `proven` | the two sides compiled to the same normal form |
+| `disproven` | both sides were successfully compiled, to distinct normal forms – they differ as polynomials; declared equations are not taken into account |
 | *(no answer)* | at least one side did not compile |
 
 ```
-zelph> ? $( (x+1)^2 ) ≡ $( x^2 + 2*x + 1 )
+zelph+> ? $( (x+1)^2 ) ≡ $( x^2 + 2*x + 1 )
 Answer: … = proven
-zelph> ? $( (x+1)^2 ) ≡ $( x^2 + 1 )
+zelph+> ? $( (x+1)^2 ) ≡ $( x^2 + 1 )
 Answer: … = disproven
 ```
 

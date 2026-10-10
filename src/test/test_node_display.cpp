@@ -363,7 +363,176 @@ TEST_CASE("display: a name the grammar reads by its first character is quoted")
         interactive.process(".name q \"≈net\"");
         collector.clear();
         interactive.process("p rel Z");
-        CHECK(answers_contain(collector, "p rel \"≈net\"")); });
+        CHECK(answers_contain(collector, "p rel \"≈net\""));
+
+        // A comment begins after whitespace followed by '#', meaning that
+        // an unquoted "#tag" would be interpreted as the end of the line
+        // when read back.
+        interactive.process("h rel i");
+        interactive.process(".name i \"#tag\"");
+        collector.clear();
+        interactive.process("h rel Z");
+        CHECK(answers_contain(collector, "h rel \"#tag\"")); });
+}
+
+TEST_CASE("display: a name the line classifier reads by its first character is quoted")
+{
+    // `.`, `%` and `?` are not tokens of the grammar. The REPL
+    // reads them off the start of a line -- a command, inline Janet, or
+    // the result-query prefix -- before the grammar sees the line at all,
+    // thus limiting the impact to the SUBJECT: a node named ".x" printed
+    // its answer as `.x p y`, which re-entered as an unrecognized
+    // command, `%x p y` as a Janet compile error, `? p y` as a result query
+    // that swallowed the next line, and `?$z p y` silently as a fact
+    // concerning `$z`. A `#` also initiates a comment in that location; the
+    // case above checks it as an object only.
+    //
+    // The classifier looks for that first character behind the invisible
+    // spaces it skips (string::whitespace_length), hence the last three
+    // names carry `#`, `.` and `%` after a U+FEFF, a U+2003, and a U+3000.
+    // Quoting only names beginning with one of these characters left
+    // these three printed bare: the U+FEFF line re-entered as a comment,
+    // discarded silently, and the other two as a command and as Janet
+    // once more. They are now enclosed in quotes because every name
+    // starting with an invisible space is (next case), with `?` after one
+    // also included.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::vector<std::string> names = {"#h", ".x", "%x", "?", "?$z",
+                                                "\xEF\xBB\xBF#h", "\xE2\x80\x83.x", "\xE3\x80\x80%x"};
+        for (const std::string& name : names)
+            interactive.process("\"" + name + "\" p y");
+
+        collector.clear();
+        interactive.process("A p y");
+        const std::vector<std::string> printed = collect_answers(collector);
+        for (const std::string& name : names)
+            CHECK(std::find(printed.begin(), printed.end(), "\"" + name + "\" p y") != printed.end());
+
+        // Every printed line, upon re-entering, must denote the
+        // existing facts: identical answers, and no line read as
+        // anything different.
+        for (const std::string& answer : printed)
+            interactive.process(answer);
+        collector.clear();
+        interactive.process("A p y");
+        CHECK(collect_answers(collector).size() == printed.size());
+
+        // `?` opens a result query solely when a blank space, `(`, or `$`
+        // appears immediately after it. Every other name beginning
+        // with `?` is interpreted as itself upon reading back, and
+        // enclosing it in quotes would merely introduce unnecessary
+        // clutter -- just as it would to the renderer's `??` for an
+        // unnamed node.
+        interactive.process("\"?x\" q y");
+        collector.clear();
+        interactive.process("A q y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"?x q y"}); });
+}
+
+TEST_CASE("display: a name that starts with an invisible space is quoted")
+{
+    // A line is processed starting from its first visible character: the
+    // REPL skips every invisible space whitespace_length knows in front of
+    // a statement, ensuring a byte order mark is not glued to the first
+    // name of a file. A name that genuinely starts with such whitespace
+    // consequently drops it when entered bare at the start of a line. Only
+    // a name with `#`, `.` or `%` after the space used to be quoted,
+    // meaning the em-space name below printed bare and re-entered as a
+    // fact concerning `p`, the U+FEFF name as a fact about `q`, and `?`
+    // behind a U+3000 as the result-query prefix.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::vector<std::string> names = {"\xE2\x80\x83p", "\xEF\xBB\xBFq", "\xE3\x80\x80?"};
+        for (const std::string& name : names)
+            interactive.process("\"" + name + "\" rel y");
+
+        collector.clear();
+        interactive.process("A rel y");
+        const std::vector<std::string> printed = collect_answers(collector);
+        for (const std::string& name : names)
+            CHECK(std::find(printed.begin(), printed.end(), "\"" + name + "\" rel y") != printed.end());
+
+        // Re-entering each printed line must denote the facts that are
+        // already present, not introduce new facts regarding the
+        // names without their associated space.
+        for (const std::string& answer : printed)
+            interactive.process(answer);
+        collector.clear();
+        interactive.process("A rel y");
+        CHECK(collect_answers(collector).size() == printed.size()); });
+}
+
+TEST_CASE("display: a name spelled like a registered keyword is quoted")
+{
+    // A syntax keyword registered via a script (zelph/register-keyword) is
+    // processed before the grammar sees the line, as well. A block keyword
+    // -- `sparql`, once .import sparql has executed -- acts as the initial
+    // token on a line and opens a block extending to the subsequent blank
+    // line; an inline keyword's opener starts an island at its position,
+    // provided it is not within a quoted name. A node named like either
+    // printed bare: `sparql rel y` re-entered as a SPARQL block that
+    // swallowed the lines following it, and a name containing an opener
+    // as an island that never closed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import sparql");
+        interactive.process(R"js(%(zelph/register-keyword "[[" "]]" (fn [t] (zelph/resolve (string/trim t)))))js");
+
+        interactive.process("\"sparql\" rel y");
+        interactive.process("\"a[[b\" rel y");
+        interactive.process("x \"sparql\" y");
+
+        collector.clear();
+        interactive.process("A rel y");
+        const std::vector<std::string> printed = collect_answers(collector);
+        CHECK(std::find(printed.begin(), printed.end(), "\"sparql\" rel y") != printed.end());
+        CHECK(std::find(printed.begin(), printed.end(), "\"a[[b\" rel y") != printed.end());
+
+        // Quoted in every position, just as the line classifier's prefixes
+        // are: the renderer remains unaware of where its output will be
+        // located.
+        collector.clear();
+        interactive.process("x P y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x \"sparql\" y"});
+
+        // Every line that is printed must denote the existing facts
+        // upon re-entering, and result in the subsequent line being a
+        // standalone statement.
+        for (const std::string& answer : printed)
+            interactive.process(answer);
+        collector.clear();
+        interactive.process("A rel y");
+        CHECK(collect_answers(collector).size() == printed.size());
+
+        // Only the keyword itself is claimed: a more extended name that
+        // begins with it constitutes a distinct initial token, and
+        // prints bare.
+        interactive.process("sparqling rel z");
+        collector.clear();
+        interactive.process("A rel z");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"sparqling rel z"}); });
+}
+
+TEST_CASE("display: a keyword is quoted only while it is registered")
+{
+    // The quoting rule acquires its keywords from the script engine, with
+    // a single engine existing per process. Upon its removal, its
+    // keywords are lost: a later session that has never imported sparql
+    // prints a node named sparql without quotes, which is what reads back
+    // there.
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".import sparql");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("sparql rel y");
+    collector.clear();
+    interactive.process("A rel y");
+    CHECK(collect_answers(collector) == std::vector<std::string>{"sparql rel y"});
 }
 
 TEST_CASE("display: a variable keeps its bare name")
@@ -450,6 +619,49 @@ TEST_CASE("display: the self-fact sugar gives way to a predicate that needs quot
         CHECK_FALSE(any_output_contains(collector, ":\"&12\"")); });
 }
 
+TEST_CASE("display: a self-fact prints as sugar however the matching pattern spells it")
+{
+    // A premise, a `!` line, and a query answer are rendered from the
+    // PATTERN that was matched, according to its bindings. The sugar test
+    // applied solely to the variable bindings: a side consisting of a bare
+    // variable was substituted with its value, whereas a compound side like
+    // (X + Y) was compared as the pattern node directly. Thus, `(T p U)`
+    // with T and U bound to (a + b) produced the output `:p (a + b)`,
+    // whereas `(T p (X + Y))` and `((X + Y) p T)`, which matched the
+    // identical fact, printed `((a + b) p (a + b))`. One fact, two
+    // renderings, depending on which rule utilized it -- the sugar is a
+    // property of the fact, hence the test now inquires what the pattern
+    // DENOTES.
+    //
+    // any_event_contains and collect_answers, not any_output_contains or
+    // answers_contain: these two canonicalize the sugar, and would accept
+    // the verbose form this case is designed to exclude.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions all");
+        interactive.process("(T p (X + Y), T q Z) => (T r Z)");
+        interactive.process("(T p U, T q Z) => (T s Z)");
+        interactive.process("((X + Y) p T) => (T r2 X)");
+
+        collector.clear();
+        interactive.process("(a + b) q c");
+        interactive.process("(a + b) p (a + b)");
+        REQUIRE(any_event_contains(collector, "((a + b) r c) ⇐"));
+        REQUIRE(any_event_contains(collector, "((a + b) s c) ⇐"));
+        REQUIRE(any_event_contains(collector, "((a + b) r2 a) ⇐"));
+        CHECK(any_event_contains(collector, "((a + b) r2 a) ⇐ (:p (a + b))"));
+        CHECK_FALSE(any_event_contains(collector, "(a + b) p (a + b)"));
+
+        collector.clear();
+        interactive.process("T p (X + Y)");
+        CHECK(collect_answers(collector) == std::vector<std::string>{":p (a + b)"});
+
+        collector.clear();
+        interactive.process("(T p (X + Y)) => !");
+        CHECK(any_event_contains(collector, "! ⇐ (:p (a + b))"));
+        CHECK_FALSE(any_event_contains(collector, "(a + b) p (a + b)")); });
+}
+
 TEST_CASE("display: a name containing a quote is writable")
 {
     // The quoted-atom rule had no escapes, so a name carrying a quote could
@@ -473,7 +685,22 @@ TEST_CASE("display: a name containing a quote is writable")
         std::size_t answers = 0;
         for (const auto& e : collector.events())
             if (normalize(e.text).rfind("Answer:", 0) == 0) ++answers;
-        CHECK(answers == 1); });
+        CHECK(answers == 1);
+
+        // The name above was quoted solely due to its blanks: a quote
+        // within a name without one printed bare, and `subj2 rel a"b`
+        // re-entered as a quoted name that remained open and took the
+        // following line.
+        interactive.process("subj2 rel obj2");
+        interactive.process(".name obj2 \"a\\\"b\"");
+        collector.clear();
+        interactive.process("subj2 rel X");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"subj2 rel \"a\\\"b\""});
+
+        interactive.process("subj2 rel \"a\\\"b\"");
+        collector.clear();
+        interactive.process("subj2 rel X");
+        CHECK(collect_answers(collector).size() == 1); });
 }
 
 TEST_CASE("display: a backslash in a name is a backslash")
@@ -520,14 +747,67 @@ TEST_CASE("display: a name containing guillemets survives the identifier marking
         CHECK(answers_contain(collector, "s rel \"«Le Monde»\"")); });
 }
 
+TEST_CASE("display: a name that shares a byte with ¬ prints bare and reads back")
+{
+    // `¬` consists of the two bytes C2 AC, with both the grammar and the
+    // quoting rule examining a byte under the assumption it represented the
+    // character. The grammar refused a bare name containing either byte.
+    // The quoting rule enclosed in quotes every name with a C2 byte -- all
+    // from U+0080 to U+00BF -- yet omitted any with an AC byte, resulting
+    // in `€` (E2 82 AC) and 北京 (where 京 is E4 BA AC) printing lines that
+    // could not be read back. Of these characters, only `¬`, the no-break
+    // space, and the C1 control characters still require quotation, as well
+    // as `«` `»`, since the renderer marks a name with them.
+    //
+    // collect_answers, not answers_contain: the latter accepts a self-fact
+    // in either spelling, and the sugar is among the elements verified
+    // here.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("\"°C\" \"µ\" \"€\"");
+        interactive.process("\"北京\" \"µ\" \"½\"");
+        interactive.process("\"a¬b\" \"µ\" \"«LeMonde»\"");
+        interactive.process("\"x\xC2\xA0y\" \"µ\" \"x\xC2\x85y\"");
+
+        collector.clear();
+        interactive.process("S \"µ\" O");
+        std::vector<std::string> printed = collect_answers(collector);
+        std::sort(printed.begin(), printed.end());
+        CHECK(printed == std::vector<std::string>{"\"a¬b\" µ \"«LeMonde»\"",
+                                                  "\"x\xC2\xA0y\" µ \"x\xC2\x85y\"",
+                                                  "°C µ €",
+                                                  "北京 µ ½"});
+
+        // A predicate constructed from them is free for the self-fact
+        // sugar, which possesses no way to quote it.
+        interactive.process("\"½\" \"°C\" \"½\"");
+        collector.clear();
+        interactive.process("S \"°C\" O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{":°C ½"});
+        printed.push_back(":°C ½");
+
+        // Every printed line that is re-entered must denote the facts
+        // that are already present.
+        for (const std::string& answer : printed)
+            interactive.process(answer);
+        collector.clear();
+        interactive.process("S \"µ\" O");
+        CHECK(collect_answers(collector).size() == 4);
+        collector.clear();
+        interactive.process("S \"°C\" O");
+        CHECK(collect_answers(collector).size() == 1); });
+}
+
 TEST_CASE("display: a name the grammar has a token for stays bare")
 {
     // The quoting rule keys on "the parser would not read this back as one
-    // atom", and reserved characters are only a proxy for that. `*`, `<`,
-    // `>` and the arrows have dedicated rules in the grammar, so quoting
-    // them is not merely noisy -- the term-island parser of math-syntax
-    // rejects `$( x "*" x )`, which quietly broke every mathematical
-    // rendering the moment the proxy was taken literally.
+    // atom", with reserved characters serving merely as a proxy for that
+    // condition. `*`, `<`, `>` and the arrows each have dedicated rules
+    // defined in the grammar, making their quoting superfluous --
+    // particularly for `*` in all mathematical rendering, which would
+    // print as `$( x "*" x )`. That spelling does read back correctly (the
+    // math-syntax island accepts a quoted operator), yet no one ever
+    // writes a product in such a manner.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("a * b");
@@ -563,10 +843,14 @@ namespace
         return answers;
     }
 
-    // Names covering the PEG's reserved characters and the tokens it reads
-    // by their first character, plus the shapes whose RENDERING is composed
-    // rather than named: a sequence element, a self-fact, and a fact used as
-    // subject and as object.
+    // Names that encompass the PEG's reserved characters and the tokens it
+    // interprets via their initial character, along with the shapes whose
+    // RENDERING is composed rather than explicitly named: a sequence
+    // element, a self-fact, and a fact used as subject and as object. The
+    // s1..s5 names occupy the SUBJECT role, as the line classifier reads its
+    // prefixes from the start of a line, and an object never resides in that
+    // position. b18..b22 and t1..t3 each share a byte with the two-byte `¬`
+    // but are not identical to it.
     const std::string round_trip_network = R"zph(.deductions off
 p1 rel b1
 .name b1 "Mercury (planet)"
@@ -602,6 +886,32 @@ p16 rel b16
 .name b16 "The \"Big\" One"
 p17 rel b17
 .name b17 "C:\\Users\\x"
+p18 rel b18
+.name b18 "°C"
+p19 rel b19
+.name b19 "€"
+p20 rel b20
+.name b20 "北京"
+p21 rel b21
+.name b21 "«LeMonde»"
+p22 rel b22
+.name b22 "a¬b"
+p23 rel b23
+.name b23 "a\"b"
+t1 t2 t3
+.name t1 "µg/m³"
+.name t2 "½"
+.name t3 "ά"
+s1 rel e1
+.name s1 "#h"
+s2 rel e1
+.name s2 ".x"
+s3 rel e1
+.name s3 "%x"
+s4 rel e1
+.name s4 "?"
+s5 rel e1
+.name s5 "?$z"
 f maps <"a b" item2>
 g maps < item2 >
 h <item2 "a b"> k
@@ -880,17 +1190,25 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             const std::string dir = std::filesystem::absolute(std::filesystem::temp_directory_path()).generic_string();
             CHECK(link.find(dir) != std::string::npos);
         }
+        // The file takes its name from the fact as it PRINTS. The
+        // guillemets that mark a name within a rendering are meant
+        // for the output stage, which strips them from all printed content;
+        // the file name kept them -- `«a» «rel» «b».html`, a name no one
+        // would manually enter and not the .node representation shown next
+        // to the link.
         SUBCASE("the fact itself, as it prints")
         {
             collector.clear();
             interactive.process(".mermaid a rel b");
-            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+            CHECK(any_output_contains(collector, "/a rel b.html"));
+            CHECK_FALSE(any_event_contains(collector, "«"));
         }
         SUBCASE("the same fact in parentheses")
         {
             collector.clear();
             interactive.process(".mermaid (a rel b)");
-            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+            CHECK(any_output_contains(collector, "/a rel b.html"));
+            CHECK_FALSE(any_event_contains(collector, "«"));
         }
         SUBCASE("no argument at all takes the node from the last output")
         {
@@ -899,7 +1217,43 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             interactive.process("c rel d");
             collector.clear();
             interactive.process(".mermaid");
-            CHECK(any_output_contains(collector, "«c» «rel» «d».html"));
+            CHECK(any_output_contains(collector, "/c rel d.html"));
+            CHECK_FALSE(any_event_contains(collector, "«"));
+        }
+        SUBCASE(".node names the file after the representation it prints")
+        {
+            // The identical link, written by .node, for a fact comprising
+            // multiple objects. The order of the objects is determined by
+            // the renderer's logic, hence the file name is compared
+            // against the representation line, rather than a spelling of
+            // the fact.
+            interactive.process("alice parent_of bob charlie");
+            collector.clear();
+            interactive.process(".node alice parent_of bob charlie");
+
+            std::string printed;
+            for (const auto& event : collector.events())
+                printed += event.text + "\n";
+            const std::string label = "Representation: ";
+            const std::size_t at    = printed.find(label);
+            REQUIRE(at != std::string::npos);
+            const std::string representation =
+                printed.substr(at + label.size(), printed.find('\n', at) - at - label.size());
+            CHECK(representation.starts_with("alice parent_of "));
+            CHECK(printed.find("/" + representation + ".html") != std::string::npos);
+            CHECK(printed.find("«") == std::string::npos);
+        }
+        SUBCASE("a node's own name is the file name unchanged")
+        {
+            // Only the rendering carries the marks. A NAME containing
+            // guillemets -- French Wikidata labels feature these --
+            // would be read as marked if it underwent identical
+            // unmarking, and the file would be called `_Le Monde_.html`.
+            interactive.process("x rel y");
+            interactive.process(".name x \"«Le Monde»\"");
+            collector.clear();
+            interactive.process(".mermaid \"«Le Monde»\"");
+            CHECK(any_output_contains(collector, "/«Le Monde».html"));
         }
         SUBCASE("a name nothing answers to is refused")
         {
@@ -921,13 +1275,13 @@ TEST_CASE("mermaid: a trailing numeral is a count only when the head already den
         {
             collector.clear();
             interactive.process(".mermaid a rel b 2");
-            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+            CHECK(any_output_contains(collector, "/a rel b.html"));
         }
         SUBCASE("two trailing numerals are depth and neighbour cap")
         {
             collector.clear();
             interactive.process(".mermaid a rel b 2 30");
-            CHECK(any_output_contains(collector, "«a» «rel» «b».html"));
+            CHECK(any_output_contains(collector, "/a rel b.html"));
         }
         SUBCASE("a numeral stays in the fact when the shorter reading denotes nothing")
         {
@@ -1025,6 +1379,38 @@ TEST_CASE("display: a rule prints its conditions in the surface syntax")
         interactive.run(true, false, false);
         CHECK(any_output_contains(collector, "(d j f) ⇐ {("));
         CHECK_FALSE(any_output_contains(collector, "(d j f) ⇐ ((")); });
+}
+
+TEST_CASE("display: a rule's conclusion is not printed negated because a condition negates it")
+{
+    // The negation tag is positioned on the pattern node, while the rule
+    // serves as the parent for both its conclusion and its condition. A rule
+    // that derives the exact pattern which one of its conditions negates --
+    // the smallest program .strata reports as not stratifiable -- therefore
+    // printed its conclusion as (¬(:q A)), and attempting to input that line
+    // once more resulted in failure: "¬" carries no meaning when used as a
+    // conclusion.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("(:p A, ¬(:q A)) => (:q A)");
+        CHECK(any_output_contains(collector, ") => (:q A)"));
+        CHECK_FALSE(any_output_contains(collector, "=> (¬"));
+
+        // The line that has been printed re-enters, and as the
+        // identical rule: the listing continues to hold precisely
+        // one.
+        collector.clear();
+        interactive.process(".list-rules");
+        std::string printed;
+        for (const auto& e : collector.events())
+            if (e.text.find(") => (:q A)") != std::string::npos) printed = normalize(e.text);
+        REQUIRE_FALSE(printed.empty());
+        CHECK_NOTHROW(interactive.process(printed));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(count_outputs_containing(collector, ") => (:q A)") == 1); });
 }
 
 TEST_CASE("display: the rule-pattern marking is never printed in place of its node")

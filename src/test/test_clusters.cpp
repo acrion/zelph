@@ -50,6 +50,39 @@ tmp1 relT tmp2
         CHECK(answers_contain(collector, "keep1 relK keep2")); });
 }
 
+TEST_CASE("clusters: a node the drop removed is no fallback for .node, .mermaid or .explain")
+{
+    // If no argument is provided, these commands operate on the node linked to
+    // the most recently printed statement, answer, or deduction. Removing that
+    // node via a drop resulted in .node printing a record for an id that
+    // denotes nothing ("Representation: ??"), .mermaid drawing a lone "??" box
+    // -- the playground's graph panel after the contradiction demonstration,
+    // where the final deduction occurred within a dropped cluster -- and
+    // .explain answering that the fact is not asserted.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("keep1 relK keep2");
+        interactive.process(".cluster exp");
+        interactive.process("tmp1 relT tmp2");
+        collector.clear();
+        interactive.process(".node");
+        REQUIRE(any_output_contains(collector, "tmp1 relT tmp2"));
+
+        interactive.process(".cluster-drop exp");
+        for (const std::string command : {".node", ".mermaid", ".explain"})
+        {
+            CAPTURE(command);
+            CHECK_THROWS_WITH_AS(interactive.process(command), doctest::Contains("no longer exists"), std::runtime_error);
+        }
+
+        // A node that is printed after the drop again functions as the
+        // fallback.
+        interactive.process("X relK Y");
+        collector.clear();
+        interactive.process(".node");
+        CHECK(any_output_contains(collector, "keep1 relK keep2")); });
+}
+
 TEST_CASE("clusters: merge into default keeps facts, forgets membership")
 {
     run_both_modes([](auto& collector, auto& interactive)

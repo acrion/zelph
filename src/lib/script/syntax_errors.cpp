@@ -159,6 +159,7 @@ namespace zelph::script
             const unsigned char c = static_cast<unsigned char>(s[i]);
             if (std::string(" \t\r\n\v<\"(){}*>,").find(static_cast<char>(c)) != std::string::npos) return 1;
             if (c == 0xC2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0xAC) return 2; // ¬
+            if (c == 0xC2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0xA0) return 2; // U+00A0 no-break space
             return 0;
         }
 

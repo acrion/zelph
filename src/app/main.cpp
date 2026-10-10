@@ -24,7 +24,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "interactive.hpp"
+#include "string/string_utils.hpp"
 #include "versions.hpp"
+
+#ifdef ZELPH_LINKS_MIMALLOC
+    #include <mimalloc.h>
+#endif
 
 #ifdef _WIN32
     #include <Windows.h> // for SetConsoleOutputCP
@@ -91,6 +96,12 @@ int main(int argc, char** argv)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+#endif
+#ifdef ZELPH_LINKS_MIMALLOC
+    // The header is the pinned copy used to construct the allocator, and the
+    // function draws its responses from the linked object -- the two are
+    // unable to diverge as a system header and the linked object once did.
+    zelph::set_linked_mimalloc(mi_version());
 #endif
     try
     {
@@ -198,7 +209,18 @@ int main(int argc, char** argv)
             std::string line;
             while (std::getline(std::cin, line))
             {
-                if (line == exit_command)
+                // Read the way process() reads a command line: the initial
+                // non-whitespace character has to be a '.', and the tokens
+                // must be exactly .quit, meaning that any comment or blank
+                // behind it is irrelevant. Matching the tokens alone also
+                // matched the quoted name ".quit", since the tokenizer
+                // removes the quotation marks; such a line forms part of a
+                // statement or a Janet block. Checked BEFORE process(),
+                // ensuring that a .quit entered within a keyword block still
+                // ends the session.
+                const std::size_t first = zelph::string::first_non_whitespace(line);
+                if (first != std::string::npos && line[first] == '.'
+                    && zelph::string::tokenize_quoted(line.substr(first)) == std::vector<std::string>{exit_command})
                     break;
 
                 if (line.empty() && !interactive.is_accumulating())
@@ -231,6 +253,13 @@ int main(int argc, char** argv)
                         break;
                     }
                 }
+
+                // A `.quit` command that the check above does not see still
+                // arrives at the command handler, which records the request
+                // -- such as `.quit now`. A session script halts at this
+                // point, and both piped and manually entered input cease as
+                // well.
+                if (interactive.quit_requested()) break;
 
                 const auto elapsed = std::chrono::steady_clock::now() - start_time;
                 if (elapsed >= kReplTimingThreshold)

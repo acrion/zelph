@@ -42,26 +42,167 @@ using namespace zelph::network;
 
 namespace
 {
-    // Reconstruction-based reference walk -- the pre-flag implementation
-    // of unification.cpp's contains_variable_deep, kept verbatim so the
-    // fallback after binary loads / trusted imports / removals is exactly
-    // the historical semantics. Depth is fixed at 1 (logging only).
-    bool var_in_closure_walk(const Zelph* n, const Node nd, std::unordered_set<Node>& visited)
+    // Whether the conditions `conditions` represents hold a variable: the
+    // members Zelph::condition_set_members reads, and the members of a
+    // member that itself qualifies as a container, which
+    // Reasoning::evaluate enters as well. `holds` inquires about one
+    // member. That reader decides what constitutes a container -- a
+    // collection or a set constant, into which a construction writes its
+    // conditions -- and reads no statement: a statement as a rule's subject
+    // serves as its sole condition, and the closure reaches it as the
+    // subject of the `=>` fact. `entered` holds the containers read so far,
+    // apart from the nodes a walk has visited: the walk visits a set
+    // constant as the subject of the `=>` fact before its members are read.
+    template <class Holds>
+    bool conditions_hold_variable(const Zelph* n, const Node conditions, std::unordered_set<Node>& entered, const Holds& holds)
+    {
+        if (conditions == 0 || Zelph::is_var(conditions)) return false;
+        if (!entered.insert(conditions).second) return false; // cycle protection
+
+        adjacency_set members;
+        if (!n->condition_set_members(conditions, members)) return false;
+        for (const Node m : members)
+            if (holds(m) || conditions_hold_variable(n, m, entered, holds)) return true;
+        return false;
+    }
+
+    // Whether any member of the container `c` -- whose members are attached
+    // via membership facts, which no fact structure leads to -- is one that
+    // `holds` answers yes for.
+    template <class Holds>
+    bool some_member(const Zelph* n, const Node c, const Holds& holds)
+    {
+        for (const Node rel : n->get_right(c))
+        {
+            if (n->predicate_of(rel) != n->core.PartOf) continue;
+            adjacency_set objects;
+            const Node    m = n->parse_fact(rel, objects, 0);
+            if (m != 0 && objects.count(c) == 1 && holds(m)) return true;
+        }
+        return false;
+    }
+
+    bool var_in_closure_walk(const Zelph* n, Node nd, std::unordered_set<Node>& visited, Zelph::VariableReading reading);
+
+    // The text contained within a rule's own collection or a set constant,
+    // read by the walk below: a variable member, a fact or set constant the
+    // walk finds one in, or a rule's own collection containing such a
+    // member.
+    bool members_text_walk(const Zelph* n, const Node c, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
+    {
+        return some_member(n, c, [&](const Node m)
+                           {
+                               if (Zelph::is_var(m)) return true;
+                               if (Zelph::is_hash(m)) return var_in_closure_walk(n, m, visited, reading);
+                               return n->is_rule_template(m) && visited.insert(m).second && members_text_walk(n, m, visited, reading); });
+    }
+
+    // Whether the rule text beneath `n` holds a membership whose object
+    // is a rule's own collection containing a variable within its text:
+    // `a in @{Y}` as a condition, `c in @{Y}` as a consequence.
+    // The membership constitutes the collection's content and holds a
+    // variable solely via its member, yet a rule that states it holds the
+    // collection's. The walk reads facts and the members of a rule's own
+    // collection or a conjunction set, halting at values, constants, and set
+    // constants: the members of a set constant branch from it amidst all
+    // facts that name it, and data can make those any number. `read` holds
+    // the nodes read so far.
+    bool membership_holds_variable(const Zelph* z, const Node n, std::unordered_set<Node>& read)
+    {
+        if (n == 0 || Zelph::is_var(n) || !read.insert(n).second) return false;
+
+        const auto below = [&](const Node m)
+        { return membership_holds_variable(z, m, read); };
+        if (!Zelph::is_hash(n))
+        {
+            if (!z->is_rule_template(n) && !z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known()) return false;
+            return some_member(z, n, below);
+        }
+
+        const auto structs = get_fact_structures(z, n, 1);
+        for (const auto& fs : *structs)
+        {
+            if (fs.predicate == z->core.PartOf
+                && std::any_of(fs.objects.begin(), fs.objects.end(), [z](const Node o)
+                               { return z->is_rule_template(o) && z->holds_variable_in_text(o); }))
+                return true;
+            if (below(fs.subject) || below(fs.predicate) || std::any_of(fs.objects.begin(), fs.objects.end(), below)) return true;
+        }
+        return false;
+    }
+
+    // Whether the rule a `=>` fact over `subject` and `objects` states holds
+    // such a membership, in its conditions -- read as conditions_hold_variable
+    // reads them -- or in its consequences.
+    bool rule_memberships_hold_variable(const Zelph* z, const Node subject, const adjacency_set& objects)
+    {
+        std::unordered_set<Node> read;
+        const auto               in_text = [&](const Node m)
+        { return membership_holds_variable(z, m, read); };
+
+        std::unordered_set<Node> entered;
+        return conditions_hold_variable(z, subject, entered, in_text) || in_text(subject)
+            || std::any_of(objects.begin(), objects.end(), in_text);
+    }
+
+    // Reference walk based on reconstruction -- the pre-flag implementation
+    // of unification.cpp's contains_variable_deep, preserved exactly as-is
+    // to ensure the fallback behaviour following binary loads / trusted
+    // imports / removals matches historical semantics precisely, except for
+    // the conditions of a `=>` fact and the members of a rule's own
+    // collection and of a set constant, which it reads as
+    // Zelph::var_in_closure says, by `reading`. Depth remains fixed at 1
+    // (for logging purposes only).
+    bool var_in_closure_walk(const Zelph* n, const Node nd, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
     {
         if (nd == 0) return false;
         if (Zelph::is_var(nd)) return true;
         if (!Zelph::is_hash(nd)) return false;        // plain atom -> no internal structure
         if (!visited.insert(nd).second) return false; // cycle protection
 
+        const bool text    = reading == Zelph::VariableReading::Text;
         const auto structs = get_fact_structures(n, nd, 1);
+        if (structs->empty()) return text && members_text_walk(n, nd, visited, reading); // a set constant
+
+        // A rule's own collection is entered as Zelph::fact enters it: not
+        // as the object of a membership, which is its content (`enter`
+        // false).
+        const auto component = [&](const Node c, const bool enter)
+        {
+            if (var_in_closure_walk(n, c, visited, reading)) return true;
+            return text && enter && c != 0 && !Zelph::is_hash(c) && !Zelph::is_var(c) && n->is_rule_template(c)
+                && visited.insert(c).second && members_text_walk(n, c, visited, reading);
+        };
+
         for (const auto& fs : *structs)
         {
-            if (var_in_closure_walk(n, fs.subject, visited)) return true;
-            if (var_in_closure_walk(n, fs.predicate, visited)) return true;
+            if (component(fs.subject, true)) return true;
+            if (component(fs.predicate, true)) return true;
             for (const Node o : fs.objects)
-                if (var_in_closure_walk(n, o, visited)) return true;
+                if (component(o, fs.predicate != n->core.PartOf)) return true;
+            if (text && fs.predicate == n->core.Causes)
+            {
+                std::unordered_set<Node> entered;
+                if (conditions_hold_variable(n, fs.subject, entered, [&](const Node m)
+                                             { return var_in_closure_walk(n, m, visited, reading); }))
+                    return true;
+                if (rule_memberships_hold_variable(n, fs.subject, fs.objects)) return true;
+            }
         }
         return false;
+    }
+
+    // Zelph::holds_variable_in_text, with the containers that have
+    // been entered so far.
+    bool text_holds_variable(const Zelph* z, const Node n, std::unordered_set<Node>& entered)
+    {
+        if (n == 0) return false;
+        if (Zelph::is_var(n)) return true;
+        if (Zelph::is_hash(n)) return z->var_in_closure(n);
+        if (!z->is_rule_template(n) && !z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known()) return false;
+        if (!entered.insert(n).second) return false; // cycle protection
+        return some_member(z, n, [&](const Node m)
+                           { return text_holds_variable(z, m, entered); });
     }
 }
 
@@ -136,12 +277,15 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 // (21.8k created facts => 1.28M full get_fact_structures reconstructions
 // in the Jacobian diffby phase -- the dominant cost in the perf profile).
 //
-// Correctness argument. A fact node's ID IS create_hash(predicate,
-// subject, objects), so each node has exactly ONE genuine triple, fixed
-// at creation; monotone graph growth can only ADD reconstruction
-// candidates (every skip heuristic flips only towards skipping less),
-// and hash verification prunes any ambiguous candidate set back to the
-// genuine reading. What growth can actually change is therefore:
+// Correctness argument. The identifier of a fact node is
+// generated via create_hash(predicate, subject, objects), ensuring that
+// every node holds precisely ONE genuine triple, established
+// permanently upon creation; the monotonic growth of the graph can
+// only introduce new reconstruction candidates (each skip heuristic
+// consistently shifts toward reducing skips), and hash verification
+// prunes any ambiguous candidate set back to the genuine
+// interpretation. What the growth process can genuinely modify,
+// therefore, is:
 //  (1) the new relation node itself and its components (their adjacency
 //      grew, changing candidate collection),
 //  (2) nodes whose child-fact heuristic inspects the components'
@@ -149,14 +293,15 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 //      around subject and objects; deeper levels (the heuristic reads up
 //      to three hops) only feed checks whose outcome hash verification
 //      makes result-neutral,
-//  (3) globally: relation-type declarations (P ~ ->). Predicate detection
-//      consults check_fact(p, IsA, RelationTypeCategory) per right
-//      neighbor, so a new declaration can change ANY cached entry -- that
-//      case falls back to the full clear (rare: module load time only).
-// Residual risk, consciously accepted: entries kept UNVERIFIED (no
-// candidate hash-verifies, e.g. subject==predicate facts) are not
-// re-checked on deeper-level growth. The suite-wide `.semi-naive check`
-// equivalence net backstops this.
+//  (3) across the entire scope: relation-type declarations (P ~ ->).
+//      Predicate detection consults check_fact(p, IsA,
+//      RelationTypeCategory) per right neighbor, so a new declaration
+//      can change ANY cached entry -- that case falls back to the full
+//      clear (rare: module load time only).
+// Residual risk, consciously accepted: entries preserved as UNVERIFIED
+// (no candidate hash-verifies) are not re-evaluated during
+// deeper-level growth. The entire suite's `.semi-naive check`
+// equivalence mechanism serves as a backstop for this.
 //
 // The bidirectional restriction keeps hubs harmless: nil sits in the
 // RIGHT set of every terminating cons cell, but is bidirectional only
@@ -313,7 +458,7 @@ void Zelph::reset_fs_cache_stats() const
     _fs_cache_stale_erased.store(0, std::memory_order_relaxed);
 }
 
-bool Zelph::var_in_closure(const Node nd) const
+bool Zelph::var_in_closure(const Node nd, const VariableReading reading) const
 {
     if (nd == 0) return false;
     if (Impl::is_var(nd)) return true;
@@ -323,12 +468,44 @@ bool Zelph::var_in_closure(const Node nd) const
     {
         if (logging_active()) _var_flag_queries.fetch_add(1, std::memory_order_relaxed);
         std::shared_lock lock(_pImpl->_template_vars_mtx);
-        return _pImpl->_template_vars.find(nd) != _pImpl->_template_vars.end();
+        return _pImpl->_template_vars.find(nd) != _pImpl->_template_vars.end()
+            || (reading == VariableReading::Text && !_pImpl->_rule_text_vars.empty() && _pImpl->_rule_text_vars.contains(nd));
     }
 
     if (logging_active()) _var_flag_fallbacks.fetch_add(1, std::memory_order_relaxed);
     std::unordered_set<Node> visited;
-    return var_in_closure_walk(this, nd, visited);
+    return var_in_closure_walk(this, nd, visited, reading);
+}
+
+bool Zelph::conditions_hold_variable(const Node conditions) const
+{
+    std::unordered_set<Node> entered;
+    return ::conditions_hold_variable(this, conditions, entered, [this](const Node m)
+                                      { return var_in_closure(m); });
+}
+
+bool Zelph::rule_memberships_hold_variable(const Node subject, const adjacency_set& objects) const
+{
+    return ::rule_memberships_hold_variable(this, subject, objects);
+}
+
+bool Zelph::holds_variable_in_text(const Node n) const
+{
+    std::unordered_set<Node> entered;
+    return text_holds_variable(this, n, entered);
+}
+
+bool Zelph::component_holds_text_variable(const Node component) const
+{
+    if (Impl::is_hash(component))
+    {
+        if (!_pImpl->_rule_text_vars_any.load(std::memory_order_acquire)) return false;
+        std::shared_lock lock(_pImpl->_template_vars_mtx);
+        return _pImpl->_rule_text_vars.contains(component);
+    }
+    // The id test first: for every other atom, this is the
+    // total expense.
+    return is_rule_template(component) && holds_variable_in_text(component);
 }
 
 bool Zelph::is_asserted_fact(const Node fact) const
@@ -363,6 +540,8 @@ std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
         std::shared_lock lock(_pImpl->_template_vars_mtx);
         for (const auto& entry : _pImpl->_template_vars)
             out->insert(entry.first);
+        for (const Node n : _pImpl->_rule_text_vars)
+            out->insert(n);
     }
 
     if (out->empty()) return nullptr;
@@ -417,9 +596,13 @@ bool Zelph::try_get_genuine_structure(const Node fact, FactStructurePtr& out) co
     const auto       it = _pImpl->_genuine.find(fact);
     if (it == _pImpl->_genuine.end()) return false;
 
-    if (logging_active()) _genuine_hits.fetch_add(1, std::memory_order_relaxed);
     out = it->second; // shared_ptr copy: one atomic increment, no allocation
     return true;
+}
+
+void Zelph::count_genuine_hit() const
+{
+    if (logging_active()) _genuine_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Zelph::count_genuine_walk() const
@@ -453,6 +636,8 @@ void Zelph::disable_fact_stores() const
         // nodes, and freeing the memory is the point of the switch.
         std::unique_lock lock(_pImpl->_template_vars_mtx);
         _pImpl->_template_vars.clear();
+        _pImpl->_rule_text_vars.clear();
+        _pImpl->_rule_text_vars_any.store(false, std::memory_order_release);
     }
 
     _pImpl->_genuine_authoritative.store(false, std::memory_order_release);

@@ -9,10 +9,9 @@ Start the REPL and type:
 
 ```
 zelph> .import math
-math loaded: declare indeterminates with <x y z> ~ polyring
-zelph> <x> ~ polyring
+zelph+> <x> ~ polyring
 (:needsring <x>) ⇐ (<x> ~ polyring)
-zelph> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
+zelph+> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
 Answer: (((&1 + x) * (&1 - x)) ≡ $( &1 - x ^ &2 )) = proven
 ```
 
@@ -29,11 +28,13 @@ convenience: every module can also be imported on its own, and
 **`<x> ~ polyring`** declares the indeterminates. `<…>` is zelph's list
 syntax and `~` reads *is an instance of*, so this is a plain fact: the list
 `<x>` is an instance of `polyring`. It is not a directive to the parser —
-it is knowledge, and the echo shows a rule already reacting to it. With
-several indeterminates you write them in one list, outermost first:
+it is knowledge, and the deduction displayed beneath it shows a rule
+already reacting to it. With several indeterminates you write them in one
+list, outermost first:
 
 ```
-zelph> <x y z> ~ polyring
+zelph+> <x y z> ~ polyring
+(:needsring <x y z>) ⇐ (<x y z> ~ polyring)
 ```
 
 **`? …`** is the result-query prefix. It materialises the statement, runs
@@ -53,12 +54,7 @@ precedence, spelled inside a statement that is otherwise ordinary zelph.
 Inside an island you may write `+ - * / ^`, function application `f(u)`,
 unary minus, integer literals, and parentheses.
 
-Islands are pure surface. `$( 1 - x^2 )` builds exactly the same graph
-structure as the verbose form `(&1 - (x ^ &2))`, and because zelph
-hash-conses every node, the two spellings *meet at the identical node*.
-You can mix them freely — the answer line above does exactly that, printing
-one side verbose and one side as an island, because zelph only reaches for
-island notation where precedence actually lets it drop parentheses.
+Islands are pure surface. The expression `$( 1 - x^2 )` generates precisely the same graph structure as the verbose form `(&1 - (x ^ &2))`, and due to zelph’s use of hash-consing for every term, both spellings *meet at the identical node*. You can combine them freely – the answer line above exemplifies this, displaying one side in verbose form and the other as an island, since zelph employs island notation exclusively when precedence permits omitting parentheses.
 
 The `&` in `&1` marks a numeral. It is not decoration: it distinguishes the
 *number* 1 from a node that happens to be called `1`. You do not type it
@@ -66,15 +62,15 @@ inside islands, but you will see it in output.
 
 ## A gallery
 
-Everything below is a complete session after `.import math`. Timings are
-wall-clock on a laptop, cold start included.
+Everything below is a complete session after `.import math`.
 
 **Sophie Germain's identity** — the classic factorisation that shows
 x⁴ + 4y⁴ is composite for every y > 1:
 
 ```
-zelph> <x y> ~ polyring
-zelph> ? $( x^4 + 4*y^4 ) ≡ $( (x^2 + 2*y^2 - 2*x*y) * (x^2 + 2*y^2 + 2*x*y) )
+zelph+> <x y> ~ polyring
+(:needsring <x y>) ⇐ (<x y> ~ polyring)
+zelph+> ? $( x^4 + 4*y^4 ) ≡ $( (x^2 + 2*y^2 - 2*x*y) * (x^2 + 2*y^2 + 2*x*y) )
 Answer: ($( x ^ &4 + &4 * y ^ &4 ) ≡ $( (x ^ &2 + &2 * y ^ &2 - &2 * x * y) * (x ^ &2 + &2 * y ^ &2 + &2 * x * y) )) = proven
 ```
 
@@ -83,8 +79,9 @@ squares is a sum of two squares, which is why the Gaussian integers are
 multiplicative:
 
 ```
-zelph> <a b c d> ~ polyring
-zelph> ? $( (a^2 + b^2) * (c^2 + d^2) ) ≡ $( (a*c - b*d)^2 + (a*d + b*c)^2 )
+zelph+> <a b c d> ~ polyring
+(:needsring <a b c d>) ⇐ (<a b c d> ~ polyring)
+zelph+> ? $( (a^2 + b^2) * (c^2 + d^2) ) ≡ $( (a*c - b*d)^2 + (a*d + b*c)^2 )
 Answer: … = proven
 ```
 
@@ -92,24 +89,27 @@ Answer: … = proven
 indeterminates:
 
 ```
-zelph> <a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring
-zelph> ? $( (a1^2+a2^2+a3^2+a4^2) * (b1^2+b2^2+b3^2+b4^2) ) ≡ $( (a1*b1-a2*b2-a3*b3-a4*b4)^2 + (a1*b2+a2*b1+a3*b4-a4*b3)^2 + (a1*b3-a2*b4+a3*b1+a4*b2)^2 + (a1*b4+a2*b3-a3*b2+a4*b1)^2 )
+zelph+> <a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring
+(:needsring <a1 a2 a3 a4 b1 b2 b3 b4>) ⇐ (<a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring)
+zelph+> ? $( (a1^2+a2^2+a3^2+a4^2) * (b1^2+b2^2+b3^2+b4^2) ) ≡ $( (a1*b1-a2*b2-a3*b3-a4*b4)^2 + (a1*b2+a2*b1+a3*b4-a4*b3)^2 + (a1*b3-a2*b4+a3*b1+a4*b2)^2 + (a1*b4+a2*b3-a3*b2+a4*b1)^2 )
 Answer: … = proven
 ```
 
 **A cyclotomic factorisation:**
 
 ```
-zelph> <x> ~ polyring
-zelph> ? $( x^6 - 1 ) ≡ $( (x-1)*(x+1)*(x^2+x+1)*(x^2-x+1) )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? $( x^6 - 1 ) ≡ $( (x-1)*(x+1)*(x^2+x+1)*(x^2-x+1) )
 Answer: … = proven
 ```
 
 **The binomial theorem, instantiated:**
 
 ```
-zelph> <x y> ~ polyring
-zelph> ? $( (x+y)^5 ) ≡ $( x^5 + 5*x^4*y + 10*x^3*y^2 + 10*x^2*y^3 + 5*x*y^4 + y^5 )
+zelph+> <x y> ~ polyring
+(:needsring <x y>) ⇐ (<x y> ~ polyring)
+zelph+> ? $( (x+y)^5 ) ≡ $( x^5 + 5*x^4*y + 10*x^3*y^2 + 10*x^2*y^3 + 5*x*y^4 + y^5 )
 Answer: … = proven
 ```
 
@@ -117,10 +117,7 @@ Answer: … = proven
 
 It is worth being precise, because the mechanism is unusually simple.
 
-Both sides are compiled to a **canonical normal form**: a recursive, dense,
-variable-tagged representation of a multivariate polynomial over ℤ. Two
-polynomials are equal exactly when their normal forms are equal. And since
-every node in zelph is hash-consed, equal normal forms are *the same node*.
+Each side is compiled to a **canonical normal form**: a recursive, dense, variable-tagged structure representing a multivariate polynomial over ℤ. Two polynomials are equal exactly when their normal forms match. Furthermore, because every term in zelph is hash-consed, equal normal forms are *the same node*.
 
 So the whole proof rule is:
 
@@ -141,28 +138,29 @@ backward search over the saturated graph — zelph records no provenance
 during inference, so this is genuinely reconstructed, not replayed.
 
 ```
-zelph> <x> ~ polyring
-zelph> ? $( x^2 - 1 ) ≡ $( (x-1)*(x+1) )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? $( x^2 - 1 ) ≡ $( (x-1)*(x+1) )
 Answer: ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
-zelph> .explain 3
+zelph+> .explain 3
 ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
    ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
    ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  ├─ :topoly $( x ^ &2 - &1 )
-   │  │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   │  └─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │     ├─ :needstopoly $( x ^ &2 - &1 )  … [depth limit -- use '.explain <pattern> 0' for the full proof]
-   │     ├─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
-   │     ├─ &1 aspoly (pos zint &1)  … [depth limit …]
-   │     └─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+   │  ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │  │  ├─ :needstopoly $( x ^ &2 - &1 )  … [depth limit -- use '.explain <pattern> 0' for the full proof]
+   │  │  ├─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+   │  │  ├─ &1 aspoly (pos zint &1)  … [depth limit …]
+   │  │  └─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+   │  └─ :topoly $( x ^ &2 - &1 )
+   │     └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
    └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-      ├─ :topoly ((x - &1) * (x + &1))
-      │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-      └─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-         ├─ :needstopoly ((x - &1) * (x + &1))  … [depth limit …]
-         ├─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)  … [depth limit …]
-         ├─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)  … [depth limit …]
-         └─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+      ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+      │  ├─ :needstopoly ((x - &1) * (x + &1))  … [depth limit …]
+      │  ├─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)  … [depth limit …]
+      │  ├─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)  … [depth limit …]
+      │  └─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)  … [depth limit …]
+      └─ :topoly ((x - &1) * (x + &1))
+         └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
 ```
 
 Three things are worth noticing.
@@ -185,8 +183,9 @@ there is no native implementation.
 A false identity is answered, not merely left out:
 
 ```
-zelph> <x> ~ polyring
-zelph> ? $( (x+1)^2 ) ≡ $( x^2 + 1 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? $( (x+1)^2 ) ≡ $( x^2 + 1 )
 Answer: (((x + &1) ^ &2) ≡ $( x ^ &2 + &1 )) = disproven
 ```
 
@@ -198,8 +197,8 @@ The third answer is silence, and it means something specific:
 
 ```
 zelph> .import math
-zelph> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
-zelph>
+zelph+> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
+zelph+>
 ```
 
 Here `<x> ~ polyring` is missing, so `x` has no sort, neither side compiles,
@@ -208,11 +207,13 @@ and there is nothing to compare. zelph does *not* report that as
 the standard library, *partiality is expressed by absence*, so that a
 missing premise can never turn into a wrong verdict.
 
-When you get silence, ask for the normal forms directly to see which side
-failed:
+When encountering silence, directly request the normal forms to see which
+side has failed. In the silent session above, both queries remain silent
+as well, since `x` lacks a sort; once `<x> ~ polyring` is declared, as in
+the session of the false identity, both sides provide a response:
 
 ```
-zelph> ? :topoly $( (x+1)^2 )
+zelph+> ? :topoly $( (x+1)^2 )
 Answer: (:topoly ((x + &1) ^ &2)) = (x poly <(pos zint &1) (pos zint &2) (pos zint &1)>)
 zelph> ? :topoly $( x^2 + 1 )
 Answer: (:topoly $( x ^ &2 + &1 )) = (x poly <(pos zint &1) (pos zint &0) (pos zint &1)>)

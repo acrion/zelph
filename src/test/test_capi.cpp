@@ -1023,11 +1023,11 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
 // ---------------------------------------------------------------------------
 // The reasoning surface.
 //
-// This is the half of zelph that is the reason it exists, and until now the C
-// ABI could not reach it: a program could store facts and evaluate networks
-// but not state a rule or ask a question. These tests pin the loop a caller
-// actually runs - assert, reason, read, and (because the graph is monotonic)
-// discard.
+// This is the half of zelph that is the reason it exists, and up until now
+// the C ABI has been unable to access it: a program could store facts and
+// evaluate networks yet could not state a rule or ask a question. These
+// tests pin the loop a caller actually executes -- assert, reason, read, and
+// (since the graph otherwise only grows) remove.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("capi: a rule derives what forward chaining makes of it")
@@ -1129,7 +1129,7 @@ TEST_CASE("capi: a query reports its bindings as nodes")
     CHECK(found == std::vector<std::string>{"aristotle", "plato", "socrates"});
 }
 
-TEST_CASE("capi: a cluster turns the monotonic graph into a workspace")
+TEST_CASE("capi: a cluster turns a graph that otherwise only grows into a workspace")
 {
     Engine engine;
 
@@ -1396,7 +1396,6 @@ TEST_CASE("capi: a leaky hidden layer can recover from being all-negative")
     const zelph_node hidden = engine.node("Hid");
     const zelph_node out    = engine.node("Out");
     const zelph_node i1     = engine.node("i1");
-    const zelph_node h1     = engine.node("h1");
     const zelph_node o1     = engine.node("o1");
 
     REQUIRE(zelph_nn_connect_layers(engine, in, hidden, 0.0, 1, nullptr) == ZELPH_OK);
@@ -1598,4 +1597,82 @@ c q d
     CHECK(exists == 1);
 
     fs::remove(file);
+}
+
+TEST_CASE("capi: a membership in a collection of a rule's text is refused with the error code, and nothing is written")
+{
+    // Once a rule has been authored, its text becomes immutable. If a caller
+    // accesses the node of a rule's own collection -- here via a name given
+    // to it -- and writes a member into it, this would alter the rule's
+    // meaning. In response, zelph_fact rejects the action with
+    // ZELPH_RUNTIME_ERROR and issues a message naming the collection, while
+    // performing no write operation.
+    const auto file = fs::temp_directory_path() / "zelph_capi_rule_text.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q @{d})");
+
+        // The collection lacks a name of its own; `.node` identifies it
+        // through its id.
+        const auto listed = [&](const std::string& label)
+        {
+            const std::string prefix = "- " + label + " (ID ";
+            for (const auto& event : collector.events())
+                if (const std::size_t at = event.text.find(prefix); at != std::string::npos)
+                    return event.text.substr(at + prefix.size(), event.text.find(')', at + prefix.size()) - at - prefix.size());
+            return std::string{};
+        };
+        collector.clear();
+        interactive.process(".node c");
+        const std::string consequence = listed("c q @{d}");
+        REQUIRE_FALSE(consequence.empty());
+        collector.clear();
+        interactive.process(".node " + consequence);
+        const std::string collection = listed("@{d}");
+        REQUIRE_FALSE(collection.empty());
+        interactive.process(".name " + collection + " zelph bucket");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+    fs::remove(file);
+
+    zelph_node collection = 0;
+    REQUIRE(zelph_resolve(engine, "bucket", "zelph", &collection) == ZELPH_OK);
+    const zelph_node in = engine.node("in");
+    const zelph_node zz = engine.node("zz");
+
+    zelph_node fact = 0;
+    CHECK(zelph_fact(engine, zz, in, &collection, 1, &fact) == ZELPH_RUNTIME_ERROR);
+    CHECK(fact == 0);
+    const std::string error = zelph_last_error();
+    CHECK(error.find("bucket is a collection of a rule's own text") != std::string::npos);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, zz, in, &collection, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+    zelph_node  members[4] = {};
+    std::size_t count      = 4;
+    REQUIRE(zelph_sources(engine, in, collection, members, &count) == ZELPH_OK);
+    CHECK(std::find(members, members + count, zz) == members + count);
+
+    // `d` is already a member, so stating it again introduces no new node;
+    // however, a statement constitutes a claim, and it would turn the rule's
+    // literal member into data. It is rejected just like any other write,
+    // and the member remains as rule text, which no query answers.
+    const zelph_node d = engine.node("d");
+    CHECK(zelph_fact(engine, d, in, &collection, 1, &fact) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("is fixed once the rule is written") != std::string::npos);
+
+    zelph_node o = 0;
+    REQUIRE(zelph_variable(engine, "O", &o) == ZELPH_OK);
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, d, in, &o, 1, &pattern) == ZELPH_OK);
+    std::size_t pairs = 0;
+    std::size_t rows  = 0;
+    CHECK(zelph_query(engine, pattern, nullptr, &pairs, nullptr, &rows) == ZELPH_OK);
+    CHECK(rows == 0);
 }

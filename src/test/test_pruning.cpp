@@ -688,11 +688,14 @@ TEST_CASE("pruning: a rule's own ground pattern is not data to prune")
         CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
     }
 
-    SUBCASE("asserting the statement makes it data again")
+    // Asserting the statement revokes the marking: it becomes data, and the
+    // prune commands take it. What they take is the CLAIM. The node also
+    // serves as the rule's condition, and removing it took the rule with it
+    // -- a rule no one had requested to eliminate, disappeared silently,
+    // and every later run performed without it. The statement reverts to
+    // being the rule's pattern, just as a dropped cluster leaves it.
+    SUBCASE("asserting the statement makes it data again, and pruning it leaves the rule")
     {
-        // The control: asserting revokes the marking, and from then on the
-        // documented cascade applies -- the fact goes, and the rule built on
-        // it goes with it.
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
         process_lines(interactive, R"(
@@ -706,10 +709,128 @@ a p b
 
         collector.clear();
         interactive.process(".list-rules");
-        CHECK(any_output_contains(collector, "No rules found"));
+        CHECK(any_output_contains(collector, "(a p b) => (c q d)"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+
+        // Asserting it once more transforms it into data once more,
+        // and the rule fires.
+        process_lines(interactive, "a p b\n");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "c q d"));
     }
 
-    SUBCASE("a DERIVED ground fact is data")
+    SUBCASE("the variable form leaves the rule as well")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+(a p b) => (e q f)
+)");
+        collector.clear();
+        interactive.process(".prune-facts (S p O)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(a p b) => (e q f)"));
+    }
+
+    // A statement enclosed within a condition or a consequence is also part
+    // of the rule: the rule is built from it, and removing its node took the
+    // rule with it, regardless of the command's form -- the variable form
+    // left a remnant of the rule within the graph besides. Only the
+    // conditions, the consequences, and the members of condition sets were
+    // counted as belonging to the rule, whereas the identical nested
+    // statement, if NOT asserted, was reported as the rule's own pattern and
+    // remained untouched. If asserted before the rule, the statement was
+    // never marked as its pattern; if asserted afterwards, the claim
+    // nullified that designation. A rule situated within a consequence stands
+    // as a distinct rule, with its condition already counted.
+    SUBCASE("a statement nested inside a rule leaves the rule as well")
+    {
+        const auto listed_rules = [](const zelph::console::Interactive& interactive, zelph::io::OutputCollector& collector)
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            std::string listed;
+            for (const auto& e : collector.events())
+                if (e.channel == zelph::io::OutputChannel::Out) listed += e.text + "\n";
+            return listed;
+        };
+        const char* const rules[] = {
+            "((a p b) says Z) => (Z ok yes)",
+            "(X q Y) => ((a p b) says X)",
+            "(X (a p b) Y) => (X ok Y)",
+            "(Z says (a p b)) => (Z ok yes)",
+            "(((a p b) says Z) about W) => (Z ok W)",
+            "(X q Y, ((a p b) says Z)) => (X r Z)",
+            "(X q Y, ¬((a p b) says X)) => (X r Y)",
+            "(X q Y) => ((a p b) => (X ok yes))",
+        };
+        for (const std::string rule : rules)
+        {
+            for (const std::string prune : {".prune-facts (a p b)", ".prune-facts (A p b)"})
+            {
+                for (const std::string asserted : {"before", "after", "never"})
+                {
+                    CAPTURE(rule);
+                    CAPTURE(prune);
+                    CAPTURE(asserted);
+                    zelph::io::OutputCollector  collector;
+                    zelph::console::Interactive interactive(collector.sink());
+                    if (asserted == "before") process_lines(interactive, "a p b\n");
+                    process_lines(interactive, rule + "\n");
+                    if (asserted == "after") process_lines(interactive, "a p b\n");
+                    const std::string before = listed_rules(interactive, collector);
+                    REQUIRE(before.find("(a p b)") != std::string::npos);
+
+                    collector.clear();
+                    interactive.process(prune);
+                    CHECK(any_output_contains(collector, asserted == "never" ? "Pruned 0" : "Pruned 1"));
+                    if (asserted == "never" && prune == ".prune-facts (a p b)") CHECK(any_event_contains(collector, "only as a rule's own pattern"));
+
+                    CHECK(listed_rules(interactive, collector) == before);
+
+                    collector.clear();
+                    interactive.process("S p O");
+                    CHECK(collect_answers(collector).empty());
+                }
+            }
+        }
+    }
+
+    // The statement the claim was withdrawn from is once more the rule's
+    // pattern, and the rule fires upon a fact regarding it.
+    SUBCASE("a rule a nested statement was pruned from still fires")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+((a p b) says Z) => (Z ok yes)
+)");
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 1"));
+
+        collector.clear();
+        interactive.process(".explain (a p b) 0");
+        CHECK(any_output_contains(collector, "a p b  [rule pattern; not asserted]"));
+
+        process_lines(interactive, "(a p b) says d\n");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(answers_contain(collector, "d ok yes"));
+    }
+
+    SUBCASE("a DERIVED ground fact is data, and its rule stays")
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
@@ -724,6 +845,10 @@ x r y
         collector.clear();
         interactive.process("S p O");
         CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X r Y) => (a p b)"));
     }
 }
 

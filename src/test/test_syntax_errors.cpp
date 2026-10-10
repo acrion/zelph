@@ -385,5 +385,15 @@ TEST_CASE("syntax errors: a statement spanning lines is named whole, not by its 
         // A statement on ONE line keeps the wording it always had.
         CHECK_THROWS_WITH_AS(interactive.process("a b x(c d e)"),
                              doctest::Contains("Error in line \"a b x(c d e)\""),
+                             std::runtime_error);
+
+        // Additionally, a comment follows it. The parser interprets the
+        // line excluding the comment, meaning that matching this processed
+        // text against the original line would classify every line with a
+        // comment as a statement spanning multiple lines; only a genuine
+        // line break may switch the wording, and the line is quoted
+        // exactly as it was typed.
+        CHECK_THROWS_WITH_AS(interactive.process("a b x(c d e)   # glued"),
+                             doctest::Contains("Error in line \"a b x(c d e)   # glued\""),
                              std::runtime_error); });
 }

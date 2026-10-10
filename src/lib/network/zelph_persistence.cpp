@@ -178,6 +178,7 @@ void Zelph::Impl::validate_chunk_selector(const detail::chunk_selector& selectio
 void Zelph::Impl::clear_loaded_state()
 {
     invalidate_predicate_index();
+    note_load();
 
     std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
     std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
@@ -191,6 +192,7 @@ void Zelph::Impl::clear_loaded_state()
     _name_of_node.clear();
     _node_of_name.clear();
     _string_pool.clear();
+    _older_rules = false;
 }
 #endif
 
@@ -975,6 +977,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     }
     impl.setLast(_last);
     impl.setLastVar(_last_var);
+    impl.setTemplateIds(!_older_rules);
 
     const bool filtering = keep != nullptr;
 
@@ -1187,7 +1190,7 @@ std::string Zelph::Impl::read_error_text(const std::string& filename, const kj::
 #endif
 
 #ifndef __EMSCRIPTEN__
-void Zelph::Impl::loadFromFile(const std::string& filename)
+bool Zelph::Impl::loadFromFile(const std::string& filename)
 {
     #ifdef _WIN32
         #define fileno _fileno
@@ -1210,7 +1213,11 @@ void Zelph::Impl::loadFromFile(const std::string& filename)
         ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
         auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
+        // Before the first write: a load that encounters failure midway
+        // still results in partial merging of the file.
+        note_load();
         loadSmallData(impl);
+        const bool template_ids = impl.getTemplateIds();
 
         uint32_t leftChunkCount       = impl.getLeftChunkCount();
         uint32_t rightChunkCount      = impl.getRightChunkCount();
@@ -1234,6 +1241,7 @@ void Zelph::Impl::loadFromFile(const std::string& filename)
         _pidx_last       = _last;
         _pidx_last_var   = _last_var;
         _pidx_io_enabled.store(true, std::memory_order_release);
+        return template_ids;
     }
     catch (const kj::Exception& e)
     {

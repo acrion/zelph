@@ -45,7 +45,7 @@ TEST_CASE("numbers: multi-digit addition via rules")
 # MSB-first notation.
 
 # ---------------------------------------------------------------------------
-# Digit addition lookup table (200 facts, generated at load time by Janet)
+# Digit addition lookup table (400 facts: 200 entries, generated at load time by Janet)
 # ---------------------------------------------------------------------------
 %
 (for a 0 10
@@ -329,7 +329,102 @@ TEST_CASE("numbers: comparison via rules (all arithmetic modules)" * doctest::te
             interactive.process("&7 cmp &7");
             interactive.run(true, false, false);
             CHECK(any_output_starts_with(collector, "(&7 == &7)"));
+        }
+        SUBCASE("a list that is not a numeral is not compared")
+        {
+            // The more significant cells decide a comparison, and the result
+            // they achieved was elevated without examining the cells
+            // beneath: <x 1>, whose least significant cell is the symbol x,
+            // compared greater than &0, and <x c> less than &4 based solely
+            // on its length.
+            interactive.process("<x 1> cmp &0");
+            interactive.process("<x c> cmp &4");
+            interactive.process("&0 cmp <x 1>");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("(<x 1> cmp &0) = R");
+            interactive.process("(<x c> cmp &4) = R");
+            interactive.process("(&0 cmp <x 1>) = R");
+            interactive.process("<x 1> > N");
+            interactive.process("<x c> < N");
+            CHECK(collect_answers(collector).empty());
         } });
+}
+
+TEST_CASE("numbers: the empty list is no numeral, yet the recursions that end on it read it as zero (all arithmetic modules)" * doctest::test_suite("slow"))
+{
+    // nil, typed <>, is the exhausted tail at which every digit recursion
+    // ends. The numeral test does not accept it (its base case is
+    // (A cons nil)), and arithmetic.md documents it as lying beyond the
+    // arithmetic contract -- with the reading that the rules give it all
+    // the same, which this case pins: +, -, and cmp treat it as zero, and
+    // so does the exponent in ^ via cmp; * treats it as zero when it
+    // serves as the second factor of a number with multiple digits in the
+    // substrate's base (the accumulation computes nil + <0> in that case;
+    // &12 contains more than one digit in every base); as the first
+    // factor of *, or as either operand in / and mod, it derives nothing.
+    // Choosing to make a top-level nil silent instead requires guarding
+    // the hottest seed rules, so a change here is a decision to take with
+    // a measurement, not a drift.
+    run_arithmetic_modules([](auto& collector, const auto& interactive)
+                           {
+        process_lines(interactive, R"(
+<> + &3
+&3 + <>
+&3 - <>
+<> cmp &3
+&3 cmp <>
+&2 ^ <>
+&12 * <>
+<> + <>
+:needsnumeral <>
+<> * &12
+<> / &3
+&3 / <>
+<> mod &3
+&3 mod <>
+<> - <>
+)");
+        collector.clear();
+        process_lines(interactive, R"(
+(nil + &3) = X
+(&3 + nil) = X
+(&3 - nil) = X
+(nil cmp &3) = X
+(&3 cmp nil) = X
+(&2 ^ nil) = X
+(&12 * nil) = X
+(nil + nil) = X
+)");
+        CHECK(collect_answers(collector).size() == 8);
+        CHECK(answers_contain(collector, "(nil + &3) = &3"));
+        CHECK(answers_contain(collector, "(&3 + nil) = &3"));
+        CHECK(answers_contain(collector, "(&3 - nil) = &3"));
+        CHECK(answers_contain(collector, "(nil cmp &3) = lt"));
+        CHECK(answers_contain(collector, "(&3 cmp nil) = gt"));
+        CHECK(answers_contain(collector, "(&2 ^ nil) = &1"));
+        CHECK(answers_contain(collector, "(&12 * nil) = &0"));
+        // A result that would be nil itself is not converted to &0: the +
+        // operator does not canonicalize its result, and the - operator
+        // connects only a result that possesses a canonical form, which
+        // nil lacks (checked below).
+        CHECK(answers_contain(collector, "(nil + nil) = nil"));
+
+        // `:needsnumeral <>` above requests the numeral test for nil in the
+        // way a consuming module would, so the absence of an answer to
+        // `nil isnumeral X` constitutes the test's verdict rather than a
+        // test that never ran.
+        collector.clear();
+        process_lines(interactive, R"(
+nil isnumeral X
+(nil * &12) = X
+(nil / &3) = X
+(&3 / nil) = X
+(nil mod &3) = X
+(&3 mod nil) = X
+(nil - nil) = X
+)");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +450,7 @@ TEST_CASE("numbers: subtraction via rules (all arithmetic modules)" * doctest::t
             interactive.run(true, false, false);
             CHECK(any_output_starts_with(collector, "((&1000 - &1) = &999)"));
         }
-        SUBCASE("105 - 98 = 7 (result list <007>, value normalized by &-display)")
+        SUBCASE("105 - 98 = 7 (raw difference has leading zeros; = carries the canonical &7)")
         {
             collector.clear();
             interactive.process("&105 - &98");
@@ -382,8 +477,9 @@ TEST_CASE("numbers: subtraction via rules (all arithmetic modules)" * doctest::t
 
 TEST_CASE("numbers: comparison and subtraction via rules (binary, identical rules)")
 {
-    // The recursion rules are byte-identical to the decimal script; only the
-    // digit tables differ. Same decimal &-I/O on a different internal base.
+    // The rules governing recursion are those of common-arithmetic, shared
+    // with the decimal substrate; only the digit tables vary. Identical
+    // decimal &-I/O operating on an alternative internal base.
     run_both_modes([](auto& collector, const auto& interactive)
                    {
         interactive.process(".import binary-arithmetic");
@@ -651,10 +747,9 @@ TEST_CASE("numbers: result query (A / B) = X is repeatable")
 
 TEST_CASE("numbers: subtraction and division results are canonical (no leading zeros)" * doctest::test_suite("slow"))
 {
-    // Pins the canonicalization bridge: the = results of the two
-    // non-canonical producers are the canonical node, verified WITHOUT
-    // the &-display (which value-normalizes and would mask the
-    // distinction) by disabling the digit alphabet first.
+    // The canonicalization bridge is pinned: the = results from the
+    // two non-canonical producers are the canonical node, verified
+    // WITHOUT the &-display by first disabling the digit alphabet.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process(".import decimal-arithmetic");
@@ -700,11 +795,11 @@ TEST_CASE("numbers: multiplication by zero yields the canonical zero node (all a
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {
-        // The display renders digit lists by VALUE, so a raw zero-extended
-        // product like binary <00> prints as &0 -- indistinguishable from
-        // the canonical node. These probes therefore pin NODE identity via
-        // zelph/exists; the raw list is built explicitly for the negative
-        // probe (digit atom "0" is shared by all three modules).
+        // What is pinned is NODE identity, through zelph/exists: = must
+        // carry the canonical &0, not the raw zero-extended product (binary
+        // <00>, which the display presents in raw form). The raw list is
+        // built explicitly for the negative probe (digit atom "0" is shared
+        // by all three modules).
         interactive.process("&3 * &0");
         interactive.process("&0 * &3");
         interactive.process("&35 * &0");

@@ -110,17 +110,23 @@ TEST_CASE("jacobian: three distinct points collide on (-8, 0, 0) (binary substra
         interactive.process(R"js(%(each g gp2 (tp g)))js");
         interactive.process(R"js(%(each g gp3 (tp g)))js");
         interactive.run(true, false, false);
+        // topoly returns the values from the polynomial layer, where the
+        // constants are expressed as zint terms -- the zero polynomial is
+        // represented as (pos zint &0). zelph/int reads a nonnegative
+        // literal as a natural numeral, thus it is unable to express those
+        // expected values.
+        interactive.process(R"js(%(defn pz [s] (zelph/fact "pos" "zint" (zelph/number s))))js");
         collector.clear();
         interactive.process(R"js(%(string "JB-P1G1-" (zelph/exists (tp (get gp1 0)) "=" (zelph/int "-8"))))js");
-        interactive.process(R"js(%(string "JB-P1G2-" (zelph/exists (tp (get gp1 1)) "=" (zelph/int "0"))))js");
-        interactive.process(R"js(%(string "JB-P1G3-" (zelph/exists (tp (get gp1 2)) "=" (zelph/int "0"))))js");
+        interactive.process(R"js(%(string "JB-P1G2-" (zelph/exists (tp (get gp1 1)) "=" (pz "0"))))js");
+        interactive.process(R"js(%(string "JB-P1G3-" (zelph/exists (tp (get gp1 2)) "=" (pz "0"))))js");
         interactive.process(R"js(%(string "JB-P2G1-" (zelph/exists (tp (get gp2 0)) "=" (zelph/int "-8"))))js");
-        interactive.process(R"js(%(string "JB-P2G2-" (zelph/exists (tp (get gp2 1)) "=" (zelph/int "0"))))js");
-        interactive.process(R"js(%(string "JB-P2G3-" (zelph/exists (tp (get gp2 2)) "=" (zelph/int "0"))))js");
+        interactive.process(R"js(%(string "JB-P2G2-" (zelph/exists (tp (get gp2 1)) "=" (pz "0"))))js");
+        interactive.process(R"js(%(string "JB-P2G3-" (zelph/exists (tp (get gp2 2)) "=" (pz "0"))))js");
         interactive.process(R"js(%(string "JB-P3G1-" (zelph/exists (tp (get gp3 0)) "=" (zelph/int "-8"))))js");
-        interactive.process(R"js(%(string "JB-P3G2-" (zelph/exists (tp (get gp3 1)) "=" (zelph/int "0"))))js");
-        interactive.process(R"js(%(string "JB-P3G3-" (zelph/exists (tp (get gp3 2)) "=" (zelph/int "0"))))js");
-        interactive.process(R"js(%(string "JB-NOTPOS-" (zelph/exists (tp (get gp1 0)) "=" (zelph/int "8"))))js");
+        interactive.process(R"js(%(string "JB-P3G2-" (zelph/exists (tp (get gp3 1)) "=" (pz "0"))))js");
+        interactive.process(R"js(%(string "JB-P3G3-" (zelph/exists (tp (get gp3 2)) "=" (pz "0"))))js");
+        interactive.process(R"js(%(string "JB-NOTPOS-" (zelph/exists (tp (get gp1 0)) "=" (pz "8"))))js");
         CHECK(any_output_contains(collector, "JB-P1G1-true"));
         CHECK(any_output_contains(collector, "JB-P1G2-true"));
         CHECK(any_output_contains(collector, "JB-P1G3-true"));
@@ -188,6 +194,11 @@ TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512" * doc
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".import examples/math/jacobian");
+    // The symbolic-core and diff components each implement a contradiction
+    // rule to handle a term yielding two distinct outcomes, one tailored for
+    // `simp` and another for `deriv`. The largest workload within the
+    // maths stack must not trigger either of these.
+    CHECK_FALSE(has_contradiction(collector));
     collector.clear();
 
     interactive.process(R"js(%(string "JEX-NEG-" (> (length (zelph/query (zelph/fact '_M "jdet" (zelph/fact "neg" "zint" (zelph/number "512"))))) 0)))js");

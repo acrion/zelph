@@ -8,32 +8,39 @@
 # layer is a separate follow-up module.
 #
 # REPRESENTATION (recursive dense, collapsed, variable-tagged):
-#   - A CONSTANT polynomial is a zint term: (pos zint N) / (neg zint N).
-#   - A NON-CONSTANT polynomial with main variable V is (V poly L),
-#     where L is a cons list of canonical polynomials, LSB-first: the
-#     V^0 coefficient is the outermost cell -- the numeral orientation,
-#     because a number in base b IS a polynomial evaluated at b, and
-#     the rules below are the digit recursions with the carry removed.
-#   - COLLAPSE: a polynomial constant in V is represented by its
-#     constant coefficient directly, never as (V poly (C cons nil)).
-#     Canonical coefficient lists therefore have length >= 2.
-#   - The LAST list element (leading coefficient) is never the zero
-#     polynomial; inner zeros are value-relevant and kept. By collapse,
-#     the zero polynomial at EVERY level is the single node
-#     (pos zint &0) -- which is what makes the strip stage's zero test
-#     a pattern match instead of a structural recursion.
-#   - NESTING ORDER: composite coefficients inside (V poly L) have main
-#     variables strictly inner to V. The order is declared by the user
-#     as pouter facts (V pouter W: V is strictly outer); adjacent pairs
-#     suffice, transitivity is provided below. The order must be a
-#     STRICT total order on the variables in use -- declaring both
-#     V pouter W and W pouter V would break single-valuedness, exactly
-#     like conflicting declared equations in symbolic-core.
-#   - The variable tag resolves the ambiguity a collapsed UNTAGGED list
-#     representation would have across nesting levels (the list for y
-#     as a constant-in-x polynomial would be node-identical to the list
-#     for x); with the tag, every canonical polynomial is a unique
-#     hash-consed node, so equality of normal forms is node identity.
+#   - A CONSTANT polynomial is expressed as a zint term: (pos zint N) /
+#     (neg zint N).
+#   - A NON-CONSTANT polynomial featuring main variable V takes the form
+#     (V poly L), where L is a cons list of canonical polynomials,
+#     arranged LSB-first: the coefficient for V^0 appears as the
+#     outermost cell -- this orientation mirrors numeral representation,
+#     since a number in base b IS a polynomial evaluated at b, and the
+#     subsequent rules are the digit recursions with carry removed.
+#   - COLLAPSE: when a polynomial is constant with respect to V, it is
+#     represented directly by its constant coefficient, never as (V poly
+#     (C cons nil)). Consequently, canonical coefficient lists must have
+#     length >= 2.
+#   - The LAST element of the list (the leading coefficient) is never
+#     the zero polynomial; inner zeros retain semantic significance and
+#     are preserved. Through collapse, the zero polynomial at every
+#     level is uniquely represented as the single node (pos zint &0) --
+#     this enables the strip stage's zero check to be implemented via
+#     pattern matching rather than structural recursion.
+#   - NESTING ORDER: within (V poly L), composite coefficients have main
+#     variables strictly inner to V. The user declares this order via
+#     pouter facts (V pouter W: V is strictly outer); adjacent pairs are
+#     sufficient, and transitivity is provided below. The order must
+#     constitute a STRICT total order over the variables in use --
+#     declaring both V pouter W and W pouter V would violate
+#     single-valuedness, resulting in two normal forms for a product of
+#     the two variables. Unlike a conflicting declared equation in
+#     symbolic-core (rule SU), nothing reports such a conflict.
+#   - The variable tag eliminates ambiguity that a collapsed UNTAGGED
+#     list representation would introduce across nesting levels (the
+#     list for y as a constant-in-x polynomial would otherwise be
+#     node-identical to the list for x); with the tag, each canonical
+#     polynomial becomes a unique hash-consed node, so equality of
+#     normal forms reduces to node identity.
 #
 # OPERATIONS (results exposed under =, the uniform query idiom):
 #   (P padd Q) = R        addition
@@ -41,19 +48,28 @@
 #   (P psub Q) = R        subtraction, via pneg + padd
 #   (P pmul Q) = R        multiplication
 #
-# CANONICITY: all rules yield canonical results for canonical operands.
-# Only same-main-variable addition can produce non-canonical raw lists
-# (cancellation of present coefficients, possibly including the leading
-# one); its results run through the strip/collapse stage below -- the
-# canonnum pattern with the zero POLYNOMIAL in place of the zero digit.
-# Head-adjustment cases (different main variables, or constant into
-# composite) touch only the V^0 coefficient: the tail -- including the
-# nonzero leading coefficient -- passes through unchanged, and a zero
-# HEAD is an inner zero, which is canonical. Negation maps nonzero
-# coefficients to nonzero coefficients elementwise. Multiplication
-# needs no strip stage of its own: see the pmul section. Applying
-# an operation to non-polynomial or non-canonical operands derives
-# nothing -- partiality by absence, as everywhere in the stdlib.
+# CANONICITY: every rule generates a canonical result when given
+# canonical operands. The sole exception is same-main-variable
+# addition, which may generate non-canonical raw lists due to
+# coefficient cancellation -- this might involve the leading
+# coefficient itself -- after which the results run through the
+# strip/collapse stage below, following the canonnum pattern where the
+# zero POLYNOMIAL substitutes for the zero digit. Head-adjustment
+# scenarios (involving distinct main variables or a constant being
+# incorporated into a composite) affect solely the V^0 coefficient: the
+# tail -- including the nonzero leading coefficient -- remains
+# unaltered, and a zero HEAD constitutes an inner zero, which is
+# canonical. Negation maps nonzero coefficients to nonzero coefficients
+# in an elementwise manner. Multiplication does not require a separate
+# strip stage -- refer to the pmul section for details. An operand that
+# is neither a zint nor a (V poly L) term gets no answer -- this
+# reflects partiality by absence, consistent with the behaviour across
+# the stdlib -- except when serving as the base of (P ppow &0), which
+# yields (pos zint &1) regardless of P. Outside this, results are
+# specified exclusively for canonical operands: a non-canonical input
+# -- such as (neg zint &0), a magnitude that fails to be a numeral, or
+# a coefficient list that is not canonical -- might still be answered,
+# and the resulting output need not be canonical.
 #
 # ZERO TEST, POSITIVELY: the strip rules must distinguish zero from
 # nonzero elements. Zero is matched directly as the ground pattern
@@ -87,11 +103,14 @@
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Rules PZ -- constant + constant: delegate to the Z facade (an ordinary
-# + fact, routed to z+, result under =). Canonical: z+ results are.
+# Rules PZ -- constant + constant: delegate to z+ without using the +
+# facade: the facade lowers nonnegative results to natural numerals,
+# whereas constant polynomials remain zint expressions across this layer
+# (the zero polynomial is the single node (pos zint &0)). Canonical: z+
+# results are.
 # ---------------------------------------------------------------------------
-((G zint A) padd (H zint B)) => ((G zint A) + (H zint B))
-((G zint A) padd (H zint B), ((G zint A) + (H zint B)) = R)
+((G zint A) padd (H zint B)) => ((G zint A) z+ (H zint B))
+((G zint A) padd (H zint B), ((G zint A) z+ (H zint B)) = R)
 => (((G zint A) padd (H zint B)) = R)
 
 # ---------------------------------------------------------------------------
@@ -244,7 +263,7 @@
 # preserves canonicity elementwise, and the only accumulation (the
 # schoolbook case) delegates to padd, which owns its canonicalization.
 # The cases are mutually exclusive, so = stays single-valued: constant
-# x constant is the Z facade; the ground zero times a composite has
+# x constant is zx; the ground zero times a composite has
 # direct rules; a NONZERO constant or an inner-variable composite
 # scales elementwise; same-main-variable composites run the schoolbook
 # recursion. Two composites without a declared pouter order derive
@@ -252,11 +271,12 @@
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Rules MZ -- constant x constant: delegate to the Z facade (an
-# ordinary * fact, routed to zx; zero operands are canonical there).
+# Rules MZ -- constant x constant: forward directly to zx, due to
+# the rationale outlined in rules PZ (zero operands are canonical
+# in that context).
 # ---------------------------------------------------------------------------
-((G zint A) pmul (H zint B)) => ((G zint A) * (H zint B))
-((G zint A) pmul (H zint B), ((G zint A) * (H zint B)) = R)
+((G zint A) pmul (H zint B)) => ((G zint A) zx (H zint B))
+((G zint A) pmul (H zint B), ((G zint A) zx (H zint B)) = R)
 => (((G zint A) pmul (H zint B)) = R)
 
 # ---------------------------------------------------------------------------
@@ -371,9 +391,14 @@
 => (((V poly (A cons (B cons (C cons S)))) pmul (V poly M)) = R)
 
 # ===========================================================================
-# Exponentiation (P ppow N) -- the same recursion shape as the naturals'
-# ^, with pmul in place of *. N is a NATURAL numeral: the exponent is not
-# a polynomial. A zint, symbolic or composite exponent derives nothing.
+# Exponentiation (P ppow N) -- mirroring the recursive structure of the
+# naturals' ^, but substituting pmul for *. N must be a NATURAL numeral:
+# the exponent is not a polynomial. A zint, symbolic or composite
+# exponent derives nothing, except a negative-signed zero like (neg zint
+# &0), which the facade compares as &0 and thus treats as the exponent
+# zero; (pos zint &0) remains silent. The empty list nil, operating
+# beyond the arithmetic contract, also functions as the exponent zero:
+# cmp reads it as zero, since the digit recursions end at nil.
 #
 # Canonicity: (pos zint &1) is canonical and pmul preserves canonicity,
 # so every ppow result is canonical -- no strip stage of its own.

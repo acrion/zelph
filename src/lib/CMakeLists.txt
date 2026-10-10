@@ -74,10 +74,11 @@ if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(MI_OVERRIDE ON CACHE BOOL "" FORCE)
 
+    set(ZELPH_MIMALLOC_VERSION 3.4.5)
     FetchContent_Declare(
         mimalloc
         GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-        GIT_TAG v3.4.5
+        GIT_TAG v${ZELPH_MIMALLOC_VERSION}
         SYSTEM
     )
     FetchContent_MakeAvailable(mimalloc)
@@ -87,6 +88,10 @@ if(ZELPH_USE_MIMALLOC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         mimalloc-obj
         "$<TARGET_OBJECTS:mimalloc-obj>"
     )
+    # What the app is linked against, for the check that `zelph -v` confirms this
+    # (tools/check_version_banner.py, registered in src/test).
+    set_target_properties(zelph_mimalloc_override PROPERTIES
+        ZELPH_MIMALLOC_VERSION ${ZELPH_MIMALLOC_VERSION})
 endif()
 
 FetchContent_Declare(
@@ -397,6 +402,7 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     network/reasoning_neural.cpp
     network/reasoning_pruning.cpp
     network/reasoning_seminaive.cpp
+    network/reasoning_strata.cpp
     network/reasoning.hpp
     network/reasoning_profiler.hpp
     network/rule_identity.cpp

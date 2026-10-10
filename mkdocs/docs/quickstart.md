@@ -59,6 +59,8 @@ thing: that makes it a quiet **module**, see [Scripts and Modules](modules.md).
 zelph leaves with a non-zero status when something failed, so a script can be
 used in a pipeline or a Makefile.
 
+**Organization of the transcripts found in this documentation.** After a prompt comes your input; every other line corresponds to what zelph outputs. A line that extends a partial statement, a Janet `%` block, or a keyword block such as `sparql` is considered input, even though zelph does not display a prompt before it. Four kinds of zelph output in a terminal are typically excluded: its echo of a statement you typed, the `Importing file …` and `Skipping …` messages from an `.import`, timing indicators like `-- 12 ms --`, and the banner some modules show when initialized (`math loaded: …`). A page keeps one of these when it contains meaningful content: a banner indicating the next thing to type, a timing referenced in the text, an echo discussed within the text. A full session log includes them too: the [appendix on neural networks](neural.md#appendix-complete-session-log) and the [archival SPARQL session](sparql.md#complete-example-session). When zelph’s echo of your input varies from the original in a way that matters, the transcript captures that difference. The prompt is rendered precisely as zelph prints it: `zelph+>` after a run that hid deductions, `zelph->` when auto-run is turned off – see [Deduction Output Modes](rules.md#deduction-output-modes). A transcript that leaves out any other line indicates this: `...` or `…` on a line by itself denotes missing lines, while `…` within a line indicates a segment of that line. Long messages are broken at roughly 80 columns here; zelph outputs each as a single line.
+
 Let's try a basic example:
 
 ```
@@ -86,7 +88,7 @@ statement line is appended to them:
 
 ```
 zelph> (a p b)
-zelph> c q d
+c q d
 zelph> S c O
 Answer: (a p b) c q
 Answer: (a p b) c d
@@ -113,6 +115,8 @@ value glued to a "(": the grammar separates two values by whitespace, so write
 a notation island -- see ".import math-syntax".
 ```
 
+**A comment can end a line.** Initiating a comment occurs by placing a `#` at the start of a line, or immediately after a space or tab, causing it to extend to the line’s termination – regardless of whether it appears after a statement or a command, as seen in `x ~ symvar   # a variable`, which asserts a single fact. A `#` embedded within a name, such as in `C#` or within the fragment of an IRI, forms part of that name, just as a `#` inside a quoted name does; a name commencing with `#` must be enclosed in quotation marks. A quoted name can continue on the next line, yet that line remains categorized by its first character: a line starting with `#` is a comment line, and one starting with `.` is a command.
+
 ## Two Statement Prefixes
 
 Besides the dot-commands, two prefixes modify how a *statement* is read.
@@ -121,12 +125,14 @@ itself.
 
 **`?` — ask for a result.** Most standard-library modules expose their
 answer under `=`, which normally means asserting the request, letting the
-fixpoint run, and querying the result separately. `?` does all three in one
-line, and keeps the inference pass quiet:
+fixpoint run, and querying the result separately. `?` performs all three
+actions in a single line while keeping the inference pass quiet; only a
+contradiction encountered is disclosed, just as it would be after any other
+line:
 
 ```
 zelph> .import decimal-arithmetic
-zelph> ? &12 * &34
+zelph+> ? &12 * &34
 Answer: (&12 * &34) = &408
 ```
 
@@ -142,8 +148,9 @@ The two combine, which is the usual way to drive the mathematical modules:
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> ? :topoly $( (x+1)^2 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? :topoly $( (x+1)^2 )
 Answer: (:topoly ((x + &1) ^ &2)) = (x poly <(pos zint &1) (pos zint &2) (pos zint &1)>)
 ```
 
@@ -202,8 +209,8 @@ The `.load` command is general-purpose:
 
 zelph provides powerful commands for targeted data removal:
 
-- `.prune-facts <pattern>` – Removes only the matching facts (statement nodes).  
-  Useful for deleting specific properties without affecting the entities themselves. A pattern without variables removes exactly the one fact it names; a pattern that matches nothing changes nothing.
+- `.prune-facts <pattern>` – Eliminates solely the matching facts (statement nodes).  
+  Useful for erasing particular properties without affecting the entities they belong to. A pattern lacking variables deletes precisely the single fact it identifies; one that finds no match leaves everything unchanged. A statement that is simultaneously asserted and included in a rule’s condition or consequence retains its role as the rule’s pattern: only its claim is removed, and the rule remains active.
 
 - `.prune-nodes <pattern>` – Removes matching facts **and** the nodes bound to the pattern's variable.  
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  
@@ -213,7 +220,7 @@ zelph provides powerful commands for targeted data removal:
   Any number of variables and predicates is allowed there; the other conditions are the filter that selected the victims, and their own facts survive. With a [transitive path condition](logic.md#transitive-path-conditions) this replaces a hand-written list of subclasses:  
   `.prune-nodes A (A P31 C, C P279∗ Q6999)` removes every instance of a class at or below Q6999.
 
-Both commands remove **claims**. A statement that exists only as a rule's own condition or consequence is graph structure rather than data — queries do not answer it and `.explain` calls it a rule pattern — so the prune commands leave it alone and say so. Use `.node` to get its ID and `.remove` if you really mean to delete that structure.
+Both commands remove **claims**. A statement that appears solely within a rule’s condition or consequence is classified as graph structure rather than data – queries do not answer it, and `.explain` identifies it as a rule pattern – thus, the prune commands refrain from altering it and explicitly state this. Employ `.node` to get its identifier and `.remove` if you genuinely intend to delete that structure.
 
 - `.cleanup` – Removes all isolated nodes and cleans name mappings. The engine's core nodes (`!`, `nil`, `conjunction`, `negation`) are exempt, since they carry no edges until something uses them.
 
@@ -255,7 +262,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.name <node|id> <lang> <new_name>` – Set name in specific language
 - `.delname <node|id> [lang]` – Delete name in current language (or specified language)
 
-Giving a node a name that another node already holds in that language **merges the two**, with a warning naming both — that is how one states, after the fact, that a node written by hand and an imported entity are the same thing. A node *is* the hash of what it is built from, so everything built on the node that disappears is re-created under the id its new components give it, and folds into an equal fact where the graph already holds one. Core nodes are never the ones that disappear, and a variable and a non-variable cannot be merged at all.
+Assigning a node a name that another node already holds in that language **merges the two**, accompanied by a warning naming both – this is how one indicates, post hoc, that a manually created node and an imported entity are the same thing. A node *is* the hash of its constituent parts, so any structure depending on the vanished node is re-created under the identifier provided by its new components, and folds into an equal fact where the graph already holds one. Core nodes never vanish during this process, and a variable cannot be merged with a non-variable, nor can a collection of a rule’s text be merged with any other node.
 
 ### Exploring the Network
 
@@ -274,11 +281,12 @@ Giving a node a name that another node already holds in that language **merges t
 
 - `.run` – Run full inference (from Janet: [`(zelph/run)`](janet.md#running-the-engine))
 - `.run-once` – Run a single inference pass (from Janet: `(zelph/run-once)`)
-- `.run-delta` – Run inference seeded only by the facts added since the last run; costs time in the size of the addition rather than of the graph (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
+- `.run-delta` – Run inference seeded only by the facts added since the last run; it omits the traversal of the whole graph for rules that support seeding, whereas a rule featuring a negated condition still takes a classic pass over the facts satisfying its positive conditions at every negation level, and a rule whose conditions cannot be seeded undergoes one pass in each iteration (from Janet: `(zelph/run-delta)`, see [Reasoning incrementally](janet.md#reasoning-incrementally))
 - `.run-export <file>` – Run inference and write what that run derives to a JSON Lines file (see [Exporting Derivations](rules.md#exporting-derivations))
 - `.auto-run` – Toggle automatic execution of .run after each input; takes no argument (default: on). Auto-run is tied to processing an input line, so a program that only calls the Janet API has to run the engine itself with `(zelph/run)`.
 - `.deductions [all|focus|quiet|off]` – Set the deduction printing mode (default: quiet)
 - `.list-rules` – List all defined inference rules
+- `.strata` – Display the negation levels of the rules, along with those rules that cannot be stratified (refer to [Stratified Evaluation](logic.md#stratified-evaluation))
 - `.remove-rules` – Remove all inference rules
 
 ### Editing & Removing

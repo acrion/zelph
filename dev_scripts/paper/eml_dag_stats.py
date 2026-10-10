@@ -2,12 +2,16 @@
 # dev_scripts/paper/eml_dag_stats.py
 """Tree-vs-DAG statistics for the EML macro chain.
 
-Mirrors the emit primitives of the reference compiler (eml_compiler_v4.py,
-SI Sect. 2.1) and zelph's stdlib/eml.zph rules. "Tree size" equals
-Mathematica's LeafCount, which counts heads as well as atoms (hence
-LeafCount(ln x) = 7 despite 4 terminal symbols). "Distinct DAG nodes" counts
-distinct subexpressions -- exactly the number of graph nodes zelph
-materializes, since all terms are hash-consed.
+Mirrors the emit primitives of the reference compiler (eml_compiler_v4.py;
+SI Sect. 2.1, division x/y = x*(1/y) per SI Sect. 2.5) and zelph's
+stdlib/eml.zph rules. "Tree size" equals Mathematica's LeafCount, which
+counts heads as well as atoms (hence LeafCount(ln x) = 7 despite 4 terminal
+symbols). "Distinct DAG nodes" counts distinct subexpressions: the term
+nodes the tree occupies, since all terms are hash-consed. Each eml
+application, each variable and the numeral 1 count one; the predicate eml
+and the cons structure of &1 do not, and compiling adds intermediate terms
+and needseml/emlform facts. The figures are counted on this mirror, not
+measured in zelph.
 """
 
 

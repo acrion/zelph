@@ -70,25 +70,25 @@ A **module** loaded with `.import` contributes no deduction anchors, so in the d
 
 ```
 zelph> .import examples/english
-Importing file examples/english.zph...
 Answer: paul "is ancestor of" pius
 zelph+>
 ```
 
-`.deductions all` shows what those 35 are. The order in which they appear
-is not fixed -- the reasoner is parallel, and the fixpoint is a set:
+The `+` represents 35 derived facts, and `.deductions all` shows them.
+The order in which they are listed is not fixed – the reasoner operates
+in parallel, and the fixpoint is a set:
 
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> .import examples/english
-Importing file examples/english.zph...
 Answer: paul "is ancestor of" pius
 (peppermint ~ mint) ⇐ (peppermint "is a" mint)
 (catnip ~ lamiacea) ⇐ (catnip "is a" lamiacea)
 (mint ~ lamiacea) ⇐ (mint "is a" lamiacea)
 ("water mint" ~ mint) ⇐ ("water mint" "is a" mint)
-( peppermint ~ lamiacea ) ⇐ {( peppermint ~ mint ) ( ~ is transitive ) ( mint ~ lamiacea )}
+(peppermint ~ lamiacea) ⇐ {(peppermint ~ mint) (~ is transitive) (mint ~ lamiacea)}
 ("water mint" ~ lamiacea) ⇐ {("water mint" ~ mint) (~ is transitive) (mint ~ lamiacea)}
 (peter "is ancestor of" pius) ⇐ {(peter "is ancestor of" paul) ("is ancestor of" is transitive) (paul "is ancestor of" pius)}
 (chimpanzee "has part" finger) ⇐ {(chimpanzee "has part" hand) ("has part" is transitive) (hand "has part" finger)}

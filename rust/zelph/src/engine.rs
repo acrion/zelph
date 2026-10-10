@@ -159,6 +159,12 @@ impl Engine {
     }
 
     /// Assert the fact `(subject predicate object...)` and return its node.
+    ///
+    /// A membership (`in`) within a collection of a rule's text is rejected
+    /// via [`ErrorKind::Runtime`], regardless of whether the member is
+    /// already there: the condition set [`rule`](Engine::rule) returns, or
+    /// a collection a rule written in zelph's language holds as its own. A
+    /// rule's text remains immutable once the rule is written.
     pub fn fact(&self, subject: Node, predicate: Node, objects: &[Node]) -> Result<Node> {
         let mut fact: zelph_sys::zelph_node = 0;
 
@@ -546,6 +552,17 @@ impl Engine {
     /// consequence. Returns the condition set.
     ///
     /// Nothing is derived until the engine [`run`](Engine::run)s.
+    ///
+    /// The rule holds only values. Since its components were constructed
+    /// before the call, none of them is marked as the rule's text: a ground
+    /// fact among them is a claim, and a collection among them is a value the
+    /// rule refers to, not a collection it owns. Each
+    /// firing names that exact collection in what it derives -- if a member
+    /// holds a variable, the variable is included as well, ensuring every
+    /// binding of the rule shares the same node. Establishing a scope to
+    /// construct the rule's own parts via the C ABI is follow-up
+    /// work; until such a scope is available, any rule requiring its own
+    /// collections must be expressed in zelph's language.
     pub fn rule(&self, conditions: &[Node], consequences: &[Node]) -> Result<Node> {
         let mut node: zelph_sys::zelph_node = 0;
         check(unsafe {
@@ -587,9 +604,12 @@ impl Engine {
         Ok(previous != 0)
     }
 
-    /// Inference seeded by what was created since the previous run, so the
-    /// cost follows the addition rather than the graph. That difference is
-    /// what decides whether reasoning can happen inside a loop.
+    /// Reasoning seeded by what was created since the prior run, meaning that
+    /// for rules eligible to be seeded, the expense aligns with the addition
+    /// instead of the graph. This distinction determines whether inference
+    /// can occur within a loop. A rule featuring a negated condition or one
+    /// that cannot be seeded still takes a pass over the facts that satisfy
+    /// its conditions.
     pub fn run_delta(&self) -> Result<()> {
         check(unsafe { zelph_sys::zelph_run_delta(self.raw) })
     }
@@ -644,9 +664,10 @@ impl Engine {
 
     /// Activate a named cluster, or deactivate tracking with `None`.
     ///
-    /// Nodes CREATED while a cluster is active are recorded in it, which is
-    /// what makes [`drop_cluster`](Engine::drop_cluster) a rollback - and
-    /// what turns a monotonic graph into a workspace.
+    /// When a cluster is active, any nodes CREATED are recorded in it,
+    /// which is why [`drop_cluster`](Engine::drop_cluster) functions as a
+    /// rollback -- and which transforms a graph that otherwise only grows
+    /// into a workspace.
     pub fn cluster(&self, name: Option<&str>) -> Result<()> {
         let name = name.map(cstring).transpose()?;
         check(unsafe {

@@ -227,6 +227,15 @@ namespace zelph::string
     /// has no way to quote the name it embeds.
     bool prints_bare(const std::string& name);
 
+    /// The spellings the registered syntax keywords (zelph/register-keyword)
+    /// remove from bare names: a block keyword is read as the first token
+    /// on a line, an inline keyword's opener is recognized wherever it
+    /// stands outside a quoted name. A name spelled like either is printed
+    /// quoted. Scripts register keywords during execution, so the script
+    /// engine passes the whole set here upon any modification, and an empty
+    /// set when it goes.
+    void set_keyword_spellings(std::vector<std::string> block_keywords, std::vector<std::string> inline_openers);
+
     std::string escape_atom(const std::string& name);
     std::string unescape_atom(const std::string& body);
 
@@ -359,8 +368,21 @@ namespace zelph::string
         std::string source;
     };
 
+    /// A '#' at the start of a token -- either at the start of the line or
+    /// following whitespace, and not within quotes -- ends the tokens on that
+    /// line: the remainder becomes a comment.
     std::vector<QuotedToken> tokenize_quoted_marked(const std::string& input);
-    std::vector<std::string> tokenize_quoted(const std::string& input);
+    ZELPH_EXPORT std::vector<std::string> tokenize_quoted(const std::string& input);
+
+    /// The text of zelph statements, excluding any comments. Outside a
+    /// quoted name, a '#' positioned at the start of a line or immediately
+    /// following whitespace starts a comment that runs to the line's end; a
+    /// '#' within a token -- such as in C#, part of an IRI -- constitutes
+    /// text. Quoting adheres to the grammar: a quoted name can extend across
+    /// multiple lines, and within it, a backslash performs escapes on the
+    /// next character. Line breaks are preserved, meaning a statement that
+    /// spans multiple lines continues to be reported as such.
+    ZELPH_EXPORT std::string strip_comments(const std::string& text);
 
     /// Remove all leading and trailing occurrences of any string in `chars` (UTF-8 safe).
     inline std::string trim_any_of(const std::string& s, const std::vector<std::string>& chars)

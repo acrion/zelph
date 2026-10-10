@@ -11,42 +11,37 @@ removed.
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> ? :topoly $( 7 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? :topoly $( 7 )
 Answer: (:topoly &7) = (pos zint &7)
-zelph> ? :topoly $( -7 )
+zelph+> ? :topoly $( -7 )
 Answer: (:topoly $( neg(&7) )) = (neg zint &7)
 ```
 
-A constant polynomial is a signed integer, and a signed integer is the
-ordinary term `(pos zint N)` or `(neg zint N)` with `N` a natural numeral
-of whatever substrate you loaded. No new machinery: `pos`, `neg` and `zint`
-are plain atoms, and the pair is a fact node like any other.
+A constant polynomial takes the form of a signed integer term, either `(pos zint N)` or `(neg zint N)`, where `N` represents a natural numeral from the substrate currently in use. No additional mechanisms are required: `pos`, `neg`, and `zint` are plain atoms, and the pair functions as a fact node just like any other. The expression `(pos zint &7)` carries an explicit sign since it is the coefficient form within the polynomial layer. Beyond this layer, a nonnegative integer is simply the natural numeral – 7 is expressed as `&7` – and a zint term serves exclusively to denote a negative value.
 
-That layer, [`integer-arithmetic`](integers.md), is a *façade*. It owns no
-recursion; each of its rules delegates the magnitude work to the natural
-module by asserting ordinary `+`, `-`, `*` and `cmp` facts. What it buys is
-totality — the gap [tutorial 2](tutorial-numbers.md#where-partiality-lives)
-left open:
+The integer layer, [`integer-arithmetic`](integers.md), serves as a *façade*. It owns no recursion; each of its rules delegates the magnitude work to the natural module by asserting ordinary `+`, `-`, `*` and `cmp` facts. What it buys is totality – the gap [tutorial 2](tutorial-numbers.md#where-partiality-lives) left open. `math` has already imported it; importing it again, as the first line below does, is harmless and merely indicates that the module is skipped:
 
 ```
-zelph> .import integer-arithmetic
-zelph> ? &3 - &5
-zelph>
-zelph> ? (pos zint &3) - (pos zint &5)
+zelph+> .import integer-arithmetic
+zelph+> ? &3 - &5
+zelph+> ? (pos zint &3) - (pos zint &5)
 Answer: ((pos zint &3) - (pos zint &5)) = (neg zint &2)
+zelph+> ? &2 + (neg zint &5)
+Answer: (&2 + (neg zint &5)) = (neg zint &3)
+zelph+> ? (neg zint &2) - (neg zint &5)
+Answer: ((neg zint &2) - (neg zint &5)) = &3
 ```
 
-The natural subtraction is still partial — nothing was patched. A *second*
-set of rules recognises zint-shaped operands and routes them to the signed
-implementation, and the natural rules simply never fire there.
+The natural subtraction remains partial – nothing was patched. A *second* set of rules identifies signed operands (either two zint terms or a natural numeral paired with a negative one) and routes them to the signed implementation, whereas the natural rules yield no outcome in that context. An explicit `(pos zint N)` remains valid when placed alongside another zint term (when adjacent to a natural numeral, it derives nothing), and responses follow the same convention: a nonnegative outcome is expressed as a natural numeral, while only a negative value is represented as a zint term.
 
 ## One variable
 
 ```
-zelph> ? :topoly $( x )
+zelph+> ? :topoly $( x )
 Answer: (:topoly x) = (x poly <(pos zint &0) (pos zint &1)>)
-zelph> ? :topoly $( 3*x^2 - 5 )
+zelph+> ? :topoly $( 3*x^2 - 5 )
 Answer: (:topoly $( &3 * x ^ &2 - &5 )) = (x poly <(neg zint &5) (pos zint &0) (pos zint &3)>)
 ```
 
@@ -77,21 +72,22 @@ one node**. The zero polynomial at every nesting level is the single node
 `(pos zint &0)`. Which is why cancellation just happens:
 
 ```
-zelph> ? :topoly $( x - x )
+zelph+> ? :topoly $( x - x )
 Answer: (:topoly (x - x)) = (pos zint &0)
+zelph+> ? :topoly $( (x + 1) - (1 + x) )
+Answer: (:topoly $( x + &1 - (&1 + x) )) = (pos zint &0)
 ```
 
-[`symbolic-minus`](symbolic.md#subtraction-and-negation) deliberately has
-*no* rewrite rule for `X - X`. Cancelling equal symbolic terms is not a
-local rewrite's job — it is what a normal form is for.
+[`symbolic-minus`](symbolic.md#subtraction-and-negation) converts `X - X` into `&0` as well, yet it compares nodes rather than polynomials: `:simplify` transforms `(x - x)` into `&0` and maintains `(x + &1) - (&1 + x)` unaltered, since its operands simplify to two distinct terms. Eliminating terms that are equal as polynomials falls outside the responsibility of a local rewrite – this is precisely what the canonical form built here achieves.
 
 ## Several variables
 
 Coefficients are themselves polynomials, in strictly *inner* variables:
 
 ```
-zelph> <x y> ~ polyring
-zelph> ? :topoly $( x*y )
+zelph+> <x y> ~ polyring
+(:needsring <x y>) ⇐ (<x y> ~ polyring)
+zelph+> ? :topoly $( x*y )
 Answer: (:topoly (x * y)) = (x poly <(pos zint &0) (y poly <(pos zint &0) (pos zint &1)>)>)
 ```
 
@@ -101,7 +97,7 @@ polynomial `y`. So this is 0 + (y)·x = xy.
 A larger one:
 
 ```
-zelph> ? :topoly $( (x+y)^2 )
+zelph+> ? :topoly $( (x+y)^2 )
 Answer: (:topoly ((x + y) ^ &2)) = (x poly <(y poly <(pos zint &0) (pos zint &0) (pos zint &1)>) (y poly <(pos zint &0) (pos zint &2)>) (pos zint &1)>)
 ```
 
@@ -121,13 +117,18 @@ Transitivity is provided by the polynomial layer, so adjacent pairs suffice.
 Change the declaration and the normal form changes with it:
 
 ```
-zelph> <x y> ~ polyring
+zelph+> <x y> ~ polyring
 zelph> ? :topoly $( y*x )
 Answer: (:topoly (y * x)) = (x poly <(pos zint &0) (y poly <(pos zint &0) (pos zint &1)>)>)
 ```
+
+In a fresh session that declares the opposite order:
+
 ```
-zelph> <y x> ~ polyring        # a fresh session
-zelph> ? :topoly $( y*x )
+zelph> .import math
+zelph+> <y x> ~ polyring
+(:needsring <y x>) ⇐ (<y x> ~ polyring)
+zelph+> ? :topoly $( y*x )
 Answer: (:topoly (y * x)) = (y poly <(pos zint &0) (x poly <(pos zint &0) (pos zint &1)>)>)
 ```
 

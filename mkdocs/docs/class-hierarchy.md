@@ -201,10 +201,10 @@ _organization_ has 824 direct subclasses in this file. **Nine of them reach _pro
 
 Two points arise from these being _rules_ rather than a query.
 
-Every answer carries its derivation:
+Each answer can be explained:
 
 ```
-wikidata> .explain (Q153936 in-violation Q215627)
+wikidata+> .explain (Q153936 in-violation Q215627)
 Q153936 in-violation Q215627
    ├─ Q153936 P279 Q43229  [axiom]
    └─ (Q153936 P279 Q215627) closure one-or-more  [closure]
@@ -235,6 +235,7 @@ SELECT DISTINCT ?class WHERE {
   }
 }
 
+...
 ```
 
 (A blank line runs the query.) What SPARQL cannot express is the ranking: `MINUS` gives you the 81 topmost classes as a set, in no particular order. The `below` column comes from counting, per candidate, how much of the violation set hangs underneath it — which is one closure per candidate, not one query.
@@ -270,6 +271,7 @@ SELECT ?cls WHERE {
   MINUS { ?cls wdt:P279* wd:Q16889133 }
 }
 
+...
 -- 201 result(s) --
 -- 1.050 s --
 ```

@@ -1318,6 +1318,32 @@ Q2 P279 Q5
         CHECK(any_output_contains(collector, "-- 2 result(s) --")); });
 }
 
+TEST_CASE("sparql: a # inside a query is SPARQL's, not zelph's")
+{
+    // zelph interprets a '#' following whitespace as the start of a comment,
+    // but solely within its own statements and commands: the text of a
+    // keyword block is delivered to the handler exactly as it was typed,
+    // including the rest of the opener line.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        interactive.process(".lang wikidata");
+        process_lines(interactive, R"(
+Q1 P279 Q5
+)");
+        collector.clear();
+
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . FILTER('a # b' != 'c') }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --"));
+
+        collector.clear();
+        interactive.process("sparql SELECT ?x WHERE { ?x wdt:P279 wd:Q5 . FILTER('a # b' != 'c') }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
 // The counterpart, and the one that keeps the masking honest: a query that is
 // genuinely unbalanced must still be held open. Masking removes braces, so a
 // mistake in it shows up here as a query dispatched too early -- which answers

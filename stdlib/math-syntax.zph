@@ -20,17 +20,29 @@
 #   (T red $( X * 1 )) => (T rw X)        # node-identical to (X * &1)
 #
 # GRAMMAR:
-#   expr    := <one level per declared precedence, loosest first>
+#   expr    := <one level per declared precedence below 30, loosest first>
 #   factor  := '-' factor | power
-#   power   := primary ('^' INTEGER)?             INTEGER >= 1
-#   primary := INTEGER | IDENT '(' expr ')' | IDENT | '(' expr ')'
+#   power   := tight ('^' factor)?
+#   tight   := <one level per declared precedence above 30, loosest first>
+#   primary := INTEGER | NAME '(' expr ')' | NAME | '(' expr ')'
+#   NAME    := IDENT | '"' IDENT '"'
+#
+# The tightest level of expr reads factors, the tightest level of tight
+# reads primaries (with none declared, tight defaults to primary). An
+# operand that comes after an operator of tight can also be '-' factor.
 #
 # The infix levels are GENERATED from the operator table below, which also
-# feeds zelph/set-infix-display. One table, so the parser and the printer
-# cannot drift apart: whatever the island can read, it can also write.
-# Default table: + - at 10, * / at 20, all left-associative. ^ is not in
-# it -- its right operand is an integer literal rather than an expression,
-# so it stays the dedicated :power rule.
+# feeds zelph/set-infix-display. A single table ensures the parser and the
+# printer remain synchronized: whatever the island writes, it correctly
+# reads back.
+# Default table: + - at 10, * / at 20, left-associative; ^ at 30,
+# right-associative. Unary minus is positioned between ^ and the levels
+# beneath it, meaning it has lower precedence than ^ and all operators
+# declared above 30: -x^2 is interpreted as (neg of (x ^ &2)). As in
+# Python, the right operand of ^ is treated as a factor, allowing an
+# exponent to include a sign: x^-1 is (x ^ (neg of &1)).
+# A sign binds the same way after an operator declared above 30: with "**"
+# at 40, a ** -b ** c becomes (a "**" (neg of (b "**" c))).
 #
 #   INTEGER  -> (zelph/number "...")  (the &-literal representation)
 #   IDENT    -> a zelph variable if variable-shaped (single uppercase
@@ -38,16 +50,15 @@
 #               named node in the current language. Identifiers are
 #               [A-Za-z_][A-Za-z0-9_]* -- atoms outside this charset
 #               need the verbose syntax.
+#   "IDENT"  -> always a named node; this is how the printer writes a
+#               node whose name is variable-shaped, such as "A" or "_k"
 #   f(u)     -> (f of u); single-argument application only
 #   -u       -> (neg of u); with symbolic-integers loaded, -3 promotes
 #               to (neg zint &3) through the existing machinery
-#   t^n      -> left-nested products ((t*t)*t)...; a dedicated pow
-#               module may later replace this desugaring. t^1 is t;
-#               t^0 is rejected.
-#   t^n      -> (t ^ &n); ^ is a term former, not sugar for a product.
-#               n >= 0, integer literal. t^0 is a valid term compiling to
-#               the polynomial 1; t^1 simplifies to t. Symbolic or
-#               negative exponents need the verbose syntax (t ^ n).
+#   t^u      -> (t ^ u); ^ is a term former, not sugar for a product.
+#               The exponent u is any factor, and ^ is right-associative:
+#               x^y^z is (x ^ (y ^ z)). t^0 is a valid term compiling to
+#               the polynomial 1; t^1 simplifies to t.
 #
 # EXTENDING THE NOTATION: math-syntax/operator adds a binary infix
 # operator to the grammar AND to the display scheme in one step, so a
@@ -56,11 +67,21 @@
 #   %(math-syntax/operator "circ" 15)          # left-associative default
 #   %(math-syntax/operator "**" 40 :right)
 #
-# Word-shaped operator names are matched with an identifier boundary, so
-# "circ" does not match inside "circle"; they need surrounding whitespace
-# (a circ b), symbolic ones do not. All operators sharing a precedence
-# must share an associativity -- mixing them has no meaning and is an
-# error rather than a silent choice.
+# Word-shaped operator names are matched with an identifier boundary,
+# meaning "circ" fails to match within "circle"; such names require
+# surrounding whitespace (as in a circ b), whereas symbolic ones do not.
+# Every operator that shares a given precedence must also share the same
+# associativity -- combining operators with differing associativity is
+# meaningless and constitutes an error, not a silent choice. An operator
+# declared at level 30 belongs to the same level as ^ and must therefore
+# be designated as :right.
+#
+# A name that requires quoting in zelph's statement syntax is printed
+# within quotation marks inside an island too, and the island reads it
+# back. Regarding an operator like "**", either spelling is acceptable:
+# $( a "**" b ) is $( a ** b ). For a leaf or a call head, the quotation
+# marks prevent a node named "A" or "_k" from being interpreted as a
+# variable during the read-back process.
 #
 # DELIBERATE OMISSIONS: no implicit multiplication (2x is an error,
 # write 2*x), no unquote inside islands, no comparison operators, no
@@ -74,13 +95,20 @@
 # only afterwards.
 
 %
+# The precedence of ^. Unary minus is positioned immediately beneath it:
+# looser than ^ and all operators above it, tighter than all operators
+# below.
+(def- power-prec 30)
+
 # The one operator table: [name precedence associativity]. Higher
 # precedence binds tighter. Consumed by build-grammar (parsing) and by
 # zelph/set-infix-display (printing).
 (def- operator-table @[["+" 10 :left] ["-" 10 :left]
-                       ["*" 20 :left] ["/" 20 :left]])
+                       ["*" 20 :left] ["/" 20 :left]
+                       ["^" power-prec :right]])
 
-# Everything except the generated infix levels and :expr.
+# Everything other than the generated infix levels, :factor, and
+# :expr.
 (def- grammar-base
   ~{:ws (set " \t\r\n")
     :s* (any :ws)
@@ -90,15 +118,24 @@
     :ident (capture (* (choice (range "az") (range "AZ") "_")
                        (any (choice (range "az") (range "AZ") (range "09") "_"))))
 
-    :funcall (group (* (constant :call) :ident :s* "(" :s* :expr :s* ")"))
-    :leaf (group (* (constant :leaf) :ident))
+    # The way an identifier is represented in quotes: the manner in which
+    # the printer writes a node whose name the statement syntax must
+    # enclose in quotation marks, like "A" or "_k". It always refers to a
+    # node, not a variable. Only identifiers are placed within an island
+    # (:name-first and :name-chars below), and none of them contains a
+    # quote or a backslash, so escape_atom's two escapes cannot appear
+    # within it.
+    :quoted (group (* (constant :named) "\"" :ident "\""))
+    :name (choice :quoted :ident)
+
+    :funcall (group (* (constant :call) :name :s* "(" :s* :expr :s* ")"))
+    :leaf (group (* (constant :leaf) :name))
     :paren (* "(" :s* :expr :s* ")")
     :primary (choice :int :funcall :leaf :paren)
 
-    :power (group (* (constant :pow) :primary
-                     (? (* :s* "^" :s* (? "&") (capture (some (range "09")))))))
-
-    :factor (choice (group (* (constant :neg) "-" :s* :factor)) :power)
+    # A sign opens a factor, no matter where an operand
+    # might be positioned.
+    :negated (group (* (constant :neg) "-" :s* :factor))
 
     :main (* :s* :expr :s* -1)})
 
@@ -109,10 +146,21 @@
   (def c (get s 0))
   (or (= c 95) (<= 97 c 122) (<= 65 c 90)))
 
-(defn- op-pattern [name]
-  (if (word-op? name)
-    ~(* ,name (not (choice (range "az") (range "AZ") (range "09") "_")))
-    name))
+(defn- quoted-name
+  "The name the way zelph prints it in quotes: escape_atom's two escapes."
+  [name]
+  (string "\""
+          (string/replace-all "\"" "\\\"" (string/replace-all "\\" "\\\\" name))
+          "\""))
+
+(defn- op-pattern
+  "Matches the operator and yields its NAME, whichever spelling was read."
+  [name]
+  (def bare
+    (if (word-op? name)
+      ~(* ,name (not (choice (range "az") (range "AZ") (range "09") "_")))
+      name))
+  ~(* (choice ,bare ,(quoted-name name)) (constant ,name)))
 
 (defn- build-grammar []
   (def by-prec @{})
@@ -122,12 +170,18 @@
     (array/push (in by-prec prec) entry))
 
   (def g (table ;(kvs grammar-base)))
-  (var operand :factor)
+  (var operand :primary)
   (var level 0)
+  (var factor-placed false)
+  (defn place-factor []
+    (put g :factor ~(choice :negated ,operand))
+    (set operand :factor)
+    (set factor-placed true))
 
   # Tightest precedence first, so each level's operands are the next
   # tighter level and the LOOSEST ends up as :expr.
   (each prec (reverse (sort (keys by-prec)))
+    (when (and (not factor-placed) (< prec power-prec)) (place-factor))
     (def entries (in by-prec prec))
     (def assocs (distinct (map |($ 2) entries)))
     (when (> (length assocs) 1)
@@ -137,15 +191,29 @@
     # that starts with the same characters.
     (def names (sort (map |($ 0) entries)
                      (fn [a b] (> (length a) (length b)))))
+    (def ops ~(choice ,;(map op-pattern names)))
     (def tag (if (= (first assocs) :right) :rchain :chain))
     (def rule (keyword "lvl" level))
+    # Above ^, an operand represents the next tighter level, beginning
+    # with a primary, hence a sign following an operator must have its
+    # own way in. Below ^, each operand already starts with a :factor,
+    # which admits one.
+    (def right-operand
+      (if (> prec power-prec) ~(choice :negated ,operand) operand))
     (put g rule
-         ~(group (* (constant ,tag) ,operand
-                    (any (* :s* (capture (choice ,;(map op-pattern names)))
-                            :s* ,operand)))))
+         (if (= prec power-prec)
+           # The level of ^. Its right operand functions as a :factor,
+           # in line with Python's power rule: this permits a sign
+           # (x^-1), and because :factor extends backward into this
+           # level, x^y^z nests to the right on its own.
+           ~(group (* (constant :rchain) ,operand
+                      (? (* :s* ,ops :s* :factor))))
+           ~(group (* (constant ,tag) ,operand
+                      (any (* :s* ,ops :s* ,right-operand))))))
     (set operand rule)
     (++ level))
 
+  (unless factor-placed (place-factor))
   (put g :expr operand)
   g)
 
@@ -158,6 +226,15 @@
   (or (string/has-prefix? "_" s)
       (and (= 1 (length s)) (<= 65 (get s 0) 90))))
 
+(defn- name-arg
+  "A parsed name -> zelph/fact argument: a Janet symbol (a variable) for a
+  bare variable-shaped name, the name string otherwise. A quoted name is
+  never a variable."
+  [n]
+  (if (string? n)
+    (if (var-name? n) (symbol n) n)
+    (n 1)))
+
 (defn- build
   "AST -> zelph/fact argument: a zelph/node, or a Janet symbol for a
   variable leaf (resolved into the statement's shared variable scope by
@@ -165,17 +242,10 @@
   [ast]
   (case (first ast)
     :num (zelph/number (ast 1))
-    :leaf (let [s (ast 1)]
-            (if (var-name? s) (symbol s) (zelph/resolve s)))
-    :call (let [head (ast 1)]
-            (zelph/fact (if (var-name? head) (symbol head) head)
-                        "of"
-                        (build (ast 2))))
+    :leaf (let [a (name-arg (ast 1))]
+            (if (symbol? a) a (zelph/resolve a)))
+    :call (zelph/fact (name-arg (ast 1)) "of" (build (ast 2)))
     :neg (zelph/fact "neg" "of" (build (ast 1)))
-    :pow (let [base (build (ast 1))]
-           (if (= 2 (length ast))
-             base
-             (zelph/fact base "^" (zelph/number (ast 2)))))
     :chain (do
              (var acc (build (ast 1)))
              (var i 2)
@@ -223,11 +293,14 @@
 
 # --- Display: render terms the way this module's parser reads them ------
 #
-# Registered HERE and not in the arithmetic modules on purpose: the
-# notation is this module's, not theirs. A term appears in island form
-# only where the default rendering would deviate -- where precedence
-# actually removes parentheses, or where a numeral drops its sigil.
-# Everything else keeps the form it has today.
+# Registered HERE and not within the arithmetic modules intentionally:
+# the notation belongs to this module, not theirs. A term appears in
+# island form solely at points where the default rendering would differ
+# -- specifically, when precedence actually eliminates parentheses, or
+# when an application outputs using call notation (refer to 'of' below).
+# Numerals retain their '&' (as defined by :numeral-prefix below),
+# ensuring a numeral never opens an island independently. All other
+# elements maintain their default form.
 #
 # 'of' is registered in APPLICATION form: (f of u) is what this module's
 # f(u) builds, and call notation is how it reads back. That also covers
@@ -241,10 +314,8 @@
    :name-first "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
    :name-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"})
 
-# The grammar's own operators, plus ^ -- which the parser handles as a
-# dedicated rule (integer exponent) but which prints like any other infix.
 (zelph/set-infix-display "math-syntax"
-  [;(map |[($ 0) ($ 1) ($ 2)] operator-table) ["^" 30 :right]])
+  (map |[($ 0) ($ 1) ($ 2)] operator-table))
 
 (zelph/set-application-display "math-syntax" ["of"])
 

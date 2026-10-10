@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/script_engine_impl.hpp"
 
 #include "network/reasoning.hpp"
+#include "string/string_utils.hpp"
 
 #include <janet.h>
 
@@ -69,6 +70,10 @@ namespace
         }
         janet_panicv(message);
     }
+
+    // The binding from which the zelph/rule macro acquires its rule
+    // builder; the macro's expansion spells the identical name.
+    const char* const kRuleMacroBuilder = "zelph/rule-macro-builder";
 }
 
 namespace zelph
@@ -80,7 +85,13 @@ namespace zelph
 
     ScriptEngine::Impl::~Impl()
     {
-        if (s_instance == this) s_instance = nullptr;
+        if (s_instance == this)
+        {
+            s_instance = nullptr;
+            // The keywords go with the engine that has registered
+            // them.
+            string::set_keyword_spellings({}, {});
+        }
         if (_janet_env)
         {
             for (auto& [kw, entry] : _keyword_handlers)
@@ -103,6 +114,7 @@ namespace zelph
         register_zelph_functions();
         setup_module_paths();
         setup_script_runner();
+        setup_rule_macro();
         setup_peg();
         setup_numbers();
     }
@@ -161,7 +173,8 @@ namespace zelph
                                                                                                             "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only.");
 
         janet_def(_janet_env, "zelph/run-delta", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_delta>), "(zelph/run-delta)\nRun inference seeded by the facts created since the previous run, like the .run-delta command. "
-                                                                                                              "Costs time in the size of the addition rather than of the graph, which is what makes assert-then-reason loops practical. "
+                                                                                                              "Skips the pass over the whole graph for the rules that can be seeded, which is what makes assert-then-reason loops practical; "
+                                                                                                              "a rule with a negated condition still takes a classic pass over the facts its positive conditions match at each negation level, and a rule that cannot be seeded takes one in every iteration. "
                                                                                                               "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only.");
 
         janet_def(_janet_env, "zelph/cluster", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cluster>), "(zelph/cluster &opt name)\nActivate a named cluster, or with nil / \"default\" deactivate cluster tracking; without an argument only report. "
@@ -192,15 +205,34 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nMark a fact pattern as negation. Returns the pattern node.\nEquivalent to (*(pattern) ~ negation) in zelph syntax.");
 
-        janet_def(_janet_env, "zelph/rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule>), "(zelph/rule conditions & consequences)\nCreate an inference rule.\n"
-                                                                                                    "conditions: array of fact nodes (the conjunction).\n"
-                                                                                                    "consequences: one or more fact nodes to deduce.\n"
-                                                                                                    "Returns the condition set node.");
+        janet_def(_janet_env, "zelph/rule*", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_star>), "(zelph/rule* conditions & consequences)\nCreate an inference rule: the plain function behind the zelph/rule macro.\n"
+                                                                                                          "conditions: array of fact nodes (the conjunction).\n"
+                                                                                                          "consequences: one or more fact nodes to deduce.\n"
+                                                                                                          "Returns the condition set node.\n"
+                                                                                                          "Its arguments are evaluated before it runs, so it cannot tell which of them the call built: it marks nothing, "
+                                                                                                          "and a collection among them is a value the rule refers to. Unlike zelph/rule it is a value that apply or map can take. "
+                                                                                                          "Refused while a rule is being built.");
+
+        // What the zelph/rule macro builds its rule with: zelph/rule*
+        // excluding the refusal, which the macro's own rule would otherwise
+        // meet. Bound solely until setup_rule_macro has unquoted it into the
+        // macro.
+        janet_def(_janet_env, kRuleMacroBuilder, wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule>), nullptr);
+
+        janet_def(_janet_env, "zelph/build-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_build_rule>), "(zelph/build-rule thunk)\nRun a thunk that builds one rule, as a parsed rule is built, and return what it returns. "
+                                                                                                                "What the thunk builds into the rule is the rule's text: a collection it writes into it is the rule's own, and the ground parts of the rule it returns "
+                                                                                                                "(every => fact over the condition set it returns, or over the condition of the => fact it returns) are rule patterns, not claims. "
+                                                                                                                "Unlike a parsed rule, a duplicate is not rolled back. The zelph/rule macro runs its argument forms in it; "
+                                                                                                                "wrap a rule written by hand with zelph/fact in it. Refused while another rule is being built.");
 
         janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_dedup_rule>), "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
                                                                                                                 "If the graph already holds a rule that is the same up to renaming of its variables, "
                                                                                                                 "the newly built one is rolled back and the existing node returned instead. "
                                                                                                                 "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
+
+        janet_def(_janet_env, "zelph/rule-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_text>), "(zelph/rule-text thunk)\nRun a thunk that writes a rule which another statement mentions, and return what it returns. "
+                                                                                                              "The collections the thunk writes are that rule's own, and their memberships are rule patterns, not claims. "
+                                                                                                              "Emitted automatically around every parsed `... => ...` that stands inside another statement.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_car>), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cdr>), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
@@ -275,7 +307,7 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/set-number-digits", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_number_digits>), "(zelph/set-number-digits digits)\nRegister the digit alphabet of the loaded number representation, as an "
                                                                                                                               "array of digit nodes or names in ascending order of value (e.g. [\"0\" \"1\"] for binary). "
-                                                                                                                              "node_to_string then displays every nil-terminated cons list consisting solely of these digit "
+                                                                                                                              "node_to_string then displays every canonical (no leading zero digit) nil-terminated cons list consisting solely of these digit "
                                                                                                                               "nodes as a decimal &-literal -- the inverse of the &-input syntax (zelph/number). All other "
                                                                                                                               "cons lists keep the generic <...> display. An empty array disables the feature.");
 
@@ -360,6 +392,33 @@ namespace zelph
         if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
     }
 
+    void ScriptEngine::Impl::setup_rule_macro() const
+    {
+        // zelph/rule is a macro that ensures its argument forms execute within
+        // the context of the rule's build process: since a function's
+        // arguments are evaluated before execution, the function cannot know
+        // which parts of the rule were constructed via its invocation. The two
+        // functions are unquoted into the expansion, preventing a caller's own
+        // binding of zelph/build-rule from capturing the call. The second is
+        // kRuleMacroBuilder, whose binding is discarded as soon as the macro
+        // holds it: no program can call it by name, and zelph/rule* among the
+        // argument forms meets the refusal. A program that takes the builder
+        // from an expansion of the macro (macex1) calls it without
+        // encountering the refusal.
+        const char* code = R"janet(
+                (defmacro zelph/rule
+                  `Create an inference rule, built as a parsed rule is built. conditions: array of fact nodes (the conjunction). consequences: one or more fact nodes to deduce. Returns the condition set node. The argument forms run inside zelph/build-rule, so what they build into the rule is the rule's text: a collection they write into it is the rule's own, and a ground fact they build into it is a rule pattern, not a claim. A fact they build that the rule does not hold is a claim, and a node built before the call stays what it was. A macro is no value that apply or map can take: use zelph/rule* there.`
+                  [conditions & consequences]
+                  ~(,zelph/build-rule (fn [] (,zelph/rule-macro-builder ,conditions ,;consequences))))
+            )janet";
+
+        Janet out;
+        int   status = janet_dostring(_janet_env, code, "rule-macro", &out);
+        flush_err_trace();
+        if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
+        janet_table_remove(_janet_env, janet_csymbolv(kRuleMacroBuilder));
+    }
+
     void ScriptEngine::Impl::setup_peg()
     {
         // zelph Grammar:
@@ -374,6 +433,19 @@ namespace zelph
         // 9. :selffact -> :pred X (self-fact sugar: desugars to (X pred X))
         // Returns tagged tuples like [:atom "val"], [:list-compact "val"] or [:nested sub-stmt...] for C++ processing
         std::string peg_setup = R"zph(
+            # A group in parentheses and a whole line are read alike: one or
+            # more statements separated by commas. A single statement gets
+            # `tag` (:nested for a group, :root for a line), several are a
+            # comma list of conditions (:conjunction). The grammar reads the
+            # statements once and this names the result afterwards, in the
+            # tree each case has always had -- see :tag-nested for what
+            # deciding it beforehand cost.
+            (defn zelph-comma-list [tag]
+              (fn [head & tail]
+                (if (empty? tail)
+                  (array tag ;(slice head 1))
+                  (array :conjunction head ;tail))))
+
             (def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
                 :s* (any :ws)
@@ -382,7 +454,17 @@ namespace zelph
                 # > and < are reserved to act as delimiters.
                 # , is reserved for unquoting Janet variables.
                 # To use them as atoms, we define specific rules below.
-                :reserved (set " \t\r\n\0\v<\"(){}*>,¬")
+                # A set matches single BYTES, hence the two characters beyond
+                # ASCII stand outside it, each considered as a whole. `¬`
+                # corresponds to the bytes C2 AC, and inside the set it
+                # reserved both: every character from U+0080 to U+00BF starts
+                # with C2 (°, µ, ½), and numerous others carry AC as a
+                # continuation byte (€, the 京 in 北京), so none of them could
+                # stand in a bare name. The no-break space U+00A0 also uses
+                # C2 and stays reserved, just as previously: a line
+                # containing one in place of a blank is rejected instead of
+                # being interpreted as a single name that holds the blanks.
+                :reserved (choice (set " \t\r\n\0\v<\"(){}*>,") "¬" "\u00A0")
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
@@ -435,14 +517,27 @@ namespace zelph
                 # a variable token (e.g. :R) keeps variable semantics.
                 :tag-selffact (group (* (constant :selffact) ":" (capture (some :symchars)) :s* :val-any))
 
+                # A prefix form -- :pred X, ≈net X, *X, @{...} -- is
+                # attempted before the atom that the prefix might also be
+                # read as. If the form fails due to its operand failing, and
+                # the content following the prefix cannot end a value, then
+                # the atom is rejected: interpreted as an atom, the prefix
+                # leaves the same operand to the next value, which fails the
+                # same way, so the line has no reading either way. Finding
+                # that out read the operand twice, and each prefix form
+                # contained within it twice per reading -- 2^n for a
+                # malformed line nested n levels deep.
+                :value-end (choice :ws (set ",)}>") -1)
+                :spent-prefix (choice (* (choice ":" "≈") (some :symchars) :s* (not :value-end)) "@{")
+
                 # Atom Definition Order:
                 # 1. Quoted (always safe)
                 # 2. Multi-char arrows (e.g. "=>"). Must be before raw-atom because "=" is a symchar.
                 # 3. Raw atoms (e.g. "abc", "=")
                 # 4. Single ops (e.g. ">"). Checked last to prefer longer matches or delimiters.
-                :tag-atom   (group (* (constant :atom) (choice :quoted :arrow-multi :raw-atom :op-single)))
+                :tag-atom   (group (* (constant :atom) (not :spent-prefix) (choice :quoted :arrow-multi :raw-atom :op-single)))
 
-                :star-atom  (group (* (constant :atom) (capture "*")))
+                :star-atom  (group (* (constant :atom) (capture "*") (> 0 :value-end)))
 
                 # 1. Compact List: <abc> — no spaces between chars, split into individual character nodes.
                 #    Characters are stored reversed internally (LSB-first for numbers).
@@ -460,13 +555,21 @@ namespace zelph
                 :tag-negation (group (* (constant :negation) "¬" :s* :val-any))
 
                 # Conjunction sugar: comma-separated conditions inside parentheses
-                :conj-cond (group (* (constant :condition) :val-any (any (sequence :s+ :val-any))))
+                :conj-cond (group (* (constant :condition) :stmt-any))
                 :comma-sep (* :s* "," (not :symchars) :s*)
+                :comma-list (* :conj-cond (any (* :comma-sep :conj-cond)))
 
-                # Nested Facts: ( A B C )
-                :tag-nested (choice
-                              (group (* (constant :conjunction) "(" :s* :conj-cond (some (* :comma-sep :conj-cond)) :s* ")"))
-                              (group (* (constant :nested) "(" :s* :stmt-any :s* ")")))
+                # Nested Facts: ( A B C ), or a comma list ( A B C, D E F ).
+                # ONE pattern reads both, and zelph-comma-list tells them
+                # apart by the number of conditions it found. Two
+                # alternatives -- the comma list first, the plain statement
+                # when no comma turned up -- read a group without a comma
+                # twice, and every group inside it twice per reading, so a
+                # term nested n deep was read 2^n times. A PEG does not
+                # remember what it has read, and Janet collects no garbage
+                # during a match: depth 20 took six seconds and a gigabyte
+                # for one line.
+                :tag-nested (/ (* "(" :s* :comma-list :s* ")") ,(zelph-comma-list :nested))
 
                 # Sets: { A B C }
                 :set-content (any (sequence :s* :val-any))
@@ -486,7 +589,93 @@ namespace zelph
                 #    represents the number 123 (same internal form as the compact <123>).
                 # The loop (if-not ">" :val-any) ensures we don't consume the closing delimiter.
                 :list-content (any (sequence :s* (if-not ">" :val-any)))
-                :tag-list-nodes (group (* (constant :list-nodes) (* "<" :list-content :s* ">")))
+                # A node list must have its closing ">" before the termination
+                # of the group it belongs to, and :list-probe checks that
+                # first, scanning only characters and leaving no capture.
+                # Absent this check, "<" as an operator -- as in a < b or
+                # x <= y -- was initially interpreted as the start of a list:
+                # the attempt read the rest of the statement, including nested
+                # groups, and failed for want of a ">", and :stmt-any then
+                # re-read the entire expression, so (a < (a < ... x)) doubled
+                # per level, just as :tag-nested did. The probe skips content
+                # that might conceal a ")" or a ">": strings, compact lists
+                # (<=)> is one) and balanced groups and sets. Every list that
+                # successfully parses passes this check, so it only saves
+                # attempts that could not succeed.
+                #
+                # Five forms passed an earlier probe all the same, and each
+                # doubled at every level in the same fashion:
+                # - a "(" or "{" that does not close inside the probe, read as
+                #   a plain character, as in (a < (a < x})) -- the probe now
+                #   refuses it, since a group or set that parses is balanced;
+                # - a ">" positioned after a comma separating two conditions,
+                #   as in (x < a, b > c) -- the probe halts at such a comma, as
+                #   a node list never contains one;
+                # - the ">" of a nested list, as in (a < <b c> (a < ...)) --
+                #   the probe tallies every "<" it encounters and allows each
+                #   ">" to close one such opening before its own. It tallies
+                #   rather than diving recursively into the nested list,
+                #   because a recursive probe descends one level per "<", and a
+                #   long sequence a < a < ... exhausts the recursion limit of
+                #   peg/match;
+                # - the ">" of an arrow, as in (a < -> (a < ...)) -- a value
+                #   commencing with -->, -> or => is read as that arrow in
+                #   full. Where the reading stands at the beginning of a value
+                #   -- immediately after a "<" or a blank that cannot belong to
+                #   an atom, and after a string, a group, a set, a list,
+                #   another arrow or a prefix form -- the probe skips the
+                #   whitespace and subsequent arrows. There every whitespace
+                #   character separates values, the form feed included, so in
+                #   "q"\f-> the arrow constitutes a value by itself. After an
+                #   atom the probe skips no arrow: in x-> the "-" terminates
+                #   the atom x- and the ">" can close a list, and an atom
+                #   absorbs a form feed following it, so a\f-> is the atom a\f-
+                #   and a ">". The probe reads a run of blanks as a whole,
+                #   regardless of whether an arrow comes after or not: re-read
+                #   from each blank passed, a run of n blanks cost n^2;
+                # - the ">" in the operand of a prefix form, as in
+                #   (a < ¬-> (a < ...)) -- ¬X, *X, :p X and ≈n X read X as a
+                #   value, and an X starting with a ">" includes it: ¬->
+                #   denotes the negation of the arrow ->, :p > the self-fact of
+                #   the atom >, and :p-> the same under the name p-. Where a
+                #   value commences, the probe skips a run of prefixes, each
+                #   accompanied by the blanks its form consumes after it, and
+                #   then the -->, ->, =>, >= or > that the operand begins with.
+                #   It skips the prefixes irrespective of whether such an
+                #   operand follows, so it reads a run of them just once. ¬ and
+                #   * are reserved, so either one starts a value wherever it
+                #   appears, as in x¬->; a ":" or "≈" initiates a prefix only
+                #   where a value starts: in x:p > it belongs to the atom x:p,
+                #   and the ">" closes the list. The focus * reads its operand
+                #   with no blank in between, and a form feed right behind it
+                #   begins that operand, an atom: in *\f-> the atom is \f- and
+                #   the ">" closes the list, so the probe does not treat that *
+                #   as a prefix.
+                :probe-quoted (* "\"" (any (choice (* "\\" 1) (if-not "\"" 1))) "\"")
+                :probe-compact (* "<" (some (if-not (set "> \t\r\n") 1)) ">")
+                :probe-item (choice :probe-quoted :probe-compact :probe-group :probe-set)
+                :probe-group (* "(" (any (choice :probe-item (if-not (set "(){}") 1))) ")")
+                :probe-set (* "{" (any (choice :probe-item (if-not (set "(){}") 1))) "}")
+                :probe-open (cmt (* (backref :probe-depth) "<") ,inc :probe-depth)
+                :probe-close (cmt (* (backref :probe-depth) ">") ,(fn [depth] (if (pos? depth) (dec depth))) :probe-depth)
+                :probe-mark (choice (* "¬" :s*) (* "*" (not "\f")))
+                :probe-prefix (choice :probe-mark (* (choice ":" "≈") (some :symchars) :s*))
+                :probe-prefixed (* (some :probe-prefix) (? (choice "-->" "->" "=>" ">=" ">")))
+                :probe-gap (any (choice (some :ws) "-->" "->" "=>" :probe-prefixed))
+                :probe-arrow (* (some (set " \t\r\n\0\v")) :probe-gap)
+                :list-probe (drop (* "<" (constant 0 :probe-depth) :probe-gap (any (choice (* :probe-item :probe-gap) :probe-arrow (* :probe-open :probe-gap) (* :probe-close :probe-gap) (* (> 0 :probe-mark) :probe-prefixed :probe-gap) (if-not (choice (set "(){}<>") (* "," (not :symchars))) 1))) ">"))
+                # After the probe locates the ">", the content must terminate
+                # at the point where the list closes or where a value can
+                # end: at ">", a comma separator, ")", "}" or the line's end.
+                # In any other position, the line has no reading: read as an
+                # operator, "<" leaves the same content for the next value,
+                # which similarly fails. Determining this required reading
+                # the content twice, and each nested list within it twice per
+                # reading -- resulting in 2^n for a malformed line nested n
+                # levels deep. The match ceases at that point with an error,
+                # and the caller reports the line as unparsable.
+                :list-can-close (choice ">" (* "," (not :symchars)) (set ")}") -1)
+                :tag-list-nodes (* (> 0 :list-probe) (group (* (constant :list-nodes) "<" :list-content)) :s* (choice ">" (if-not :list-can-close (error (constant "list")))))
 
                 # Value order:
                 # Check lists first so "<" starts a list if possible.
@@ -499,9 +688,8 @@ namespace zelph
                 # Top Level Parsing
                 # Everything is captured into a :root group, or a :conjunction if comma separated.
                 # C++ logic decides if it's a single value or a fact (S P O) based on element count.
-                :main (sequence :s* (choice
-                                        (group (* (constant :conjunction) :conj-cond (some (* :comma-sep :conj-cond))))
-                                        (group (* (constant :root) :stmt-any))) :s* -1)})
+                # Read once, like a group in parentheses (see :tag-nested).
+                :main (sequence :s* (/ :comma-list ,(zelph-comma-list :root)) :s* -1)})
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))

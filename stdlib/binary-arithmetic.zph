@@ -1,27 +1,40 @@
-# Rule-based binary addition for arbitrarily large non-negative integers.
+# Binary arithmetic (+ - cmp * / mod) on non-negative integers of any
+# size.
 #
-# Numbers are stored LSB-first as cons lists of bit atoms: <101> (binary 101,
-# decimal 5) is stored as 1 cons (0 cons (1 cons nil)). node_to_string
-# reverses the display order, so results appear MSB-first as entered.
+# Numbers are kept in least-significant-bit-first order, represented as cons
+# lists composed of bit atoms: <101> (binary 101, decimal 5) appears in
+# storage as 1 cons (0 cons (1 cons nil)). The digit alphabet registered
+# below makes node_to_string render such a list as a decimal &-literal,
+# enabling a binary session to interpret and output values in decimal.
 #
-# Unlike arithmetic.zph (base 10), the digit-level knowledge is NOT a
-# generated lookup table. It is the truth table of the full adder: 16
-# hand-written axioms, the logical minimum for positional addition. In
-# base 2, the "table" degenerates into the Boolean axioms themselves.
-# The entire script is native zelph syntax -- no Janet involved.
+# In contrast to decimal-arithmetic.zph (base 10), digit-level knowledge is
+# NOT a generated lookup table. Instead, it consists of 52 hand-written
+# digit-table facts: the truth tables for the full adder (16), the full
+# subtractor (16) and digit multiplication, an AND gate with increment
+# (16), plus digit comparison (4). In base 2, these "tables" are the
+# Boolean truth tables themselves. The Janet block below serves solely as
+# the I/O and display layer (the &-literal reader zelph/number, the digit
+# alphabet, the self-fact sugar exclusions); the tables are expressed using
+# native zelph syntax.
 #
-# The recursion rules (A0, D1-D3, As1-As3, C0) are identical to
-# arithmetic.zph: they are base-agnostic. Only the digit axioms differ.
+# This file holds no recursion rules. They exist solely, once, in
+# common-arithmetic.zph (imported at the end), and execute unchanged on
+# the decimal and the NAND substrate as well: only the digit tables
+# differ.
 #
-# Do NOT load this script together with arithmetic.zph: both define
-# d+/ci/sum/co facts over the digits 0 and 1, with base-specific and
-# mutually inconsistent values (e.g. (1 d+ 1): sum 2 in base 10, but
-# sum 0 / co 1 in base 2). The reasoning engine would match both.
+# The substrates are alternatives: each claims the module ID arithmetic
+# through .provides, causing a second one to be omitted with a warning.
+# When loaded together, they would state tci/sum/co facts for the digits 0
+# and 1, featuring base-dependent, conflicting values (for instance,
+# (1 d+ 1): sum 2 in base 10, yet sum 0 / co 1 in base 2), and the rules
+# would match both.
 #
-# Usage after loading this script:
-#   (<101> + <11>) = X       (5 + 3 = 8 -> <1000>)
-#   (<1111> + <1>) = X       (15 + 1 = 16 -> <10000>)
-#   (&128 + &53) = X         (128 + 53 = 181 -> 10110101)
+# After this script has been
+# loaded, proceed with the
+# following usage:
+#   (<101> + <11>) = X       (5 + 3 = 8 -> &8)
+#   (<1111> + <1>) = X       (15 + 1 = 16 -> &16)
+#   (&128 + &53) = X         (128 + 53 = 181 -> &181)
 #   (&42 - &9) = X
 #   (&42 cmp &9) = X
 #   (&12 * &34) = X

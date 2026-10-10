@@ -86,6 +86,7 @@ add_executable(zelph_tests
     test_profiler.cpp
     test_pruning.cpp
     test_reasoning.cpp
+    test_recipe_ids.cpp
     test_rule_identity.cpp
     test_rule_patterns.cpp
     test_result_query.cpp
@@ -106,12 +107,29 @@ add_executable(zelph_tests
     test_symbolic_integers.cpp
     test_topoly.cpp
     test_var_closure.cpp
+    test_versions.cpp
     test_wikidata_constraints.cpp
     test_wikidata_export.cpp
     test_wikidata_import.cpp
     test_wikidata_qualifiers.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
+
+# Networks saved by an engine before template IDs, which test_recipe_ids.cpp
+# loads as a user would. They are compiled into the test binary instead of
+# being loaded from the source tree, ensuring those cases run wherever the
+# binary is executed, also where a package installs it.
+file(GLOB ZELPH_OLDER_NETWORKS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/older_networks/*.bin)
+set(ZELPH_OLDER_NETWORKS_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/older_networks.cpp)
+add_custom_command(
+    OUTPUT ${ZELPH_OLDER_NETWORKS_SOURCE}
+    COMMAND ${CMAKE_COMMAND} -DINPUT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/older_networks
+            -DOUTPUT=${ZELPH_OLDER_NETWORKS_SOURCE} -DFUNCTION=older_networks
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake
+    DEPENDS ${ZELPH_OLDER_NETWORKS} ${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake
+    COMMENT "Embedding the test networks of an older engine"
+    VERBATIM)
+target_sources(zelph_tests PRIVATE ${ZELPH_OLDER_NETWORKS_SOURCE})
 
 # Where test_paper_scripts.cpp looks. An absolute path into the SOURCE tree,
 # because the scripts are development material and are not installed anywhere:
@@ -291,6 +309,36 @@ if (Python3_Interpreter_FOUND)
     if (TARGET zelph)
         zelph_add_check_test(exit_status_of_the_binary "${CMAKE_SOURCE_DIR}/tools/check_exit_status.py"
                 "$<TARGET_FILE:zelph>" 0)
+    endif ()
+
+    # --- the paper's timing table --------------------------------------------
+    #
+    # s9_timings.py names stdlib modules, similar to the scripts
+    # test_paper_scripts.cpp runs, yet nothing ran it. Its import row read the
+    # REPL's statement timer, which only outputs values starting at 10 ms,
+    # causing the script to abort once the import duration fell below this
+    # threshold, thereby halting run_all.sh as well. The initial case runs the
+    # script's doctests, which pin the mapping between reports and rows and how
+    # import time is read. The second case constructs the entire table in one go
+    # using the binary from this build and requires the import row's label with a
+    # time specified in tenths of a millisecond, a value exclusively available
+    # through the clock read within the session.
+    set(ZELPH_PAPER_TIMINGS "${CMAKE_SOURCE_DIR}/dev_scripts/paper/s9_timings.py")
+    zelph_add_check_test(paper_timings_select_the_claimed_reports "${ZELPH_PAPER_TIMINGS}" "--self-test" 0)
+    if (TARGET zelph)
+        zelph_add_check_test(paper_timing_table_is_complete "${ZELPH_PAPER_TIMINGS}" "$<TARGET_FILE:zelph> 1" 0
+                "inference deferred[)] [|] n/a [|] [0-9]+[.][0-9] ms")
+    endif ()
+
+    # --- the allocator the binary names ----------------------------------------
+    #
+    # Only the app connects to mimalloc, meaning only the app can say which
+    # one it runs on; test_versions.cpp covers the remaining part, a binary that
+    # links no mimalloc.
+    if (TARGET zelph AND TARGET zelph_mimalloc_override)
+        get_target_property(ZELPH_LINKED_MIMALLOC zelph_mimalloc_override ZELPH_MIMALLOC_VERSION)
+        zelph_add_check_test(version_banner_names_the_linked_mimalloc "${CMAKE_SOURCE_DIR}/tools/check_version_banner.py"
+                "$<TARGET_FILE:zelph> --mimalloc ${ZELPH_LINKED_MIMALLOC}" 0)
     endif ()
 else ()
     # Rather than skip. The tests the packages run at install time are the ones

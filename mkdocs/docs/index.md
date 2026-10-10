@@ -35,6 +35,7 @@ wikidata> (I P569 Y, I P571 Z) => !
 wikidata> Q42 P569 Q1900
 wikidata> Q42 P571 Q1900
 ! ⇐ {(Q42 P569 Q1900) (Q42 P571 Q1900)}
+Found one or more contradictions!
 ```
 
 An entity here possesses a date of birth and, at the same time, an inception – a date set aside for what is founded or created rather than born. What emerges is not a score and not a list of suspects: it is the two statements that cannot both be right, which is what anyone needs in order to decide which of them is the mistake. Six rules of this kind run over a 26.5-million-node slice of the dump in under a minute.

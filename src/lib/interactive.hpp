@@ -90,6 +90,14 @@ namespace zelph::console
         // whole-program runner, the script arguments and the module guard.
         void process_file(const std::string& file, const std::vector<std::string>& args = {}) const;
 
+        // Whether a `.quit` instruction arrives at the command table and
+        // asks the caller to end the session. The `.quit` handler merely
+        // records the request, leaving the decision to the input-reading
+        // loop; a file processed by `process_file` already ceases execution
+        // at that point, and a caller that reads lines itself asks this
+        // after every `process()`.
+        bool quit_requested() const;
+
         // Whether anything has FAILED in this session: a command that threw
         // and was reported, or an import that was declined. The binary turns
         // it into its exit status. Not cleared by `.new`, and deliberately not

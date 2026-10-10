@@ -21,10 +21,8 @@ Both exist because first-order logic cannot quantify over formulas, so the quant
 
 A rule generator is the same move, with two differences that matter:
 
-- The metalanguage is the object language.
-  The generator is a statement in the same syntax, stored in the same graph, matched by the same engine as the rules it writes.
-- The instances are **real objects**, not a figure of speech.
-  A generated rule appears in `.list-rules`, carries its own justification, can be `.explain`ed, saved, loaded, and removed one at a time — and can be reasoned _about_ by further rules.
+- The metalanguage is the object language. The generator is a statement expressed in identical syntax, housed within the same graph, matched by the same engine that processes the rules it writes.
+- The instances are **actual objects**, not metaphorical constructs. A rule produced through generation surfaces in `.list-rules`, carries its own justification, may be `.explain`ed, saved, loaded, and removed individually.
 
 That is what distinguishes a generator from the [meta-rule](logic.md#meta-rules-predicates-as-first-class-nodes) `(R is transitive, A R B, B R C) => (A R C)`, which expresses the same closure by quantifying over the predicate at match time.
 Both are available and both are correct; the meta-rule keeps one rule and re-decides the quantification on every match, the generator pays it once per declaration and leaves something behind that the rest of the system can see.
@@ -38,6 +36,7 @@ Deduplication is therefore explicit, and it is exact — the instantiated condit
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (A knows B) => ((X p B) => (X q B))
 zelph> tom knows red
 ((X p red) => (X q red)) ⇐ (tom knows red)
@@ -46,6 +45,8 @@ zelph> ann knows blue
 ((X p blue) => (X q blue)) ⇐ (ann knows blue)
 zelph> .deductions off
 Deduction printing mode: off
+  No derivations are printed; a run says how many it hid and marks the prompt
+with '+' (e.g. "zelph+> ").
 zelph> .list-rules
 Listing all rules:
 ------------------------
@@ -67,6 +68,7 @@ Written as generators, declaring one relation to be a partial order installs the
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (R is partialorder) => ((X R Y, Y R Z) => (X R Z))
 zelph> (R is partialorder) => ((X R Y, Y R X) => (X sameas Y))
 zelph> divides is partialorder
@@ -90,6 +92,7 @@ Written as generators, _which schemas a system accepts_ becomes ordinary data, a
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (S accepts axiomT) => ((A necessaryin S) => (A holdsin S))
 zelph> (S accepts axiomD) => ((A necessaryin S) => (A possiblein S))
 zelph> kt accepts axiomT
@@ -120,11 +123,12 @@ The nesting is written with parentheses, which the parser [requires](logic.md#ba
 ```
 zelph> .deductions all
 Deduction printing mode: all
+  Every derivation is printed.
 zelph> (G go H) => ((H is on) => ((P entails Q) => ((X P Y) => (X Q Y))))
 zelph> now go k
 ((k is on) => ((P entails Q) => ((X P Y) => (X Q Y)))) ⇐ (now go k)
-((P entails Q) => ((X P Y) => (X Q Y))) ⇐ (k is on)
 zelph> k is on
+((P entails Q) => ((X P Y) => (X Q Y))) ⇐ (k is on)
 zelph> parent entails ancestor
 ((X parent Y) => (X ancestor Y)) ⇐ (parent entails ancestor)
 zelph> a parent b
@@ -144,16 +148,11 @@ The shape to watch for is one whose consequence builds a term out of its own con
 (F respects R) => ((X R Y) => ((F of X) R (F of Y)))
 ```
 
-Declaring `succ respects sameparity` installs a rule that derives a fact about `(succ of a)`, then about `(succ of (succ of a))`, and does not stop.
-That is [congruence](https://en.wikipedia.org/wiki/Congruence_relation) stated without a bound, and it is the generated rule that runs away; writing it out by hand for `succ` behaves identically.
+Stating `succ respects sameparity` sets up a rule that derives a fact concerning `(succ of a)`, then proceeds to `(succ of (succ of a))`, and continues indefinitely. This is [congruence](https://en.wikipedia.org/wiki/Congruence_relation) stated without a bound, and it is the generated rule that runs away; manually writing it out for `succ` yields the same behaviour. A rule whose collection literal flows back into its own binding represents another such shape (see [A literal a rule derives](concepts.md#a-literal-a-rule-derives)).
 
-**Generation itself terminates.**
-A generator cannot create nodes: the variables of the rule it writes are quantified by that inner rule, so the [fresh-variable](logic.md#fresh-variables-generative-rules) mechanism never applies to them.
-What a generator can do is produce one rule per match, and the matches come from a fact base that only rules can grow — so a generator that runs away needs a rule that feeds it, exactly like any other rule.
+**Generation itself terminates.** A generator creates nodes solely as components within the rules it writes: each rule it produces gets collections of its own where the inner rule has collection literals, and the variables within that rule are quantified by it, ensuring the [fresh-variable](logic.md#fresh-variables-generative-rules) mechanism does not affect them. What a generator is capable of is issuing one rule per match, and the matches come from a fact base that only rules can expand – thus, a runaway generator requires a rule that supplies it, precisely as any other rule does.
 
-**A generated rule is an ordinary rule.**
-It survives `.save` and `.load`, `.explain` reconstructs proofs through it, `.list-rules` shows it, and `.remove` takes it — although the generator will write it again on the next run, because a consequence cannot be deleted while its premise stands.
-It is created inside whatever [cluster](rules.md#node-clusters-transactional-workspaces) is active, so `.cluster-drop` rolls it back with the rest of an experiment.
+**A generated rule is an ordinary rule.** It survives `.save` and `.load`, `.explain` rebuilds justifications via it, `.list-rules` shows it, and `.remove` takes it – yet the generator will recreate it on the next run, since a consequence cannot be deleted while its premise persists. Much like a typed rule, merely writing it does not make an assertion: a condition or consequence that becomes ground through substitution remains a rule pattern until something asserts or derives it. Similarly to a typed rule, one that keeps a variable constitutes graph structure rather than data: no other rule’s condition matches it, meaning a rule can reason about the declaration that wrote it, but not about the rule itself (refer to [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)). It is created within whichever [cluster](rules.md#node-clusters-transactional-workspaces) is currently active, thus `.cluster-drop` reverts it alongside the rest of an experiment.
 
 ## Reference: what is substituted
 
@@ -161,13 +160,13 @@ When a generator fires, the rule it writes is rebuilt under the bindings of that
 
 | Part of the inner rule | What happens |
 | --- | --- |
-| a variable the generator's conditions bound | replaced by the node it was bound to |
-| a variable they did not bind | stays a variable — it is quantified by the inner rule |
-| a condition set | rebuilt as a set of its own, so the new rule has its own conjunction |
-| a negated condition | stays negated; the `¬` tag is restated on the rebuilt pattern |
-| a `!=` guard | rebuilt like any other condition |
-| `!` as the consequence | rebuilt, so a generator can install a contradiction check |
-| a container, `{...}` or `@{...}` | rebuilt with its substituted members — except the one a consequence writes **into**, whose identity is the point |
+| a variable that the generator’s conditions had bound | substituted with the node it was bound to |
+| a variable that they did not bind | stays a variable – it is quantified by the inner rule |
+| a condition set | rebuilt as a set of its own, ensuring the new rule possesses its own conjunction |
+| a negated condition | stays negated; the `¬` tag is reinserted into the rebuilt pattern |
+| a `!=` guard | rebuilt in the same manner as any other condition |
+| `!` as the consequence | rebuilt, enabling a generator to introduce a contradiction check |
+| a container, `{...}` or `@{...}` | rebuilt with its substituted members; a collection becomes one of the new rule’s own, the one a consequence writes **into** included |
 
 A container follows the renaming that a generator performs on the rule it
 writes, so the generated rule behaves like the same rule typed by hand:
@@ -182,10 +181,46 @@ zelph> (K is on) => ((X p Y) => (X likes {Y}))
 (c likes {d}) ⇐ (c p d)
 ```
 
-The exception is the accumulator: `(K is on) => ((X reported Y) => (Y in @{X}))`
-keeps naming the one container the generator wrote, because putting something
-into a container is a statement about that container. See
-[Braces](concepts.md#braces-set-constants-and-collections) for the two literals.
+A collection **into** which a consequence writes is likewise reconstructed, ensuring that each rule authored by a generator accumulates within a distinct collection:
+
+```
+zelph> t go k
+zelph> u go m
+zelph> (G go H) => ((X G Y) => (Y in @{H}))
+(G go H) => ((X G Y) => (Y in @{Y H}))
+((X u Y) => (Y in @{m Y})) ⇐ (u go m)
+((X t Y) => (Y in @{k Y})) ⇐ (t go k)
+zelph> a t bug1
+(bug1 in @{k bug1}) ⇐ (a t bug1)
+zelph> b u bug2
+(bug2 in @{m bug2}) ⇐ (b u bug2)
+```
+
+Each rule produced by the generator writes into the term of its own collection, just as the same rule manually authored does (refer to [Collections](concepts.md#collections)). However, the node to which a generator’s variable is bound presents a distinct case: a collection within the data is a node like any other, and the rule generated by the generator names that exact node, so `(S has C) => ((X r Y) => (X in C))` applied to `d has @{x}` writes a rule that places what it derives into `@{x}` itself. Consult [Braces](concepts.md#braces-set-constants-and-collections) for details on the two literals.
+
+A collection of another rule's text is not such a node. A generator can bind one – via rule structure, as `(G => (S q C))` binds the collection of a ground rule, or through an engine marking fact – yet a rule's text remains immutable after the rule is written, so the rule generated names the **data term** of the collection instead: the collection that the bound rule's firings produce for it. The bound rule keeps the text it was written with, and when re-typed, it remains the same rule:
+
+```
+zelph> (a p b) => (c q @{d})
+zelph> (G => (S q C)) => ((X r Y) => (X in C))
+((X r Y) => (X in @{})) ⇐ ((a p b) => (c q @{d}))
+zelph> e r f
+(e in @{e}) ⇐ (e r f)
+zelph> S in O
+Answer: e in @{e}
+zelph> a p b
+zelph+> S in O
+Answer: d in @{d e}
+Answer: e in @{d e}
+zelph> c q O
+Answer: c q @{d e}
+```
+
+The data term contains only what has been derived into it, and holds nothing prior: `e r f` detects it as empty, while the firing of `(a p b) => (c q @{d})` adds `d`. Three configurations arise from replacing the bound collection with its data term. A rule restated from its bound components, `(G => (S q C)) => (G => (S q C))`, is a second rule, operating on the data term, beside the initial one; under a switch, `(G => (S q C)) => ((s is on) => (G => (S q C)))`, the restated rule leaves the typed one in force. Furthermore, the data term of a collection governed by a rule containing variables, like `@{d Y}` in `(X p Y) => (X likes @{d Y})`, is the term under no binding, which none of the rule’s firings ever writes: a rule that binds such a collection via a marking fact writes where the rule never looks.
+
+While empty, the data term prints as `@{}` in every context it stands: the rule produced above reads `(X r Y) => (X in @{})` until some content is derived into the term, and given `(X likes C)` as its consequence, `e r f` derives `e likes @{}`. Typed back, `@{}` is `nil` (refer to [Braces](concepts.md#braces-set-constants-and-collections)), thus such a line re-enters as a statement concerning `nil`: no literal refers to any existing collection, not even the empty one.
+
+A conjunction set that a generator binds represents its data term identically at every location where the generated rule writes a membership into it, and is the bound rule's conditions in all other contexts, as illustrated by `(C => H) => ((X r Y) => (C noted yes))`. A condition likewise constitutes such a membership: in `(C => (e f g)) => ((X in C) => (X flagged yes))`, the generated rule's condition reads the set's data term, which a different generated rule might write into, and the typed rule `(a p b, c q d) => (e f g)` keeps its two conditions and continues to fire. Had `X in C` been written directly into the set, it would have become a third condition of the typed rule. A firing that writes into a conjunction set simultaneously writes into its data term as well, even in cases where the generated rule holds the set itself, due to the relation of the membership having remained a variable at the time the rule was written, as in `(X R C)`.
 
 The one shape that cannot be told apart is a fully **ground** inner rule that is also merely mentioned somewhere: [hash-consing](logic.md#mentioning-a-rule-is-not-asserting-it) makes those a single node, and the graph carries no evidence of which was meant.
 A rule with variables is two nodes, because every statement names its own variables — which is why the generator can assert a rule that is written out, unasserted, elsewhere.

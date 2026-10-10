@@ -283,7 +283,17 @@ namespace zelph::console
             // REPORTS the state instead of acting on it.
             const bool present = _n->check_fact(pattern_fact).is_known();
             const bool exists  = present && _n->is_asserted_fact(pattern_fact);
-            if (exists) _n->remove_node(pattern_fact);
+            if (exists)
+            {
+                // The claim goes; a statement that is also included within a
+                // rule -- either as its condition, its consequence, or
+                // embedded within one of those -- remains as the rule's
+                // pattern (see Reasoning::part_of_rule).
+                if (_n->part_of_rule(pattern_fact))
+                    _n->restore_rule_patterns({pattern_fact});
+                else
+                    _n->remove_node(pattern_fact);
+            }
 
             const std::string what = exists ? "1" : "0";
             if (facts_mode)

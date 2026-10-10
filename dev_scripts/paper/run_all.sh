@@ -65,7 +65,13 @@ done
 python3 "${here}/eml_dag_stats.py" > "${out}/eml_dag_stats.md"
 echo "ok   eml_dag_stats"
 
-# the timing table cannot be read off the logs above.
+# The timing table is not extractable from the logs shown above, and those
+# logs do not contain a match count of their own: no evidence script includes
+# a `.run`. When executed as a session, a script already saturates the graph
+# following each line, meaning an explicit `.run` would merely log a pass
+# across the already saturated graph -- neither reflecting the derivation cost
+# printed above it nor contributing to the table's figures, whose counts come
+# from s9_timings.py alone.
 python3 "${here}/s9_timings.py" "${zelph}" > "${out}/s9_timings.md"
 echo "ok   s9_timings"
 

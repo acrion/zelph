@@ -1,15 +1,17 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s1_eq5_derivation.zph
-# Flagship artifact: zelph derives paper Eq. (5) with full provenance.
-# Evidence scripts print the FULL derivation trace: the paper quotes
-# individual deduction lines, and every mode but 'all' shows only deductions
-# anchored to statements of the session, which drops most of them from a log.
+# Flagship artefact: zelph derives paper Eq. (5), outputs each step of the
+# derivation in sequence, and subsequently rebuilds the justification of the
+# outcome (.explain, depth 0 = unlimited), relying solely on the graph.
+# Evidence scripts print the FULL derivation trace: the paper quotes specific
+# deduction lines, and every mode except 'all' shows only deductions anchored
+# to session statements, thereby omitting most entries from the log.
 .deductions all
 .import decimal-arithmetic
 .import symbolic-core
 .import eml
 x ~ symvar
 :simplify (&1 eml ((&1 eml x) eml &1))
-.run
 (:simplify (&1 eml ((&1 eml x) eml &1))) = X
 (:simplify (&1 eml ((&1 eml x) eml &1))) = X
+.explain ((:simplify (&1 eml ((&1 eml x) eml &1))) = (ln of x)) 0

@@ -11,21 +11,17 @@
 x ~ symvar
 
 :emlcompile (exp of x)
-.run
 (:emlcompile (exp of x)) = F
 (:emlcompile (exp of x)) = F
 
 :simplify (x eml &1)
-.run
 (:simplify (x eml &1)) = X
 (:simplify (x eml &1)) = X
 
 :emlcompile (ln of x)
-.run
 (:emlcompile (ln of x)) = F
 (:emlcompile (ln of x)) = F
 
 :simplify (&1 eml ((&1 eml x) eml &1))
-.run
 (:simplify (&1 eml ((&1 eml x) eml &1))) = X
 (:simplify (&1 eml ((&1 eml x) eml &1))) = X

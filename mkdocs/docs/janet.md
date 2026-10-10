@@ -16,6 +16,7 @@ Use the `.licenses` command to see which Janet version is embedded in your zelph
 
 ```
 zelph> .licenses
+...
 zelph incorporates the following third-party software:
 ------------------------------------------------------
 Janet (v1.41.2) - MIT License
@@ -52,11 +53,12 @@ To install the `spork` library (which provides JSON, CSV, and other utilities):
 jpm install spork
 ```
 
-Once installed, you can use its modules in zelph scripts:
+After installation, you may employ its modules within zelph, either in the REPL as demonstrated or within a script:
 
 ```
-%(use spork/json)
-%(pp (decode "{\"name\": \"Alice\", \"age\": 30}"))
+zelph> %(use spork/json)
+<table 0x…>
+zelph> %(pp (decode "{\"name\": \"Alice\", \"age\": 30}"))
 @{"age" 30 "name" "Alice"}
 ```
 
@@ -111,7 +113,7 @@ This is convenient for longer scripts with multiple definitions and function cal
 
 ### Comments and Commands
 
-Lines starting with `#` (comments) and `.` (commands like `.lang`, `.run`, `.save`) work identically in both modes. They are never interpreted as Janet or zelph statements.
+Lines starting with `#` (comments) and `.` (commands such as `.lang`, `.run`, `.save`) function the same way in both modes. They are never interpreted as Janet or zelph statements. A comment can also end a zelph statement or a command; within Janet code, Janet’s own comment rule remains in effect.
 
 ## The zelph API for Janet
 
@@ -132,7 +134,7 @@ The returned value is a `zelph/node` abstract type — an opaque handle to the i
 
 ### Facts: `zelph/fact`
 
-`zelph/fact` creates a subject–predicate–object triple in the graph and returns the relation node. It accepts three or more arguments (multiple objects create multiple facts with the same subject and predicate):
+`zelph/fact` creates a subject–predicate–object triple in the graph and returns the relation node. It accepts three or more arguments (additional arguments serve as extra objects for the same fact: a single relation node whose objects form an unordered set):
 
 ```
 %(zelph/fact "Berlin" "is capital of" "Germany")
@@ -164,8 +166,8 @@ When called from Janet, `zelph/query` returns its results as a Janet array of ta
 If the graph contains `Berlin "is located in" Germany` and `Paris "is located in" France`, the return value is:
 
 ```
-@[@{X <zelph/node 11> Y <zelph/node 13>}
-  @{X <zelph/node 14> Y <zelph/node 16>}]
+@[@{X <zelph/node Berlin> Y <zelph/node Germany>}
+  @{X <zelph/node Paris> Y <zelph/node France>}]
 ```
 
 Access individual bindings with `get` using the same symbol that was passed to `zelph/fact`:
@@ -248,16 +250,41 @@ In zelph syntax, the [focus operator `*`](concepts.md#the-focus-operator) contro
 
 # Janet equivalent:
 %
-(let [condition
-      (zelph/collection
-        (zelph/fact 'X "is capital of" 'Y)
-        (zelph/fact 'Y "is located in" 'Z))]
-  (zelph/fact condition "~" "conjunction")
-  (zelph/fact condition "=>" (zelph/fact 'X "is located in" 'Z)))
+(zelph/build-rule
+  (fn []
+    (let [condition
+          (zelph/collection
+            (zelph/fact 'X "is capital of" 'Y)
+            (zelph/fact 'Y "is located in" 'Z))]
+      (zelph/fact condition "~" "conjunction")
+      (zelph/fact condition "=>" (zelph/fact 'X "is located in" 'Z)))))
 %
 ```
 
-The `let` binding stores the set node in `condition`, then uses it in two separate facts — once to mark it as a conjunction, and once to connect it to the consequence via `=>`. This mirrors exactly what the `*` operator does in zelph syntax. The reasoning engine is triggered automatically when the Janet block closes (via [auto-run](quickstart.md#full-command-reference)).
+The `let` binding stores the set node within `condition`, subsequently applying it in two separate facts – first to mark it as a conjunction, and second to connect it to the consequence using `=>`. Within `zelph/build-rule`, this behaviour precisely replicates the action of the `*` operator in zelph syntax. The reasoning engine activates automatically when the Janet block closes (through [auto-run](quickstart.md#full-command-reference)).
+
+**Why `zelph/build-rule`.** zelph writes a parsed rule within a scope of its own, and `zelph/build-rule` gives a manually constructed rule the same scope: whatever the thunk generates inside the rule becomes the rule’s text. Any collection the thunk inserts into the rule becomes the rule’s own collection, just as if it were a literal typed directly into the rule, and any ground fact it constructs within the rule becomes a pattern of the rule, not a claim. A fact the thunk builds that the rule does not hold is treated as a claim, and any node that existed before the thunk’s execution remains what it was. Without this scope, identical calls would produce data instead. Each `zelph/collection` then becomes a value that the rule only references: every firing of the rule names that exact node in what it derives, and if a member of the collection holds a variable, that variable enters the data unaltered, with every binding of the rule sharing the same node. Each ground fact then becomes a claim, just like any other `zelph/fact` within a Janet block. [`zelph/rule`](#zelphrule) opens the scope by itself; a rule crafted manually using `zelph/fact`, as demonstrated here, requires `zelph/build-rule` surrounding it.
+
+The distinction becomes apparent as soon as a variable is contained within a collection in the consequence. The identical function builds a rule once outside the scope and once within it:
+
+```
+zelph> %(defn likes-rule [p] (let [condition (zelph/collection (zelph/fact 'X p 'Y))] (zelph/fact condition "~" "conjunction") (zelph/fact condition "=>" (zelph/fact 'X "likes" (zelph/collection (zelph/fact 'Z "q" 'Y))))))
+<function likes-rule>
+zelph> %(likes-rule "p")
+<zelph/node ((X p Y)) => (X likes @{(Z q Y)})>
+zelph> %(zelph/build-rule (fn [] (likes-rule "r")))
+<zelph/node ((X r Y)) => (X likes @{(Z q Y)})>
+zelph> a p k
+(a likes @{(Z q Y)}) ⇐ {(a p k)}
+zelph> b p m
+(b likes @{(Z q Y)}) ⇐ {(b p m)}
+zelph> c r k
+(c likes @{(Z q k)}) ⇐ {(c r k)}
+zelph> d r m
+(d likes @{(Z q m)}) ⇐ {(d r m)}
+```
+
+The rule built without the scope names the single collection in both facts, `Y` included, meaning `a` and `b` like the same node. The rule constructed within `zelph/build-rule` builds a collection for each binding, just as the typed rule `(X r Y) => (X likes @{(Z q Y)})` does.
 
 ### The Scope of a Variable Symbol: One Block
 
@@ -286,7 +313,7 @@ zelph> %(length (zelph/query crossed))
 
 Both conjunctions print identically — the variable nodes carry the same display names — and both answer without a warning. Only the counts differ: the first joins on `B` and reports the one match (Berlin / Germany / EU), the second reports every combination of the two conditions.
 
-The cost of getting this wrong grows with the graph, not with the program. Two conditions of 400 facts each already produce 160,801 rows instead of a handful, and at Wikidata scale the cross product exhausts memory before it finishes. **Build all conditions of one pattern inside a single block**, which the `let` form above does naturally. A pattern *node* may of course be stored and queried later — see [Programmatic Query Results](#programmatic-query-results-zelphquery); it is the symbol, not the node, whose meaning ends with the block.
+The expense of getting this wrong increases alongside the graph, not with the program. Two conditions each containing 400 facts already generate 160,000 rows rather than just a few, and at the scale of Wikidata, the cross product consumes all available memory before completion. **Construct all conditions belonging to one pattern within a single block**, a structure naturally supported by the `let` form shown above. A pattern *node* can of course be stored and queried later – refer to [Programmatic Query Results](#programmatic-query-results-zelphquery); the symbol, not the node, loses its meaning once the block ends.
 
 When one block is not where the program wants to build them — a pattern assembled step by step, or by several functions — use `zelph/var`, which returns the variable as an ordinary node. Then the caller's own binding decides how far it reaches:
 
@@ -298,7 +325,7 @@ zelph> %(def c1 (zelph/fact (zelph/var "A") "is located in" B))
 zelph> %(def c2 (zelph/fact B "is member of" (zelph/var "K")))
 <zelph/node B "is member of" K>
 zelph> %(def joined (let [s (zelph/set c1 c2)] (zelph/fact s "~" "conjunction") s))
-<zelph/node {(A "is located in" B) (B "is member of" K)}>
+<zelph/node {(B "is member of" K) (A "is located in" B)}>
 zelph> %(length (zelph/query joined))
 1
 ```
@@ -367,6 +394,10 @@ Equivalent to:
 A rule's conjunction of conditions is a collection, not a set constant: its
 members are condition patterns, and the rule needs a container of its own.
 
+A collection is a rule's own exactly when it was written with the rule: entered directly in the rule's text, constructed within the argument forms of [`zelph/rule`](#zelphrule) or within `zelph/build-rule`, or built by a rule generator for the rule it produces. No subsequent writing alters this status, nor does any concurrent activity by another thread: a collection that a thread started with `ev/thread` builds while the program's primary thread resides within `zelph/rule` constitutes a value. A collection constructed by the program before the rule, or passed to `zelph/rule*`, also counts as a value: the rule refers to it, and any data the rule writes into it is stored in that node. In contrast, data a rule writes into a collection of its own is placed in the collection's term (refer to [Collections](concepts.md#collections)), meaning a program seeking to read what the rule accumulates must either build the collection before the rule or retrieve it via a query like `S in O`.
+
+Once a rule has been formulated, its text becomes immutable. A program that keeps the node of a collection it constructed within `zelph/build-rule` and subsequently attempts to insert a member into it – via `zelph/fact`, or as the consequence of a rule created with `zelph/rule*` – is rejected, issuing an error that names the collection, and no data is recorded; similarly, a member that the collection already contains, which `zelph/fact` would otherwise claim as data, is also disallowed, and the same restriction applies to a rule's condition set. Within the argument forms of `zelph/rule` or the thunk of `zelph/build-rule`, writing into a collection is the mechanism by which a rule's text is written.
+
 ### Janet API Reference (zelph/\*)
 
 The embedded Janet environment exposes the following functions. Unless stated otherwise, functions accept either strings (resolved as node names in the current `.lang`) or `zelph/node` values.
@@ -380,7 +411,7 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Create a **fresh** variable node and return it. Every call yields a new variable, whatever it is named — the name is display only, and is what makes the binding readable as `(get r 'name)`; an unnamed variable still matches but contributes no column. Use it when the conditions of one pattern are built in separate blocks, where a variable *symbol* would mean a different variable each time: see [The Scope of a Variable Symbol](#the-scope-of-a-variable-symbol-one-block).
 
 - **`(zelph/fact s p o & more-objects)`**  
-  Create a fact node for `s p o...` and return the statement node.
+  Create a fact node from `s p o...` and return the corresponding statement node. A membership (`p` being `in`) within a collection of a rule's own text or within a rule's condition set is disallowed when not within the process of writing a rule: a rule's text becomes immutable once the rule is written.
 
 - **`(zelph/set nodes...)`**  
   Create a SET CONSTANT from the given elements and return its super-node.
@@ -404,10 +435,21 @@ The embedded Janet environment exposes the following functions. Unless stated ot
   Mark a fact pattern as a negation condition and return the **pattern node** (equivalent to `*(pattern) ~ negation` in zelph syntax). In zelph syntax, this is also what `¬(pattern)` desugars to.
 
 - **`(zelph/rule conditions & consequences)`**  
-  Convenience constructor for rules.  
-  `conditions` must be a non-empty array/tuple of fact (pattern) nodes; `consequences` are one or more fact nodes.  
+  A macro serving as a convenient way to construct rules.  
+  `conditions` must be a non-empty array or tuple composed of fact (pattern) nodes; `consequences` consist of one or more fact nodes.  
   Returns the conjunction set node.  
-  Unlike a parsed `... => ...` statement, this does **not** check whether the graph already holds the same rule up to a renaming of its variables (see [Rules Say Themselves Only Once](modules.md#rules-say-themselves-only-once)): the condition nodes are created by the caller, before `zelph/rule` sees them, so there is nothing zelph could roll back without touching facts the caller asked for. A program that builds the same rule repeatedly should either build it once or go through `zelph/import`.
+  The argument forms execute within `zelph/build-rule`, meaning the rule is assembled in the same manner as a parsed rule: the content the forms build into the rule – within their dynamic extent, including any helper function they invoke – becomes the rule’s text. Any collection they write into it is the rule’s own, and a ground fact constructed within it functions as a pattern within the rule, not as a claim (refer to [Claimed or Merely Written Down](#claimed-or-merely-written-down)). A fact they build that the rule does not hold, such as one a helper asserts in addition to the fact it returns, constitutes a claim, and any node created before the call remains unchanged. As a macro, `zelph/rule` cannot be used as a value by `apply` or `map`; instead, `zelph/rule*` can be.  
+  In contrast to a parsed `... => ...` statement, this does **not** check whether the graph already contains an identical rule, up to variable renaming (see [Rules Say Themselves Only Once](modules.md#rules-say-themselves-only-once)): the decision of what to build rests with the program constructing the rules. If a program generates the same rule multiple times, it should either build it once or proceed through `zelph/import`.  
+  `zelph/rule`, `zelph/build-rule`, and `zelph/rule*` are refused while a rule is under construction: inside the argument forms of another rule, or within the thunk of `zelph/build-rule`. Invoked in such contexts, `zelph/rule*` would build a rule of its own, in force by itself, and not as part of the outer rule. A rule nested within another is a part of the outer rule and is written there as a `=>` fact, `(zelph/fact condition "=>" consequence)` – which is the way Janet writes a [rule generator](rule-generators.md).
+
+- **`(zelph/rule* conditions & consequences)`**  
+  The plain function behind `zelph/rule`, accepting identical parameters and producing the same outcome. Before execution, its arguments are evaluated, so it cannot tell which of them the call built: it marks nothing, a ground fact within them stays a claim, and a collection among them is a value, just as one constructed before a `zelph/rule` invocation is.
+
+- **`(zelph/build-rule thunk)`**  
+  Run `thunk`, which constructs a single rule, as a parsed rule is built, and return what it returns. What the thunk builds into the rule is the rule’s text, and the ground components of the rule it returns – of every `=>` fact over the condition set it returns, or over the condition of the `=>` fact it returns – are patterns, not claims. A duplicate is not undone. `zelph/rule` runs its argument forms within this context; a rule manually authored using `zelph/fact` must be enclosed by it (refer to [Rules in Janet: The `let` Pattern](#rules-in-janet-the-let-pattern)). Rejected if another rule is currently under construction, and also rejected when the thunk is awaiting the event loop, as `ev/sleep` does and `ev/take` does even on a channel that holds a value, or when yielding: other fibres would run within this scope meanwhile and write the rule’s text, so nothing of the rule is kept, and thus the value the thunk is waiting for must be determined before rule construction.
+
+- **`(zelph/dedup-rule thunk)`**, **`(zelph/rule-text thunk)`**  
+  Emitted by the parser around a typed `... => ...` statement and around a rule that another statement mentions. Not required for manually authored Janet code.
 
 #### Querying (read-only)
 
@@ -482,7 +524,7 @@ Given this script:
 %(zelph/out (string "derived after run: " (zelph/exists "socrates" "~" "mortal")))
 ```
 
-the session reads:
+the session reads, with the script provided via `zelph < script.zph` (given as an argument, the identical lines are displayed, excluding the prompts):
 
 ```
 zelph> Auto-run is now disabled.
@@ -491,7 +533,8 @@ zelph-> <zelph/node {(X ~ human)}>
 zelph-> derived before run: false
 zelph-> Starting reasoning with 24 worker threads.
 (socrates ~ mortal) ⇐ {(socrates ~ human)}
-Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0.
+Reasoning complete. Total unification matches processed: 1. Total contradictions
+found: 0.
 Reasoning summary: 1 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found.
@@ -506,7 +549,7 @@ The rule is in the graph from the moment it is created, but its consequence only
 
 `zelph/run` always begins with one classic pass over the whole graph, because it cannot know what the graph looked like before. That pass costs time proportional to the graph — so a program that alternates between asserting a little and reasoning pays, every time, for everything it has ever asserted. This is the shape of most library use: a fact base per document, per position, per request.
 
-`zelph/run-delta` removes that term. It seeds the fixpoint with the facts created since the previous run and lets semi-naive evaluation continue from there, so the cost follows the size of the addition instead of the size of the graph.
+`zelph/run-delta` removes that term for the rules eligible to be seeded. It seeds the fixpoint with the facts created since the last run and lets semi-naive evaluation proceed from that point, ensuring their expense aligns with the size of the new additions rather than the size of the graph.
 
 ```
 %(zelph/fact "plato" "~" "human")
@@ -518,7 +561,8 @@ The rule is in the graph from the moment it is created, but its consequence only
 zelph-> <zelph/node plato ~ human>
 zelph-> Starting reasoning with 24 worker threads.
 (plato ~ mortal) ⇐ {(plato ~ human)}
-Reasoning complete. Total unification matches processed: 0. Total contradictions found: 0.
+Reasoning complete. Total unification matches processed: 0. Total contradictions
+found: 0.
 Reasoning summary: 0 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m0.000s – 0 matches processed, 0 contradictions found.
@@ -534,7 +578,7 @@ Measured on a graph holding fact bases of 72 facts each, with one rule, assertin
 | 400 | 190.7 ms | 1.26 ms |
 | 1200 | 532.3 ms | 1.02 ms |
 
-Both derive the same facts. The full run grows with the graph; the seeded one does not.
+Both derive identical facts, except in cases where two runs of the same input might diverge anyway: when using non-stratifiable rules, or under `.parallel` with a rule containing a fresh variable (refer to [Deduction Output Modes](rules.md#deduction-output-modes)). The complete run grows with the graph; the seeded variant does not. The figures correspond to a single positive rule.
 
 This is only equivalent to a full run when the graph already is a fixpoint of the current rules — otherwise the skipped pass is exactly the one that would have found the older consequences. `zelph/run-delta` therefore checks, and falls back to a full pass (with a note on the diagnostic channel) unless all of the following hold:
 
@@ -547,9 +591,16 @@ Note that facts created by an imported script count as ordinary additions here. 
 
 The safe pattern is therefore: define the rules, `zelph/run` once, then assert and `zelph/run-delta` per unit of new data.
 
+Two kinds of rule continue to be evaluated classically during a seeded run, with their expense determined by the facts their conditions match, rather than by the addition:
+
+- For a rule featuring a negated condition `¬(…)`, a classic pass is executed over the facts its positive conditions match at every [negation level](logic.md#stratified-evaluation) during the run, and once more following each pass that generates new derivations. This mechanism also enables a seeded run after a [cluster drop](#scoped-work-clusters) to recognize a negation that the drop has made true.
+- A rule whose conditions are unable to be fully seeded – a [path condition](logic.md#transitive-path-conditions) like `P279⁺`, a neural `≈` condition, a nested condition set, or a condition lacking precisely one predicate – is applied classically in every iteration.
+
+Using `.import math`, the simplifier’s identity fallback `(T red C, ¬(T rw S)) => (T simp C)` functions as such a rule, meaning that during a seeded run within a `math` session, every reduced term is still examined.
+
 #### Scoped work: clusters
 
-The graph is monotonic. A program that asserts a fact base, reasons about it and reads the conclusions has no way to take the fact base out again, so every question it ever asks stays — and the pattern "one fact base per document, per position, per request" accumulates without bound.
+Apart from clusters, the Janet API does not eliminate anything: the graph expands exclusively. A program that asserts a fact base, reasons about it, and reads the conclusions cannot take the fact base out again, thus every question it ever poses remains – and the pattern "one fact base per document, per position, per request" accumulates without bound.
 
 A **cluster** is the answer. It records the IDs of the nodes *created* while it is active, and dropping it removes exactly those. Nodes that already existed are never recorded, so a drop cannot reach them: a cluster is safe as scratch space over a graph loaded from disk. This is the same mechanism `.explain` uses internally to evaluate a pattern without asserting it.
 
@@ -590,22 +641,22 @@ Clusters are session state and are not persisted by `zelph/save`.
 
 #### Neural network functions
 
-zelph 0.9.7 adds a neural substrate: weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can consult via the `≈` operator. The full documentation — including semantics, training workflow, and a Wikidata proof of concept — is on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:
+zelph 0.9.7 adds a neural substrate: raw weighted edges act as synapses, layers are ordinary sets, and sub-graphs compile into feed-forward networks that rules can access through the `≈` operator. The full documentation – including semantics, training workflow, and a Wikidata demonstration – resides on the dedicated page [Neural Networks in the Graph](neural.md). For completeness, the functions:
 
-- **`(zelph/nn-connect from to &opt weight)`** — create a raw weighted edge (synapse); invisible to reasoning. Default weight 1.
-- **`(zelph/weight from to)`** — weight of a raw edge, or `nil` if the edge does not exist.
-- **`(zelph/set-weight from to w)`** — set the weight of an existing raw edge.
-- **`(zelph/nn-compile layers)`** — compile a feed-forward view of a sub-graph (layer nodes, input first); returns an integer handle.
-- **`(zelph/nn-nodes handle layer)`** — neurons of a compiled layer in index order.
-- **`(zelph/nn-eval handle inputs)`** — forward pass with plain number vectors.
-- **`(zelph/nn-train handle inputs targets &opt learning-rate)`** — one SGD step; returns the loss before the update.
-- **`(zelph/nn-write-back handle)`** — write trained weights back into the graph's weight store (required for `.save` and for `≈` conditions).
-- **`(zelph/nn-snapshot handle)`** — copy the weights out as an array of arrays of numbers.
-- **`(zelph/nn-restore handle snapshot)`** — put a snapshot back; shapes must match, absent synapses stay absent.
-- **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** — densely wire two layers; idempotent, preserves existing weights.
-- **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** — SGD step addressing neurons by graph node (multi-hot).
-- **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** — node-addressed forward pass; sorted `[node score]` tuples.
-- **`(zelph/approx pattern net-name)`** — tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
+- **`(zelph/nn-connect from to &opt weight)`** – create a raw weighted edge (synapse); invisible to reasoning. Default weight 1.
+- **`(zelph/weight from to)`** – weight of a directed node pair: the stored value of a synapse or fact probability, 1 for a real graph edge lacking a stored entry, `nil` if neither is present.
+- **`(zelph/set-weight from to w)`** – assign a weight to an existing synapse or edge.
+- **`(zelph/nn-compile layers)`** – compile a feed-forward view of a sub-graph (layer nodes, input first); returns an integer handle.
+- **`(zelph/nn-nodes handle layer)`** – neurons within a compiled layer, ordered by index.
+- **`(zelph/nn-eval handle inputs)`** – perform a forward pass using plain number vectors.
+- **`(zelph/nn-train handle inputs targets &opt learning-rate)`** – execute one stochastic gradient descent step; returns the loss before the update.
+- **`(zelph/nn-write-back handle)`** – transfer learned weights into the graph’s weight store (required for `.save` and for `≈` conditions).
+- **`(zelph/nn-snapshot handle)`** – copy the weights out as an array of arrays of numbers.
+- **`(zelph/nn-restore handle snapshot)`** – put a snapshot back; dimensions must align, missing synapses remain missing.
+- **`(zelph/nn-connect-layers from-layer to-layer &opt scale seed)`** – fully interconnect two layers; idempotent, preserves existing weights.
+- **`(zelph/nn-train-nodes handle inputs targets &opt learning-rate)`** – stochastic gradient descent step addressing neurons by graph node (multi-hot).
+- **`(zelph/nn-eval-nodes handle inputs &opt top-k)`** – forward pass addressed by node; returns sorted `[node score]` tuples.
+- **`(zelph/approx pattern net-name)`** – tag a fact pattern as a neural rule condition; desugared form of `≈net(pattern)`. Returns the tag fact.
 
 **Threading.** Unlike most of the API above, a compiled network may be used from more than one thread. Any number of threads may **evaluate** concurrently — `nn-eval`, `nn-eval-nodes`, `nn-snapshot`, `nn-write-back` — while a **training** step (`nn-train`, `nn-train-nodes`) or `nn-restore` excludes them for its duration. So a program may evaluate a network from a worker thread while another thread trains it, which is what lets training run continuously alongside the work that uses the result. `nn-compile` is *not* synchronised: build the network before sharing its handle. The guarantee covers the network's weights only — the graph operations marked "Main thread only" above stay main-thread-only, so `zelph/save` and `zelph/load` must not run while another thread trains.
 
@@ -782,12 +833,14 @@ Janet functions can encapsulate common rule patterns:
 ```
 %
 (defn transitive-rule [rel]
-  (let [condition
-        (zelph/collection
-          (zelph/fact 'X rel 'Y)
-          (zelph/fact 'Y rel 'Z))]
-    (zelph/fact condition "~" "conjunction")
-    (zelph/fact condition "=>" (zelph/fact 'X rel 'Z))))
+  (zelph/build-rule
+    (fn []
+      (let [condition
+            (zelph/collection
+              (zelph/fact 'X rel 'Y)
+              (zelph/fact 'Y rel 'Z))]
+        (zelph/fact condition "~" "conjunction")
+        (zelph/fact condition "=>" (zelph/fact 'X rel 'Z))))))
 
 (transitive-rule "is part of")
 (transitive-rule "is ancestor of")
@@ -795,7 +848,7 @@ Janet functions can encapsulate common rule patterns:
 %
 ```
 
-A single function generates a transitive inference rule for any relation. The `let` pattern captures the condition set and reuses it — the Janet equivalent of the focus operator `*` in zelph syntax.
+A single function generates a transitive inference rule for any given relation. The `let` pattern captures the condition set and employs it again – within `zelph/build-rule`, the Janet equivalent of the focus operator `*` in zelph syntax.
 
 ### Parameterized Queries
 
@@ -900,6 +953,23 @@ exists Berlin now: true
 A pattern carrying a variable is never data either, so a rule condition
 such as `(X p Y)` is invisible to all of the above by the same rule.
 
+A rule constructed using [`zelph/rule`](#zelphrule) writes down what its argument forms build into it, precisely as a typed rule does: the forms execute within the rule’s build, meaning any ground fact generated inside the rule – via `zelph/fact` or as a cons cell from `zelph/list-chars`, directly or through a helper function invoked by the forms – constitutes a pattern of the rule, not a claim. Only what the rule holds is marked: a fact generated by the forms that the rule does not hold, such as one a helper asserts in addition to the fact it returns, is classified as a claim. A fact created before the call, on a preceding line or within a `let` around the call, was already claimed at the time of its construction, and it stays a claim:
+
+```
+zelph> %(zelph/rule [(zelph/fact "Rome" "is-capital-of" "Italy")] (zelph/fact "Italy" "has-capital" "yes"))
+<zelph/node {(Rome is-capital-of Italy)}>
+zelph> %(zelph/out (string "exists Rome: " (zelph/exists "Rome" "is-capital-of" "Italy")))
+exists Rome: false
+zelph> %(let [madrid (zelph/fact "Madrid" "is-capital-of" "Spain")] (zelph/rule [madrid] (zelph/fact "Spain" "has-capital" "yes")))
+<zelph/node {(Madrid is-capital-of Spain)}>
+zelph+> %(zelph/out (string "exists Madrid: " (zelph/exists "Madrid" "is-capital-of" "Spain")))
+exists Madrid: true
+zelph> %(zelph/out (string "exists Spain: " (zelph/exists "Spain" "has-capital" "yes")))
+exists Spain: true
+```
+
+The second rule fired immediately upon being written, because its condition was already stated as a claim; the prompt’s `+` says that the run concealed the deduction. The plain function `zelph/rule*` receives its arguments already built, meaning that for it, every fact built within its arguments constitutes a claim.
+
 #### Node Names: `zelph/name`
 
 `zelph/name` returns the name of a node as a string, or `nil` if the node has no name:
@@ -966,9 +1036,9 @@ Both return `nil` for invalid input. `zelph/cdr` returns the `nil` node for the 
 
 ```
 %(def list-42 (zelph/list-chars "42"))
-%(zelph/car list-42)                    # → <zelph/node> for "4"
-%(zelph/cdr list-42)                    # → <zelph/node> for the sublist <2>
-%(zelph/car (zelph/cdr list-42))        # → <zelph/node> for "2"
+%(zelph/car list-42)                    # → <zelph/node> for "2"
+%(zelph/cdr list-42)                    # → <zelph/node> for the sublist <4>
+%(zelph/car (zelph/cdr list-42))        # → <zelph/node> for "4"
 %(zelph/cdr (zelph/cdr list-42))        # → <zelph/node> for nil
 ```
 
@@ -981,7 +1051,7 @@ Combining `zelph/car` and `zelph/cdr` to walk a cons-list:
 ```
 zelph> <42>
 <2 4>
-%
+zelph> %
 (def list-42 (zelph/list-chars "42"))
 (def nil-node (zelph/resolve "nil"))
 
@@ -994,7 +1064,7 @@ zelph> <42>
   (set current (zelph/cdr current)))
 (print) # newline
 %
-# Output: 42
+24
 ```
 
 Note: `zelph/car` and `zelph/cdr` mirror the classic Lisp operations. `zelph/sources` and `zelph/targets` cannot be used for cons cell decomposition because cons cells are relation nodes in the graph, not entities.
@@ -1069,17 +1139,19 @@ Creates a complete inference rule: a conjunction of conditions linked to one or 
 - **consequences**: One or more fact nodes to deduce when conditions match.
 - **Returns**: The condition set node (the rule's identity in the graph).
 
+`zelph/rule` is a macro. Its argument forms run within `zelph/build-rule`, meaning the rule is constructed in the same manner as a typed rule: a collection that the forms write into the rule is the rule’s own, and any ground fact they generate within it is a pattern of the rule, not a claim, whereas a fact they build that the rule does not hold is a claim. The underlying plain function is `zelph/rule*`, accepting identical arguments; it is the version to pass to `apply` or `map`, and because it receives its arguments already built, they remain unchanged.
+
 **Example — Transitivity rule:**
 
 ```
 # zelph syntax:
-(*{(X R Y) (Y R Z) (R ~ transitive)} ~ conjunction) => (X R Z)
+(*{(X R Y) (Y R Z) (R is transitive)} ~ conjunction) => (X R Z)
 
 # Janet equivalent using zelph/rule:
 %(zelph/rule
    [(zelph/fact 'X 'R 'Y)
     (zelph/fact 'Y 'R 'Z)
-    (zelph/fact 'R "~" "transitive")]
+    (zelph/fact 'R "is" "transitive")]
    (zelph/fact 'X 'R 'Z))
 ```
 
@@ -1166,7 +1238,7 @@ As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops
 %
 ```
 
-The rules above are general-purpose (they work on any list, not just numbers). The lookup table encodes digit arithmetic as graph facts. From here, additional rules can process multi-digit numbers by walking lists from right to left, extracting digits, applying the lookup table, handling carries, and constructing new result lists using fresh variables — all within zelph's reasoning engine.
+The previously stated rules are universally applicable (they work on any list, not exclusively numerical ones). The lookup table encodes digit arithmetic through graph facts. Starting from this point, additional rules can process multi-digit numbers by walking lists from right to left, extracting digits, applying the lookup table, handling carries, and constructing the result lists from the bound digits – entirely inside zelph’s reasoning engine.
 
 ## Extending the REPL: `zelph/register-keyword`
 
@@ -1174,19 +1246,7 @@ The rules above are general-purpose (they work on any list, not just numbers). T
 
 This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
 
-`zelph/register-keyword` has a second, three-argument form for **inline
-keywords** ("expression islands"): `(zelph/register-keyword open close handler)`.
-Whenever `open` appears inside a zelph statement (outside quoted atoms and
-comments), the raw text up to `close` is passed to `handler`, which must
-return a `zelph/node`; the node replaces the island in the statement and can
-therefore stand in any value position — subjects, objects, nested facts, rule
-conditions and consequences. The handler may return `:incomplete` to extend
-the island to the next occurrence of `close`, so delimiters nested inside the
-island's own grammar work naturally; handlers must not create graph structure
-before accepting their input. Variables created inside an island share the
-surrounding statement's scope. This is the host mechanism behind the stdlib's
-term islands (`$( ... )`), whose grammar is itself an ordinary Janet PEG in a
-`.zph` module — the language grows in scripts, not in C++.
+`zelph/register-keyword` features a second, three-argument variant tailored for **inline keywords** ("expression islands"): `(zelph/register-keyword open close handler)`. Each time `open` surfaces within a zelph statement (outside quoted atoms and comments), the segment up to `close`, with zelph comments already removed, is passed to `handler`, which must return a `zelph/node`; this node then replaces the island within the statement and can therefore occupy any position requiring a value – subjects, objects, nested facts, rule conditions, or consequences. Should the handler return `:incomplete`, the island extends to the subsequent `close`, enabling nested delimiters within the island's syntax to function intuitively; handlers must refrain from constructing graph structure until they have accepted their input. zelph's comment convention governs the entire statement, including the island's content: a `#` positioned at the start of a line or following a space or tab starts a comment extending to the line's end, thus preventing island grammars from employing such `#`; a `#` embedded within a token (`x#y`) or within a quoted atom reaches the handler unaltered. Variables created within an island share the scope of the enclosing statement. This is the host mechanism behind the stdlib's term islands (`$( ... )`), whose syntax is defined by a standard Janet PEG located in a `.zph` module – the language evolves through scripts, not via C++ extensions.
 
 ## Summary: zelph Syntax and Janet Equivalents
 

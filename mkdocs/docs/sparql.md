@@ -20,11 +20,11 @@ Although the script contains convenience handling for Wikidata prefixes (`wd:`, 
 
 ## Getting Started
 
-Load a network, import the script, then type `sparql` and paste your query. An empty line executes it:
+Load a network, import the script, then type `sparql` and paste your query. An empty line executes it (the block shows only your input; zelph’s responses are omitted):
 
 ```
 zelph> .load /path/to/wikidata-20260309-all-pruned-small.bin
-zelph> .import sparql
+zelph-> .import sparql
 zelph-> sparql
 SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }
 
@@ -117,7 +117,7 @@ Every evaluation phase that takes longer than 1 ms then prints a line with its d
 
 ## Complete Example Session
 
-The following is an unedited session running one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
+The following session was captured using zelph 0.9.7 and appears exactly as it was output, with the exception of the loader’s progress dots, which are abbreviated; zelph 1.0.2 prints a distinct start-up message and, following `.import sparql`, includes an additional line (`SPARQL subset loaded. …`). It runs one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
 
 The identical query identifies 81 culprits in the [pruned](binaries.md) database, whose `P279` index spans 1,114,757 edges rather than 5,166,316 – and on the `P279` slice cut from it, which amounts to a few hundred megabytes and needs 0.6 GiB of memory. That is the way to reproduce this without 256 GB of RAM; [The Wikidata Class Hierarchy](class-hierarchy.md) walks through it.
 

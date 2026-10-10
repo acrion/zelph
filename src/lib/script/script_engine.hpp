@@ -131,10 +131,18 @@ namespace zelph
 
         bool invoke_keyword(const std::string& keyword, const std::string& text, const bool force);
 
-        // Check whether a Janet code fragment has balanced delimiters
-        // (parentheses, brackets, braces), respecting strings and comments.
-        // Returns true when the expression is syntactically complete.
-        static bool is_expression_complete(const std::string& code);
+        // Whether an inline `%` expression is complete, as determined by
+        // Janet's reader, which processes one line at a time:
+        // start_inline_janet takes the first line, and continue_inline_janet
+        // handles each subsequent line until one returns true. That is false
+        // exclusively during the time when a form or a string remains
+        // unclosed; a syntax error is treated as complete, thus reported at
+        // runtime. The reader is dropped once processing finishes, while
+        // drop_inline_janet drops it if the expression is abandoned. Executes
+        // on the thread whose Janet VM this engine owns.
+        bool start_inline_janet(const std::string& line);
+        bool continue_inline_janet(const std::string& line);
+        void drop_inline_janet();
 
         static bool is_zelph_complete(const std::string& code);
 

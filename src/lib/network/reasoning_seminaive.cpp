@@ -31,7 +31,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -42,18 +46,31 @@ namespace
     // Static evaluation-plan data for one rule, built once per run().
     struct IndexedRule
     {
-        Node                     rule{0};
-        Node                     top_condition{0};          // leaf or conjunction set node
-        adjacency_set            elements;                  // conjunction elements (or the single condition)
-        std::vector<Node>        leaves;                    // positive, seedable leaf conditions
-        std::vector<Node>        leaf_preds;                // parallel to leaves; 0 = variable predicate
-        std::vector<PatternInfo> leaf_patterns;             // parallel to leaves: rule-static ctor
-                                                            // decomposition, built once, reused per seed
-        std::shared_ptr<std::unordered_set<Node>> excluded; // rule topology nodes (conjunction set + elements)
+        Node                                      rule{0};
+        Node                                      top_condition{0}; // leaf or conjunction set node
+        adjacency_set                             elements;         // conjunction elements (or the single condition)
+        std::vector<Node>                         leaves;           // positive, seedable leaf conditions
+        std::vector<Node>                         leaf_preds;       // parallel to leaves; 0 = variable predicate
+        std::vector<PatternInfo>                  leaf_patterns;    // parallel to leaves: rule-static ctor
+                                                                    // decomposition, built once, reused per seed
+        std::shared_ptr<std::unordered_set<Node>> excluded;         // rule topology nodes (conjunction set + elements)
         adjacency_set                             deductions;
         bool                                      delta_unsafe{false}; // must be applied classically every iteration
         bool                                      deferred{false};     // contains a negated condition -> stratum 2
+        std::size_t                               level{0};            // deferred only: see Reasoning::negation_levels
     };
+
+    std::atomic<bool> default_check{false};
+}
+
+void Reasoning::set_default_seminaive_check(const bool on)
+{
+    default_check = on;
+}
+
+bool Reasoning::default_seminaive_check()
+{
+    return default_check;
 }
 
 void Reasoning::set_seminaive(bool on)
@@ -107,7 +124,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     std::unordered_map<Node, std::vector<std::pair<size_t, size_t>>> pred_index;
     // leaf conditions with a variable predicate: seeded by every delta fact
     std::vector<std::pair<size_t, size_t>> wildcard_index;
-    bool                                   has_deferred = false;
+    // The number of negation levels that deferred rules encompass; 0 if
+    // no rule performs negation.
+    std::size_t levels = 0;
     // Size of the rule set this index was built from. A rule can DERIVE a
     // rule, and one that appears during the run is in no index -- see the
     // rebuild at the delta boundary below.
@@ -118,7 +137,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
         rules.clear();
         pred_index.clear();
         wildcard_index.clear();
-        has_deferred  = false;
+        _negating_rules.clear();
+        levels        = 0;
         indexed_rules = _pImpl->get_left(core.Causes).size();
 
         for (Node rule_node : _pImpl->get_left(core.Causes))
@@ -171,6 +191,14 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             // negation against an unsaturated graph and could fire prematurely
             // (negation race, see test_stratified.cpp).
             ir.deferred = condition_contains_negation(condition, 1);
+            if (ir.deferred)
+            {
+                // The function deduce() receives the condition part as its
+                // parent -- the conjunction set, for each rule that
+                // possesses one -- thereby causing both to lead to the rule.
+                _negating_rules[rule_node] = rule_node;
+                _negating_rules[condition] = rule_node;
+            }
 
             if (!ir.deferred)
             {
@@ -253,12 +281,14 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             rules.push_back(std::move(ir));
         }
 
+        std::vector<Node> rule_nodes;
+        rule_nodes.reserve(rules.size());
         for (const IndexedRule& ir : rules)
-            if (ir.deferred)
-            {
-                has_deferred = true;
-                break;
-            }
+            rule_nodes.push_back(ir.rule);
+        const NegationLevels stratified = negation_levels(rule_nodes);
+        levels                          = stratified.levels;
+        for (std::size_t i = 0; i < rules.size(); ++i)
+            rules[i].level = stratified.level[i];
     };
 
     build_index();
@@ -269,10 +299,12 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     std::mutex                         delta_mtx;
     std::vector<std::pair<Node, Node>> delta; // (fact node, predicate)
 
-    set_fact_creation_observer([&delta, &delta_mtx](Node f, Node p)
+    const bool check = _seminaive_check;
+    set_fact_creation_observer([&delta, &delta_mtx, check, this](Node f, Node p)
                                {
         std::lock_guard<std::mutex> lock(delta_mtx);
-        delta.emplace_back(f, p); });
+        delta.emplace_back(f, p);
+        if (check) _check_touched.insert(p); });
 
     // The observer captures locals by reference; make sure it is gone on
     // every exit path (including exceptions).
@@ -333,8 +365,17 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
         Unification u(this, ir.leaf_patterns[leaf_idx], ir.rule, vars, uneq, nullptr, 2, &_prof, seed_fact, seed_pred);
 
+        // Binding the condition to the seed constitutes the identical
+        // unification that a scan executes, thus qualifying as a match in
+        // the run summary just like a binding retrieved during scanning
+        // does in evaluate(): each binding the search returns, even those
+        // subsequently rejected by the checks below.
+        std::size_t seeded = 0;
+
         while (std::shared_ptr<Variables> match = u.Next())
         {
+            ++seeded;
+
             // Mirror the checks of evaluate()'s process_match so that a
             // seeded first condition behaves exactly like a scanned one.
             bool excluded_hit = false;
@@ -391,13 +432,19 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             }
         }
         u.wait_for_completion();
+        _total_matches.fetch_add(seeded, std::memory_order_relaxed);
     };
 
     // ------------------------------------------------------------------
     // Phase 2: seeded iterations until the delta drains
     // ------------------------------------------------------------------
     uint64_t safety_violations = 0;
-    bool     negation_pending  = has_deferred;
+    // The negation level evaluated at the next stratum boundary. Levels beneath
+    // it are definitive: no influence from a higher level or a positive rule
+    // can reach them (that is how the levels are established), thus it
+    // only ever advances -- except when the rule set or the safety net
+    // alters the foundation beneath all of them.
+    std::size_t next_level = 0;
 
     while (true)
     {
@@ -406,6 +453,15 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             std::lock_guard<std::mutex> lock(delta_mtx);
             current.swap(delta);
         }
+
+        // A construction that returned a rule in force removed what it had
+        // built, and the observer announced those facts as they were created
+        // (Reasoning::rebuild_rule). A node that no longer exists is not a
+        // delta: it seeds nothing, and kept it would keep the loop from
+        // finding that the delta has been depleted.
+        current.erase(std::remove_if(current.begin(), current.end(), [this](const std::pair<Node, Node>& entry)
+                                     { return !_pImpl->exists(entry.first); }),
+                      current.end());
 
         if (current.empty())
         {
@@ -427,37 +483,40 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 for (const IndexedRule& ir : rules)
                     if (!ir.deferred) apply_rule(ir.rule, 0);
                 _pool->wait();
-                negation_pending = has_deferred;
+                next_level = 0;
                 continue;
             }
 
-            // ---- Stratum boundary: the positive delta has drained. ----
-            // Deferred rules (negated conditions) are evaluated exactly
-            // here, against the saturated positive fact base. Their
-            // consequences enter the delta via the observer and re-open
-            // the positive stratum; the boundary is then reached again and
-            // the deferred stratum re-runs (duplicates are rejected by
-            // deduce as everywhere else, so this terminates).
-            if (negation_pending)
+            // ---- Stratum boundary: the positive delta has been depleted. ----
+            // Deferred rules (negated conditions) are assessed
+            // precisely at this point, using the saturated positive fact
+            // base, advancing one level of negation at a time. Their
+            // outcomes flow into the delta through the observer and re-open
+            // the positive stratum; the boundary is then encountered once
+            // more, and the same level is processed again (duplicates are
+            // filtered out by deduce, just as everywhere else, ensuring
+            // termination).
+            if (next_level < levels)
             {
                 _done = false;
                 if (!silent)
                     if (progress_due())
-                        diagnostic_stream() << "--- Deferred stratum (negation, classic pass) ---" << std::endl;
+                        diagnostic_stream() << "--- Deferred stratum (negation level " << next_level + 1 << " of " << levels
+                                            << ", classic pass) ---" << std::endl;
                 for (const IndexedRule& ir : rules)
-                    if (ir.deferred) apply_rule(ir.rule, 0);
+                    if (ir.deferred && ir.level == next_level) apply_rule(ir.rule, 0);
                 _pool->wait();
-                // Mirror the classic loop's `while (deferred_derived)`:
-                // a deferred pass that derived anything may enable
-                // further deferred derivations once the positive
-                // stratum has consumed its consequences (e.g. the
-                // identity fallback of symbolic-core, needed on two
-                // nesting levels of one term), so the next boundary
-                // must run the deferred stratum again. A pass that
-                // derives nothing is the fixpoint of the alternation
-                // and disarms the boundary -- facts only accumulate,
-                // so this terminates.
-                negation_pending = _done;
+                // Mirror the classic loop: a deferred pass that derived
+                // something may trigger additional deferred
+                // derivations after the positive stratum has consumed its
+                // consequences (for instance, the identity fallback from
+                // symbolic-core, required across two nesting levels within a
+                // single term), hence the next boundary must run this level again.
+                // A pass that yields no new derivations constitutes the
+                // fixpoint of the level, allowing the following one to
+                // commence -- facts accumulate exclusively, ensuring
+                // termination.
+                if (!_done) ++next_level;
                 continue; // any new consequences are in the delta now
             }
 
@@ -473,21 +532,34 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             if (!silent)
                 diagnostic_stream() << "--- Semi-naive safety check (classic pass) ---" << std::endl;
 
-            // Boundary marker, deliberately NOT gated on `silent`: the REPL
-            // auto-runs reasoning with silent=true, which suppresses the
-            // diagnostic banner above while deductions still print. Every
-            // deduction between this marker and the pass result below
-            // belongs to the classic verification pass.
-            out(">>> semi-naive check: classic verification pass <<<", true);
+            // Boundary marker, intentionally NOT restricted by `silent`:
+            // the REPL automatically executes reasoning with silent=true,
+            // suppressing the diagnostic banner above while still
+            // outputting deductions. Each deduction situated between this
+            // marker and the pass result below is part of the classic
+            // verification pass. It appears before the first line the pass
+            // outputs, and is absent entirely when the pass produces no
+            // output -- which is the standard scenario, and a marker
+            // following every run caused the last line of any
+            // output to be the marker instead of the actual answer.
+            {
+                std::lock_guard<std::mutex> lock(_mtx_output);
+                _verification_marker_pending = true;
+            }
 
             for (Node rule_node : _pImpl->get_left(core.Causes))
                 if (!is_mentioned(rule_node)) apply_rule(rule_node, 0);
             _pool->wait();
 
+            {
+                std::lock_guard<std::mutex> lock(_mtx_output);
+                _verification_marker_pending = false;
+            }
+
             if (!_done) break; // clean fixpoint confirmed
 
             ++safety_violations;
-            negation_pending = has_deferred; // violation facts must re-open the deferred stratum too
+            next_level = 0; // violation facts must re-open the deferred strata too
 
             // Diagnosis aid: name the missed facts explicitly. The observer
             // stayed active during the classic pass, so the delta now holds
@@ -500,17 +572,17 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                     std::lock_guard<std::mutex> lock(delta_mtx);
                     missed = delta; // copy -- the seeded loop still consumes them
                 }
-                out("Semi-naive check: classic pass #" + std::to_string(safety_violations)
-                        + " derived " + std::to_string(missed.size())
-                        + " fact(s) missed by delta seeding:",
-                    true);
+                out_finding("Semi-naive check: classic pass #" + std::to_string(safety_violations)
+                                + " derived " + std::to_string(missed.size())
+                                + " fact(s) missed by delta seeding:",
+                            true);
                 for (const auto& [f, p] : missed)
                 {
                     std::string rendered;
                     string::node_to_string(this, rendered, _lang, f, 3);
-                    out("  [missed, pred=" + get_formatted_name(p, _lang) + "] "
-                            + string::unmark_identifiers(rendered),
-                        true);
+                    out_finding("  [missed, pred=" + get_formatted_name(p, _lang) + "] "
+                                    + string::unmark_identifiers(rendered),
+                                true);
                 }
             }
 
@@ -554,4 +626,67 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
     _done = false;
     return safety_violations;
+}
+
+void Reasoning::print_pending_verification_marker(const bool finding)
+{
+    if (!_verification_marker_pending) return;
+    _verification_marker_pending = false;
+    emit(io::OutputChannel::Out, ">>> semi-naive check: classic verification pass <<<", true, finding);
+}
+
+std::vector<Reasoning::NegationRecord> Reasoning::recheck_negations()
+{
+    std::vector<NegationRecord>             lost;
+    std::vector<NegationRecord>             kept;
+    std::unordered_map<Node, RuleFootprint> footprints;
+
+    for (NegationRecord& record : _negation_records)
+    {
+        if (!_pImpl->exists(record.fact)) continue; // removed since: nothing left to justify
+
+        auto it = footprints.find(record.rule);
+        if (it == footprints.end()) it = footprints.emplace(record.rule, footprint(record.rule)).first;
+        const RuleFootprint& f = it->second;
+
+        // Only a fact whose predicate is negated by the rule can make one
+        // of its negated patterns hold, thus a record whose predicates have
+        // added nothing since the last check is skipped without being read.
+        bool touched = _check_touched_all || f.negates_any;
+        for (auto p = f.negates.begin(); !touched && p != f.negates.end(); ++p)
+            touched = _check_touched.count(*p) != 0;
+
+        // Verified the way the forward pass verifies it, using the bindings
+        // under which the rule was triggered: the negation is valid if no
+        // fact matches.
+        bool refuted = false;
+        if (touched && f.checkable)
+        {
+            for (const Node condition : f.negated_conditions)
+            {
+                const auto  vars = std::make_shared<Variables>(record.bindings);
+                const auto  uneq = std::make_shared<Variables>();
+                Unification u(this, condition, record.parent, vars, uneq, nullptr, 1, nullptr);
+                if (u.Next())
+                {
+                    refuted = true;
+                    break;
+                }
+            }
+        }
+
+        // Refuted premises do not yet constitute a lost fact: a different
+        // rule, or the same rule with alternative bindings, might still
+        // derive it. The explain() function queries every rule with the same
+        // question that the forward pass would pose.
+        if (refuted && explain(record.fact, 1)->status == ProofNode::Status::Unfounded)
+            lost.push_back(std::move(record));
+        else
+            kept.push_back(std::move(record));
+    }
+
+    _negation_records.swap(kept);
+    _check_touched.clear();
+    _check_touched_all = false;
+    return lost;
 }

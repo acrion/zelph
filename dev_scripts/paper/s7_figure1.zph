@@ -1,38 +1,24 @@
 #!/usr/bin/env zelph
 # dev_scripts/paper/s7_figure1.zph
-#
-# The .run after each command is deliberate and must stay. A script named on
-# the command line is a session, so inference already runs after every line and
-# the explicit .run changes no result -- but it does fix the internal node IDs
-# that the closing .node prints, and the figure is addressed by one of them.
-
 # Evidence scripts print the FULL derivation trace: the paper quotes
 # individual deduction lines, and every mode but 'all' shows only deductions
 # anchored to statements of the session, which drops most of them from a log.
 .deductions all
 .import decimal-arithmetic
-.run
 
 .import symbolic-core
-.run
 
 .import eml
-.run
 
 x ~ symvar
-.run
 
 y ~ symvar
-.run
 
 :simplify (&1 eml ((&1 eml x) eml &1))
-.run
 
 :emlcompile (x - y)
-.run
 
 .node
-.run
 
 # The figure itself. .mermaid takes the fact directly, so no ID has to be
 # read out of the .node report first.

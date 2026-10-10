@@ -245,10 +245,10 @@ TEST_CASE("wikidata constraints: a required statement becomes a negated conditio
     // The value end of the same sentence binds the VALUE instead.
     CHECK(text.find("(I P7777 Y, ¬(Y P569 Z)) => !") != std::string::npos);
 
-    // And it decides something. The data goes in first and the rules after:
-    // forward chaining is monotonic, so a NAF condition asked before the
-    // fact that satisfies it exists would report a violation nothing can
-    // retract.
+    // It makes a determination. Input data arrives initially, followed by
+    // the rules: forward chaining never retracts a fact, thus a NAF
+    // condition posed before the existence of the fact that satisfies it
+    // would report a violation, and nothing can undo that.
     interactive.process(".deductions off");
     interactive.process(".lang wikidata");
     interactive.process(".auto-run");

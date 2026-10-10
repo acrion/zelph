@@ -25,14 +25,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 #include "fact_structure.hpp"
-#include "io/mermaid.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
 #include "zelph_version.hpp"
 
-#include <bitset>
-#include <cassert>
+#include <algorithm>
+#include <limits>
 #include <ranges>
 
 using std::ranges::all_of;
@@ -41,6 +40,52 @@ using namespace zelph::network;
 
 namespace
 {
+    // A statement written out from its parts, as it would appear when
+    // entered: a part that is itself a statement is enclosed in parentheses,
+    // whereas a list or a set brings its own brackets. Whether a part
+    // qualifies as a statement is determined by the node, not inferred from
+    // its textual form: "(a p b) q c" and "<1 2> p x" count as statements
+    // even though they begin with a bracket. A part is rendered with all its
+    // objects, at every level of nesting: the ordinary rendering shortens a
+    // nested fact containing numerous objects to "(... 34 objects ...)", so
+    // two statements that vary only within such a fact would then appear
+    // identical.
+    std::string render_statement(const Zelph& z, const Node subject, const Node predicate, const adjacency_set& objects)
+    {
+        const auto part = [&](const Node n)
+        {
+            std::string marked;
+            zelph::string::node_to_string(&z, marked, z.lang(), n, std::numeric_limits<int>::max());
+            const std::string text = zelph::string::unmark_identifiers(marked);
+            const Node        pred = z.predicate_of(n);
+            return pred != 0 && pred != z.core.Cons ? "(" + text + ")" : text;
+        };
+
+        std::string result = part(subject) + " " + part(predicate);
+        for (const Node o : objects)
+            result += " " + part(o);
+        return result;
+    }
+
+    // What fact() and the bulk import say about a node that already
+    // possesses the identifier of a statement yet holds a different one. The
+    // node's own statement is read in the way unification reads it: from the
+    // genuine store where the node has an entry, and otherwise from its
+    // edges. Both statements are fully written out, including all objects,
+    // because distinguishing between them is the point of the message.
+    std::string occupied_node_message(const Zelph& z, const Node subject, const Node predicate, const adjacency_set& objects, const Node node)
+    {
+        const std::string   wanted = "\"" + render_statement(z, subject, predicate, objects) + "\"";
+        const FactStructure held   = get_preferred_structure(&z, node, 0);
+        const std::string   what   = held.predicate != 0
+                                       ? "it holds \"" + render_statement(z, held.subject, held.predicate, held.objects) + "\", not " + wanted
+                                       : "no statement can be read from its edges, and they do not hold " + wanted;
+
+        return "node " + std::to_string(node) + " already exists, but " + what
+             + ". A fact's node is the 62-bit hash of its statement, so this is a partially loaded view, "
+               "a damaged file, or two statements whose hashes are equal. The statement was not stored.";
+    }
+
     // Relation entries a direct (index-free) closure traversal may scan
     // before switching to the predicate index. Small closures on small
     // graphs stay index-free and fast; hub-heavy traversals on Wikidata
@@ -343,6 +388,40 @@ adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, 
     return bfs_over_index(idx->forward, start, include_start);
 }
 
+// A shortest walk, as the facts it traverses: the inquiry into which edges a
+// path condition rests on. The direct traversal halts upon reaching the
+// target and records how it reached every node; it walks around the facts in
+// `unasserted` -- unasserted_snapshot(), which the caller takes once for
+// multiple walks -- and in `without`. Within `scan_budget` adjacency entries,
+// because the index the closure falls back to beyond that recognizes nodes,
+// not facts; `exhausted` says the budget was depleted.
+bool Zelph::transitive_walk(const Node start, const Node target, const Node predicate, const bool include_start, const adjacency_set* unasserted, const adjacency_set* without, const size_t scan_budget, std::vector<Node>& edges, bool& exhausted, size_t* const scanned) const
+{
+    edges.clear();
+    exhausted = false;
+
+    adjacency_set                                             reached;
+    ankerl::unordered_dense::map<Node, std::pair<Node, Node>> via;
+    if (!_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, scan_budget, unasserted, reached, target, &via, without, scanned))
+    {
+        exhausted = true;
+        return false;
+    }
+    if (reached.count(target) == 0) return false;
+    if (include_start && target == start) return true;
+
+    for (Node at = target;;)
+    {
+        const auto it = via.find(at);
+        if (it == via.end()) return false;
+        edges.push_back(it->second.first);
+        at = it->second.second;
+        if (at == start) break;
+    }
+    std::reverse(edges.begin(), edges.end());
+    return true;
+}
+
 // Transitive closure following the predicate backward (object -> subject).
 adjacency_set Zelph::transitive_sources(const Node target, const Node predicate, const bool include_target) const
 {
@@ -434,6 +513,31 @@ adjacency_set Zelph::get_right(const Node b) const
     return _pImpl->get_right(b);
 }
 
+void Zelph::watch_removals(std::shared_ptr<const ankerl::unordered_dense::set<Node>> nodes) const
+{
+    _pImpl->watch_removals(std::move(nodes));
+}
+
+bool Zelph::touched_by_removal(const Node n) const
+{
+    return _pImpl->touched_by_removal(n);
+}
+
+std::uint64_t Zelph::graph_epoch() const
+{
+    return _pImpl->graph_epoch();
+}
+
+std::size_t Zelph::left_count(const Node b) const
+{
+    return _pImpl->left_count_of(b);
+}
+
+std::size_t Zelph::right_count(const Node b) const
+{
+    return _pImpl->right_count_of(b);
+}
+
 // Facts that use `relation` as their PREDICATE. get_left(relation) is NOT
 // that set: it also holds the facts in which the relation is the SUBJECT,
 // starting with its own `relation ~ ->` declaration.
@@ -520,79 +624,80 @@ bool Zelph::is_var(Node a)
     return Network::is_var(a);
 }
 
+bool Zelph::is_recipe(Node a)
+{
+    return Network::is_recipe(a);
+}
+
+bool Zelph::is_value_recipe(Node a)
+{
+    return Network::is_value_recipe(a);
+}
+
+bool Zelph::is_template_id(Node a)
+{
+    return Network::is_template_id(a);
+}
+
+// When the rule names its own bucket, the node a firing writes into is the
+// bucket's term, keyed by no variable -- one node for every firing of the rule.
+Node Zelph::bucket_term_id(const Node bucket)
+{
+    return Network::recipe_id(bucket, Network::recipe_key({}), false);
+}
+
+bool Zelph::is_rule_template(const Node n) const
+{
+    return Network::is_template_id(n);
+}
+
+void Zelph::enter_template_scope()
+{
+    std::lock_guard lock(_pImpl->_template_scopes_mtx);
+    const auto [scope, opened] = _pImpl->_template_scopes.try_emplace(std::this_thread::get_id());
+    if (opened) _pImpl->_template_scopes_open.fetch_add(1, std::memory_order_release);
+    ++scope->second.depth;
+}
+
+void Zelph::leave_template_scope()
+{
+    std::lock_guard lock(_pImpl->_template_scopes_mtx);
+    const auto      scope = _pImpl->_template_scopes.find(std::this_thread::get_id());
+    if (scope == _pImpl->_template_scopes.end() || --scope->second.depth > 0) return;
+    _pImpl->_template_scopes.erase(scope);
+    _pImpl->_template_scopes_open.fetch_sub(1, std::memory_order_release);
+}
+
+std::size_t Zelph::template_scope_mark() const
+{
+    std::lock_guard lock(_pImpl->_template_scopes_mtx);
+    const auto      scope = _pImpl->_template_scopes.find(std::this_thread::get_id());
+    return scope == _pImpl->_template_scopes.end() ? 0 : scope->second.collections.size();
+}
+
+std::vector<Node> Zelph::template_scope_collections_since(const std::size_t mark) const
+{
+    std::lock_guard lock(_pImpl->_template_scopes_mtx);
+    const auto      scope = _pImpl->_template_scopes.find(std::this_thread::get_id());
+    if (scope == _pImpl->_template_scopes.end()) return {};
+    const auto& written = scope->second.collections;
+    if (mark >= written.size()) return {};
+    return {written.begin() + static_cast<std::ptrdiff_t>(mark), written.end()};
+}
+
+bool Zelph::holds_rule_text(const Node container) const
+{
+    return is_rule_template(container) || check_fact(container, core.IsA, {core.Conjunction}).is_known();
+}
+
 Answer Zelph::check_fact(const Node subject, const Node predicate, const adjacency_set& objects) const
 {
     const Node relation = Impl::create_hash(predicate, subject, objects);
 
+    // A pure probe: a node that is present yet does not possess these edges
+    // is answered as unknown, and fact() refuses to write the statement into
+    // it (refer to the refusal there, which names both statements).
     const bool known = _pImpl->fact_edges_hold(relation, subject, objects);
-
-    if (!known
-        && !Impl::is_var(subject)
-        && !Impl::is_var(predicate)
-        && std::all_of(objects.begin(), objects.end(), [](const Node t)
-                       { return Impl::is_var(t); })
-        && !string::is_inside_node_to_wstring()
-        && _pImpl->exists(relation))
-    {
-        // Suspected hash collision / corrupt state: this cold diagnostic
-        // path fetches its own adjacency copies -- the hot path above no
-        // longer materializes any.
-        const adjacency_set connectedFromRelation = _pImpl->get_right(relation);
-        const adjacency_set connectedToRelation   = _pImpl->get_left(relation);
-
-        const bool relationConnectsToSubject = connectedFromRelation.count(subject) == 1;
-
-        const bool subjectConnectsToRelation         = connectedToRelation.count(subject) == 1;
-        const bool allObjectsConnectToRelation       = std::all_of(objects.begin(), objects.end(), [&](Node t)
-                                                                   { return connectedToRelation.count(t) != 0; });
-        const bool noObjectsAreConnectedFromRelation = std::all_of(objects.begin(), objects.end(), [&](Node t)
-                                                                   { return connectedFromRelation.count(t) == 1; });
-
-        // inconsistent state => debug output TODO
-        std::string output;
-        string::node_to_string(this, output, _lang, relation, 3);
-        error(output, true);
-
-        io::gen_mermaid_html(this,
-                             relation,
-                             "debug.html",
-                             1,
-                             3,
-                             {},
-                             true,
-                             true,
-                             true);
-        error("relationConnectsToSubject         == " + std::to_string(relationConnectsToSubject), true);
-        error("subjectConnectsToRelation         == " + std::to_string(subjectConnectsToRelation), true);
-        error("allObjectsConnectToRelation       == " + std::to_string(allObjectsConnectToRelation), true);
-        error("noObjectsAreConnectedFromRelation == " + std::to_string(noObjectsAreConnectedFromRelation), true);
-
-        FactComponents actual = extract_fact_components(relation);
-        error("Hash collision detected for relation=" + std::to_string(relation), true);
-        error("Expected inputs to create_hash:", true);
-        error("  Subject:   " + std::to_string(subject) + " (hex: 0x" + string::to_hex(subject) + ", bin: " + std::bitset<64>(subject).to_string() + ")", true);
-        error("  Predicate: " + std::to_string(predicate) + " (hex: 0x" + string::to_hex(predicate) + ", bin: " + std::bitset<64>(predicate).to_string() + ")", true);
-        error("  Objects:", true);
-        for (Node obj : objects)
-        {
-            error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
-        }
-
-        error("Actual inputs in existing relation:", true);
-        error("  Subject:   " + std::to_string(actual.subject) + " (hex: 0x" + string::to_hex(actual.subject) + ", bin: " + std::bitset<64>(actual.subject).to_string() + ")", true);
-        error("  Predicate: " + std::to_string(actual.predicate) + " (hex: 0x" + string::to_hex(actual.predicate) + ", bin: " + std::bitset<64>(actual.predicate).to_string() + ")", true);
-        error("  Objects:", true);
-        for (Node obj : actual.objects)
-        {
-            error("    " + std::to_string(obj) + " (hex: 0x" + string::to_hex(obj) + ", bin: " + std::bitset<64>(obj).to_string() + ")", true);
-        }
-
-        static int hash_collision_count = 0;
-        ++hash_collision_count;
-        error("Hash collision count: " + std::to_string(hash_collision_count), true);
-
-        assert(false);
-    }
 
     if (known)
     {
@@ -612,9 +717,10 @@ Node Zelph::predicate_of(const Node nd) const
     if (try_get_genuine_structure(nd, genuine) && genuine && !genuine->empty())
         return genuine->front().predicate;
 
-    // No store entry: either a subject == predicate fact (never stored), or
-    // the stores were disarmed by a bulk path. parse_relation resolves both;
-    // for subject == predicate it returns the subject, which IS the predicate.
+    // No store entry: the stores were disarmed via a bulk path (or the
+    // node was never created through fact()). parse_relation resolves it;
+    // when subject equals predicate, it returns the subject, which IS the
+    // predicate.
     return parse_relation(nd);
 }
 
@@ -636,6 +742,42 @@ Answer Zelph::check_fact(const Node relation) const
 
 Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& objects, const long double probability)
 {
+    // Once a rule has been written, its text becomes immutable. Writing a
+    // membership into a collection within the rule's own text, or into the
+    // rule's condition set, when no rule is currently being written -- via
+    // Janet, the C ABI, or a name given to the collection -- would alter what
+    // the rule says: the rule would print the member, its fingerprint and the
+    // variables contained in its text would no longer belong to it, and the
+    // rule typed again would be a second rule. A member already held by the
+    // collection, restated, does not create a new node, yet the scripting
+    // interface takes a statement as a claim, and a claim turns the rule's
+    // literal member into data; thus, the write is refused regardless of
+    // whether the membership already exists, before any modification. A
+    // statement that binds such a collection writes into its data term instead
+    // (instantiate_fact), as does every firing (container_plan). Within the
+    // template scope -- which the parser opens for a rule, and which
+    // zelph/build-rule, zelph/rule-text, and a construction open, each on the
+    // thread responsible for writing the rule -- a rule is being written, and
+    // its own collections are written as its text. Ordinary data pays the
+    // comparison on the predicate; a membership outside every rule pays a bit
+    // test per object and a tag lookup per object that is no rule's own
+    // collection.
+    if (predicate == core.PartOf && !_pImpl->template_scope_open())
+    {
+        for (const Node t : objects)
+        {
+            if (!holds_rule_text(t)) continue;
+            std::string rendered;
+            zelph::string::node_to_string(this, rendered, _lang, t, 3);
+            const bool own = is_rule_template(t);
+            throw std::runtime_error(
+                "fact(): " + zelph::string::unmark_identifiers(rendered)
+                + (own ? " is a collection of a rule's own text" : " is the condition set of a rule")
+                + ", and a rule's text is fixed once the rule is written. Data about it goes to its data term, which "
+                + (own ? "the rule's firings and a rule that binds the collection write into." : "a rule that binds the set writes into."));
+        }
+    }
+
     const Answer answer = check_fact(subject, predicate, objects);
 
     if (answer.is_known())
@@ -767,6 +909,50 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                 + " IS its members. Write the collection literal @{...} for a container that membership can grow.");
         }
 
+        // We only allow relations with the same subject and object in the case of a single object. If there are several
+        // objects and one of them is identical to the subject, we wouldn't know that such an object exists.
+        // Real life examples from Wikidata:
+        // South Africa (Q258)  country (P17)  South Africa (Q258)
+        // or
+        // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
+        //
+        // Refused here, before any writing, like every refusal above.
+        // It was formerly identified during the drawing of the new node's
+        // edges, causing the refused statement to remain as an incomplete
+        // node, alongside the declaration of its predicate. A subsequent
+        // retry encountered that node, and when another object had been
+        // connected before the throw, the remnants were interpreted as a fact
+        // known to be wrong.
+        if (objects.size() > 1 && objects.count(subject) == 1)
+        {
+            const std::string name_subject_object = get_name(subject, _lang, true);
+            const std::string name_relationType   = get_name(predicate, _lang, true);
+
+            throw std::runtime_error("fact(): facts with same subject and object are only supported for facts with a single object: " + name_subject_object + " " + name_relationType + " " + name_subject_object);
+        }
+
+        // The node corresponding to a fact IS the hash of its statement; thus,
+        // a node possessing this identifier yet failing to hold the statement
+        // (as previously indicated by check_fact) is unable to adopt it:
+        // connecting edges there would merge two distinct statements into a
+        // single one authored by nobody, an act that already occurred silently
+        // before this refusal existed. A partially loaded view or a corrupted
+        // file can result in such a node, as can two different statements
+        // whose 62-bit hashes happen to coincide. Since nothing compares the
+        // underlying structures, this is precisely where a collision becomes
+        // evident.
+        //
+        // It is not a race either: fact() has no concurrent caller.
+        // Inference creates facts on the thread executing it (within
+        // Reasoning's network mutex, in addition), the worker pool
+        // exclusively performs reads, the scripting and C interfaces perform
+        // writes solely from the main thread, and the Wikidata importer's
+        // threads write via the trusted path below, not through fact().
+        if (_pImpl->exists(answer.relation()))
+        {
+            throw std::runtime_error("fact(): " + occupied_node_message(*this, subject, predicate, objects, answer.relation()));
+        }
+
         // Whatever stands in predicate position IS a relation type, and saying
         // so is what makes the fact readable again later. The declaration used
         // to be skipped for hash nodes, i.e. for a predicate that is itself a
@@ -784,41 +970,13 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             fact(predicate, core.IsA, {core.RelationTypeCategory});
         }
 
-        if (_pImpl->exists(answer.relation()))
-        {
-            // check_fact returns !answer.is_known() though answer.relation exists, which must not happen. Indicates corrupt database or hash collision.
-            assert(false);
-        }
-        else
-        {
-            _pImpl->create(answer.relation());
-        }
+        _pImpl->create(answer.relation());
 
         _pImpl->connect(subject, answer.relation());
         _pImpl->connect(answer.relation(), subject);
         for (const Node t : objects)
         {
-            if (t == subject)
-            {
-                if (objects.size() > 1)
-                {
-                    // We only allow relations with the same subject and object in the case of a single object. If there are several
-                    // objects and one of them is identical to the subject, we wouldn't know that such an object exists.
-                    // Real life examples from Wikidata:
-                    // South Africa (Q258)  country (P17)  South Africa (Q258)
-                    // or
-                    // chemical substance  has part  chemical substance ⇐ (matter  has part  chemical substance), (chemical substance  is subclass of  matter)
-
-                    const std::string name_subject_object = get_name(subject, _lang, true);
-                    const std::string name_relationType   = get_name(predicate, _lang, true);
-
-                    throw std::runtime_error("fact(): facts with same subject and object are only supported for facts with a single object: " + name_subject_object + " " + name_relationType + " " + name_subject_object);
-                }
-            }
-            else
-            {
-                _pImpl->connect(t, answer.relation());
-            }
+            if (t != subject) _pImpl->connect(t, answer.relation());
         }
 
         _pImpl->connect(answer.relation(), predicate, probability);
@@ -887,6 +1045,44 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                 _pImpl->_template_vars.emplace(answer.relation(),
                                                std::shared_ptr<const std::unordered_set<Node>>(std::move(vars)));
             }
+            else
+            {
+                // No variable within the structural closure, though
+                // potentially one in the rule text: a component already
+                // entered, a rule's own collection whose members hold one, or
+                // the conditions of this `=>` fact (see Impl's
+                // _rule_text_vars). Data facts incur a single atomic load and
+                // a bit test per component, plus a probe per hash component
+                // only once some rule text has been entered.
+                //
+                // A membership in a rule's own collection is that
+                // collection's content, and holds a variable exactly when its
+                // member does: read through the collection, `c in @{c Y}`
+                // would depend on whether `Y in @{c Y}` was written before
+                // it, and a membership flagged by the engine as a pattern
+                // would read as one via another member's variable. A rule
+                // asserting such a membership holds the collection's
+                // variables, read here once, through a walk of the rule's
+                // text. Outside the writing of a rule, no member is written
+                // into a collection of a rule's text (refer to the refusal
+                // above), thus nothing that reads one has to be entered
+                // later. A member written into another rule's collection
+                // while the template scope remains open is the exception, and
+                // is not entered: the reconstruction walk sees it (see Impl's
+                // _rule_text_vars).
+                bool text_var = component_holds_text_variable(subject) || component_holds_text_variable(predicate);
+                for (const Node t : objects)
+                    text_var = text_var || ((predicate != core.PartOf || Impl::is_hash(t)) && component_holds_text_variable(t));
+                if (!text_var && predicate == core.Causes)
+                    text_var = conditions_hold_variable(subject) || rule_memberships_hold_variable(subject, objects);
+
+                if (text_var)
+                {
+                    std::unique_lock lock(_pImpl->_template_vars_mtx);
+                    _pImpl->_rule_text_vars.insert(answer.relation());
+                    _pImpl->_rule_text_vars_any.store(true, std::memory_order_release);
+                }
+            }
         }
 
         // Record the genuine structure (reconstruction bypass): the exact
@@ -909,6 +1105,16 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             _pImpl->_genuine.emplace(answer.relation(), FactStructurePtr(std::move(list)));
         }
 
+        // The index of fingerprints for the rules (find_equivalent_rule). A
+        // new rule is placed in the queue, to undergo fingerprinting during
+        // the next lookup, once it is complete. Data incurs a single
+        // comparison on the predicate.
+        if (predicate == core.Causes)
+        {
+            std::lock_guard lock(_pImpl->_rule_index_mtx);
+            _pImpl->_rule_index_queue.push_back(answer.relation());
+        }
+
         if (_on_fact_created) _on_fact_created(answer.relation(), predicate);
     }
 
@@ -928,7 +1134,44 @@ Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node
     if (predicate == core.IsA && object == core.RelationTypeCategory)
         _pImpl->invalidate_relation_type_set();
 
-    return _pImpl->insert_fact_single_object_trusted(subject, predicate, object);
+    bool       foreign  = false;
+    const Node relation = _pImpl->insert_fact_single_object_trusted(subject, predicate, object, foreign);
+
+    // This triple's node holds something else. No data was written,
+    // and the import continues: in an import of a billion triples, a damaged
+    // file might produce such a node per line, hence only the first of an
+    // import is reported, and end_bulk_import() reports the total number
+    // observed. Precisely one thread draws the count that the import began
+    // with. Rendering the report takes the locks that the insert operation
+    // has just released.
+    if (foreign
+        && _pImpl->_import_conflicts.fetch_add(1, std::memory_order_relaxed)
+               == _pImpl->_import_conflicts_at_begin.load(std::memory_order_relaxed))
+    {
+        error("Import: " + occupied_node_message(*this, subject, predicate, {object}, relation)
+                  + " Further cases are counted, not reported one by one.",
+              true);
+    }
+
+    return relation;
+}
+
+void Zelph::begin_bulk_import()
+{
+    _pImpl->_import_conflicts_at_begin.store(_pImpl->_import_conflicts.load(std::memory_order_relaxed), std::memory_order_relaxed);
+}
+
+uint64_t Zelph::end_bulk_import()
+{
+    const uint64_t unwritten = _pImpl->_import_conflicts.load(std::memory_order_relaxed)
+                             - _pImpl->_import_conflicts_at_begin.load(std::memory_order_relaxed);
+
+    if (unwritten == 1)
+        error("Import: 1 triple was left unwritten because its node holds a different statement; it is reported above.", true);
+    else if (unwritten > 1)
+        error("Import: " + std::to_string(unwritten) + " triples were left unwritten because their nodes hold different statements; the first of them is reported above.", true);
+
+    return unwritten;
 }
 
 // --- Synapses (neural substrate) ---
@@ -1071,10 +1314,30 @@ Node Zelph::list(const std::vector<std::string>& elements)
 // (PartOf) already carries.
 Node Zelph::collection(const std::unordered_set<Node>& elements)
 {
+    return new_collection(elements, _pImpl->template_scope_open());
+}
+
+Node Zelph::conjunction_collection(const std::unordered_set<Node>& elements)
+{
+    return new_collection(elements, false);
+}
+
+Node Zelph::new_collection(const std::unordered_set<Node>& elements, const bool rule_text)
+{
     if (elements.empty()) return core.Nil;
 
-    // Create the super-node representing the collection itself
-    Node collection_node = _pImpl->create();
+    // Create the super-node that embodies the collection as a whole.
+    // Written while a rule is written, it forms a component of that rule's
+    // text, and its identifier says so for good: no subsequent writing --
+    // be it a claim naming it or another rule writing into it -- can turn
+    // it into data.
+    const Node collection_node = rule_text ? _pImpl->create_written_template() : _pImpl->create();
+    if (rule_text)
+    {
+        std::lock_guard lock(_pImpl->_template_scopes_mtx);
+        if (const auto scope = _pImpl->_template_scopes.find(std::this_thread::get_id()); scope != _pImpl->_template_scopes.end())
+            scope->second.collections.push_back(collection_node);
+    }
 
     for (const auto& current_node : elements)
     {
@@ -1107,10 +1370,7 @@ Node Zelph::set(const std::unordered_set<Node>& elements)
     // It is also what keeps the engine's own conjunction sugar
     // `*{(A rel B) (B rel C)} ~ conjunction` working: those members are
     // condition patterns, never ground.
-    for (const Node e : elements)
-    {
-        if (Impl::is_var(e) || var_in_closure(e)) return collection(elements);
-    }
+    if (kind_unknowable(elements)) return collection(elements);
 
     adjacency_set members;
     for (const Node e : elements)
@@ -1118,7 +1378,8 @@ Node Zelph::set(const std::unordered_set<Node>& elements)
 
     const Node set_node = Impl::create_hash(members);
 
-    if (!_pImpl->exists(set_node)) _pImpl->create(set_node);
+    const bool created = !_pImpl->exists(set_node);
+    if (created) _pImpl->create(set_node);
 
     for (const auto& current_node : elements)
     {
@@ -1132,14 +1393,78 @@ Node Zelph::set(const std::unordered_set<Node>& elements)
         fact(current_node, core.PartOf, {set_node});
     }
 
+    // A member that is a rule's own collection holding a variable makes the
+    // set constant rule text (see var_in_closure): `{@{Y}}`. A set constant
+    // is not a fact, so fact() never enters it.
+    if (created && _pImpl->_template_vars_authoritative.load(std::memory_order_acquire)
+        && std::any_of(elements.begin(), elements.end(), [this](const Node e)
+                       { return component_holds_text_variable(e); }))
+    {
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        _pImpl->_rule_text_vars.insert(set_node);
+        _pImpl->_rule_text_vars_any.store(true, std::memory_order_release);
+    }
+
     return set_node;
+}
+
+// A member that is a collection does not make the kind unknowable,
+// regardless of its contents: a collection is not a fact, and
+// var_in_closure returns no in such cases. `{@{Y}}` is a set constant
+// surrounding a single collection.
+bool Zelph::kind_unknowable(const std::unordered_set<Node>& members) const
+{
+    for (const Node m : members)
+    {
+        if (Impl::is_var(m) || var_in_closure(m)) return true;
+    }
+    return false;
+}
+
+Node Zelph::recipe_collection(const Node id, const std::unordered_set<Node>& members, bool& created, std::vector<Node>* const asserted, const bool derived)
+{
+    // create(Node) records that node within the active cluster, meaning
+    // that dropping the cluster takes the collection back with its
+    // membership facts.
+    created = !_pImpl->exists(id);
+    if (created) _pImpl->create(id);
+
+    // A node that exists can be missing one of these memberships in two
+    // distinct manners. The `.remove` operation can eliminate a membership
+    // where the member is a variable, and the collection remains intact:
+    // since a variable was never an actual element, collect_doomed does not
+    // trigger the container's doom for it, unlike when a ground member is
+    // involved. The next construction under the identical recipe asserts
+    // the membership once more and reports it in `asserted`, ensuring it is
+    // marked with the rule's other parts rather than reading as a claim.
+    // Furthermore, when two recipes collide, they share a single node,
+    // which takes the members from both.
+    //
+    // A firing derives the memberships it writes. One that already exists
+    // can be a ground pattern of a rule written earlier -- a rule
+    // governing rules names a collection's data term in `(d in C) noted X` --
+    // and obtaining it through derivation removes the mark, just as deduce()
+    // does for a derived fact.
+    for (const Node m : members)
+    {
+        if (const Answer membership = check_fact(m, core.PartOf, {id}); membership.is_known())
+        {
+            if (derived) unmark_rule_pattern(membership.relation());
+            continue;
+        }
+        const Node membership = fact(m, core.PartOf, {id});
+        if (asserted != nullptr) asserted->push_back(membership);
+    }
+
+    return id;
 }
 
 // Is this node a set constant, i.e. does it hash back to its own members?
 //
-// No marker and no side table: the identity IS the answer. A collection gets
-// a counter id from create(), which cannot equal the hash of anything, so the
-// cheap is_hash test rejects every collection before the members are read.
+// No marker and no side table: the identity IS the answer. A collection is
+// assigned a counter or a recipe id, neither of which constitutes a hash,
+// thus the cheap is_hash test rejects every collection before reading its
+// members.
 bool Zelph::is_set_constant(const Node node) const
 {
     if (node == 0 || !Impl::is_hash(node) || Impl::is_var(node)) return false;
@@ -1167,8 +1492,13 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
 
     for (Node nd : _pImpl->get_left(rule))
     {
-        // Check for bidirectional link (characteristic of Subject <-> Relation connection)
-        if (_pImpl->get_left(nd).count(rule) == 1)
+        // Verify the presence of a bidirectional link (a trait typical of
+        // Subject <-> Relation connections).
+        // A probe, not a copy: the inner variable within a generator's
+        // template serves as the subject for each rule built by the generator,
+        // and copying its adjacency for each rule made reading N such rules
+        // cost N^2.
+        if (_pImpl->has_left_edge(nd, rule))
         {
             if (nd != parent)
             {
@@ -1403,6 +1733,36 @@ Network::ReadScope Zelph::read_scope() const
     return Network::ReadScope(*_pImpl);
 }
 
+namespace
+{
+    // The loop of both forms of Zelph::collect_anchored_facts, which vary
+    // solely in what they collect into.
+    template <typename Keep>
+    std::size_t anchored_facts(const Network::ReadScope& scope, const Node anchor, const Node relation, const Zelph::AnchorRole role, const Node after, const Keep& keep)
+    {
+        const adjacency_set& adjacent = scope.right(anchor);
+
+        for (const Node fact : adjacent)
+        {
+            if (fact <= after) continue;
+            const adjacency_set& outgoing = scope.right(fact);
+            if (outgoing.count(relation) == 0) continue;                                     // not this predicate
+            if (role == Zelph::AnchorRole::Subject && outgoing.count(anchor) == 0) continue; // the anchor serves as nothing more than an object
+            if (role == Zelph::AnchorRole::Object && relation != anchor && outgoing.count(anchor) != 0
+                && fact != Network::create_hash(relation, anchor, anchor))
+                continue; // the anchor serves as nothing but the subject
+            // relation -> fact makes the relation the fact's SUBJECT -- unless
+            // the fact's whole outgoing adjacency is that one node, which is
+            // how {subject, predicate} collapses when the two are the same.
+            // See get_facts_of_predicate, which applies the same test from the
+            // other end.
+            if (scope.left(fact).count(relation) != 0 && scope.right(fact).size() > 1) continue;
+            keep(fact);
+        }
+        return adjacent.size();
+    }
+}
+
 // Anchored-candidate filter for Unification::increment_fact_index: from the
 // outgoing edges of `anchor`, collect the facts that use `relation` as their
 // PREDICATE. Same role test as get_facts_of_predicate, from the other end --
@@ -1414,23 +1774,39 @@ Network::ReadScope Zelph::read_scope() const
 // two locked edge probes per candidate. This used to live in Network, which
 // is the wrong layer: reading an edge pair as subject-versus-predicate is
 // knowledge about zelph's fact topology, and Network only stores edges.
-void Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out) const
+//
+// The adjacency of the anchor holds the facts for which it serves as subject
+// and those for which it serves as object. AnchorRole::Subject keeps the
+// former: a fact points back at its subject (and at its predicate, and at a
+// fact of which it is the subject, which are also kept), but not at its
+// objects. AnchorRole::Object keeps a fact that points back at the anchor only
+// where it is (anchor relation anchor): a fact includes its subject among its
+// objects only as its one object (Zelph::fact refuses any other), and the node
+// of a fact is the hash of its triple. Its edges cannot tell: the other
+// objects of a fact point at it without a reciprocal edge, and so does each
+// fact that uses it as a predicate. A fact where the anchor is the predicate
+// also points back at it, and when the anchor is the relation itself, every
+// fact is kept.
+//
+// `after` retains solely the facts whose identifiers are greater: a
+// resumption of enumeration following a specific fact
+// (Unification::start_after) considers only the remaining candidates.
+//
+// Returns the count of adjacency entries it processed, encompassing all
+// associated with the anchor: a hub costs its complete adjacency even
+// where the predicate selects nothing.
+std::size_t Zelph::collect_anchored_facts(const Node anchor, const Node relation, adjacency_set& out, const AnchorRole role, const Node after) const
 {
     out.clear();
+    return anchored_facts(read_scope(), anchor, relation, role, after, [&](const Node fact)
+                          { out.insert(fact); });
+}
 
-    const Network::ReadScope scope = read_scope();
-
-    for (const Node fact : scope.right(anchor))
-    {
-        if (scope.right(fact).count(relation) == 0) continue; // not this predicate
-        // relation -> fact makes the relation the fact's SUBJECT -- unless
-        // the fact's whole outgoing adjacency is that one node, which is how
-        // {subject, predicate} collapses when the two are the same. See
-        // get_facts_of_predicate, which applies the same test from the other
-        // end.
-        if (scope.left(fact).count(relation) != 0 && scope.right(fact).size() > 1) continue;
-        out.insert(fact);
-    }
+std::size_t Zelph::collect_anchored_facts(const Node anchor, const Node relation, std::vector<Node>& out, const AnchorRole role, const Node after) const
+{
+    out.clear();
+    return anchored_facts(read_scope(), anchor, relation, role, after, [&](const Node fact)
+                          { out.push_back(fact); });
 }
 
 // Semantic caveat, deliberate: parse_relation's exact probe uses
@@ -1564,10 +1940,10 @@ zelph::io::OutputHandler Zelph::get_output_handler() const
     return _pImpl->_output;
 }
 
-void Zelph::emit(io::OutputChannel channel, const std::string& text, bool newline) const
+void Zelph::emit(io::OutputChannel channel, const std::string& text, bool newline, bool finding) const
 {
     std::lock_guard lock(_pImpl->_mtx_print);
-    _pImpl->emit(channel, text, newline);
+    _pImpl->emit(channel, text, newline, finding);
 }
 
 void Zelph::out(const std::string& msg, bool newline) const
@@ -1583,6 +1959,16 @@ void Zelph::error(const std::string& msg, bool newline) const
 void Zelph::diagnostic(const std::string& msg, bool newline) const
 {
     emit(io::OutputChannel::Diagnostic, msg, newline);
+}
+
+void Zelph::out_finding(const std::string& msg, bool newline) const
+{
+    emit(io::OutputChannel::Out, msg, newline, true);
+}
+
+void Zelph::diagnostic_finding(const std::string& msg, bool newline) const
+{
+    emit(io::OutputChannel::Diagnostic, msg, newline, true);
 }
 
 void Zelph::prompt(const std::string& msg, bool newline) const
@@ -1652,14 +2038,15 @@ bool Zelph::should_log(int depth) const
 {
     if (!_pImpl->_logging || depth > _pImpl->_max_log_depth) return false;
 
-    // Never log from inside a rendering. Log messages are built with
-    // format(), which runs node_to_string, which itself consults
-    // get_fact_structures -- and that logs. Without this guard the pair
-    // recurses without bound (log -> format -> log), overflowing the
-    // stack. Same re-entrancy criterion as the collision diagnostic in
-    // check_fact; a log line about the node currently being printed would
-    // be self-referential noise in any case. Checked last so that the
-    // common case -- logging off -- costs exactly what it did before.
+    // Never emit logs within a rendering. Log messages are
+    // constructed using format(), which runs node_to_string, which in
+    // turn accesses get_fact_structures -- and that operation triggers
+    // logging. Without this guard, the pair would engage in unbounded
+    // recursion (log -> format -> log), leading to stack overflow. A
+    // log entry describing the node currently being rendered would, in
+    // any case, be self-referential noise. Checked last to ensure the
+    // typical scenario -- logging being disabled -- costs exactly what
+    // it did before.
     return !string::is_inside_node_to_wstring();
 }
 

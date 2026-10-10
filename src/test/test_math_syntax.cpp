@@ -29,6 +29,20 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::test;
 
+namespace
+{
+    // The engine's echo upon entering the statement: the FIRST Out event.
+    // Subsequent ones consist of deductions and the semi-naive check
+    // diagnostics.
+    std::string first_out_text(const zelph::io::OutputCollector& collector)
+    {
+        for (const auto& e : collector.events())
+            if (e.channel == zelph::io::OutputChannel::Out && !e.text.empty())
+                return normalize(e.text);
+        return {};
+    }
+}
+
 // ---------------------------------------------------------------------------
 // math-syntax.zph: the $( ... ) term island -- conventional infix notation
 // with precedence, desugaring to the exact graph structures the verbose
@@ -99,6 +113,63 @@ TEST_CASE("math-syntax: powers build a ^ term (all arithmetic modules)" * doctes
         CHECK(any_output_contains(collector, "MS-POW0-true"));
         CHECK(any_output_contains(collector, "MS-POWP-true"));
         CHECK(any_output_contains(collector, "MS-POWPREC-true")); });
+}
+
+// The exponent was formerly a dedicated rule that accepted only digits,
+// whereas the printer wrote ^ as a standard right-associative infix at
+// precedence level 30 -- thus causing the engine to print powers that its
+// own island could not read back. ^ is now an entry in the operator table,
+// and its right operand is a factor.
+TEST_CASE("math-syntax: an exponent is any factor, and ^ nests to the right (all arithmetic modules)" * doctest::test_suite("slow"))
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import math-syntax");
+
+        SUBCASE("a symbol, a sum and a call are exponents; a numeral is a base")
+        {
+            CHECK_NOTHROW(interactive.process("$( x^y ) ~ e1"));
+            CHECK_NOTHROW(interactive.process("$( 2^x ) ~ e2"));
+            CHECK_NOTHROW(interactive.process("$( x^(y+z) ) ~ e3"));
+            CHECK_NOTHROW(interactive.process("$( x^exp(y) ) ~ e4"));
+            collector.clear();
+            interactive.process(R"js(%(string "MS-EXPSYM-" (zelph/exists (zelph/fact "x" "^" "y") "~" "e1")))js");
+            interactive.process(R"js(%(string "MS-EXPBASE-" (zelph/exists (zelph/fact (zelph/number "2") "^" "x") "~" "e2")))js");
+            interactive.process(R"js(%(string "MS-EXPSUM-" (zelph/exists (zelph/fact "x" "^" (zelph/fact "y" "+" "z")) "~" "e3")))js");
+            interactive.process(R"js(%(string "MS-EXPCALL-" (zelph/exists (zelph/fact "x" "^" (zelph/fact "exp" "of" "y")) "~" "e4")))js");
+            CHECK(any_output_contains(collector, "MS-EXPSYM-true"));
+            CHECK(any_output_contains(collector, "MS-EXPBASE-true"));
+            CHECK(any_output_contains(collector, "MS-EXPSUM-true"));
+            CHECK(any_output_contains(collector, "MS-EXPCALL-true"));
+        }
+        SUBCASE("^ associates to the right; parentheses group to the left")
+        {
+            CHECK_NOTHROW(interactive.process("$( x^y^z ) ~ e5"));
+            CHECK_NOTHROW(interactive.process("$( (x^y)^z ) ~ e6"));
+            collector.clear();
+            interactive.process(R"js(%(string "MS-EXPRIGHT-" (zelph/exists (zelph/fact "x" "^" (zelph/fact "y" "^" "z")) "~" "e5")))js");
+            interactive.process(R"js(%(string "MS-EXPLEFT-" (zelph/exists (zelph/fact (zelph/fact "x" "^" "y") "^" "z") "~" "e6")))js");
+            CHECK(any_output_contains(collector, "MS-EXPRIGHT-true"));
+            CHECK(any_output_contains(collector, "MS-EXPLEFT-true"));
+        }
+        SUBCASE("an exponent may carry a sign")
+        {
+            CHECK_NOTHROW(interactive.process("$( x^-1 ) ~ e7"));
+            collector.clear();
+            interactive.process(R"js(%(string "MS-EXPNEG-" (zelph/exists (zelph/fact "x" "^" (zelph/fact "neg" "of" (zelph/number "1"))) "~" "e7")))js");
+            CHECK(any_output_contains(collector, "MS-EXPNEG-true"));
+        }
+        SUBCASE("unary minus binds looser than ^")
+        {
+            // The old grammar interpreted -x^2 in this manner as well.
+            // The minus sign is now placed between the generated levels,
+            // and this pins that it landed beneath ^ rather than above
+            // it.
+            CHECK_NOTHROW(interactive.process("$( -x^2 ) ~ e8"));
+            collector.clear();
+            interactive.process(R"js(%(string "MS-NEGPOW-" (zelph/exists (zelph/fact "neg" "of" (zelph/fact "x" "^" (zelph/number "2"))) "~" "e8")))js");
+            CHECK(any_output_contains(collector, "MS-NEGPOW-true"));
+        } });
 }
 
 TEST_CASE("math-syntax: function application; nested parens exercise the veto")
@@ -245,6 +316,16 @@ TEST_CASE("math-syntax: terms render in island form exactly where it is needed (
             collector.clear();
             interactive.process("$( -x + 1 ) marker r4");
             CHECK(any_output_contains(collector, "$( neg(x) + &1 ) marker r4"));
+        }
+        SUBCASE("call notation alone opens an island")
+        {
+            // Here, no parentheses are eliminated, and the numeral-free
+            // term still prints as an island: the call notation
+            // serves as the second of the two triggers that the module
+            // names.
+            collector.clear();
+            interactive.process("$( exp(x) ) marker r5");
+            CHECK(any_output_contains(collector, "$( exp(x) ) marker r5"));
         } });
 }
 
@@ -262,17 +343,7 @@ TEST_CASE("math-syntax: the engine's own output re-enters as the same node (all 
         collector.clear();
         interactive.process("$( 1 - x*x )");
 
-        // The FIRST Out event is the statement echo; the later ones are the
-        // semi-naive check diagnostics that run_arithmetic_modules enables.
-        std::string rendered;
-        for (const auto& e : collector.events())
-        {
-            if (e.channel == zelph::io::OutputChannel::Out && !e.text.empty())
-            {
-                rendered = normalize(e.text);
-                break;
-            }
-        }
+        const std::string rendered = first_out_text(collector);
         REQUIRE_FALSE(rendered.empty());
 
         interactive.process(rendered + " marker roundtrip");
@@ -321,6 +392,53 @@ TEST_CASE("math-syntax: call notation survives the round trip (all arithmetic mo
         collector.clear();
         interactive.process(R"js(%(let [t (zelph/fact (zelph/fact "exp" "of" "x") "+" (zelph/number "1"))] (string "MSD-APP-" (zelph/exists t "marker" "approundtrip"))))js");
         CHECK(any_output_contains(collector, "MSD-APP-true")); });
+}
+
+// Each of these powers printed as island syntax that the island
+// refused: the printer wrote ^ as an infix operator just like any other,
+// whereas the parser interpreted only digits following it.
+TEST_CASE("math-syntax: a printed power re-enters as the same node (all arithmetic modules)" * doctest::test_suite("slow"))
+{
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        interactive.process(".import math-syntax");
+
+        const auto round_trip = [&](const std::string& verbose, const std::string& marker, const std::string& janet_term)
+        {
+            collector.clear();
+            interactive.process(verbose);
+            const std::string rendered = first_out_text(collector);
+            // The default form reads back anyway: lacking an island
+            // within the echo, the test would pass without actually
+            // performing any verification.
+            REQUIRE(rendered.find("$(") != std::string::npos);
+
+            CHECK_NOTHROW(interactive.process(rendered + " marker " + marker));
+            collector.clear();
+            interactive.process(R"js(%(string "MSD-POW-" (zelph/exists )js" + janet_term + R"js( "marker" ")js" + marker + R"js(")))js");
+            CHECK(any_output_contains(collector, "MSD-POW-true"));
+        };
+
+        SUBCASE("a symbolic exponent under a sum")
+        {
+            round_trip("(x ^ y) + z", "pw1", R"js((zelph/fact (zelph/fact "x" "^" "y") "+" "z"))js");
+        }
+        SUBCASE("a power under a product")
+        {
+            round_trip("z * (x ^ (y + z))", "pw2", R"js((zelph/fact "z" "*" (zelph/fact "x" "^" (zelph/fact "y" "+" "z"))))js");
+        }
+        SUBCASE("a power inside a call")
+        {
+            round_trip("(exp of (x ^ y)) + &1", "pw3", R"js((zelph/fact (zelph/fact "exp" "of" (zelph/fact "x" "^" "y")) "+" (zelph/number "1")))js");
+        }
+        SUBCASE("a power nested to the right")
+        {
+            round_trip("x ^ (y ^ z)", "pw4", R"js((zelph/fact "x" "^" (zelph/fact "y" "^" "z")))js");
+        }
+        SUBCASE("a negated exponent")
+        {
+            round_trip("x ^ (neg of y)", "pw5", R"js((zelph/fact "x" "^" (zelph/fact "neg" "of" "y")))js");
+        } });
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +504,107 @@ TEST_CASE("math-syntax: right associativity and rejected operator tables")
             interactive.process(R"js(%(string "MO-RIGHT-" (zelph/exists (zelph/fact "a" "to" (zelph/fact "b" "to" "c")) "~" "r1")))js");
             CHECK(any_output_contains(collector, "MO-RIGHT-true"));
         }
+        SUBCASE("an operator tighter than ^ binds tighter in the parser too")
+        {
+            // Before ^ was added to the operator table, the parser bound
+            // "to" (40) looser than ^, while the printer bound it tighter.
+            // This term printed as shown below and, upon being read back,
+            // parsed without issue as ((a to (b ^ &2)) * c) -- a different
+            // node.
+            interactive.process(R"js(%(math-syntax/operator "to" 40 :right))js");
+            collector.clear();
+            interactive.process("((a to b) ^ &2) * c");
+            CHECK(any_output_contains(collector, "$( a to b ^ &2 * c )"));
+            interactive.process("$( a to b ^ &2 * c ) marker t1");
+            collector.clear();
+            interactive.process(R"js(%(string "MO-TIGHT-" (zelph/exists (zelph/fact (zelph/fact (zelph/fact "a" "to" "b") "^" (zelph/number "2")) "*" "c") "marker" "t1")))js");
+            CHECK(any_output_contains(collector, "MO-TIGHT-true"));
+        }
+        SUBCASE("an exponent built by a tighter operator round-trips")
+        {
+            // The printer drops the parentheses around (a to b), because "to"
+            // binds tighter than ^; the exponent factor must
+            // interpret it as a complete unit.
+            interactive.process(R"js(%(math-syntax/operator "to" 40 :right))js");
+            collector.clear();
+            interactive.process("x ^ (a to b)");
+            const std::string rendered = first_out_text(collector);
+            REQUIRE(rendered.find("$(") != std::string::npos);
+            CHECK_NOTHROW(interactive.process(rendered + " marker t2"));
+            collector.clear();
+            interactive.process(R"js(%(string "MO-TIGHTEXP-" (zelph/exists (zelph/fact "x" "^" (zelph/fact "a" "to" "b")) "marker" "t2")))js");
+            CHECK(any_output_contains(collector, "MO-TIGHTEXP-true"));
+        }
+        SUBCASE("a sign may open the right operand of an operator tighter than ^")
+        {
+            // When unary minus is positioned lower than ^, the levels above
+            // ^ accept only primaries. Lacking a mechanism to incorporate a
+            // sign following their operators, the island would reject
+            // a ** -b, which the old grammar read as (a ** (neg of b)). A
+            // sign reads the same regardless of position: it encompasses
+            // everything that binds tighter than unary minus, meaning
+            // -b ** c is (neg of (b ** c)) immediately after an operator,
+            // just as at the start of a term, and it halts at *. The old
+            // grammar bound the sign tighter than ** and read a ** -b ** c
+            // as (a ** ((neg of b) ** c)).
+            interactive.process(R"js(%(math-syntax/operator "**" 40 :right))js");
+            CHECK_NOTHROW(interactive.process("$( a ** -b ) marker g1"));
+            CHECK_NOTHROW(interactive.process("$( a ** -b ** c ) marker g2"));
+            CHECK_NOTHROW(interactive.process("$( -a ** b ) marker g3"));
+            CHECK_NOTHROW(interactive.process("$( a ** -b * c ) marker g4"));
+            collector.clear();
+            interactive.process(R"js(%(string "MO-SIGN1-" (zelph/exists (zelph/fact "a" "**" (zelph/fact "neg" "of" "b")) "marker" "g1")))js");
+            interactive.process(R"js(%(string "MO-SIGN2-" (zelph/exists (zelph/fact "a" "**" (zelph/fact "neg" "of" (zelph/fact "b" "**" "c"))) "marker" "g2")))js");
+            interactive.process(R"js(%(string "MO-SIGN3-" (zelph/exists (zelph/fact "neg" "of" (zelph/fact "a" "**" "b")) "marker" "g3")))js");
+            interactive.process(R"js(%(string "MO-SIGN4-" (zelph/exists (zelph/fact (zelph/fact "a" "**" (zelph/fact "neg" "of" "b")) "*" "c") "marker" "g4")))js");
+            CHECK(any_output_contains(collector, "MO-SIGN1-true"));
+            CHECK(any_output_contains(collector, "MO-SIGN2-true"));
+            CHECK(any_output_contains(collector, "MO-SIGN3-true"));
+            CHECK(any_output_contains(collector, "MO-SIGN4-true"));
+        }
+        SUBCASE("an operator name the statement syntax quotes reads back in an island")
+        {
+            // "**" must be enclosed in quotation marks within a statement,
+            // and the printer also quotes it within an island. The
+            // island rejected that particular spelling, causing the engine's
+            // own echo to fail in re-entering. Both spellings must arrive at
+            // the same node.
+            interactive.process(R"js(%(math-syntax/operator "**" 40 :right))js");
+            collector.clear();
+            interactive.process(R"((a "**" b) + c)");
+            const std::string rendered = first_out_text(collector);
+            REQUIRE(rendered.find("$(") != std::string::npos);
+            CHECK_NOTHROW(interactive.process(rendered + " marker t3"));
+            interactive.process("$( a ** b + c ) marker t4");
+            collector.clear();
+            interactive.process(R"js(%(let [t (zelph/fact (zelph/fact "a" "**" "b") "+" "c")] (string "MO-QUOTED-" (zelph/exists t "marker" "t3") "-" (zelph/exists t "marker" "t4"))))js");
+            CHECK(any_output_contains(collector, "MO-QUOTED-true-true"));
+        }
+        SUBCASE("a leaf or call head the statement syntax quotes reads back in an island")
+        {
+            // The printer quotes a node NAME within an island in the same
+            // manner as it does within a statement: a node labelled "A" or
+            // "_k" would otherwise be interpreted as a variable upon reading
+            // back. The island did not accept a quoted leaf or call head,
+            // causing these echoes to fail in re-entering. The quoted form
+            // must construct the named node exclusively, never a variable; a
+            // variable would not match the named node verified
+            // subsequently.
+            const auto round_trip = [&](const char* verbose, const std::string& marker, const std::string& janet_term)
+            {
+                collector.clear();
+                interactive.process(verbose);
+                const std::string rendered = first_out_text(collector);
+                REQUIRE(rendered.find("$(") != std::string::npos);
+                CHECK_NOTHROW(interactive.process(rendered + " marker " + marker));
+                collector.clear();
+                interactive.process(R"js(%(string "MO-QLEAF-" (zelph/exists )js" + janet_term + R"js( "marker" ")js" + marker + R"js(")))js");
+                CHECK(any_output_contains(collector, "MO-QLEAF-true"));
+            };
+            round_trip(R"((x ^ y) + "A")", "t5", R"js((zelph/fact (zelph/fact "x" "^" "y") "+" "A"))js");
+            round_trip(R"((a * b) + "_k")", "t6", R"js((zelph/fact (zelph/fact "a" "*" "b") "+" "_k"))js");
+            round_trip(R"(("A" of x) + y)", "t7", R"js((zelph/fact (zelph/fact "A" "of" "x") "+" "y"))js");
+        }
         // A rejected registration propagates as an exception rather than
         // landing in the output collector, so these subcases capture it.
         const auto message_of = [&interactive](const char* code) -> std::string
@@ -405,6 +624,22 @@ TEST_CASE("math-syntax: right associativity and rejected operator tables")
         {
             CHECK(message_of(R"js(%(math-syntax/operator "bad" 10 :right))js")
                       .find("disagree on associativity")
+                  != std::string::npos);
+        }
+        SUBCASE("an operator at the precedence of ^ must share its associativity")
+        {
+            // Allowed while ^ remained outside the table. ^
+            // exhibits right-associative behaviour, and a single level
+            // is unable to group its chain in both directions
+            // simultaneously.
+            CHECK(message_of(R"js(%(math-syntax/operator "bad" 30 :left))js")
+                      .find("disagree on associativity")
+                  != std::string::npos);
+        }
+        SUBCASE("^ is an operator of the table and cannot be declared again")
+        {
+            CHECK(message_of(R"js(%(math-syntax/operator "^" 30 :right))js")
+                      .find("is already an operator")
                   != std::string::npos);
         }
         SUBCASE("a refused table leaves neither registry changed")

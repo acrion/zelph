@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 #include <filesystem>
 #include <string>
 
@@ -376,6 +378,114 @@ z p w
     CHECK(answers_contain(collector, "c q d"));
 
     fs::remove(file);
+}
+
+// A collection of a rule's own text -- the `@{c d}` a consequence names, the
+// `@{bug1 bug2}` one writes into -- is neither a fact nor a condition set, so
+// the structural closure did not expand it, and its memberships stayed behind.
+// Slicing `in` did not bring them either: a membership of a rule's text is a
+// rule pattern, which a slice of `in` does not count among its facts. The
+// rules came in as `(X p Y) => (X likes ??)` and
+// `(X reported Y) => (Y in @{Y})`, a firing wrote the emptied collection
+// itself into the data (`e likes ??`), the data term lost the literal's
+// members (`bug4 in @{bug4}`), and each rule, after being typed again, turned
+// into a second rule beside the one that had lost its text.
+TEST_CASE("slice: a rule's own collections travel with the rule")
+{
+    const auto rules_listed = [](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process(".list-rules");
+        std::vector<std::string> rules;
+        for (const auto& event : collector.events())
+            if (event.text.find("=>") != std::string::npos) rules.push_back(normalize(event.text));
+        std::ranges::sort(rules);
+        return rules;
+    };
+
+    // `term` is how the data term of `@{bug1 bug2}` prints after bug4 has
+    // been reported: the literal's members, the portion of the source's
+    // data preserved by the slice, and bug4.
+    const auto check_slice = [&rules_listed](const std::string& predicates, const std::string& term)
+    {
+        const auto file = slice_path("own_collections");
+
+        std::vector<std::string> source_rules;
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(X p Y) => (X likes @{c d})
+(X reported Y) => (Y in @{bug1 bug2})
+alice reported bug3
+a p b
+)");
+            source_rules = rules_listed(collector, interactive);
+            interactive.process(".save-predicates \"" + file.string() + "\" " + predicates);
+        }
+
+        // The output the source prints for each of the two rules must be
+        // identical to what the slice prints.
+        REQUIRE(source_rules == std::vector<std::string>{"(X p Y) => (X likes @{c d})", "(X reported Y) => (Y in @{bug1 bug2 Y})"});
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + file.string() + "\"");
+        fs::remove(file);
+
+        CHECK(rules_listed(collector, interactive) == source_rules);
+
+        interactive.process(".auto-run");
+        interactive.process("e p f");
+        collector.clear();
+        interactive.process("e likes O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e likes @{c d}"});
+
+        // The printed form is unable to distinguish the rule's collection from
+        // a term built from it, as both hold c and d: the id can.
+        auto* const          z         = interactive.graph();
+        zelph::network::Node term_of_e = 0;
+        for (const zelph::network::Node f : z->get_right(z->get_node("e")))
+        {
+            zelph::network::adjacency_set objects;
+            if (z->predicate_of(f) == z->get_node("likes") && z->parse_fact(f, objects) == z->get_node("e") && objects.size() == 1)
+                term_of_e = *objects.begin();
+        }
+        REQUIRE(term_of_e != 0);
+        CHECK_FALSE(z->is_rule_template(term_of_e));
+
+        // bug1 is a member of the term that the firing writes into, and
+        // of the rule's literal. Solely the first constitutes data: the
+        // membership in the literal arrives marked as a rule pattern and
+        // answers nothing.
+        interactive.process("bob reported bug4");
+        collector.clear();
+        interactive.process("bug4 in O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"bug4 in " + term});
+        collector.clear();
+        interactive.process("bug1 in O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"bug1 in " + term});
+
+        // The rules that are re-entered are the rules the slice
+        // already holds.
+        process_lines(interactive, R"(
+(X p Y) => (X likes @{c d})
+(X reported Y) => (Y in @{bug1 bug2})
+)");
+        CHECK(rules_listed(collector, interactive) == source_rules);
+    };
+
+    // A `likes` slice contains no membership as data, thus the term is
+    // constructed post-load; an `in` slice holds the term with alice's
+    // report.
+    SUBCASE("sliced by likes")
+    {
+        check_slice("likes", "@{bug1 bug2 bug4}");
+    }
+    SUBCASE("sliced by in")
+    {
+        check_slice("in", "@{bug1 bug2 bug3 bug4}");
+    }
 }
 
 // A predicate is a NODE, and a fact is a node, so a fact can be a predicate.

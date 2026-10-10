@@ -52,10 +52,12 @@ namespace zelph::network
     // from a script. Without a registration the tables stay empty and
     // nothing about the display changes.
     //
-    // The wrapper (open/close) is emitted ONLY where the rendering actually
-    // deviates from what the default renderer would produce -- elided
-    // parentheses or a different numeral prefix. Both strings are emitted
-    // verbatim, so a scheme wanting padding registers "$( " and " )".
+    // The wrapper (open/close) is emitted exclusively at locations where
+    // the rendering genuinely differs from the output of the default
+    // renderer -- omitted parentheses, an alternate numeral prefix, or call
+    // notation, which the default renderer never produces. Both strings are
+    // output exactly as written, meaning a scheme wanting padding registers
+    // "$( " and " )".
     struct DisplayScheme
     {
         std::string name;
@@ -178,7 +180,35 @@ namespace zelph::network
         static Node          create_hash(const Node predicate, const Node subject, const adjacency_set& objects);
         static bool          is_hash(Node a);
         static bool          is_var(Node a);
+        static bool          is_recipe(Node a);
+        static bool          is_value_recipe(Node a);
+        static bool          is_template_id(Node a);
+        static Node          bucket_term_id(Node bucket);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
+
+        // get_left(b).size() and get_right(b).size(), without copying the set.
+        std::size_t left_count(Node b) const;
+        std::size_t right_count(Node b) const;
+
+        // Whether a removal has touched a node since the nodes were named, for
+        // a few nodes named ahead of time (see Network::watch_removals): in
+        // the absence of such a removal, a node's edge count indicates whether
+        // it underwent a change. `graph_epoch` counts the loads, merging ones
+        // included.
+        void          watch_removals(std::shared_ptr<const ankerl::unordered_dense::set<Node>> nodes) const;
+        bool          touched_by_removal(Node n) const;
+        std::uint64_t graph_epoch() const;
+
+        // A shortest walk from `start` to `target` via `predicate`, as the
+        // facts traversed during the journey, proceeding around the facts
+        // listed in `unasserted` (pass unasserted_snapshot()) and those in
+        // `without`; either can be null. Returns False if no such walk
+        // exists, or if the `scan_budget` adjacency entries failed to resolve
+        // it (in which case `exhausted`).
+        // include_start: zero steps lead to `start`, resulting in an empty
+        // walk. `scanned`: the total number of adjacency entries processed
+        // during the operation.
+        bool transitive_walk(Node start, Node target, Node predicate, bool include_start, const adjacency_set* unasserted, const adjacency_set* without, size_t scan_budget, std::vector<Node>& edges, bool& exhausted, size_t* scanned = nullptr) const;
 
         // Single-argument form for callers that already hold the relation
         // node itself (e.g. .explain, whose target comes from evaluating a
@@ -186,12 +216,13 @@ namespace zelph::network
         // that is not a readable fact node is reported as unknown.
         Answer check_fact(Node relation) const;
 
-        // Predicate of an existing fact node. Prefers the genuine-structure
-        // store (exact, O(1), no heuristics); falls back to parse_relation()
-        // for nodes without an entry -- subject == predicate facts, which the
-        // store deliberately omits, and everything after a bulk path disarmed
-        // it. Returns 0 if nd is not a fact node or its predicate cannot be
-        // determined unambiguously.
+        // The predicate associated with a pre-existing fact node. Favours
+        // the genuine-structure store (exact, O(1), no heuristics); falls
+        // back to parse_relation() when a node lacks an entry -- every node
+        // once a bulk path has disarmed the store, and a node fact() did not
+        // create. The fallback handles subject == predicate facts too.
+        // Returns 0 if nd is not a fact node or its predicate cannot be
+        // ascertained without ambiguity.
         Node predicate_of(Node nd) const;
 
         Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
@@ -201,17 +232,109 @@ namespace zelph::network
         // `{...}`: identified by its members (extensionality), so two
         // occurrences are ONE node and it cannot be extended.
         Node set(const std::unordered_set<Node>& elements);
-        // `@{...}`: a container with its own identity, whose membership is
-        // asserted and can grow. Also what a rule's conjunction set is.
+        // `@{...}`: a container possessing a distinct identity, where
+        // membership is asserted and capable of expanding. Within the
+        // template scope, a template that has been written (see
+        // enter_template_scope), outside it a counter.
         Node collection(const std::unordered_set<Node>& elements);
+        // The rule's condition set: a collection with a counter id, also
+        // located within the template scope. The `~ conjunction` tag
+        // indicates its nature at any position it occupies, hence the id has
+        // no influence, and a typed rule keeps the ids it has always held.
+        Node conjunction_collection(const std::unordered_set<Node>& elements);
+        // The template scope. While it remains open, collection() creates a
+        // written template (Network::create_written_template), as the
+        // collection forms part of the text of a rule that is being written:
+        // zelph/dedup-rule opens it around the statement of a typed rule,
+        // zelph/build-rule around a rule that a Janet program builds, and
+        // zelph/rule-text around a rule that a different statement refers
+        // to. Scopes nest, and a scope stays open only on the thread that
+        // opened it: a collection created by another thread during this time
+        // becomes a value, just as one created outside every scope does. A
+        // rule written by a generator acquires its collections from its
+        // construction instead, which gives them recipe ids of the template
+        // class (Network::recipe_id).
+        void enter_template_scope();
+        void leave_template_scope();
+        // Holds the template scope in an open state throughout its
+        // existence. If an error leaves the scope open, every collection
+        // written afterwards, including data, would become a rule's own.
+        class TemplateScope
+        {
+        public:
+            explicit TemplateScope(Zelph& z)
+                : _z(z)
+            {
+                _z.enter_template_scope();
+            }
+            ~TemplateScope() { _z.leave_template_scope(); }
+            TemplateScope(const TemplateScope&)            = delete;
+            TemplateScope& operator=(const TemplateScope&) = delete;
+
+        private:
+            Zelph& _z;
+        };
+        // A location within the list of the collections written while the
+        // scope is open, along with those written since it: what a rule
+        // that a statement mentions marks (zelph/rule-text). The list is
+        // cleared upon closure of the outermost scope.
+        std::size_t       template_scope_mark() const;
+        std::vector<Node> template_scope_collections_since(std::size_t mark) const;
+        // A collection whose identifier is determined by its recipe (see
+        // Network::recipe_id). Reuses the node if present -- avoiding any
+        // comparison of members, which ensures that a collection that
+        // another rule wrote into is not rebuilt -- and asserts each
+        // membership fact that is absent, just as set() does. `created` says
+        // whether this invocation generated the node; `asserted`, if not
+        // null, receives the membership facts it wrote. `derived`: during a
+        // firing, the collection is constructed, and a membership that
+        // exists as a rule pattern is claimed, as a derived fact is.
+        Node recipe_collection(Node id, const std::unordered_set<Node>& members, bool& created, std::vector<Node>* asserted, bool derived = false);
+        // Whether a literal over `members` cannot determine its kind: a member
+        // either is a variable or contains one within its fact closure. Since
+        // extensionality requires knowledge of the members, the set() function
+        // transforms such a literal into a collection.
+        bool kind_unknowable(const std::unordered_set<Node>& members) const;
         bool is_set_constant(Node node) const;
+        // Whether `n`, encountered within a rule's text, is a collection that
+        // the rule's own statement wrote -- a Skolem function symbol, which
+        // gets substituted by its term during firing -- as opposed to a value
+        // or a constant. The id alone indicates this: a rule's own collection
+        // is created in the template class (Network::is_template_id), and no
+        // subsequent writing alters an id.
+        bool is_rule_template(Node n) const;
+
+        // A bulk importer invokes these before its first triple and after
+        // its final one. During the intervening period,
+        // fact_import_trusted_single_object refrains from writing a triple if
+        // its node is already taken by another statement: the first such
+        // triple is reported at the moment it happens, and end_bulk_import()
+        // reports the total count and returns that number. A second import
+        // into the same engine counts its own occurrences.
+        void     begin_bulk_import();
+        uint64_t end_bulk_import();
+
         Node parse_fact(Node rule, adjacency_set& deductions, Node parent = 0) const;
         Node parse_relation(const Node rule) const;
         // Locked-scope read access (see Network::ReadScope). Constructed
         // here because only zelph.cpp sees the complete Impl type -- this
         // is the visibility-correct path (Cap'n-Proto layering).
         Network::ReadScope read_scope() const;
-        void               collect_anchored_facts(Node anchor, Node relation, adjacency_set& out) const;
+        // The role of the anchor in collect_anchored_facts regarding
+        // the facts it keeps: any, their subject, or one of their objects.
+        enum class AnchorRole
+        {
+            Any,
+            Subject,
+            Object
+        };
+        std::size_t collect_anchored_facts(Node anchor, Node relation, adjacency_set& out, AnchorRole role = AnchorRole::Any, Node after = 0) const;
+        // The same collected into a list, following the sequence defined by
+        // the anchor's adjacency, for a reader that processes facts according
+        // to its own ordering (Unification::enumerate_by_id): a set exceeding
+        // 128 facts builds a hash index, which such a reader does not
+        // utilize.
+        std::size_t collect_anchored_facts(Node anchor, Node relation, std::vector<Node>& out, AnchorRole role = AnchorRole::Any, Node after = 0) const;
 
         // parse_relation for code running under a live ReadScope: all
         // adjacency reads via scope references, predicate detection via
@@ -295,22 +418,68 @@ namespace zelph::network
         FsCacheStats fs_cache_stats() const;
         void         reset_fs_cache_stats() const;
 
+        // Whether var_in_closure reads the conditions associated with a `=>`
+        // fact and the members contained within a rule's own collection (see
+        // there).
+        enum class VariableReading
+        {
+            Text,     // it does: the text of a rule that holds a variable is no data
+            Instance, // it does not: what a firing substitutes
+        };
+
         // --- Variable-closure flag (rule-template detection) ---
         // True iff nd is a variable or its GENUINE structural closure
-        // (subject, predicate, objects at any depth) contains one -- the
-        // criterion separating rule-template nodes from data nodes
-        // (template rejection in extract_bindings, anchor eligibility,
-        // bound-pattern grounding). O(1): maintained eagerly by fact()
-        // from the actual triple arguments -- hash-consing materializes
-        // children before parents, so child flags are final when the
-        // parent is created, and a node's ID is its triple hash, so the
-        // flag can never change afterwards. Unlike the former
-        // reconstruction-based walk this cannot be misled by ambiguous
-        // adjacency readings. Paths that bypass triple construction or
-        // destroy topology clear the authoritative bit (see Impl); the
-        // query then falls back to the historical walk -- never unsound,
-        // never worse than the pre-flag behaviour.
-        bool var_in_closure(Node nd) const;
+        // (subject, predicate, objects at any depth) includes one, the
+        // conditions of every `=>` fact within it included, and the members of
+        // every collection of a rule's own text within it (is_rule_template),
+        // including when a set constant holds that collection -- but not when
+        // the collection is the object of a membership, which is its content
+        // and holds a variable exactly when its member does; the rule
+        // asserting the membership holds the collection's. These are attached
+        // to a container, a collection, or a set constant, whose members are
+        // not reachable through structure; the conditions are read as
+        // Reasoning::evaluate reads them, meaning a rule whose variables
+        // reside solely in its conditions holds them as its one-condition twin
+        // does, and a rule whose variables appear within one of its own
+        // collections also holds them. A value -- a collection not owned by
+        // the rule -- is never entered: what other rules wrote into it is not
+        // a variable in the text that holds it. When asked about a collection
+        // directly, the response is no: a collection is not a fact, and
+        // `{@{Y}}` is a set constant enclosing one collection
+        // (kind_unknowable), while that set constant answers yes.
+        // collect_variables, which asks what a firing substitutes, reads none
+        // of these members. This is the criterion separating rule-template
+        // nodes from data nodes (template rejection in extract_bindings,
+        // anchor eligibility, bound-pattern grounding). O(1): maintained
+        // eagerly by fact() from the actual triple arguments -- hash-consing
+        // generates children before parents, so child flags are finalized by
+        // the time the parent is created, and a node's ID is its triple hash,
+        // making the flag immutable thereafter; a rule's conditions are read
+        // at the time its `=>` fact is created, and a rule's own collection is
+        // read when a fact or a set constant over it is created, and either
+        // again when another rule writes a variable-containing member into it
+        // (see Impl's _rule_text_vars).
+        // Unlike the former reconstruction-based walk, this cannot be misled
+        // by ambiguous adjacency readings. Paths that bypass triple
+        // construction or destroy topology clear the authoritative bit (see
+        // Impl); the query then falls back to the historical walk -- never
+        // unsound, never inferior to the pre-flag behaviour.
+        //
+        // VariableReading::Instance leaves the conditions and those members
+        // out, mirroring collect_variables: it returns whether a firing
+        // possesses a variable for substitution. The verification of a prior
+        // witness for a fresh variable reads its candidates in the same manner
+        // (Reasoning::consequences_already_exist): it must locate what a
+        // firing wrote, and a firing writes the conditions of a rule it
+        // mentions exactly as they are.
+        bool var_in_closure(Node nd, VariableReading reading = VariableReading::Text) const;
+
+        // Whether the text of `n` holds a variable: `n` is one, or a fact or a
+        // set constant var_in_closure answers for, or a rule's own collection
+        // or a conjunction set containing such a member. A value, a constant,
+        // and an atom hold none. reasoning.cpp determines by it the kind of a
+        // rebuilt collection and which members the term of a bucket holds.
+        bool holds_variable_in_text(Node n) const;
 
         // Did anybody CLAIM this statement? True for an asserted or derived
         // fact, false for the two kinds of node that exist as graph structure
@@ -365,15 +534,21 @@ namespace zelph::network
         void              reset_template_vars_stats() const;
 
         // --- Genuine-structure store (reconstruction bypass) ---
-        // get_fact_structures consults this on every fs_cache miss and
-        // walks the adjacency only for nodes without an entry: atoms
-        // (negative entries), subject == predicate facts (deliberately
-        // not stored -- the walk reconstructs those as EMPTY and
-        // unification's atom treatment of them must not change), and
-        // everything after the store is disarmed. Ends the O(deg^2)
-        // re-reconstruction of hub nodes.
+        // get_fact_structures checks this upon every fs_cache miss and
+        // walks the adjacency solely for nodes lacking an entry: a hash
+        // node that fact() did not create (a set constant), and each node
+        // once the store has been disarmed. fact() stores every triple it
+        // creates, including those where subject equals predicate. Atoms
+        // and variables never get this far: the lock-free gate answers
+        // them first. Ends the O(deg^2) re-reconstruction of hub nodes.
         bool try_get_genuine_structure(Node fact, FactStructurePtr& out) const;
-        void count_genuine_walk() const; // profiler hook for get_fact_structures
+
+        // Profiler hooks for get_fact_structures: an fs_cache miss is resolved
+        // by either the store or the walk, with each resolution counted there,
+        // not within the lookup -- predicate_of also queries the store, but
+        // its lookups do not constitute answers to a miss.
+        void count_genuine_hit() const;
+        void count_genuine_walk() const;
 
         struct GenuineStats
         {
@@ -400,10 +575,12 @@ namespace zelph::network
         FactComponents    extract_fact_components(Node relation) const;
         void              set_output_handler(io::OutputHandler output) const;
         io::OutputHandler get_output_handler() const;
-        void              emit(io::OutputChannel channel, const std::string& text, bool newline = true) const;
+        void              emit(io::OutputChannel channel, const std::string& text, bool newline = true, bool finding = false) const;
         void              out(const std::string&, bool newline = true) const;
         void              error(const std::string&, bool newline = true) const;
         void              diagnostic(const std::string&, bool newline = true) const;
+        void              out_finding(const std::string&, bool newline = true) const;
+        void              diagnostic_finding(const std::string&, bool newline = true) const;
         void              prompt(const std::string&, bool newline = false) const;
         io::OutputStream  out_stream() const;
         io::OutputStream  diagnostic_stream() const;
@@ -491,6 +668,9 @@ namespace zelph::network
         std::string get_name(const Node node, std::string lang = "", const bool fallback = false) const;
         std::string get_formatted_name(Node node, const std::string& lang) const;
         bool        has_name(Node node, const std::string& lang) const;
+        // Whether the node is a core node or possesses a name in any
+        // language.
+        bool        is_named_any(Node node) const;
         void        remove_name(Node node, std::string lang = "");
         void        unset_name(Node node, std::string lang = "");
         Node        get_node(const std::string& name, std::string lang = "") const;
@@ -525,6 +705,13 @@ namespace zelph::network
         void          remove_names_of(const adjacency_set& dead) const;
         uint64_t      name_map_scans() const;
         adjacency_set get_rules() const;
+
+        /// Whether the `=>` fact `node` conforms to the form of a rule --
+        /// having a statement as its condition and a consequence capable of
+        /// being asserted (see the definition). get_rules lists such a node
+        /// unless a statement mentions it; regardless of whether it is
+        /// mentioned or not, the form is the same.
+        bool has_rule_form(Node node) const;
 
         /// Is this node a PART of some other fact -- its subject, its
         /// predicate or one of its objects? For a rule that is the
@@ -582,6 +769,36 @@ namespace zelph::network
         /// nodes that already existed, the predicate declarations the
         /// construction emitted -- is left alone.
         void mark_rule_patterns(Node rule, const std::vector<Node>& created) const;
+
+        /// The same applies to the parts of a rule: its condition
+        /// and its consequences.
+        void mark_rule_parts(Node condition, const adjacency_set& consequences, const std::vector<Node>& created) const;
+
+        /// The rule in force that specifies the same content as `rule`, up to
+        /// a renaming of its variables (rule_identity.hpp), or 0. With
+        /// `mentioned`, if not found, a rule that a statement merely mentions.
+        /// Determined via the fingerprint index; refer to the definition.
+        Node find_equivalent_rule(Node rule, bool mentioned) const;
+
+        /// How many rule fingerprints the index has computed since the
+        /// most recent reset, tallied only when logging is active
+        /// (`.prof`).
+        uint64_t rules_fingerprinted() const;
+        void     reset_rules_fingerprinted() const;
+
+        /// The rule in force that the construction of the rule `statement`
+        /// under recipe key `key` (Reasoning::rebuild_rule) returned during its
+        /// most recent execution -- either the rule it built or the one it
+        /// claimed -- or 0. Without this, the construction would repeatedly
+        /// assemble its components, locate the rule, and keep nothing new, or
+        /// claim the rule and discard its components anew on every pass of
+        /// every run; with this, it retrieves a single entry. The entry remains
+        /// valid as long as the rule persists, remains in force, and no
+        /// alteration has occurred in any rule's text under its fingerprint
+        /// (refer to find_equivalent_rule). One entry per unique construction,
+        /// thus rule-scale.
+        Node claimed_rule(Node statement, Node key) const;
+        void note_claim(Node statement, Node key, Node rule) const;
 
         /// Re-mark patterns whose marking a dropped cluster revoked. A node
         /// the drop removed is skipped, so this is safe to call with whatever
@@ -752,6 +969,7 @@ namespace zelph::network
         mutable std::atomic<uint64_t>                             _genuine_walks{0};
         mutable std::atomic<uint64_t>                             _tvars_hits{0};
         mutable std::atomic<uint64_t>                             _tvars_walks{0};
+        mutable std::atomic<uint64_t>                             _rules_fingerprinted{0};
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
         mutable std::shared_mutex                                 _smtx_number_digits;
         std::shared_ptr<const DisplayTables>                      _display_tables;
@@ -767,6 +985,45 @@ namespace zelph::network
         void invalidate_relation_type_set() const;
 
     private:
+        // Whether the conditions that a `=>` fact's container subject
+        // represents hold a variable, each asked by var_in_closure: what
+        // fact() reads upon creating such a fact (see Impl's
+        // _rule_text_vars).
+        bool conditions_hold_variable(Node conditions) const;
+
+        // Whether the rule a `=>` fact over `subject` and `objects` states
+        // holds, in either its conditions or its consequences, a
+        // membership whose object is a rule's own collection with a
+        // variable embedded in its text: what fact() reads in addition to
+        // conditions_hold_variable.
+        bool rule_memberships_hold_variable(Node subject, const adjacency_set& objects) const;
+
+        // The text of a rule may have changed under its fingerprint: the
+        // next lookup in the fingerprint index fingerprints every rule
+        // again.
+        void note_rule_text_changed() const;
+
+        // Whether a membership fact having `container` as its object
+        // constitutes a component of a rule's text: either a template or a
+        // conjunction set.
+        bool holds_rule_text(Node container) const;
+
+        // collection() and conjunction_collection(): a written template when
+        // `rule_text` indicates it, a counter otherwise.
+        Node new_collection(const std::unordered_set<Node>& elements, bool rule_text);
+
+        // Whether a component of a newly created fact or a member of a newly
+        // defined set constant brings a variable of rule text into it that
+        // the template-variable store lacks: a fact or set constant input
+        // into Impl's _rule_text_vars, or a rule's own collection whose text
+        // holds one.
+        bool component_holds_text_variable(Node component) const;
+
+        // Whether the text of a rule contains a collection that an
+        // engine before template ids wrote as part of it; see the
+        // definition.
+        bool rules_written_before_template_ids() const;
+
         zelph::io::OutputStream locked_stream(zelph::io::OutputChannel channel) const;
         void                    register_operator_display(std::size_t scheme, const std::vector<std::pair<Node, OperatorDisplay>>& entries);
     };

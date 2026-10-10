@@ -71,6 +71,13 @@ namespace zelph::network
 
         std::atomic<uint64_t> facts_created{0};
 
+        // Constructions of a generated rule: those that constructed their
+        // components within a scratch cluster, and those that returned the
+        // rule an earlier construction sharing the same statement and recipe
+        // key had previously claimed.
+        std::atomic<uint64_t> constructions_built{0};
+        std::atomic<uint64_t> constructions_remembered{0};
+
         std::atomic<uint64_t> seminaive_seeds{0};
         std::atomic<uint64_t> seminaive_safety_extra{0};
 
@@ -200,6 +207,8 @@ namespace zelph::network
             RZ(check_fact_new);
             RZ(check_fact_wrong);
             RZ(facts_created);
+            RZ(constructions_built);
+            RZ(constructions_remembered);
 
             RZ(unification_instances);
             RZ(unification_parallel_instances);
@@ -242,6 +251,7 @@ namespace zelph::network
             _zelph->reset_var_closure_stats();
             _zelph->reset_genuine_stats();
             _zelph->reset_template_vars_stats();
+            _zelph->reset_rules_fingerprinted();
 
             // maps
             {
@@ -354,6 +364,10 @@ namespace zelph::network
                 oss << "  genuine: hits=" << gs.hits
                     << " walks=" << gs.walks << "\n";
             }
+
+            oss << "  construction: built=" << load(constructions_built)
+                << " remembered=" << load(constructions_remembered)
+                << " fingerprinted=" << _zelph->rules_fingerprinted() << "\n";
 
             oss << "  check_fact: known=" << load(check_fact_known)
                 << " new=" << load(check_fact_new)

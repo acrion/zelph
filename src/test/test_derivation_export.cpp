@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 using namespace zelph::test;
 
@@ -93,6 +94,93 @@ TEST_CASE("run-export: a deduction becomes one record with separated premises")
         CHECK(lines[0].find("\"names\":{\"zelph\":\"rel\"}") != std::string::npos);
         CHECK(lines[0].find("\"names\":{\"zelph\":\"a\"}") != std::string::npos);
         CHECK(lines[0].find("\"names\":{\"zelph\":\"c\"}") != std::string::npos); });
+}
+
+TEST_CASE("run-export: the conclusions of a run are stable, and with .parallel off the whole file repeats")
+{
+    // Across the chain a..g, the fact (a before g) can be derived from
+    // (a before c) and (c before g), or from (a before e) and (e before g),
+    // and similarly for other intermediate steps, all in one run. Only the
+    // first derivation of a given fact is written, and when .parallel is
+    // active, the thread that reaches the conclusion first varies between
+    // runs: the premises associated with a record differ, yet the set of
+    // conclusions remains unchanged. The file rules.md asserts this
+    // behaviour for every program without rules that are not stratifiable
+    // and without a fresh variable, including this one, and promises that
+    // with .parallel off, two runs write the same file -- which is what
+    // this case pins.
+    //
+    // Only the conclusions are subjected to comparison under .parallel.
+    // The derivation that prevails there depends on timing, so asserting
+    // the premises DIFFER would effectively test the scheduler, and
+    // would fail whenever it happens to repeat itself.
+    auto export_chain = [](bool parallel, const std::string& file_name)
+    {
+        const std::filesystem::path out = std::filesystem::temp_directory_path() / file_name;
+        std::filesystem::remove(out);
+        {
+            // Only one session at a time: launching a second live
+            // Interactive within the same process results in it sharing
+            // the script engine of the first.
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            if (!parallel) interactive.process(".parallel");
+            interactive.process(".semi-naive check");
+            interactive.process(".auto-run");
+            interactive.process("(X before Y, Y before Z) => (X before Z)");
+            process_lines(interactive, R"(
+a before b
+b before c
+c before d
+d before e
+e before f
+f before g
+)");
+            interactive.process(".run-export " + out.string());
+        }
+        REQUIRE(std::filesystem::exists(out));
+        std::ifstream      in(out, std::ios::binary);
+        std::ostringstream content;
+        content << in.rdbuf();
+        in.close();
+        std::filesystem::remove(out);
+        return content.str();
+    };
+
+    auto sorted_conclusions = [](const std::string& file)
+    {
+        std::vector<std::string> conclusions;
+        std::istringstream       in(file);
+        std::string              line;
+        while (std::getline(in, line))
+        {
+            if (line.empty()) continue;
+            const auto from = line.find("\"conclusion\":");
+            const auto to   = line.find(",\"premises\":");
+            REQUIRE(from != std::string::npos);
+            REQUIRE(to != std::string::npos);
+            conclusions.push_back(line.substr(from, to - from));
+        }
+        std::sort(conclusions.begin(), conclusions.end());
+        return conclusions;
+    };
+
+    SUBCASE("parallel: the same conclusions, whatever premises they name")
+    {
+        const auto first  = sorted_conclusions(export_chain(true, "zelph_test_export_stable_par1.jsonl"));
+        const auto second = sorted_conclusions(export_chain(true, "zelph_test_export_stable_par2.jsonl"));
+        // A chain composed of seven elements contains 21 ordered pairs, six
+        // of which are specified.
+        CHECK(first.size() == 15);
+        CHECK(first == second);
+    }
+    SUBCASE(".parallel off: byte-identical files")
+    {
+        const auto first  = export_chain(false, "zelph_test_export_stable_seq1.jsonl");
+        const auto second = export_chain(false, "zelph_test_export_stable_seq2.jsonl");
+        CHECK(sorted_conclusions(first).size() == 15);
+        CHECK(first == second);
+    }
 }
 
 TEST_CASE("run-export: an exported deduction is not one that was withheld")

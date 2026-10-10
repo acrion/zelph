@@ -1,6 +1,8 @@
 # .import decimal-arithmetic
 
-# Rule-based multi-digit addition for arbitrarily large positive integers.
+# Conversion of &-literals and decimal digit tables for arbitrarily large
+# non-negative integers. The arithmetic rules themselves (+ - cmp * / mod
+# and ^) reside in common-arithmetic.zph, which is imported at the end.
 #
 # Numbers are stored LSB-first as cons lists: <42> = 2 cons (4 cons nil).
 # node_to_string reverses the display order, so results appear in conventional
@@ -56,13 +58,16 @@
 %
 
 # ---------------------------------------------------------------------------
-# Digit addition lookup table (200 facts, generated at load time by Janet)
+# Lookup table for digit addition (400 facts: 200 entries, produced at
+# load time by Janet)
 #
-# For all a,b in {0..9} and carry-in c in {0,1}:
-#   ((a d+ b) ci c) sum s
-#   ((a d+ b) ci c) co  e
+# For every a, b within the set {0..9} and
+# carry-in c belonging to {0,1}:
+#   ((a d+ b) tci c) sum s
+#   ((a d+ b) tci c) co  e
 #
-# All six values are digit atoms node("0")..node("9"), not cons cells.
+# Each of the five values constitutes a digit atom, specifically
+# node("0")..node("9"), and none are cons cells.
 # ---------------------------------------------------------------------------
 %
 (for a 0 10
@@ -104,9 +109,10 @@
 # ---------------------------------------------------------------------------
 # Digit subtraction lookup table (400 facts)
 #
-# For all a,b in {0..9} and borrow-in c in {0,1}: v = a - b - c
-#   ((a d- b) bi c) diff (v mod 10)
-#   ((a d- b) bi c) bo   (1 if v < 0 else 0)
+# For every a, b within the set {0..9} and borrow-in c from the
+# set {0,1}: v = a - b - c
+#   ((a d- b) tbi c) diff (v mod 10)
+#   ((a d- b) tbi c) bo   (1 if v < 0 else 0)
 # ---------------------------------------------------------------------------
 %
 (for a 0 10
@@ -124,11 +130,13 @@
 # ---------------------------------------------------------------------------
 # Digit multiplication lookup table (1800 facts)
 #
-# For all a,b in {0..9} and running carry c in {0..8}: v = a*b + c
+# For every pair a, b selected from the set {0..9} and with the running
+# carry c taken from {0..8}: v = a*b + c
 #   ((a dx b) tci c) pd  (v mod 10)
 #   ((a dx b) tci c) mco (v div 10)
 # The carry range {0..8} is closed: mco = floor((81+8)/10) = 8.
-# tci (not mci) keys the table -- see the schema note in the rule block.
+# tci (not mci) serves as the key for the table -- refer to the schema
+# note within the multiplication block of common-arithmetic.zph.
 # ---------------------------------------------------------------------------
 %
 (for a 0 10

@@ -214,7 +214,10 @@ The graph is not only a store, and this is the surface a program needs to use ru
 A query reports the variable as the **node the caller created**, not as a name, so no string
 crosses the boundary and no lookup is needed to read an answer.
 
-Clusters are what make the monotonic graph usable as a workspace. The loop a caller runs is
+**A rule constructed via the C ABI holds only values.** The `zelph_rule` function accepts its conditions and consequences pre-assembled, thus it is unable to determine which components originated from the rule itself, and therefore marks nothing: a ground fact built for it using `zelph_fact` is indistinguishable from any other assertion. A collection instantiated with `zelph_collection` functions as a value that the rule references, never as a collection of the rule's own, as a literal written in a rule's text is: each firing names that specific node in what it derives, and if one of its members holds a variable, that variable is carried into the data unaltered, with every binding of the rule sharing the same node. A rule requiring collections of its own must be expressed in zelph's language, or in Janet using [`zelph/rule`](janet.md#zelphrule), whose argument forms execute within the rule's construction phase. A scope in which a C caller constructs a rule's components in the same fashion – mirroring Janet's `zelph/build-rule` – is follow-up work. For the same rationale, `zelph_fact` rejects membership in a collection of a rule's own text, or in a rule's condition set, which a caller can reach through a loaded network: a rule's text is immutable after the rule is authored. This encompasses any member already held by the collection. The invocation yields `ZELPH_RUNTIME_ERROR`, `zelph_last_error()` identifies the collection, and no data is stored.
+
+Clusters are what make a graph that only grows usable as a working environment. The loop a caller runs is activate, assert, `zelph_run_delta`, query, deactivate, drop – and what a drop removes is exactly what was created within it, ensuring that a graph loaded from storage is never compromised.
+
 ## Staying quiet
 
 zelph narrates, because its primary front end is a REPL: a line per derived fact on
@@ -249,9 +252,6 @@ are the same either way. Parallelism pays on a large graph and costs on a small 
 dispatch dominates the scan it replaces. A caller reasoning about many small fact bases in a
 loop is the case that wants it off - and it was reachable from the REPL as `.parallel` long
 before a C caller could touch it.
-
-activate, assert, `zelph_run_delta`, query, deactivate, drop - and what a drop removes is
-exactly what was created inside it, so a graph loaded from disk is never at risk.
 
 ## Rust
 

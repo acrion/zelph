@@ -237,6 +237,12 @@ void Wikidata::import_all(const std::string& constraints_dir)
             active_threads.fetch_sub(1, std::memory_order_relaxed);
         };
 
+        // A triple is not written if its node already holds a different
+        // statement. The first occurrence of this import is reported when
+        // it happens, and end_bulk_import below reports the total count of
+        // such instances.
+        _pImpl->_n->begin_bulk_import();
+
         // Start worker threads
         workers.reserve(num_threads);
         for (unsigned int i = 0; i < num_threads; ++i)
@@ -365,6 +371,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
             else
             {
                 _pImpl->_n->diagnostic_stream() << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
+                _pImpl->_n->end_bulk_import();
 
                 try
                 {
@@ -1610,6 +1617,11 @@ void Wikidata::import_qualifiers(const std::vector<std::string>& qualifier_prope
         active_threads.fetch_sub(1, std::memory_order_relaxed);
     };
 
+    // The engine typically holds the main import already, thus
+    // this import counts and reports its own unwritten triples
+    // (see import_all).
+    _pImpl->_n->begin_bulk_import();
+
     workers.reserve(num_threads);
     for (unsigned int i = 0; i < num_threads; ++i)
     {
@@ -1681,5 +1693,6 @@ void Wikidata::import_qualifiers(const std::vector<std::string>& qualifier_prope
         << counters.skipped_values.load() << " skipped values (novalue/somevalue/unsupported)."
         << " Total nodes: " << _pImpl->_n->count();
     _pImpl->_n->diagnostic(oss.str(), true);
+    _pImpl->_n->end_bulk_import();
     _pImpl->_n->out("Use .save <file.bin> to persist the combined network.", true);
 }

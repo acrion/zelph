@@ -69,42 +69,19 @@ counters (`genuine walks`, `var_closure walk_fallbacks`, `template_vars
 walks`) are **zero**; any nonzero value means the disarm funnel fired
 mid-run, and the measurement stops until the trigger is understood.
 
-**Hard semantic invariants** must be bit-identical across any
-semantics-neutral change: `facts_created`, `seminaive_seeds`,
-`extract ok` and `template_rejects`, the entire `evaluate`, `negation`,
-`check_fact` and `termination_guard` blocks, and
-`seminaive_safety_extra=0`. These counters describe _what_ was derived and
-_which_ decisions the engine took; an optimization that moves them has
-changed semantics, whatever the test suite says.
+**Hard semantic invariants** must stay bit-identical across any change that does not affect semantics: `facts_created`, `seminaive_seeds`, `extract ok`, and `template_rejects`, the entire `evaluate`, `negation`, `check_fact`, and `termination_guard` blocks, and `seminaive_safety_extra=0`. These counters describe _what_ was derived and _which_ decisions the engine made; an optimization that moves them changes semantics, regardless of the test suite’s verdict. The full set remains bit-identical only during a sequential run (`.parallel` off). In the parallel default, `evaluate calls` and `leaf_conditions`, `extract ok` and `check_fact known` form a drift family (explained further below). The rest of the set also preserves bit-identity in that configuration: `facts_created`, `seminaive_seeds`, `template_rejects`, `evaluate conjunction_sets` and `optimize_order`, the `negation` and `termination_guard` blocks, `check_fact new` and `wrong`, and `seminaive_safety_extra=0`. Check the four drifting ones in a standalone run with `.parallel` disabled, not by executing the whole protocol sequentially: its timing measurements apply to the parallel default.
+
+**A recorded change.** In version 1.0.2, two counters within this set were intentionally altered. The reference protocol’s dump, which covers its second phase, remains identical down to the final digit; its first phase, responsible for importing the rules, underwent the same shift (`template_rejects` from 3,137 to 2,733, `extract ok` from 12,349 to 12,347), as did the standalone, sequential execution of the Jacobian example (`.parallel` off, `.semi-naive on`, `.log -1`, `.deductions off`, `.import examples/math/jacobian`, `.prof`). In that run, `extract ok` decreased from 167,042 to 167,040 and `template_rejects` from 9,198 to 8,705, with `extract calls` (824,248 to 802,793) and `failS` (517,151 to 496,191) following suit, while `facts_created` (15,406), `deduce_calls` (39,866), `seminaive_seeds`, and the `evaluate`, `negation`, `check_fact`, and `termination_guard` blocks stayed bit-identical. The underlying mechanism: unification now checks, before extracting a candidate, whether a `=>` fact holds a variable anywhere in its rule text (`is_rule_text`, `unification.cpp`), including conditions attached to a conjunction set or a collection, which the closures of subject and consequence do not reach. Of the 21,455 readings it skips, 20,960 would have failed on the subject, 493 were rule templates previously rejected and counted during extraction, and 2 were accepted despite being rule text: rules whose variables appear only in regions unreachable by those closures were interpreted as facts. Fewer extractions result in fewer `unify()` calls and cache probes, and each `=>` reading pays a `var_closure` lookup instead, causing `var_closure queries` to increase. A comparison across this version begins with the updated values. The dump also introduced a new line, `construction:`, for the rules a generator writes: `built` tracks the constructions that assembled their components within a scratch cluster, `remembered` counts those that returned a rule previously claimed by an earlier construction, and `fingerprinted` records the rules read by the fingerprint index, which expands with the number of rules written, not with the volume of reasoning (429 in the Jacobian example).
 
 ## Drift Families
 
-Counters outside the invariant set drift, and every family has a known
-mechanism: `parallel=` and `scanned(par)` vary with nondeterministic
-parallel launches; `scanned(seq)`, `snapshot_facts` and the `unify()`
-family drift by dozens because the parallel match-queue drain order
-perturbs fact-creation _order_, so snapshots taken mid-run see slightly
-different candidate sets; `fs_cache` hits/misses and `stale_erased` drift
-by a few thousand for the same reason. The rule is not "small drift is
-fine" — it is **every drift needs a mechanism**. A change may legitimately
-move a counter far outside its family when the mechanism predicts it
-exactly (hoisting the pattern decomposition out of the `Unification`
-constructor removed one to two cache probes per seed, and `fs_cache hits`
-dropped by the predicted several hundred thousand). Unexplained drift, of
-any size, is a finding.
+Counters lying beyond the invariant set exhibit drift, and each family possesses a known mechanism: `parallel=` and `scanned(par)` fluctuate due to nondeterministic parallel launches; `scanned(seq)`, `snapshot_facts`, and the `unify()` family drift by several dozen because the unpredictable order in which the parallel match-queue is drained alters the _order_ of fact generation, causing snapshots captured mid-run to observe marginally distinct candidate sets; `fs_cache` hits/misses and `stale_erased` drift by several thousand for the same underlying cause. The identical drain sequence allows a small number of deductions to reach conclusions that were already established, thereby shifting `deduce_calls`, `evaluate calls` and `leaf_conditions`, `extract calls`, `ok` and `failS`, and `check_fact known` by a modest amount: under the reference protocol, the second phase manifests in two stable forms, the less common one featuring two additional `deduce_calls` and two extra `check_fact known`. When `.parallel` is disabled, these counters repeat precisely. The principle is not "small drift is fine" – it is **every drift needs a mechanism**. A modification may rightly shift a counter significantly beyond its family if the mechanism predicts it precisely (hoisting the pattern decomposition out of the `Unification` constructor reduced cache probes per seed by one to two, and `fs_cache hits` declined by the predicted several hundred thousand). Unexplained drift, of any magnitude, constitutes a finding.
+
+The number of matches processed in a run’s summary (`N matches processed`) is not a `.prof` counter and does not belong to the invariant set. It counts the bindings produced by the unification search, whether they were scanned or seeded (refer to [What the run summary counts](../rules.md#what-the-run-summary-counts)), and thus varies according to the evaluation mode: `.semi-naive check` adds the matches from its safety pass. Only compare this value within the same mode. When `.parallel` is disabled, the count remains identical; under the default parallel setting, it drifts in tandem with `deduce_calls`.
 
 ## The Semantic Nets
 
-Counter protocols catch regressions in the measured workload; three
-independent nets catch them everywhere else. The test suite runs
-permanently in `.semi-naive check` mode, so every case is verified by
-classic evaluation passes against the seeded fixpoint — the completeness
-net for the entire delta/anchoring machinery, and the reason "accepted
-divergence class" is an admissible phrase on the architecture page at all.
-`.anchors off` provides the anchor-free naive reference for suspected
-anchoring bugs. And the suite itself multiplies coverage across both
-parallelism modes and all three arithmetic substrates, so
-representation-agnosticism is continuously enforced rather than assumed.
+Counter protocols detect regressions within the measured workload; three independent nets detect them in all other scenarios. The test binary sets up each engine in `.semi-naive check` mode, ensuring that every case not explicitly choosing a mode undergoes validation via classic evaluation passes against the seeded fixpoint – the completeness net for the entire delta/anchoring system, and the justification for why "accepted divergence class" is a permissible term on the architecture page at all. Check mode does not run the classic evaluator anew; only the small subset of tests that directly contrast `.semi-naive on` with `.semi-naive off` carry out such a fresh run. This mode serves as the inherent default of the test binary, not of a test helper. Through version 1.0.1, only the cases that went through `run_both_modes` and its sibling helpers utilized it: 173 out of the 799 cases at that time constructed their engine directly, and among those 55 that ran inference, all ran outside this net. The identical mode also serves as the net for negation: it re-tests every negation that a newer fact could have refuted, a defect class where classic and semi-naive evaluation agree, rendering the re-test the exclusive method of detection. Rules featuring a neural condition, a negated path condition, or a path condition that binds a variable not bound by anything else are excluded from the re-test (see [Stratified Evaluation](../logic.md#stratified-evaluation)). `.anchors off` provides the anchor-free naive reference for suspected anchoring issues. Furthermore, the suite multiplies coverage across both parallelism modes and all three arithmetic substrates, ensuring representation-agnosticism is continuously enforced rather than merely presumed.
 
 ## CPU Profiles
 
@@ -133,11 +110,4 @@ wrong.
 
 ## Known Honesty Gaps
 
-The profiler does not count `get_fact_structures` calls on the parallel
-scan path (rare, and visible as a small calls/scanned discrepancy).
-Sub-second phase timings carry tens of milliseconds of run-to-run noise —
-compare bands, not single runs. And at the current state, script parsing
-(the Janet/PEG layer) is a visible floor of the reference timings: a
-measurement that "improves" it without touching the parser is measuring
-noise. When the honest expected gain of the next increment drops into that
-noise floor, the correct optimization is to stop.
+`get_fact_structures: calls` tallies solely the invocations generated by the sequential candidate scan (it always equals `scanned(seq)`); the parallel scan and every other caller are not counted. `fs_cache` hits + misses counts every structure retrieval that gets past the atom/variable gate, regardless of whether it originates from either scan path or elsewhere. Sub-second phase timings carry tens of milliseconds of run-to-run noise – compare ranges, not single runs. At present, script parsing (the Janet/PEG layer) is a visible floor of the reference timings: a measurement that "improves" it without touching the parser is measuring noise. Once the honest anticipated benefit of the next enhancement falls beneath this noise floor, the appropriate step is to cease further optimization.

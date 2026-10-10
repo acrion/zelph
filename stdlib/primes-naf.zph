@@ -5,6 +5,17 @@
 # deferred until the positive rules -- candidate enumeration and all mod
 # computations -- have reached quiescence, so the negation tests absence
 # against the complete divisor scan.
+#
+# .strata lists that rule as not stratifiable, together with the whole
+# arithmetic. The analysis compares predicates, and the verdict rule (N
+# testprime N, N isprime N) => ((N testprime N) = prime) creates an = fact,
+# the predicate for each arithmetic result the scan reads, and contains (N
+# testprime N), which starts the scan. Neither can produce a fact upon
+# which the negation relies: the = fact has (N testprime N) as its subject,
+# never one of the arithmetic terms the scan reads, and (N testprime N) is
+# already present, as the rule's own premise. Thus, every hasdivisor fact
+# for N is derived before the negation is tested, and .semi-naive check
+# verifies it at every execution.
 # 
 # Companion script: primes.zph solves
 # the same problem WITHOUT negation via a positive fold, which doubles as
@@ -29,7 +40,8 @@
 (D divisorcand N) => (N mod D)
 (D divisorcand N, (N mod D) = &0) => (N hasdivisor D)
 
-# The textbook rule -- sound under stratified evaluation:
+# The textbook rule -- sound as written (the header explains the reason for
+# .strata's disagreement):
 (N testprime N, &2 < N, ¬(N hasdivisor D)) => (N isprime N)
 
 (N testprime N, N isprime N) => ((N testprime N) = prime)

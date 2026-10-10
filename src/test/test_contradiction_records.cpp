@@ -397,6 +397,11 @@ TEST_CASE("contradiction record: a single-condition rule leaves nothing to count
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
+    // The quantity that is counted is the announcements of a single
+    // evaluation. In check mode, a second classic run follows the initial
+    // one, and a contradiction lacking a record is declared once more during
+    // this process.
+    interactive.process(".semi-naive on");
     process_lines(interactive, R"(
 x p y
 (A p B) => !
@@ -577,6 +582,10 @@ TEST_CASE("contradiction record: the switch is honoured in both directions")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
+    // Counted per evaluation, as in the case above: with records off,
+    // check mode's second, classic evaluation would report each
+    // contradiction twice.
+    interactive.process(".semi-naive on");
 
     collector.clear();
     interactive.process(".contradiction-records");

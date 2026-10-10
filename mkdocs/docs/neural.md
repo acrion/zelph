@@ -1,6 +1,6 @@
 # Neural Networks in the Graph
 
-zelph can embed neural networks directly inside its semantic network. There is no parallel world, no export/import boundary, no separate tensor runtime with its own identifiers: **the neurons are ordinary graph nodes, and the synapses are ordinary graph edges carrying weights**. A sub-graph can be compiled into a feed-forward network on demand, trained, evaluated, and written back — and inference rules can consult such a network as a condition, using the `≈` operator.
+zelph allows neural networks to be embedded directly within its semantic network. There is no distinct realm, no need for export or import, no separate tensor runtime with its own identifiers: **the neurons are standard graph nodes, and the synapses are raw weighted edges connecting them** – kept in the weight store that also holds fact probabilities, keyed by the same node identifiers, outside the graph’s adjacency structure, ensuring the reasoner never sees them. A sub-graph can be compiled into a feed-forward network when required, trained, evaluated, and written back – and inference rules can consult such a network as a condition, using the `≈` operator.
 
 This page covers the full stack: the weighted-edge substrate, the compiled-network cache, the Janet API, the `≈` rule condition, the helper library [`stdlib/nn.zph`](https://github.com/acrion/zelph/blob/main/stdlib/nn.zph), and a complete proof of concept on real Wikidata data ([`stdlib/examples/neural/nn-wikidata-demo.zph`](https://github.com/acrion/zelph/blob/main/stdlib/examples/neural/nn-wikidata-demo.zph)).
 
@@ -18,9 +18,9 @@ If you are new to neural networks, this is the minimal vocabulary needed for thi
 
 ## The Substrate: Raw Weighted Edges
 
-Internally, zelph stores edge weights in a sparse side table keyed by a hash of the directed edge. Nodes and edges that carry no weight cost **nothing** — the neural substrate adds zero memory overhead to the millions of nodes of, say, a Wikidata import.
+On the inside, zelph maintains weights within a sparse side table that is indexed by a hash derived from a directed node pair. A **raw weighted edge** constitutes precisely such an entry, and nothing beyond: in contrast to a standard edge, it does not occupy a position in the graph’s adjacency (refer to the section below). Nodes and edges that lack any weight cost **nothing** – the neural substrate introduces no additional memory burden for the millions of nodes present in, for instance, a Wikidata import.
 
-This weight store is _shared_ with an older zelph concept: **fact probabilities**. A fact's probability has always been stored on the edge from the fact node to its predicate node (range `[0, 1]`, absent entry = 1). Synapse weights use the same store on neuron-to-neuron edges, without the range constraint. In other words, fact probabilities are a _constrained view_ of the general weight store — this unification is what later allows a network's confidence to become a deduced fact's probability with no translation step.
+This weight store is _shared_ with an older zelph concept: **fact probabilities**. The probability associated with a fact has always been stored on the edge connecting the fact node to its predicate node (within the range `[0, 1]`, absent entry = 1). Synapse weights utilize the identical store for neuron-to-neuron connections, but without the range constraint. In essence, fact probabilities are a _constrained view_ of the general weight store – this unification enables a network's confidence to directly serve as a deduced fact's probability, eliminating the need for a conversion phase.
 
 Synapses are stored exclusively in this weight table, keyed by the
 directed node pair. Creating a synapse inserts **nothing** into the
@@ -52,9 +52,9 @@ The query returns only `n1 ~ neuron` — the synapse is not a fact.
 
 The low-level API:
 
-- **`(zelph/nn-connect from to &opt weight)`** — create a raw weighted edge (default weight 1), creating the nodes if needed.
-- **`(zelph/weight from to)`** — read the weight of an edge, or `nil` if the edge does not exist. An existing edge without a stored weight yields 1.
-- **`(zelph/set-weight from to w)`** — overwrite the weight of an existing edge.
+- **`(zelph/nn-connect from to &opt weight)`** – create a raw weighted edge (default weight 1), creating the nodes if needed.
+- **`(zelph/weight from to)`** – read the weight of a directed node pair: the stored value of a synapse (or of an explicitly stored fact probability), 1 for a real graph edge lacking a stored entry, `nil` if neither is present.
+- **`(zelph/set-weight from to w)`** – overwrite the weight of an existing synapse or edge.
 
 ## Layers Are Sets, Neurons Are Nodes
 
@@ -180,7 +180,8 @@ That is reported once per net rather than left to `.log`:
 zelph> a p b
 zelph> (X p Y, ≈nosuchnet(X p Y)) => (X q Y)
 (((X p Y) nn nosuchnet), (X p Y)) => (X q Y)
-Neural condition: net 'nosuchnet' has no nn-layers definition, so every rule consulting it stays silent.
+Neural condition: net 'nosuchnet' has no nn-layers definition, so every rule
+consulting it stays silent.
 ```
 
 The message appears when the condition is first EVALUATED, so the rule needs
@@ -195,7 +196,8 @@ zelph> a p b
 zelph> badnet nn-layers something
 zelph> (X p Y, ≈badnet(X p Y)) => (X q Y)
 ((X p Y), ((X p Y) nn badnet)) => (X q Y)
-Neural condition: net 'badnet' has an nn-layers definition that is not a list of at least two layers -- write `net nn-layers < input hidden output >`.
+Neural condition: net 'badnet' has an nn-layers definition that is not a list of
+at least two layers -- write `net nn-layers < input hidden output >`.
 ```
 
 ### `.explain` and a neural premise
@@ -279,11 +281,11 @@ Two dump-related notes, so they are not mistaken for bugs: entities absent from 
 
 A compiled network is safe to share between threads: evaluation is concurrent, training is exclusive against it. See the threading note in the [Janet API reference](janet.md#neural-network-functions).
 
-The current implementation is a deliberate foundation, not a finished ML framework: networks have no bias terms, hidden layers are ReLU-only, the output is linear, features are identity-based, and `≈` supports plain S-P-O patterns only. What the foundation establishes is the _architectural_ claim: neurons as nodes, synapses as edges, training data gathered by reasoning queries, and network confidences flowing back into the graph as fact probabilities — all without leaving the semantic network.
+The present implementation serves as a deliberate foundation, not a complete machine learning system: networks lack bias terms, hidden layers employ ReLU exclusively, the output remains linear, features are identity-based, and `≈` accommodates only basic S-P-O patterns. What this foundation establishes is the _architectural_ claim: neurons as nodes, synapses as raw weighted edges within the weight store, training data collected through reasoning queries, and network confidences reintegrated into the graph as fact probabilities – all while remaining entirely within the semantic network.
 
 ## Appendix: Complete Session Log
 
-The following is a complete, unaltered session log of `stdlib/examples/neural/nn-wikidata-demo.zph` executing against `wikidata-20260309-all-pruned-small.bin`: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph. It was generated non-interactively, which is how any transcript here is made reproducible:
+The following is a complete session log of `stdlib/examples/neural/nn-wikidata-demo.zph` executing against `wikidata-20260309-all-pruned-small.bin`: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph. It was captured using zelph 1.0.0, except for the second line of the `.deductions` banner, which subsequent releases introduce and which is shown here. It was generated non-interactively, which is how any transcript here is made reproducible:
 
 ```text
 .deductions all
@@ -312,6 +314,7 @@ zelph 1.0.0
 -- REPL mode - type .help for commands, .quit to exit --
 
 zelph> Deduction printing mode: all
+  Every derivation is printed.
 zelph> Auto-run has been disabled due to loading a large dataset.
 Loading network from generic file /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin...
 Loading: left chunks=27, right chunks=27, nameOfNode chunks=13, nodeOfName chunks=13

@@ -66,6 +66,14 @@ namespace
         "No argument given and no previous output node available. The fallback is the node of "
         "the last statement, answer or deduction PRINTED, and a module loaded with .import "
         "prints none -- name the node, or run the script as a session ('zelph script.zph').";
+
+    // The fallback is remembered as an identifier, and after the node has been
+    // printed, a cluster drop, .remove, or a prune could eliminate it.
+    // Rendering that identifier nonetheless resulted in a record and a figure
+    // for something that denotes nothing.
+    constexpr const char* kLastNodeGone =
+        "No argument given, and the node printed last no longer exists -- a cluster drop or a "
+        "removal took it. Name the node.";
 }
 
 namespace zelph::console
@@ -218,8 +226,16 @@ namespace zelph::console
 
     void CommandExecutor::Impl::generate_and_print_mermaid_link(network::Node nd, int depth, int max_neighbors, const std::unordered_set<network::Node>& exclude_nodes, bool dark_theme, bool horizontal_layout, bool use_subgraphs) const
     {
-        std::filesystem::path temp_dir  = std::filesystem::temp_directory_path();
-        std::string           hex_name  = _n->get_name_hex(nd, false, max_neighbors);
+        std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+        // A node lacking a name is named by its rendering, which carries the
+        // markers distinguishing a name from the surrounding structure. These
+        // markers are meant for the output stage, and here the output is a
+        // file name: unmarked, it is the fact as .node prints it
+        // ("a rel b.html", not "«a» «rel» «b».html"). A NAME is interpreted
+        // exactly as provided -- it bears no marks, and one containing a
+        // guillemet would be incorrectly treated as marked.
+        std::string hex_name = _n->get_name_hex(nd, false, max_neighbors);
+        if (_n->get_name(nd, _n->lang(), true).empty()) hex_name = string::unmark_identifiers(hex_name);
         std::string           safe_name = string::sanitize_filename(hex_name);
         std::filesystem::path html_path = temp_dir / (safe_name + ".html");
 
@@ -513,6 +529,7 @@ namespace zelph::console
         {
             network::Node last = string::last_node_to_string_node();
             if (last == network::Node{}) throw std::runtime_error("Command .node: " + std::string(kNoLastNode));
+            if (!_n->exists(last)) throw std::runtime_error("Command .node: " + std::string(kLastNodeGone));
             nodes.push_back(last);
         }
         else
@@ -641,6 +658,7 @@ namespace zelph::console
             // shell wrapper around the paper scripts existed to avoid.
             nd = string::last_node_to_string_node();
             if (nd == network::Node{}) throw std::runtime_error("Command .mermaid: " + std::string(kNoLastNode));
+            if (!_n->exists(nd)) throw std::runtime_error("Command .mermaid: " + std::string(kLastNodeGone));
         }
         else
         {

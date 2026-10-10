@@ -11,6 +11,7 @@ declaration; `math-syntax` is the infix notation.
 
 ```
 zelph> .import math
+math-syntax loaded: $( ... ) term islands (infix with precedence)
 math loaded: declare indeterminates with <x y z> ~ polyring
 ```
 
@@ -23,7 +24,8 @@ them, an arithmetic substrate, [`integer-arithmetic`](integers.md) and
 ### The ring declaration
 
 ```
-zelph> <x y z> ~ polyring
+zelph+> <x y z> ~ polyring
+(:needsring <x y z>) ⇐ (<x y z> ~ polyring)
 ```
 
 The subject is a cons list of the ring's indeterminates, **outermost
@@ -43,7 +45,7 @@ the nesting order. Transitivity is already provided by
 [`polynomial`](polynomial.md#variable-order), so adjacent pairs suffice:
 
 ```
-zelph> %(string "ADJ-"   (and (zelph/exists "x" "pouter" "y") (zelph/exists "y" "pouter" "z")))
+zelph+> %(string "ADJ-"   (and (zelph/exists "x" "pouter" "y") (zelph/exists "y" "pouter" "z")))
 "ADJ-true"
 zelph> %(string "TRANS-" (zelph/exists "x" "pouter" "z"))
 "TRANS-true"
@@ -87,19 +89,24 @@ are freely mixable — in facts and in rules.
 ### Grammar
 
 ```
-expr    := <one level per declared precedence, loosest first>
+expr    := <one level per declared precedence below 30, loosest first>
 factor  := '-' factor | power
-power   := primary ('^' INTEGER)?
-primary := INTEGER | IDENT '(' expr ')' | IDENT | '(' expr ')'
+power   := tight ('^' factor)?
+tight   := <one level per declared precedence above 30, loosest first>
+primary := INTEGER | NAME '(' expr ')' | NAME | '(' expr ')'
+NAME    := IDENT | '"' IDENT '"'
 ```
+
+The tightest level of `expr` reads factors, the tightest level of `tight` reads primaries; with no operator declared above 30, `tight` equates to `primary`. An operand that comes after an operator of `tight` can also be `'-' factor`.
 
 | Form | Builds |
 |---|---|
-| `INTEGER` | `(zelph/number "…")`, i.e. the `&`-literal |
-| `IDENT` | a zelph variable if variable-shaped (single uppercase letter, or leading `_`), otherwise a named node in the current language |
-| `f(u)` | `(f of u)` — single argument only |
-| `-u` | `(neg of u)`; with `symbolic-integers` loaded, `-3` promotes to `(neg zint &3)` |
-| `t^n` | `(t ^ &n)`, `n ≥ 0` an integer literal. `^` is a term former, **not** sugar for a product |
+| `INTEGER` | `(zelph/number "…")`, specifically the `&`-literal |
+| `IDENT` | a zelph variable when shaped like a variable (single uppercase letter, or prefixed with `_`), otherwise a named node within the current language |
+| `"IDENT"` | always a named node; this is the way the printer writes a node whose name follows variable shape, like `"A"` or `"_k"` |
+| `f(u)` | `(f of u)` – only one argument permitted |
+| `-u` | `(neg of u)`; when `symbolic-integers` is loaded, `-3` promotes to `(neg zint &3)` |
+| `t^u` | `(t ^ u)`, applicable to any factor `u`: `x^y^z` becomes `(x ^ (y ^ z))`, `x^-1` becomes `(x ^ (neg of &1))`. The `^` symbol functions as a term former, **not** as syntactic sugar for multiplication |
 
 Identifiers are `[A-Za-z_][A-Za-z0-9_]*`; atoms outside that charset need
 the verbose syntax. Deliberate omissions: no implicit multiplication (`2x`
@@ -111,17 +118,16 @@ statement of the polynomial layer, not an assumption of the parser.
 
 ### Adding an operator
 
-The infix levels of the grammar are *generated* from an operator table
-that also feeds the display scheme — one table, so the parser and the
-printer cannot drift apart. To extend the notation:
+The precedence levels within the grammar are *generated* from an operator table that simultaneously supplies the display scheme – a single source, ensuring the parser and the printer remain synchronized, and guaranteeing that whatever the island writes, it reads back correctly. To extend the notation:
 
 ```
 zelph> %(math-syntax/operator "circ" 15)
 zelph> %(math-syntax/operator "**" 40 :right)
 ```
 
-The built-ins are `+ -` at 10, `* /` at 20, `^` at 30. Associativity
-defaults to `:left`.
+The built-in operators `+ -` are assigned level 10, `* /` are at level 20, and `^` is at level 30; all except `^` are left-associative, and `:left` serves as the default associativity for any newly declared operator. The unary minus operator occupies a position between `^` and the lower levels: it binds more tightly than any level below 30, and less tightly than `^` and any operator declared at a level above 30, meaning that `-x^2` is `(neg of (x ^ &2))`. A sign operator binds the same way when following an operator declared at a level above 30: with `**` set at level 40, the expression `a ** -b ** c` becomes `(a "**" (neg of (b "**" c)))`. An operator declared at level 30 is integrated into the same level as `^` and must be specified as `:right`.
+
+A name that a statement has to quote is printed within quotation marks inside an island too, and is then read back by the island. For an operator like `**`, either form is acceptable: `$( a "**" b + c )` equates to `$( a ** b + c )`. For a leaf or a call head, the quotation marks prevent a node named `A` or `_k` from being interpreted as a variable upon reading back.
 
 Word-shaped operator names are matched with an identifier boundary, so
 `circ` never matches inside `circle`; they need surrounding whitespace,
@@ -135,11 +141,7 @@ print island syntax its own parser refuses to read.
 
 ### Display
 
-The scheme renders a term in island form only where the default rendering
-would **deviate** — where precedence actually removes parentheses, or where
-a numeral drops its sigil. Everything else keeps its ordinary form, which
-is why one side of an answer often prints verbosely and the other as an
-island.
+The scheme produces an island-form representation of a term only when the default rendering would **deviate** – specifically, when precedence genuinely eliminates parentheses, or when an application prints in call notation (refer to `of` below). Numerals keep their `&`, ensuring a numeral never opens an island by itself. All other elements maintain their ordinary form, which explains why one side of a result frequently appears verbose while the other appears as an island.
 
 `of` is registered in **application** form, so `(f of u)` reads back as
 `f(u)`. That also covers unary minus: `$( -x )` builds `(neg of x)` and

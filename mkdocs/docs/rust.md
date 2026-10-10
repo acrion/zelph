@@ -13,6 +13,8 @@ Anyone developing a host application relies on `zelph`. `zelph-sys` is named in 
 
 The same line as the C ABI: the part a host application needs – resolve names to nodes, assert facts, read them back, build lists and sets, compile a network out of the graph, evaluate it, train it, persist it. Rules, imports, display schemes and SPARQL stay in zelph's own language and in the REPL, where they are written once and read by anyone.
 
+`Engine::rule` builds a rule from nodes created by the caller, mirroring the behaviour of `zelph_rule`, and adhering to the same limit: such a rule only contains values. Since its components were assembled before the invocation, none of them is marked as the rule's text, and any collection within them is a value that every firing references exactly as it stands, including variable members – refer to [The C ABI](capi.md#reasoning). Establishing a scope for building a rule's internal components via the C ABI is planned for future development. `Engine::fact` returns an error when encountering a membership in a collection belonging to a rule's own text or within a rule's condition set, just as `zelph_fact` does: a rule's text becomes immutable once the rule is written.
+
 Two properties shape everything else:
 
 - **A node is its hash.** `Node` values are stable across calls and across a save and load cycle, and two structurally identical constructions collapse into one node. Identity is derived, never handed out.

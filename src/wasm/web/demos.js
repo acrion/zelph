@@ -41,7 +41,7 @@ export const DEMO_GROUPS = [
         id: "1.1",
         label: "Load arithmetic",
         command: ".import binary-arithmetic",
-        info: `Loads the arithmetic rule module. There is no arithmetic code in zelph's engine: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of a 16-fact full-adder truth table, computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/math/arithmetic/" target="_blank">zelph/arithmetic</a>`,
+        info: `Loads the arithmetic rule module. There is no arithmetic code in zelph's engine: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of 52 hand-written digit-table facts (the truth tables of a full adder, a full subtractor, a one-bit multiplier with carry and a digit comparison), computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/math/arithmetic/" target="_blank">zelph/arithmetic</a>`,
       },
       {
         id: "1.2",
@@ -87,7 +87,7 @@ export const DEMO_GROUPS = [
         id: "2.1",
         label: "Load primality test",
         command: ".import primes-naf",
-        info: `Loads the primality module. It contributes no arithmetic of its own &mdash; trial division up to the square bound is expressed by asserting ordinary <code>+</code>, <code>*</code>, <code>mod</code> and <code>cmp</code> facts, which the arithmetic modules answer. The textbook rule "N is prime if it has no divisor" is written literally, using negation-as-failure. (This module also works on top of <code>.import decimal-arithmetic</code>, which computes in base 10 &mdash; the recursion rules are byte-identical, only the digit tables differ. Try typing it!)`,
+        info: `Loads the primality module. It contributes no arithmetic of its own &mdash; trial division up to the square bound is expressed by asserting ordinary <code>+</code>, <code>*</code>, <code>mod</code> and <code>cmp</code> facts, which the arithmetic modules answer. The textbook rule "N is prime if it has no divisor" is written literally, using negation-as-failure. (This module also works on top of <code>.import decimal-arithmetic</code>, which computes in base 10 &mdash; the recursion rules are one shared module, only the digit tables differ. Try typing it!)`,
       },
       {
         id: "2.2",
@@ -150,7 +150,7 @@ export const DEMO_GROUPS = [
         id: "2.10",
         label: "Teach transitivity",
         command: "(A R B, B R C, R is transitive) => (A R C)",
-        info: `This rule teaches zelph the <em>concept</em> of transitivity &mdash; for any relation R. Note that <code>is</code> and <code>transitive</code> are nodes zelph knows nothing about; their meaning emerges purely from their use in facts and rules. The variable R ranges over predicates themselves, which is possible because predicates are first-class graph nodes &mdash; a class of rule that standard Datalog cannot express. More: <a href="https://acrion.github.io/zelph/logic/" target="_blank">zelph/logic</a>`,
+        info: `This rule teaches zelph the <em>concept</em> of transitivity &mdash; for any relation R. Note that <code>is</code> and <code>transitive</code> are nodes zelph knows nothing about; their meaning emerges purely from their use in facts and rules. The variable R ranges over predicates themselves, which is possible because predicates are first-class graph nodes &mdash; a class of rule that standard Datalog can only represent via an encoding (every fact as a row of one generic relation, <code>holds(p, s, o)</code>). More: <a href="https://acrion.github.io/zelph/logic/" target="_blank">zelph/logic</a>`,
       },
       {
         id: "2.11",
@@ -288,7 +288,7 @@ export const DEMO_GROUPS = [
         label: "Show the proof",
         requires: ["5.3"],
         command: ".explain 2",
-        info: `Reconstructs the justification of the previous answer. Nothing is recorded during inference &mdash; after quiescence every derived fact has a rule instantiation whose conditions are all present, and a backward search finds one. Both branches end at the same normal form <code>(x poly &lt;… &gt;)</code>, whose coefficient list 1,&nbsp;0,&nbsp;&minus;1 &mdash; least significant first &mdash; is 1&nbsp;&minus;&nbsp;x². <code>.explain &lt;pattern&gt; 0</code> goes all the way down to the digit tables.<br><br>The statement you typed is marked <code>[asserted; no derivation found]</code> rather than <code>[axiom]</code>, and the culprit is the transitivity rule from group 2: its consequence <code>(A R C)</code> has a <em>variable</em> predicate, so it unifies with every fact there is, and the search can no longer say that nothing derives this one. Without that rule in the graph the same button prints <code>[axiom]</code>. That is the price of quantifying over predicates, and this is where you can see it charged.`,
+        info: `Reconstructs the justification of the previous answer. Nothing is recorded during inference &mdash; a backward search rebuilds a rule instantiation whose conditions all hold in the graph as it is now. Both branches end at the same normal form <code>(x poly &lt;… &gt;)</code>, whose coefficient list 1,&nbsp;0,&nbsp;&minus;1 &mdash; least significant first &mdash; is 1&nbsp;&minus;&nbsp;x². <code>.explain &lt;pattern&gt; 0</code> goes all the way down to the digit tables.<br><br>After the earlier groups the tree opens with a note: the search for a proof whose leaves are all axioms ran out of its work budget on a graph this size, so the tree shown is the one found within the depth limit, and its cut branches say so.<br><br>The statement you typed is marked <code>[asserted; no derivation found]</code> rather than <code>[axiom]</code>, and the culprit is the transitivity rule from group 2: its consequence <code>(A R C)</code> has a <em>variable</em> predicate, so it unifies with every fact there is, and the search can no longer say that nothing derives this one. Without that rule in the graph the same button prints <code>[axiom]</code>. That is the price of quantifying over predicates, and this is where you can see it charged.`,
       },
       {
         id: "5.5",
@@ -310,7 +310,7 @@ export const DEMO_GROUPS = [
         label: "Differentiate",
         requires: ["5.2"],
         command: "? $( x^3 - 2*x + 7 ) diffby x",
-        info: `Sum rule, power rule and the constant rule, as forward-chaining rules. The raw derivative is deliberately not the answer: the connect stage pushes it through an ordinary simplification request, so you get 3x²&nbsp;&minus;&nbsp;2 rather than an unreduced tree. Constancy is the textbook definition made executable &mdash; a containment recursion plus negation-as-failure, evaluated only after the positive rules have reached quiescence.`,
+        info: `Sum rule, power rule and the constant rule, as forward-chaining rules. The raw derivative is deliberately not the answer: the connect stage pushes it through an ordinary simplification request, so you get 3x²&nbsp;&minus;&nbsp;2 rather than an unreduced tree. Constancy is stated positively, at the leaves only &mdash; a declared constant, another variable, or a numeral &mdash; and every composite is differentiated structurally, so a term outside the vocabulary gets no derivative rather than a wrong one.`,
       },
       {
         id: "5.8",
@@ -325,7 +325,7 @@ export const DEMO_GROUPS = [
         label: "Third derivative",
         requires: ["5.2"],
         command: "? $( x^5 ) diffalong <x x x>",
-        info: `Iterating needs no new machinery: a derivative is an ordinary fact exposed under <code>=</code>, so each step feeds the next. Four rules walk a list of variables &mdash; a list rather than extra arguments, because a zelph fact carries a <em>set</em> of objects, and order has to live in the data. Asking for <code>&lt;x y&gt;</code> and <code>&lt;y x&gt;</code> reaches the same answer node, which makes Clairaut's theorem observable rather than assumed.`,
+        info: `Iterating needs no new machinery: a derivative is an ordinary fact exposed under <code>=</code>, so each step feeds the next. Four rules walk a list of variables &mdash; a list rather than extra arguments, because a zelph fact carries a <em>set</em> of objects, and order has to live in the data. Asking for <code>&lt;x y&gt;</code> and <code>&lt;y x&gt;</code> reaches the same answer node wherever the two simplified results coincide, which makes Clairaut's theorem observable rather than assumed; the simplifier does not normalize commutativity, so other terms end in different arrangements of the same value, which ≡ proves equal.`,
       },
       {
         id: "5.10",
@@ -353,7 +353,7 @@ export const DEMO_GROUPS = [
         label: "Load EML",
         requires: ["5.1"],
         command: '.import eml\n%(math-syntax/operator "eml" 15)',
-        info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). The module wires eml into the simplifier as an ordinary binary operator with a three-rule identity table; the second line gives it infix notation so the nested forms below stay readable.`,
+        info: `Odrzywołek (2026) showed that a single operator eml(x,&nbsp;y)&nbsp;=&nbsp;exp(x)&nbsp;&minus;&nbsp;ln(y), together with the constant 1, generates all elementary functions &mdash; a Sheffer stroke for continuous mathematics (<a href="https://arxiv.org/abs/2603.21852" target="_blank">arXiv:2603.21852</a>). The module introduces eml as an ordinary binary operator by its definition alone: every identity of the paper then follows from that definition and the rules for exp, ln and subtraction. The second line gives it infix notation so the nested forms below stay readable.`,
       },
       {
         id: "6.2",
@@ -361,7 +361,7 @@ export const DEMO_GROUPS = [
         requires: ["6.1"],
         command:
           "x ~ symvar\n? :simplify $( 1 eml ((1 eml x) eml 1) )",
-        info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier, which answers <code>ln(x)</code>. Not checked numerically and not assumed &mdash; derived, as a chain of ordinary deductions across two strata of the negation schedule, by the same fixpoint engine that reasons over Wikidata.`,
+        info: `Submits the tree of the paper's key identity ln&nbsp;z&nbsp;=&nbsp;eml(1,&nbsp;eml(eml(1,&nbsp;z),&nbsp;1)) to the simplifier, which answers <code>ln(x)</code>. Not checked numerically and not assumed &mdash; derived from the definition of eml, as a chain of ordinary deductions, by the same fixpoint engine that reasons over Wikidata.`,
       },
       {
         id: "6.3",
@@ -369,14 +369,14 @@ export const DEMO_GROUPS = [
         requires: ["6.1"],
         command:
           "? :simplify $( 1 eml 1 )\n? :simplify $( exp(1) )",
-        info: `e&nbsp;=&nbsp;eml(1,&nbsp;1) takes two requests, and the reason is worth seeing: a rewrite result is not re-processed within the same request, so the first call reaches <code>exp(1)</code> and the second turns that into <code>e</code>. Single-pass semantics keep the simplifier single-valued; one-shot deep normalisation would be the e-graph design the module deliberately left room for.`,
+        info: `e&nbsp;=&nbsp;eml(1,&nbsp;1) in a single request: by definition eml(1,&nbsp;1)&nbsp;=&nbsp;exp(1)&nbsp;&minus;&nbsp;ln&nbsp;1, ln&nbsp;1 is 0, and the constant <code>e</code> is <em>defined</em> as exp(1). The second line simplifies exp(1) directly and meets the first at the same node <code>e</code> &mdash; two routes, one term.`,
       },
       {
         id: "6.4",
         label: "Compile to pure EML",
         requires: ["6.2"],
         command: "? :emlcompile $( ln(x) )",
-        info: `The expansion direction: rewrite a named function into eml and the constant 1 alone. Composite operators get no expansion rules of their own &mdash; each materialises its defining term as a graph node and harvests <em>its</em> result, so the paper's reference compiler becomes ordinary fact flow. Since all terms are hash-consed, the output is a canonical DAG: repeated subexpressions are stored and rewritten once.`,
+        info: `The expansion direction: rewrite a named function into eml and the constant 1 alone. Composite operators get no expansion rules of their own &mdash; each materialises its defining term as a graph node and harvests <em>its</em> result, so the paper's reference compiler becomes ordinary fact flow. Since all terms are hash-consed, the output is a maximally shared DAG: repeated subexpressions are stored and rewritten once.`,
       },
     ],
   },
@@ -412,7 +412,7 @@ export const DEMO_GROUPS = [
         label: "The Jacobian determinant",
         requiresReset: true,
         command: ".import examples/math/jacobian",
-        info: `Runs the shipped example script. It states the 3×3 Jacobian as a fact <code>&lt;G1 G2 G3&gt; jac3 &lt;a b c&gt;</code>, and rules do the rest: nine rules request the partial derivatives, one assembles the first-row cofactor expansion exactly as a linear algebra text writes it, and two compile the result to a polynomial normal form. This is the heaviest computation in the playground &mdash; symbolic differentiation produces large unsimplified terms, and the determinant multiplies three of them together.<br><br>The button types <code>.new</code> first, so this runs on an empty network and the other demos start over. Nothing here depends on them &mdash; the script imports <code>math</code> itself &mdash; and reasoning cost grows with what is already in the graph: every fact left over from the other demos is one more candidate every rule has to consider. On a graph carrying the whole playground this run takes more time and derives exactly the same answer.<br><br>Reading the output: the script sets <code>.deductions off</code>, so the thousands of intermediate facts stay silent and only the run summary appears. <em>Matches processed</em> counts rule-condition bindings the engine completed &mdash; roughly 50&nbsp;000 here; The <em>Note: … were hidden</em> line counts the consequences the run derived and did not print, which under <code>.deductions off</code> is all of them. The <code>Reasoning iteration …</code> lines are a once-per-second heartbeat, not data: how many of them appear depends on how long the run takes, and their numbers differ from run to run. The determinant itself is now a fact in the graph &mdash; ask for it next.`,
+        info: `Runs the shipped example script. It states the 3×3 Jacobian as a fact <code>&lt;G1 G2 G3&gt; jac3 &lt;a b c&gt;</code>, and rules do the rest: nine rules request the partial derivatives, one assembles the first-row cofactor expansion exactly as a linear algebra text writes it, and two compile the result to a polynomial normal form. This is the heaviest computation in the playground &mdash; symbolic differentiation produces large unsimplified terms, and the determinant multiplies three of them together.<br><br>The button types <code>.new</code> first, so this runs on an empty network and the other demos start over. Nothing here depends on them &mdash; the script imports <code>math</code> itself &mdash; and reasoning cost grows with what is already in the graph: every fact left over from the other demos is one more candidate every rule has to consider. On a graph carrying the whole playground this run takes more time and derives exactly the same answer.<br><br>Reading the output: the script sets <code>.deductions off</code>, so the thousands of intermediate facts stay silent and only the run summary appears. <em>Matches processed</em> counts the bindings the engine found for rule conditions &mdash; about a hundred thousand here; the <em>Note: … were hidden</em> line counts the consequences the run derived and did not print, which under <code>.deductions off</code> is all of them. The <code>Reasoning iteration …</code> lines are a once-per-second heartbeat, not data: how many of them appear depends on how long the run takes, and their numbers differ from run to run. The determinant itself is now a fact in the graph &mdash; ask for it next.`,
       },
       {
         id: "7.5",

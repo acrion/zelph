@@ -23,7 +23,7 @@ about:
 |---|---|---|
 | Digits | `binary-arithmetic`, `decimal-arithmetic`, `binary-nand-arithmetic` | the digit-level truth tables — or, in the NAND variant, a *single* gate axiom from which they are derived |
 | Positional arithmetic | `common-arithmetic` | `+ - * / mod cmp ^` as digit recursions over cons lists, base-agnostic |
-| Integers | `integer-arithmetic` | ℤ as `(pos zint N)` / `(neg zint N)`, a thin façade over the naturals |
+| Integers | `integer-arithmetic` | ℤ: a nonnegative integer is its natural numeral, a negative integer `(neg zint N)` – a thin façade built upon the naturals |
 | Polynomials | `polynomial` | multivariate normal forms over ℤ: `padd`, `psub`, `pmul`, `pneg`, `ppow` |
 | Terms | `symbolic-core` + `-minus`, `-pow`, `-integers` | a terminating simplifier, `diff` for derivatives |
 | Compiler | `topoly` | symbolic term → canonical polynomial |
@@ -39,8 +39,9 @@ loop.
 
 ```
 zelph> .import math
-zelph> <x> ~ polyring
-zelph> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
+zelph+> <x> ~ polyring
+(:needsring <x>) ⇐ (<x> ~ polyring)
+zelph+> ? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
 Answer: (((&1 + x) * (&1 - x)) ≡ $( &1 - x ^ &2 )) = proven
 ```
 
@@ -55,8 +56,9 @@ Scale costs remarkably little. Euler's four-square identity, eight
 indeterminates, degree four on both sides:
 
 ```
-zelph> <a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring
-zelph> ? $( (a1^2+a2^2+a3^2+a4^2) * (b1^2+b2^2+b3^2+b4^2) ) ≡ $( (a1*b1-a2*b2-a3*b3-a4*b4)^2 + (a1*b2+a2*b1+a3*b4-a4*b3)^2 + (a1*b3-a2*b4+a3*b1+a4*b2)^2 + (a1*b4+a2*b3-a3*b2+a4*b1)^2 )
+zelph+> <a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring
+(:needsring <a1 a2 a3 a4 b1 b2 b3 b4>) ⇐ (<a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring)
+zelph+> ? $( (a1^2+a2^2+a3^2+a4^2) * (b1^2+b2^2+b3^2+b4^2) ) ≡ $( (a1*b1-a2*b2-a3*b3-a4*b4)^2 + (a1*b2+a2*b1+a3*b4-a4*b3)^2 + (a1*b3-a2*b4+a3*b1+a4*b2)^2 + (a1*b4+a2*b3-a3*b2+a4*b1)^2 )
 Answer: … = proven
 ```
 
@@ -64,12 +66,7 @@ on the order of two tenths of a second, cold start included.
 
 ## Proof by node identity
 
-`≡` does not compare strings and does not evaluate at sample points. Both
-sides are compiled to a canonical polynomial normal form, and because every
-node in zelph is hash-consed — one value, one node — *equality of normal
-forms is identity of nodes*. The proof obligation collapses to a pointer
-comparison, and the rule that performs it is a single line of
-[`topoly.zph`](topoly.md):
+`≡` does not compare strings and does not evaluate at sample points. Each side is compiled to a canonical polynomial normal form, and since every term in zelph is hash-consed – representing a single structure, a single node, barring a hash collision, which zelph refuses ([details](../internals/performance.md#the-identity-foundation)) – *equality of normal forms is identity of nodes*. The proof obligation reduces to a pointer comparison, and the rule responsible for this operation consists of a single line in [`topoly.zph`](topoly.md):
 
 ```
 (A ≡ B, (:topoly A) = P, (:topoly B) = P) => ((A ≡ B) = proven)
@@ -78,23 +75,23 @@ comparison, and the rule that performs it is a single line of
 The same variable `P` in both conditions is the entire argument. Unification
 binds it only if both compilations arrived at the identical node.
 
-## Every answer carries its proof
+## Every answer can be explained
 
-Nothing above is a black box, and you do not have to take the verdict on
-trust. `.explain` reconstructs the justification from the saturated graph:
+Nothing above functions as a black box. `.explain` reconstructs a justification from the saturated graph – one such justification, reassembled by the engine that derived the answer, not replayed by an independent verifier:
 
 ```
-zelph> ? $( x^2-1 ) ≡ $( (x-1)*(x+1) )
+zelph+> ? $( x^2-1 ) ≡ $( (x-1)*(x+1) )
 Answer: ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
-zelph> .explain 3
+zelph+> .explain 3
 ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
    ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
    ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  ├─ :topoly $( x ^ &2 - &1 )
-   │  │  └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   │  └─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │  ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
    …
+   │  └─ :topoly $( x ^ &2 - &1 )
+   │     └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
    └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   …
 ```
 
 (The input to `.explain` is the depth to print; absent a fact, it explains the
@@ -113,7 +110,7 @@ plug-in" — it is stating facts.
 Two facts give you hyperbolic functions, chain rule included:
 
 ```
-zelph> sinh hasderivative cosh
+zelph+> sinh hasderivative cosh
 zelph> cosh hasderivative sinh
 zelph> ? $( cosh(x*x) ) diffby x
 Answer: ($( cosh(x * x) ) diffby x) = $( sinh(x * x) * (x + x) )
@@ -123,21 +120,11 @@ There is no table of known functions in the engine. `hasderivative` is an
 ordinary predicate, consumed by one generic rule, and `sinh` is an ordinary
 node — the same kind of node as `Berlin`.
 
-And because the substrate is interchangeable, the *same* symbolic layer runs
-over decimal digits, binary digits, or binary digits synthesised from a
-single NAND axiom. The test suite exercises every symbolic test against all
-three.
+Since the substrate can be swapped out, the *identical* symbolic layer operates on decimal digits, binary digits, or binary digits generated through a single NAND axiom. The symbolic layer’s own tests (`test_symbolic.cpp`, `test_symbolic_integers.cpp`) are executed across all three variants.
 
 ## Honest scope
 
-zelph is not competing with Singular or Macaulay2 on Gröbner bases, and it
-does not have real or complex numbers, quotient fields, or side conditions
-on identities. What it has is a complete, inspectable chain from a Boolean
-gate to a multivariate polynomial identity, in one uniform formalism, with
-provenance at every step — and enough performance that this is a working
-tool rather than a demonstration. The
-[Jacobian tutorial](tutorial-jacobian.md) verifies a July-2026
-counterexample to a sixty-year-old conjecture, over ℤ, in under a second.
+zelph is not in competition with Singular or Macaulay2 regarding Gröbner bases, and it lacks real or complex numbers, quotient fields, or side conditions applied to identities. What it provides is a complete, inspectable sequence from a Boolean gate to a multivariate polynomial identity, all within a single uniform formalism, where each stage is accessible via `.explain` – and with sufficient speed to serve as a working tool rather than merely a proof of concept. The [Jacobian tutorial](tutorial-jacobian.md) verifies a July-2026 counterexample to a sixty-year-old conjecture, over ℤ, in less than one second.
 
 ## Where to go next
 
