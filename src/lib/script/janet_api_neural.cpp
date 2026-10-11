@@ -77,6 +77,7 @@ namespace zelph
     {
         janet_arity(argc, 2, 3);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/nn-connect");
 
         network::Node from = s_instance->resolve_janet_arg(argv[0]);
         network::Node to   = s_instance->resolve_janet_arg(argv[1]);
@@ -109,10 +110,13 @@ namespace zelph
     }
 
     // Set the weight of an existing raw edge.
+    // Main thread only, in contrast to `zelph/nn-write-back`: the pair could represent a real graph edge, with its weight
+    // indicating the probability of a fact.
     Janet ScriptEngine::Impl::janet_cfun_zelph_set_weight(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 3);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/set-weight");
 
         network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
@@ -134,10 +138,17 @@ namespace zelph
 
     // Compile a feed-forward view of a sub-graph. Argument: indexed collection
     // of layer nodes, input first, output last. Returns an integer handle.
+    //
+    // Main thread only, despite making no writes to the graph: the view it
+    // maintains originates from the layer memberships and synapses that the
+    // main thread progressively updates, one step at a time, and a compile
+    // operating in parallel with that wiring would silently keep a partially
+    // connected net.
     Janet ScriptEngine::Impl::janet_cfun_zelph_nn_compile(int32_t argc, Janet* argv)
     {
         janet_arity(argc, 1, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/nn-compile");
 
         const Janet* data;
         int32_t      len;
@@ -322,6 +333,13 @@ namespace zelph
     }
 
     // Write trained weights back into the graph's edge-weight store.
+    //
+    // Allowed on any thread. It modifies exclusively the weights of the
+    // synapses from which the net was compiled, with each weight
+    // updated under the protection of the weight store's lock, and it
+    // creates no new node, edge, or name; the net's internal lock enables
+    // it to execute concurrently with other threads performing evaluation
+    // and keeps it isolated from a training step.
     Janet ScriptEngine::Impl::janet_cfun_zelph_nn_write_back(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 1);
@@ -380,6 +398,7 @@ namespace zelph
     {
         janet_arity(argc, 2, 4);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/nn-connect-layers");
 
         network::Node from_layer = s_instance->resolve_janet_arg_no_create(argv[0]);
         network::Node to_layer   = s_instance->resolve_janet_arg_no_create(argv[1]);

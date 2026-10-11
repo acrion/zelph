@@ -80,7 +80,7 @@ namespace zelph::console
 #ifndef __EMSCRIPTEN__
         static std::vector<uint64_t> parse_node_id_list(const std::string& value, const std::string& label);
 #endif
-        void import_file(const std::string& file, const std::vector<std::string>& args = {}, ScriptRole role = ScriptRole::Module) const;
+        std::size_t import_file(const std::string& file, const std::vector<std::string>& args = {}, ScriptRole role = ScriptRole::Module, std::size_t lines_done = 0) const;
 #ifndef __EMSCRIPTEN__
         void cmd_load(const std::vector<std::string>& cmd);
 #endif
@@ -94,6 +94,7 @@ namespace zelph::console
         void cmd_index_file(const std::vector<std::string>& cmd);
 #endif
         void cmd_licenses(const std::vector<std::string>& cmd);
+        void cmd_timer(const std::vector<std::string>& cmd);
 #ifndef __EMSCRIPTEN__
         void cmd_save(const std::vector<std::string>& cmd);
 #endif
@@ -181,6 +182,7 @@ namespace zelph::console
         void cmd_semi_naive(const std::vector<std::string>& cmd);
         void cmd_fact_stores(const std::vector<std::string>& cmd);
         void cmd_contradiction_records(const std::vector<std::string>& cmd);
+        void cmd_explain_budget(const std::vector<std::string>& cmd);
 
         // --- Implemented in commands_cluster.cpp ---
 

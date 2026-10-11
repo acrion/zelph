@@ -607,6 +607,42 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     std::unordered_set<network::Node> elements;
     std::unordered_set<network::Node> variable_elements;
 
+    // A ground member of a data collection qualifies as an element when its
+    // membership holds as data, via the two criteria a query enforces on every
+    // candidate fact (Unification) and `.explain` evaluates for each premise
+    // (premise_holds): a rule pattern exists only because a rule was authored
+    // using it, provided nothing derives it, and a refuted fact is held as
+    // known to not be true. Printing either listed a member that no query
+    // answers: `d in @{d m}` for the data collection `@{d}` that
+    // `(box has C) => ((X r Y) => ((m in C) noted X))` binds, whose generated
+    // rule states `m in @{d}` as a ground pattern within its text.
+    //
+    // Rule text keeps its literal: a template or a conjunction set prints
+    // every member its text wrote, and a set constant equals its members.
+    // Every other collection hides every pattern membership. Within this
+    // engine, a ground pattern was written as part of a rule's text:
+    // mark_rule_patterns marks only what a rule holds, and asserting or
+    // deriving the statement revokes the mark. This behaviour applies
+    // regardless of where the membership sits in the rule, even inside a
+    // membership of another data collection, and the membership stays a
+    // pattern when .remove-rules takes the rule away. The sole exception is a
+    // literal that an engine before template ids inserted into a rule under a
+    // counter id: its members are patterns, its collection is data in this
+    // engine, and a load records them (Zelph::is_older_rule_literal), so
+    // `a likes @{c d}` renders exactly as it did when the network was saved.
+    //
+    // Each test performs a hash probe or examines an id, except for
+    // is_set_constant, which reads the members of a set constant. None of
+    // these operations accesses the facts that hold the membership, and a
+    // generated rule's pattern is held by one such fact for every firing.
+    const auto holds_as_member = [&](const network::Node rel)
+    {
+        if (!z->is_rule_pattern(rel) && !z->is_refuted_fact(rel)) return true;
+        if (network::Zelph::is_value_recipe(resolved)) return false;
+        if (z->holds_rule_text(resolved) || z->is_set_constant(resolved)) return true;
+        return !z->is_refuted_fact(rel) && z->is_older_rule_literal(rel);
+    };
+
     if (z->exists(resolved))
     {
         for (network::Node rel : z->get_right(resolved))
@@ -639,19 +675,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 // built prints them alone -- the `@{Y}` in
                 // `(X p Y) => (X likes @{Y})` is exactly what that rule says.
                 //
-                // A ground member of a collection a firing built (a value
-                // recipe, see below) whose membership is a pattern of a
-                // rule's text, and that nothing has derived, is no member of
-                // the data either: the `m` in a rule that names the
-                // collection within `(m in C) noted X`. This same principle
-                // applies when the membership is rendered: a value recipe is
-                // the same node regardless of its content, in contrast to a
-                // set constant.
+                // A ground member whose membership does not hold
+                // (holds_as_member, above) is not an element either, and
+                // this remains true even when that very membership is the
+                // fact being rendered: a collection remains the same node
+                // regardless of what it holds, in contrast to a set constant.
                 if (s != 0 && objs.count(resolved) > 0)
                 {
                     if (network::Zelph::is_var(s))
                         variable_elements.insert(s);
-                    else if (!network::Zelph::is_value_recipe(resolved) || !z->is_rule_pattern(rel))
+                    else if (holds_as_member(rel))
                         elements.insert(s);
                 }
             }
@@ -730,17 +763,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // it constructed -- prints its ground members everywhere, just as every
     // set constant does (below).
     //
-    // Every other collection is data, regardless of position, including a
-    // rule's text, and prints its ground members, displaying variables
-    // only if it contains none -- except for a collection a firing built,
-    // which prints its data (see below). A data collection D that a rule
-    // reads and writes, as in `((X p Y), (X in D)) => (Y in D)`, holds the
-    // rule's X and Y beside its data, and these are no members of the
-    // data: printing them made the rule name a collection of two
-    // variables, `@{Y X}`, where it names D. A SET CONSTANT is read
-    // identically: its identity equals its members, and `(X in {a b})` is
-    // the exact way a rule quantifies over them -- the X that the
-    // condition adds to the set is the artefact there, not the a and b.
+    // Every other collection constitutes data, regardless of placement,
+    // including a rule's text. It prints the ground members whose
+    // membership holds (as defined by holds_as_member, above), and displays
+    // its variables solely when no such member exists -- except in the case
+    // of a collection a firing built, which prints its data (see below). A
+    // data collection D that a rule reads and writes, as in
+    // `((X p Y), (X in D)) => (Y in D)`, holds the rule's X and Y beside its
+    // data, and these are no members of the data: printing them made the
+    // rule name a collection of two variables, `@{Y X}`, where it names D.
+    // A SET CONSTANT is read identically: its identity equals its members,
+    // and `(X in {a b})` is the exact way a rule quantifies over them -- the
+    // X that the condition adds to the set is the artefact there, not the a
+    // and b.
     //
     // A collection a firing built (a value recipe) constitutes data in any
     // context, and prints all contents it holds: a variable member is one

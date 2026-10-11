@@ -462,6 +462,182 @@ TEST_CASE(".deductions off: nothing is printed however long the session has been
         CHECK_FALSE(any_output_contains(collector, "⇐")); });
 }
 
+// ---------------------------------------------------------------------------
+// The `.timer` directive determines when the REPL outputs the duration an input
+// required. Each of the binary and the playground independently enforced a
+// 10 ms threshold, with the playground implementing it in a JavaScript copy,
+// and no setting could reach either: a session aiming for all timing data or
+// none had to filter its output manually. The rule and the format of the output
+// line are now located within Interactive::report_timing, and both front ends
+// invoke it following every input; `tools/check_timer.py` holds the binary to
+// it, and `src/wasm/node_smoke_test.mjs` holds the playground's export to it.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // The sequence of timing lines, as they appeared
+    // in the printed output, in the order they were
+    // presented.
+    std::vector<std::string> timing_lines(const zelph::io::OutputCollector& collector)
+    {
+        std::vector<std::string> lines;
+        for (const auto& e : collector.events())
+            if (e.channel == zelph::io::OutputChannel::Diagnostic && e.text.starts_with("-- "))
+                lines.push_back(e.text);
+        return lines;
+    }
+}
+
+TEST_CASE(".timer: auto is the default, and the setting is shown by name")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".timer");
+    CHECK(any_output_contains(collector, "Timer: auto"));
+
+    for (const std::string setting : {"on", "off", "auto"})
+    {
+        collector.clear();
+        interactive.process(".timer " + setting);
+        CHECK(any_output_contains(collector, "Timer: " + setting));
+
+        collector.clear();
+        interactive.process(".timer");
+        CHECK(any_output_contains(collector, "Timer: " + setting));
+    }
+}
+
+TEST_CASE(".timer: an unknown setting is refused, and the setting stays as it was")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".timer off");
+
+    for (const std::string line : {".timer loud", ".timer on off"})
+        CHECK_THROWS_WITH_AS(interactive.process(line),
+                             doctest::Contains("Usage: .timer [on|off|auto]"),
+                             std::runtime_error);
+
+    collector.clear();
+    interactive.process(".timer");
+    CHECK(any_output_contains(collector, "Timer: off"));
+}
+
+TEST_CASE(".timer: the setting decides which inputs report their time")
+{
+    using std::chrono::milliseconds;
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    // The auto setting, which is the default, keeps the threshold
+    // that the REPL has consistently kept.
+    interactive.report_timing(milliseconds(9));
+    CHECK(timing_lines(collector).empty());
+    interactive.report_timing(milliseconds(10));
+    CHECK(timing_lines(collector) == std::vector<std::string>{"-- 10 ms --"});
+
+    interactive.process(".timer on");
+    collector.clear();
+    interactive.report_timing(milliseconds(0));
+    CHECK(timing_lines(collector) == std::vector<std::string>{"-- 0 ms --"});
+
+    interactive.process(".timer off");
+    collector.clear();
+    interactive.report_timing(std::chrono::hours(1));
+    CHECK(timing_lines(collector).empty());
+}
+
+TEST_CASE(".timer: a timing line reads the same in both front ends, at every scale")
+{
+    // The playground used to apply the formatting to the line itself and
+    // rounded where the binary truncated, resulting in the same 12.7 ms being
+    // displayed as "13 ms" in the playground and "12 ms" in the binary.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".timer on");
+    collector.clear();
+
+    interactive.report_timing(std::chrono::microseconds(12700));
+    interactive.report_timing(std::chrono::milliseconds(1500));
+    interactive.report_timing(std::chrono::milliseconds(61500));
+    CHECK(timing_lines(collector) == std::vector<std::string>{"-- 12 ms --", "-- 1.500 s --", "-- 1m1.500s --"});
+}
+
+TEST_CASE(".timer: .new keeps the setting, as it keeps .deductions")
+{
+    // What the individual interacting via the REPL is shown is a setting of the
+    // session, while the network that .new discards remains silent on this
+    // matter.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".timer off");
+    interactive.process(".new");
+
+    collector.clear();
+    interactive.process(".timer");
+    CHECK(any_output_contains(collector, "Timer: off"));
+}
+
+// The command shows up in four locations, with no one derived from another:
+// the dispatch table, the topics listed in .help, the overview that .help
+// prints, and the command list found in quickstart.md, which no test reads.
+TEST_CASE("help: .timer is documented and listed with the session commands")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .timer");
+    CHECK(any_output_contains(collector, ".timer [on|off|auto]"));
+    CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+
+    collector.clear();
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, ".timer [on|off|auto]"));
+
+    collector.clear();
+    interactive.process(".help .new");
+    CHECK(any_output_contains(collector, ".timer keep their mode"));
+}
+
+// When a statement extends across multiple lines, the terminal displays
+// dots in place of the prompt, ensuring that an unfinished statement no
+// longer appears as if the REPL has frozen. The binary requests this
+// behaviour solely when standard input is connected to a terminal
+// (`tools/check_continuation_prompt.py`); in contrast, a pipe keeps the
+// empty prompt, preserving it along with every recorded transcript.
+TEST_CASE("continuation prompt: dots to the width of the prompt the statement began under")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    CHECK(interactive.continuation_prompt_text().empty());
+
+    interactive.process("a p");
+    CHECK(interactive.prompt_text().empty());
+    CHECK(interactive.continuation_prompt_text() == ".....> ");
+
+    interactive.process("b");
+    CHECK(interactive.continuation_prompt_text().empty());
+    CHECK(interactive.prompt_text() == "zelph> ");
+
+    // A mark widens the prompt, and the dots follow it.
+    interactive.process(".auto-run");
+    interactive.process("c p");
+    CHECK(interactive.continuation_prompt_text() == "......> ");
+    interactive.process("d");
+
+    // The width is counted in characters: the character "Ü" occupies two
+    // bytes and one column.
+    interactive.process(".lang Ü");
+    interactive.process("e p");
+    CHECK(interactive.continuation_prompt_text() == "..> ");
+    interactive.process("f");
+
+    // A Janet block is processed across multiple lines as well.
+    interactive.process("%");
+    CHECK(interactive.continuation_prompt_text() == "..> ");
+    interactive.process("%");
+    CHECK(interactive.continuation_prompt_text().empty());
+}
+
 // Concurrent OutputStream flushes must be serialized through the same
 // print mutex as emit(): OutputStream copies the handler and flushes
 // without a lock of its own, so before the locked_stream fix, parallel

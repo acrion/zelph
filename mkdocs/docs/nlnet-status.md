@@ -44,6 +44,7 @@ Since 8 August 2026, the proof reconstruction behind `.explain` has been extende
 - 2026-09-02 · [`e689af6`](https://github.com/acrion/zelph/commit/e689af6ba42d7d585ab24072f5f2c0ac9d1e3e17) · Rework the documentation entry points and structure
 - 2026-09-04 · [`8ea77f7`](https://github.com/acrion/zelph/commit/8ea77f76f0d7eb053b8a32df1f7d697f41628168) · Pin the instruction set floor and the install-time test selection
 - 2026-09-05 · [`ac7f7ca`](https://github.com/acrion/zelph/commit/ac7f7ca98971f195e5103b68d5014b45f90f326d) · Run a command-line script as a session, and report what went wrong
+- 2026-10-10 · [`c9144a3`](https://github.com/acrion/zelph/commit/c9144a32f5642c0c003782b55162948b6a73f9a9) · Prepare 1.0.2: negation levels, recipe ids, sound simplifier, tabled .explain
 
 - **2a** (open): A serialiser for the proof graph, with stable identity per record, so that the steps of a derivation join into the chain they came from instead of having to be matched by rendered text.
 - **2b** (open): The rule that fired and the bindings that matched, recorded in the export. The proposal promises both; neither is emitted today.

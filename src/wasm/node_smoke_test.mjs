@@ -33,7 +33,16 @@ const { default: createZelphModule } = await import(
   pathToFileURL(modulePath).href
 );
 
-const Module = await createZelphModule();
+// The engine output goes to the console just as it has historically,
+// with the exception that during the final .timer check, it is
+// gathered instead.
+let collected = null;
+const Module = await createZelphModule({
+  zelphOutput: (channel, text, newline) => {
+    if (collected) collected.push(text);
+    else (channel === 1 ? process.stderr : process.stdout).write(text + (newline ? "\n" : ""));
+  },
+});
 
 const processLine = Module.cwrap("zelph_process", null, ["string"]);
 const version = Module.ccall("zelph_version", "string", [], []);
@@ -56,4 +65,34 @@ for (const line of lines) {
 // is a cheap no-op at fixpoint and doubles as a smoke test for zelph_run.
 Module.ccall("zelph_run", null, [], []);
 
-console.log("-- done --");
+// The `.timer` setting arrives at the playground via `zelph_report_timing`,
+// invoked by the worker using the duration taken by a batch of lines. The
+// engine decides whether a timing line appears and its format, just as it does
+// for the terminal, so each configuration is passed here with a time span
+// positioned on either side of the 10 ms boundary defined by `auto`.
+const reportTiming = Module.cwrap("zelph_report_timing", null, ["number"]);
+const timingLines = (setting, ms) => {
+  processLine(`.timer ${setting}`);
+  collected = [];
+  reportTiming(ms);
+  const lines = collected.filter((text) => /^-- .* --$/.test(text));
+  collected = null;
+  return lines;
+};
+
+let failures = 0;
+for (const [setting, ms, expected] of [
+  ["auto", 9.9, []],
+  ["auto", 12.7, ["-- 12 ms --"]],
+  ["on", 0.4, ["-- 0 ms --"]],
+  ["off", 5000, []],
+]) {
+  const got = timingLines(setting, ms);
+  if (JSON.stringify(got) !== JSON.stringify(expected)) {
+    console.error(`FAIL .timer ${setting} after ${ms} ms: expected ${JSON.stringify(expected)}, got ${JSON.stringify(got)}`);
+    failures++;
+  }
+}
+
+console.log(failures === 0 ? "-- done --" : `-- ${failures} .timer case(s) failed --`);
+process.exit(failures === 0 ? 0 : 1);

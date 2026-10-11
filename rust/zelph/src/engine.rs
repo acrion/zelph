@@ -668,6 +668,11 @@ impl Engine {
     /// which is why [`drop_cluster`](Engine::drop_cluster) functions as a
     /// rollback -- and which transforms a graph that otherwise only grows
     /// into a workspace.
+    ///
+    /// A name beginning with `__` is refused with
+    /// [`ErrorKind::InvalidArgument`]: the engine's internal scratch
+    /// clusters are designated with this prefix, and the engine would either
+    /// discard such a cluster or merge it with its own.
     pub fn cluster(&self, name: Option<&str>) -> Result<()> {
         let name = name.map(cstring).transpose()?;
         check(unsafe {

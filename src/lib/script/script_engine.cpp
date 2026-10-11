@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 #include <janetconf.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -142,18 +143,30 @@ std::string ScriptEngine::get_janet_logging_status() const
 
 void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 {
+    const bool preloaded = _pImpl->_scoped_vars_preloaded;
     if (_pImpl->_scoped_vars_preloaded)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
         _pImpl->_scoped_variables.clear();
 
-    // Parser-generated code builds a statement's SUBTERMS with the same
-    // zelph/fact calls as its top level, and a subterm is not claimed by the
-    // statement that names it: "x documents ((a p b) => (c q d))" says
-    // nothing about `a p b`. So the revocation for a parsed statement stays
-    // with the node the statement EVALUATES to (below), while the one inside
-    // zelph/fact belongs to a user's Janet block -- which this is when
-    // is_zelph_ast is false.
+    // The mentions of a parsed statement are marked at its end, provided it
+    // constitutes a claim (Impl::ParsedStatement); a nested statement
+    // maintains its own set of mentions. The variables of an island were
+    // resolved before the statement started and are considered the
+    // statement's.
+    Impl::ParsedStatement statement;
+    statement.asks = preloaded && _pImpl->has_scoped_variables();
+    const Impl::StatementScope current(_pImpl->_statement, is_zelph_ast ? &statement : nullptr);
+
+    // Parser-generated code builds a statement's SUBTERMS using the same
+    // zelph/fact calls as those at the top level, and a call is unable to
+    // discern whether its fact resides within a rule mentioned by the
+    // statement or within a query: "x documents ((a p b) => (c q d))" says
+    // nothing about `a p b`. Thus, the claim of a parsed statement
+    // originates at the node to which the statement EVALUATES (below) and
+    // proceeds by walking through what is nested within it, whereas the
+    // claim inside zelph/fact belongs to a user's Janet block -- which this
+    // is when is_zelph_ast is false.
     Impl::BlockScope block(_pImpl->_in_janet_block, !is_zelph_ast);
 
     Janet out;
@@ -193,6 +206,10 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     {
         if (is_zelph_ast)
         {
+            if (!statement.asks)
+                for (const auto& created : statement.mentions)
+                    _pImpl->mark_mentioned_rules(created);
+
             network::Node n = zelph_unwrap_node(out);
             if (n)
             {
@@ -201,7 +218,25 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                 // acquired by appearing in a rule. Nothing else can revoke it:
                 // the rule construction itself runs through the same fact()
                 // calls, so only the top level knows that this one was meant.
-                if (!_pImpl->has_scoped_variables()) _pImpl->_n->unmark_rule_pattern(n);
+                //
+                // It claims the nested facts as well, outside a `=>`,
+                // regardless of which was written first: following
+                // `(a p b) => (c q d)`, `(a p b) q z` causes `a p b` to be
+                // treated as data and fires the rule, just as it does when
+                // the order is reversed. A query claims nothing; the
+                // variables of a rule the statement mentions do not render
+                // it one. The walk proceeds into what the statement wrote:
+                // its facts, its set constants, and the collections created
+                // by its literals, not any it merely names.
+                if (!statement.asks)
+                {
+                    _pImpl->_n->unmark_rule_pattern(n);
+                    _pImpl->_n->claim_nested(n, [&statement](const network::Node node, bool)
+                                             {
+                                                 const bool wrote = network::Zelph::is_hash(node)
+                                                                 || std::find(statement.collections.begin(), statement.collections.end(), node) != statement.collections.end();
+                                                 return wrote ? network::Zelph::ClaimStep::Enter : network::Zelph::ClaimStep::Claim; });
+                }
 
                 if (_pImpl->echo_enabled())
                 {
@@ -229,6 +264,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 void ScriptEngine::run_janet_script(const std::string& path, const std::vector<std::string>& args)
 {
     _pImpl->clear_scoped_variables();
+    const Impl::StatementScope outside(_pImpl->_statement, nullptr); // marks at once
 
     Janet runner;
     if (janet_resolve(_pImpl->_janet_env, janet_csymbol("zelph/run-script"), &runner) != JANET_BINDING_DEF
@@ -327,6 +363,12 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, c
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
     else
         _pImpl->_scoped_variables.clear();
+
+    // A pattern that a command evaluates does not constitute a user's
+    // statement, and the mentions within it mark nothing: what they recorded
+    // is discarded.
+    Impl::ParsedStatement      pattern;
+    const Impl::StatementScope current(_pImpl->_statement, &pattern);
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, janet_code.c_str(), "eval_expr", &out);

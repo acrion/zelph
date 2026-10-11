@@ -101,8 +101,9 @@ namespace zelph::network
         const Variables*          binding{nullptr};
         RecipeMode                mode{RecipeMode::Firing};
         Node                      parent{0};        // the rule's condition part, to read the statement as deduce reads it
-        std::vector<Node>*        created{nullptr}; // Construction: what it brought into being, for marking
+        std::vector<Node>*        created{nullptr}; // what came into existence, for marking: a construction's, or a firing's that writes a rule its consequence mentions
         std::unordered_set<Node>* filled{nullptr};  // Firing: the bucket terms the run has filled (bucket_term)
+        std::vector<Node>*        values{nullptr};  // Firing: the value built for every collection of the rule's text, under this binding (what the claim of the instance enters)
 
         mutable std::optional<Node> key;
     };
@@ -153,6 +154,13 @@ namespace zelph::network
     // the ones it substitutes, outside every container it keeps (the
     // instance walk, reasoning.cpp).
     std::unordered_set<Node> statement_variables(const Zelph* z, const Recipe& recipe, int depth);
+
+    // Whether the instance a firing writes for the recipe's statement keeps a
+    // variable: a container the firing keeps as written -- the condition set
+    // of a rule the statement mentions -- contains one within its text,
+    // making the instance rule text. Read off the statement alone, via the
+    // instance walk, before anything is built.
+    bool keeps_rule_variable(const Zelph* z, const Recipe& recipe, int depth);
 
     // The key for the recipe's terms: the binding of statement_variables,
     // presented as sorted (variable, value) pairs (Network::recipe_key).
@@ -493,8 +501,12 @@ namespace zelph::network
         // expend before a depth-limited explain opts to restrict itself
         // to the search within its limit (reasoning_explain.cpp,
         // `charge`); 0 reverts to the default (`default_explain_budget`).
-        void        set_explain_budget(std::size_t work) const;
-        std::size_t explain_budget() const;
+        // No search does as much work as the largest value, thus with it a
+        // depth-limited explain always outputs the top of the complete proof
+        // (`.explain-budget unlimited`).
+        static constexpr std::size_t default_explain_budget = 80000;
+        void                         set_explain_budget(std::size_t work) const;
+        std::size_t                  explain_budget() const;
 
         // What the last explain() did: the frequency with which the search
         // entered a fact, and the number of unique facts it entered. The
@@ -762,6 +774,39 @@ namespace zelph::network
         // entry per bucket, thus rule-scale; cleared at the start of a run,
         // written under _mtx_network.
         std::unordered_set<Node> _filled_terms;
+        // Per consequence pattern, whether it holds a rule beneath its top
+        // level (holds_nested_rule in reasoning_deduce.cpp), and whether its
+        // instance would keep a variable from such a rule
+        // (keeps_rule_variable), ensuring that deduce() walks a consequence
+        // once per run. One entry per consequence, thus rule-scale; cleared
+        // at the start of a run, read and written under _mtx_network
+        // (consequence_text).
+        //
+        // `claims_nested` determines if the instance can hold a node whose
+        // mark its claim revokes or which its claim enters
+        // (Zelph::claim_nested): a fact or a set constant within the
+        // consequence's parts, or a collection of the rule's text that the
+        // firing builds a value for. A part represented by a variable is a
+        // value provided by the binding, and a derivation claims none of
+        // these. `written` lists the facts and set constants the consequence
+        // writes exactly as they stand outside a `=>`, read only when a value
+        // supplied by the binding bears a mark.
+        struct ConsequenceText
+        {
+            bool                                    mentions_rule{false};
+            bool                                    keeps_rule_variable{false};
+            bool                                    claims_nested{false};
+            std::optional<std::unordered_set<Node>> written;
+        };
+        std::unordered_map<Node, ConsequenceText> _consequence_text;
+        // The `deduction` entry, obtained by reading the components that the
+        // deduce() function has disassembled, or disassembled here. The
+        // reference stays valid until the next run clears the cache.
+        const ConsequenceText& consequence_text(Node deduction, Node source, Node relation, const adjacency_set& targets, Node parent, int depth);
+        const ConsequenceText& consequence_text(Node deduction, Node parent, int depth);
+        // Whether the consequence writes `node` in its original form, outside
+        // a `=>` (ConsequenceText::written).
+        bool consequence_writes(Node deduction, Node source, Node relation, const adjacency_set& targets, Node node);
         // The bindings of the unification search for positive fact conditions,
         // including the seed for each semi-naive iteration (rules.md, "What the
         // run summary counts"). As wide as a size, because a run over a bulk

@@ -41,6 +41,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -57,6 +58,11 @@ struct zelph_engine
     }
 
     zelph::console::Interactive interactive;
+
+    // The thread that called zelph_engine_create. The graph, the rules, the
+    // reasoning, and the engine's additional state are tied to it; refer to
+    // require_owner.
+    const std::thread::id owner = std::this_thread::get_id();
 
     // Variables are remembered by name, as the Janet bindings remember them
     // for the duration of a statement: a pattern built in one call has to be
@@ -131,6 +137,23 @@ namespace
 
         std::copy(values.begin(), values.end(), buffer);
         return succeed();
+    }
+
+    // Writing the graph, building a rule, running the engine, and changing
+    // the engine's state are refused on every thread except the one
+    // responsible for initializing the engine. The script engine beneath the
+    // graph keeps the state that a statement, a rule build, and the scratch
+    // clusters rely on, once per process: facts written by another thread
+    // while the owner was active were discarded upon the owner's next scratch
+    // drop, and no indication of this loss was provided. Reading the graph
+    // and performing evaluation or training on a compiled net are not refused.
+    // Returns ZELPH_OK when on the owner's thread, otherwise the refusal.
+    int32_t require_owner(const zelph_engine* engine, const char* const function)
+    {
+        if (std::this_thread::get_id() == engine->owner) return ZELPH_OK;
+        return fail(ZELPH_RUNTIME_ERROR,
+                    std::string(function) + ": main thread only. The graph belongs to the thread that created the engine "
+                                            "(zelph_engine_create), and this call came from another thread.");
     }
 
     zelph::network::NeuralNet* find_net(zelph_engine* engine, const zelph_net handle)
@@ -238,6 +261,22 @@ int32_t zelph_resolve(zelph_engine* engine, const char* name, const char* lang, 
 
     return guarded([&]
                    {
+        // On a different thread, a name is merely looked up, just as
+        // `zelph/resolve` does within a Janet thread: the node already
+        // provides the response, and a name requiring a new one is rejected,
+        // since generating it constitutes a write operation. The name that is
+        // empty receives the error issued by the engine's own thread.
+        if (std::this_thread::get_id() != engine->owner)
+        {
+            zelph::network::Zelph::check_node_name(name);
+            const zelph::network::Node existing = engine->interactive.graph()->get_node(name, language(engine, lang), true);
+            if (existing == 0)
+                return fail(ZELPH_RUNTIME_ERROR,
+                            std::string("zelph_resolve: '") + name + "' has no node, and creating one is main thread only.");
+            *out_node = existing;
+            return succeed();
+        }
+
         *out_node = engine->interactive.graph()->node(name, language(engine, lang));
         return succeed(); });
 }
@@ -252,6 +291,8 @@ int32_t zelph_fact(zelph_engine*     engine,
     if (!engine || !objects || !out_fact) return fail(ZELPH_INVALID_ARGUMENT, "engine, objects and out_fact are required");
     if (!subject || !predicate) return fail(ZELPH_INVALID_ARGUMENT, "subject and predicate must be nodes");
     if (object_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a fact needs at least one object");
+
+    if (const int32_t refused = require_owner(engine, "zelph_fact"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -319,6 +360,8 @@ int32_t zelph_list(zelph_engine* engine, const zelph_node* elements, const size_
 {
     if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
     if (count > 0 && !elements) return fail(ZELPH_INVALID_ARGUMENT, "elements is null");
+
+    if (const int32_t refused = require_owner(engine, "zelph_list"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -435,6 +478,8 @@ int32_t zelph_load(zelph_engine* engine, const char* path)
 {
     if (!engine || !path) return fail(ZELPH_INVALID_ARGUMENT, "engine and path are required");
 
+    if (const int32_t refused = require_owner(engine, "zelph_load"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    {
         engine->interactive.execute_command({".load", path});
@@ -444,6 +489,8 @@ int32_t zelph_load(zelph_engine* engine, const char* path)
 int32_t zelph_save(zelph_engine* engine, const char* path)
 {
     if (!engine || !path) return fail(ZELPH_INVALID_ARGUMENT, "engine and path are required");
+
+    if (const int32_t refused = require_owner(engine, "zelph_save"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -461,6 +508,8 @@ int32_t zelph_nn_compile(zelph_engine*     engine,
     if (layer_count < 2) return fail(ZELPH_INVALID_ARGUMENT, "a network needs at least 2 layers");
     if (activation != ZELPH_ACTIVATION_RELU && activation != ZELPH_ACTIVATION_LEAKY_RELU)
         return fail(ZELPH_INVALID_ARGUMENT, "unknown activation " + std::to_string(activation));
+
+    if (const int32_t refused = require_owner(engine, "zelph_nn_compile"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -494,6 +543,8 @@ int32_t zelph_nn_connect_layers(zelph_engine*    engine,
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
     if (!from_layer || !to_layer) return fail(ZELPH_INVALID_ARGUMENT, "both layers must be nodes");
+
+    if (const int32_t refused = require_owner(engine, "zelph_nn_connect_layers"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -821,6 +872,8 @@ int32_t zelph_variable(zelph_engine* engine, const char* name, zelph_node* out_n
 {
     if (!engine || !name || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine, name and out_node are required");
 
+    if (const int32_t refused = require_owner(engine, "zelph_variable"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    {
         auto it = engine->variables.find(name);
@@ -842,6 +895,7 @@ int32_t zelph_variable(zelph_engine* engine, const char* name, zelph_node* out_n
 int32_t zelph_clear_variables(zelph_engine* engine)
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+    if (const int32_t refused = require_owner(engine, "zelph_clear_variables"); refused != ZELPH_OK) return refused;
 
     engine->variables.clear();
     return succeed();
@@ -871,6 +925,8 @@ int32_t zelph_set(zelph_engine* engine, const zelph_node* elements, const size_t
     if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
     if (count > 0 && !elements) return fail(ZELPH_INVALID_ARGUMENT, "elements is null");
 
+    if (const int32_t refused = require_owner(engine, "zelph_set"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    { return node_set(elements, count, out_node, [&](const auto& set)
                                      { return engine->interactive.graph()->set(set); }); });
@@ -881,6 +937,8 @@ int32_t zelph_collection(zelph_engine* engine, const zelph_node* elements, const
     if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
     if (count > 0 && !elements) return fail(ZELPH_INVALID_ARGUMENT, "elements is null");
 
+    if (const int32_t refused = require_owner(engine, "zelph_collection"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    { return node_set(elements, count, out_node, [&](const auto& set)
                                      { return engine->interactive.graph()->collection(set); }); });
@@ -890,6 +948,8 @@ int32_t zelph_negate(zelph_engine* engine, const zelph_node pattern, zelph_node*
 {
     if (!engine || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_node are required");
     if (!pattern) return fail(ZELPH_INVALID_ARGUMENT, "pattern is not a node");
+
+    if (const int32_t refused = require_owner(engine, "zelph_negate"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -979,6 +1039,8 @@ int32_t zelph_rule(zelph_engine*     engine,
     if (condition_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a rule needs at least one condition");
     if (consequence_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a rule needs at least one consequence");
 
+    if (const int32_t refused = require_owner(engine, "zelph_rule"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    {
         auto* graph = engine->interactive.graph();
@@ -1008,9 +1070,10 @@ int32_t zelph_rule(zelph_engine*     engine,
 
 namespace
 {
-    int32_t run_command(zelph_engine* engine, const char* command)
+    int32_t run_command(zelph_engine* engine, const char* const function, const char* command)
     {
         if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+        if (const int32_t refused = require_owner(engine, function); refused != ZELPH_OK) return refused;
 
         return guarded([&]
                        {
@@ -1021,22 +1084,24 @@ namespace
 
 int32_t zelph_run(zelph_engine* engine)
 {
-    return run_command(engine, ".run");
+    return run_command(engine, "zelph_run", ".run");
 }
 
 int32_t zelph_run_once(zelph_engine* engine)
 {
-    return run_command(engine, ".run-once");
+    return run_command(engine, "zelph_run_once", ".run-once");
 }
 
 int32_t zelph_run_delta(zelph_engine* engine)
 {
-    return run_command(engine, ".run-delta");
+    return run_command(engine, "zelph_run_delta", ".run-delta");
 }
 
 int32_t zelph_set_parallel(zelph_engine* engine, int32_t enabled, int32_t* out_previous)
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+
+    if (const int32_t refused = require_owner(engine, "zelph_set_parallel"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -1061,6 +1126,8 @@ int32_t zelph_query(zelph_engine*    engine,
         *row_count  = 0;
         return fail(ZELPH_INVALID_ARGUMENT, "pattern is not a node");
     }
+
+    if (const int32_t refused = require_owner(engine, "zelph_query"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -1106,6 +1173,10 @@ int32_t zelph_query(zelph_engine*    engine,
 int32_t zelph_cluster(zelph_engine* engine, const char* name)
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+    if (name && zelph::network::Zelph::is_scratch_cluster_name(name))
+        return fail(ZELPH_INVALID_ARGUMENT, zelph::network::Zelph::scratch_cluster_name_refusal(name));
+
+    if (const int32_t refused = require_owner(engine, "zelph_cluster"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -1121,6 +1192,8 @@ int32_t zelph_cluster_active(zelph_engine* engine, char** out_name)
 {
     if (!engine || !out_name) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_name are required");
     *out_name = nullptr;
+
+    if (const int32_t refused = require_owner(engine, "zelph_cluster_active"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {
@@ -1139,6 +1212,8 @@ int32_t zelph_cluster_drop(zelph_engine* engine, const char* name, int64_t* out_
 {
     if (!engine || !name) return fail(ZELPH_INVALID_ARGUMENT, "engine and name are required");
 
+    if (const int32_t refused = require_owner(engine, "zelph_cluster_drop"); refused != ZELPH_OK) return refused;
+
     return guarded([&]
                    {
         const size_t removed = engine->interactive.graph()->drop_cluster(name);
@@ -1149,6 +1224,8 @@ int32_t zelph_cluster_drop(zelph_engine* engine, const char* name, int64_t* out_
 int32_t zelph_cluster_count(zelph_engine* engine, const char* name, int64_t* out_count)
 {
     if (!engine || !name || !out_count) return fail(ZELPH_INVALID_ARGUMENT, "engine, name and out_count are required");
+
+    if (const int32_t refused = require_owner(engine, "zelph_cluster_count"); refused != ZELPH_OK) return refused;
 
     return guarded([&]
                    {

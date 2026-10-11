@@ -337,6 +337,73 @@ TEST_CASE("sets: a membership fact keeps its own member in the printed container
         CHECK_FALSE(any_output_contains(collector, "Representation: a in {a}")); });
 }
 
+TEST_CASE("sets: a set constant keeps a member whose membership only a rule's text states")
+{
+    // The membership `a in {a b}` within the rule presented beneath
+    // constitutes a ground pattern in the rule's text until something
+    // claims it. A data collection hides such a membership. A set
+    // constant is its members, thus retaining this one: printed without
+    // it, the rule, its deduction, and the answer named `{b}`, which is
+    // a distinct set. The firing's conclusion holds the membership outside
+    // a `=>` and claims it, just as the identical statement typed does;
+    // previously, it remained a pattern that `S in O` overlooked.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X p Y) => ((a in {a b}) noted X)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X p Y) => ((a in {a b}) noted X)"));
+        CHECK(sorted_answers(collector, interactive, "S in O") == std::vector<std::string>{"b in {a b}"});
+
+        collector.clear();
+        interactive.process("k p k");
+        CHECK(any_output_contains(collector, "((a in {a b}) noted k) ⇐"));
+        CHECK(sorted_answers(collector, interactive, "S noted O") == std::vector<std::string>{"(a in {a b}) noted k"});
+        CHECK(sorted_answers(collector, interactive, "S in O") == std::vector<std::string>{"a in {a b}", "b in {a b}"}); });
+}
+
+TEST_CASE("sets: a membership claimed not to hold is no member of the printed collection")
+{
+    // `zelph/refute` records a membership as known not to hold, which no
+    // query answers. The collection still listed the refuted member,
+    // `box has @{d m}`, and the refutation read `¬(m in @{d m})`: the
+    // collection that holds m does not hold m. A collection prints the
+    // members whose membership holds, regardless of whether a statement
+    // wrote it or a firing built it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto refute_m_in = [&](const std::string& subject, const std::string& predicate)
+        {
+            collector.clear();
+            interactive.process("%(zelph/refute \"m\" \"in\" (first (zelph/targets \"" + subject + "\" \"" + predicate + "\")))");
+        };
+        SUBCASE("a data collection")
+        {
+            interactive.process("box has @{d}");
+            refute_m_in("box", "has");
+            CHECK(any_output_contains(collector, "¬(m in @{d})"));
+            CHECK(sorted_answers(collector, interactive, "box has O") == std::vector<std::string>{"box has @{d}"});
+            CHECK(sorted_answers(collector, interactive, "S in O") == std::vector<std::string>{"d in @{d}"});
+        }
+        SUBCASE("a collection a firing built")
+        {
+            process_lines(interactive, R"(
+(a p b) => (c q @{d})
+a p b
+)");
+            interactive.run(true, false, false);
+            refute_m_in("c", "q");
+            CHECK(any_output_contains(collector, "¬(m in @{d})"));
+            CHECK(sorted_answers(collector, interactive, "c q O") == std::vector<std::string>{"c q @{d}"});
+            CHECK(sorted_answers(collector, interactive, "S in O") == std::vector<std::string>{"d in @{d}"});
+        }
+        SUBCASE("a typed refutation")
+        {
+            interactive.process("¬(m in @{d})");
+            CHECK(sorted_answers(collector, interactive, "S in O") == std::vector<std::string>{"d in @{d}"});
+        } });
+}
+
 TEST_CASE("sets: substitution rebuilds a container in a consequence as a set constant")
 {
     // instantiate_fact substitutes into FACTS, and a container is not one --
@@ -413,8 +480,15 @@ d has @{x}
 d has @{x}
 (S has C) => ((X q Y) => (X likes @{(k in C)}))
 (S has C) => ((X r Y) => (X in C))
-a q b
 )");
+            // The membership `k in C` belongs to the literal of the rule that
+            // was generated, forming a pattern within its text, so the data
+            // collection excludes `k` until a firing claims it: what the
+            // firing derives holds the membership outside a `=>`, just as the
+            // identical statement typed would, and previously it remained a
+            // pattern. The literal stays a set constant regardless.
+            CHECK(sorted_answers(collector, interactive, "d has O") == std::vector<std::string>{"d has @{x}"});
+            interactive.process("a q b");
             CHECK(sorted_answers(collector, interactive, "S likes O") == std::vector<std::string>{"a likes {(k in @{x k})}"});
         } });
 }
@@ -961,6 +1035,30 @@ j twin k
         collector.clear();
         interactive.process(".explain");
         CHECK(last_out_text(collector).starts_with("k sub {(c q d) (a p b)}\n   ├─ ")); });
+}
+
+TEST_CASE("sets: a firing that names a conjunction set inside a nested statement is explained by the rule")
+{
+    // As previously described, with the firing's statement nested as the
+    // subject of `noted`: (Z R C) noted C. The generated rule's consequence
+    // features a statement subject containing a variable predicate, and
+    // such a pattern matched nothing, so `.explain` designated the derived
+    // fact as an axiom.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(a p b, c q d) => (e f g)
+sub is memrel
+m is box
+(C => (e f g)) => ((X R Y, R is memrel, Y is box, X twin Z) => ((Z R C) noted C))
+j sub m
+j twin k
+)");
+        interactive.run(true, false, false);
+        CHECK(sorted_answers(collector, interactive, "S noted O") == std::vector<std::string>{"(k sub {(c q d) (a p b)}) noted {(c q d) (a p b)}"});
+        collector.clear();
+        interactive.process(".explain");
+        CHECK(last_out_text(collector).starts_with("(k sub {(c q d) (a p b)}) noted {(c q d) (a p b)}\n   ├─ ")); });
 }
 
 TEST_CASE("sets: a rule that reads its own writes into a bound conjunction set comes to an end")

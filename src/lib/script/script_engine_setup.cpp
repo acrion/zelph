@@ -70,10 +70,6 @@ namespace
         }
         janet_panicv(message);
     }
-
-    // The binding from which the zelph/rule macro acquires its rule
-    // builder; the macro's expansion spells the identical name.
-    const char* const kRuleMacroBuilder = "zelph/rule-macro-builder";
 }
 
 namespace zelph
@@ -131,64 +127,68 @@ namespace zelph
         auto wrap = [](JanetCFunction f)
         { return janet_wrap_cfunction(f); };
 #endif
-        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_fact>), "(zelph/fact s p o)\nCreate fact.");
-        janet_def(_janet_env, "zelph/refute", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_refute>), "(zelph/refute s p o)\nClaim that the fact does NOT hold: same node as zelph/fact, created with probability 0 so that Answer::is_wrong holds for it. This is what the statement \"¬(s p o)\" means outside a rule condition. Refused if the graph already claims the fact.");
-        janet_def(_janet_env, "zelph/path-guard", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_path_guard>), "(zelph/path-guard from to)\nRefuse a path marker whose two ends are both concrete, outside a rule and outside a Janet block: reachability is walked, not asserted. Emitted by the \"P⁺\"/\"P∗\" sugar BEFORE the pattern is built, since building it is what would assert the one step.");
+        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_fact>), "(zelph/fact s p o)\nCreate fact. Main thread only.");
+        janet_def(_janet_env, "zelph/refute", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_refute>), "(zelph/refute s p o)\nClaim that the fact does NOT hold: same node as zelph/fact, created with probability 0 so that Answer::is_wrong holds for it. This is what the statement \"¬(s p o)\" means outside a rule condition. Refused if the graph already claims the fact. Main thread only.");
+        janet_def(_janet_env, "zelph/path-guard", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_path_guard>), "(zelph/path-guard from to)\nRefuse a path marker whose two ends are both concrete, outside a rule and outside a Janet block: reachability is walked, not asserted. Emitted by the \"P⁺\"/\"P∗\" sugar BEFORE the pattern is built, since building it is what would assert the one step. Main thread only.");
 
-        janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list>), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell).");
+        janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list>), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell). Main thread only.");
 
-        janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list_chars>), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.");
-        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set>), "(zelph/set nodes...)\nCreate a SET CONSTANT from elements, the `{...}` literal. Identified by its members, so the same elements always yield the same node, and membership cannot be extended.");
+        janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list_chars>), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion. Main thread only.");
+        janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set>), "(zelph/set nodes...)\nCreate a SET CONSTANT from elements, the `{...}` literal. Identified by its members, so the same elements always yield the same node, and membership cannot be extended. Main thread only.");
 
-        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_collection>), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it.");
+        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_collection>), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it. Main thread only.");
 
         janet_def(_janet_env, "zelph/conjunction", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_conjunction>), "(zelph/conjunction conditions...)\nCreate a rule's condition set, the `(cond, cond, ...)` comma list: a collection tagged `~ conjunction`. "
                                                                                                                   "Every condition must be readable as a fact pattern, or as a nested condition set; anything else is refused, "
-                                                                                                                  "because a rule holding it can never fire.");
+                                                                                                                  "because a rule holding it can never fire. Main thread only.");
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_resolve>), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
-                                                                                                          "lang defaults to the current language (as set by .lang).");
+                                                                                                          "lang defaults to the current language (as set by .lang). On a thread other than the main thread it only looks the name up, and a name that has no node yet is refused there.");
 
         janet_def(_janet_env, "zelph/var", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_var>), "(zelph/var &opt name)\nCreate a FRESH variable node and return it. "
                                                                                                   "A variable SYMBOL passed to zelph/fact is scoped to one evaluation of a Janet block; this node is a value, "
                                                                                                   "so the caller's own binding decides how far it reaches -- which is how conditions built in separate blocks "
-                                                                                                  "join instead of forming a cross product. The optional name is display only (many variables may carry one name).");
+                                                                                                  "join instead of forming a cross product. The optional name is display only (many variables may carry one name). Main thread only.");
 
         janet_def(_janet_env, "zelph/import", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_import>), "(zelph/import path & args)\nLoad and execute a script through the same machinery as the .import "
                                                                                                         "command: the path is resolved against the working directory first, then the zelph standard library; "
                                                                                                         "the .zph extension is optional. args are passed to the script as strings, available via (dyn :args). "
-                                                                                                        ".janet files are rejected (use Janet's import/use/dofile). Main thread only.");
+                                                                                                        ".janet files are rejected (use Janet's import/use/dofile). Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/save", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_save>), "(zelph/save file)\nSave the current network to a binary file, like the .save command. "
-                                                                                                    "The filename must end with '.bin'. Main thread only.");
+                                                                                                    "The filename must end with '.bin'. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/load", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_load>), "(zelph/load file)\nLoad a saved network (.bin) or import a Wikidata JSON dump "
-                                                                                                    "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. Main thread only.");
+                                                                                                    "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run>), "(zelph/run)\nRun forward chaining to a fixed point, like the .run command. "
                                                                                                   "Needed when driving zelph as a library: facts and rules created from Janet only take effect once the engine has run, "
-                                                                                                  "and outside the REPL neither .run nor auto-run is reachable. Returns nil. Main thread only.");
+                                                                                                  "and outside the REPL neither .run nor auto-run is reachable. Returns nil. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/run-once", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_once>), "(zelph/run-once)\nRun a single inference pass, like the .run-once command. "
-                                                                                                            "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only.");
+                                                                                                            "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/run-delta", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_delta>), "(zelph/run-delta)\nRun inference seeded by the facts created since the previous run, like the .run-delta command. "
                                                                                                               "Skips the pass over the whole graph for the rules that can be seeded, which is what makes assert-then-reason loops practical; "
                                                                                                               "a rule with a negated condition still takes a classic pass over the facts its positive conditions match at each negation level, and a rule that cannot be seeded takes one in every iteration. "
-                                                                                                              "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only.");
+                                                                                                              "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/cluster", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cluster>), "(zelph/cluster &opt name)\nActivate a named cluster, or with nil / \"default\" deactivate cluster tracking; without an argument only report. "
                                                                                                           "Returns the name of the cluster that is active afterwards, or nil for the default. "
                                                                                                           "Nodes CREATED while a cluster is active are recorded in it, which is what makes zelph/cluster-drop a rollback. "
-                                                                                                          "Unlike the .cluster command this prints nothing, so it can be used per question inside a loop. Main thread only.");
+                                                                                                          "Unlike the .cluster command this prints nothing, so it can be used per question inside a loop. "
+                                                                                                          "A name beginning with \"__\" is refused: those are the engine's scratch clusters. "
+                                                                                                          "Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/cluster-drop", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cluster_drop>), "(zelph/cluster-drop name)\nRemove every node recorded in the cluster, with its edges and names, and return how many were removed. "
                                                                                                                     "Nodes that already existed when the cluster was activated were never recorded, so a drop cannot remove them - which is what makes this safe as scratch space over a loaded graph. "
-                                                                                                                    "Facts OUTSIDE the cluster that referenced cluster nodes lose those connections. The default cluster cannot be dropped. Main thread only.");
+                                                                                                                    "A fact OUTSIDE the cluster that names a cluster node goes with it, as does every fact naming one of those and every rule one of them is a condition or a conclusion of (see .help .remove). "
+                                                                                                                    "The default cluster cannot be dropped. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/clusters", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_clusters>), "(zelph/clusters)\nReturn an array of [name node-count] tuples, one per existing cluster. Main thread only.");
 
-        janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query>), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.");
+        janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query>), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.\n"
+                                                                                                      "Resets the variable scope, so it is refused while a rule is being built: there the scope binds the rule's variables. Main thread only.");
 
         janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_exists>), "(zelph/exists s p o)\nCheck whether the fact was CLAIMED -- asserted or derived -- without creating it. Returns boolean.\n"
                                                                                                         "A statement that only occurs as a rule's pattern is not claimed; ask zelph/mentioned for that.");
@@ -203,7 +203,7 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/targets", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_targets>), "(zelph/targets subject predicate)\nFind all objects connected from subject via predicate. Read-only.");
 
-        janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nMark a fact pattern as negation. Returns the pattern node.\nEquivalent to (*(pattern) ~ negation) in zelph syntax.");
+        janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nMark a fact pattern as negation. Returns the pattern node.\nEquivalent to (*(pattern) ~ negation) in zelph syntax. Main thread only.");
 
         janet_def(_janet_env, "zelph/rule*", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_star>), "(zelph/rule* conditions & consequences)\nCreate an inference rule: the plain function behind the zelph/rule macro.\n"
                                                                                                           "conditions: array of fact nodes (the conjunction).\n"
@@ -211,28 +211,33 @@ namespace zelph
                                                                                                           "Returns the condition set node.\n"
                                                                                                           "Its arguments are evaluated before it runs, so it cannot tell which of them the call built: it marks nothing, "
                                                                                                           "and a collection among them is a value the rule refers to. Unlike zelph/rule it is a value that apply or map can take. "
-                                                                                                          "Refused while a rule is being built.");
-
-        // What the zelph/rule macro builds its rule with: zelph/rule*
-        // excluding the refusal, which the macro's own rule would otherwise
-        // meet. Bound solely until setup_rule_macro has unquoted it into the
-        // macro.
-        janet_def(_janet_env, kRuleMacroBuilder, wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule>), nullptr);
+                                                                                                          "Refused while a rule is being built. Main thread only.");
 
         janet_def(_janet_env, "zelph/build-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_build_rule>), "(zelph/build-rule thunk)\nRun a thunk that builds one rule, as a parsed rule is built, and return what it returns. "
                                                                                                                 "What the thunk builds into the rule is the rule's text: a collection it writes into it is the rule's own, and the ground parts of the rule it returns "
                                                                                                                 "(every => fact over the condition set it returns, or over the condition of the => fact it returns) are rule patterns, not claims. "
-                                                                                                                "Unlike a parsed rule, a duplicate is not rolled back. The zelph/rule macro runs its argument forms in it; "
-                                                                                                                "wrap a rule written by hand with zelph/fact in it. Refused while another rule is being built.");
+                                                                                                                "Unlike a parsed rule, a duplicate is not rolled back; a thunk that fails leaves nothing of what it built. "
+                                                                                                                "The zelph/rule macro builds its rule the same way (zelph/build-rule-parts); "
+                                                                                                                "wrap a rule written by hand with zelph/fact in it. Refused while another rule is being built. Main thread only.");
+
+        janet_def(_janet_env, "zelph/build-rule-parts", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_build_rule_parts>), "(zelph/build-rule-parts thunk)\nWhat the zelph/rule macro expands to: run a thunk that returns a rule's conditions and consequences as one tuple, "
+                                                                                                                            "[conditions ;consequences], and build the rule from them inside the same build, as zelph/build-rule builds a rule. "
+                                                                                                                            "Returns the condition set node. If the thunk or the build fails, nothing the thunk built is kept. "
+                                                                                                                            "Refused while another rule is being built. Not needed in hand-written Janet: use zelph/rule. Main thread only.");
 
         janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_dedup_rule>), "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
                                                                                                                 "If the graph already holds a rule that is the same up to renaming of its variables, "
                                                                                                                 "the newly built one is rolled back and the existing node returned instead. "
-                                                                                                                "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet.");
+                                                                                                                "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet. Main thread only.");
 
         janet_def(_janet_env, "zelph/rule-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_text>), "(zelph/rule-text thunk)\nRun a thunk that writes a rule which another statement mentions, and return what it returns. "
-                                                                                                              "The collections the thunk writes are that rule's own, and their memberships are rule patterns, not claims. "
-                                                                                                              "Emitted automatically around every parsed `... => ...` that stands inside another statement.");
+                                                                                                              "Mentioning a rule claims none of its parts: the ground parts of every rule the thunk creates are rule patterns, as a typed rule's are, "
+                                                                                                              "and the collections it writes are that rule's own. A part that existed before keeps its status, "
+                                                                                                              "and a mentioned rule is marked only as a part of another rule the thunk creates. "
+                                                                                                              "In a statement that asks (it has a variable outside the rules it mentions), nothing is marked. "
+                                                                                                              "zelph/fact calls in the thunk claim nothing, even in a Janet block. "
+                                                                                                              "Emitted automatically around every parsed `... => ...` that stands inside another statement; "
+                                                                                                              "wrap a mention written by hand with zelph/fact in it. Main thread only.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_car>), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cdr>), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
@@ -244,7 +249,7 @@ namespace zelph
                                                                                                                             "inside a zelph statement, the text up to `close` is passed to handler, which must return a "
                                                                                                                             "zelph/node; the node replaces the island in the statement. Returning :incomplete extends the "
                                                                                                                             "island to the next occurrence of `close`, so nested delimiters work -- handlers must be free "
-                                                                                                                            "of graph side effects until they accept their input.");
+                                                                                                                            "of graph side effects until they accept their input. Main thread only.");
 
         janet_def(_janet_env, "zelph/closure", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_closure>), "(zelph/closure start predicate &opt include-start)\nTransitive closure following predicate "
                                                                                                           "forward (subject to object). include-start true gives the reflexive closure (SPARQL *).");
@@ -253,7 +258,7 @@ namespace zelph
                                                                                                                           "predicate backward (object to subject). include-target true gives the reflexive closure.");
 
         janet_def(_janet_env, "zelph/nn-connect", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_connect>), "(zelph/nn-connect from to &opt weight)\nCreate a raw weighted edge (synapse) from -> to, creating nodes as needed. "
-                                                                                                                "Synapses live solely in the weight store and never appear in the graph's adjacency, so they are invisible to the reasoning engine by construction; any node is a safe neuron, including fact nodes and structural numbers.");
+                                                                                                                "Synapses live solely in the weight store and never appear in the graph's adjacency, so they are invisible to the reasoning engine by construction; any node is a safe neuron, including fact nodes and structural numbers. Main thread only.");
 
         janet_def(_janet_env, "zelph/weight", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_weight>), "(zelph/weight from to)\n"
                                                                                                         "Weight of the directed node pair from -> to. Returns the stored value if a "
@@ -261,11 +266,11 @@ namespace zelph
                                                                                                         "1 if the pair is a real graph edge without a stored entry (the canonical "
                                                                                                         "default, e.g. for facts asserted with probability 1); nil if neither exists.");
 
-        janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_weight>), "(zelph/set-weight from to w)\nSet the weight of an existing synapse or edge.");
+        janet_def(_janet_env, "zelph/set-weight", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_weight>), "(zelph/set-weight from to w)\nSet the weight of an existing synapse or edge. Main thread only.");
 
         janet_def(_janet_env, "zelph/nn-compile", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_compile>), "(zelph/nn-compile layers &opt activation)\nCompile a feed-forward view of a sub-graph. layers: array of layer nodes, "
                                                                                                                 "input first, output last. Neurons are the subjects of (neuron in layer) facts, ordered by node id. "
-                                                                                                                "Returns an integer handle. The compiled net is a discardable cache; the graph stays the source of truth.");
+                                                                                                                "Returns an integer handle. The compiled net is a discardable cache; the graph stays the source of truth. Main thread only.");
 
         janet_def(_janet_env, "zelph/nn-nodes", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_nodes>), "(zelph/nn-nodes handle layer)\nNeurons of a compiled layer in index order (defines input/output vector order).");
 
@@ -276,7 +281,7 @@ namespace zelph
                                                                                                             "(0.5 * sum of squared errors) before the update. learning-rate defaults to 0.01.");
 
         janet_def(_janet_env, "zelph/nn-write-back", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_write_back>), "(zelph/nn-write-back handle)\nWrite the compiled net's weights back into the graph's edge-weight store, "
-                                                                                                                      "so they survive .save and are picked up by future zelph/nn-compile calls.");
+                                                                                                                      "so they survive .save and are picked up by future zelph/nn-compile calls. Allowed on any thread, like evaluation: it only overwrites the weights of the net's own synapses.");
 
         janet_def(_janet_env, "zelph/nn-snapshot", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_snapshot>), "(zelph/nn-snapshot handle)\nCopy the compiled net's weights out as an array of arrays of numbers, "
                                                                                                                   "one per layer transition, each row-major by post-synaptic unit: input i to unit j is at (+ (* j n-pre) i). "
@@ -289,7 +294,7 @@ namespace zelph
         janet_def(_janet_env, "zelph/nn-connect-layers", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_connect_layers>), "(zelph/nn-connect-layers from-layer to-layer &opt scale seed)\nCreate raw synapses between all members of two layers "
                                                                                                                               "((neuron in layer) facts, ascending node id). Weights are uniform in [-scale, scale]; scale defaults to 0.1, scale 0 gives exact zeros. "
                                                                                                                               "seed defaults to 42 for reproducible initialization. Existing edges are left untouched, so trained weights survive re-wiring. "
-                                                                                                                              "Returns the number of edges created.");
+                                                                                                                              "Returns the number of edges created. Main thread only.");
 
         janet_def(_janet_env, "zelph/nn-train-nodes", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_nn_train_nodes>), "(zelph/nn-train-nodes handle inputs targets &opt learning-rate)\nOne SGD step, addressing neurons by node instead of by index. "
                                                                                                                         "inputs/targets are arrays whose elements are nodes (activation 1) or [node activation] pairs; all other neurons are 0. "
@@ -299,24 +304,24 @@ namespace zelph
                                                                                                                       "tuples for the output layer, sorted by descending score (ties by ascending node id), limited to top-k if given.");
 
         janet_def(_janet_env, "zelph/approx", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_approx>), "(zelph/approx pattern net-name)\nTag a fact pattern as a neural rule condition: creates (pattern nn net). "
-                                                                                                        "Desugared form of ≈net(pattern). Returns the pattern node.");
+                                                                                                        "Desugared form of ≈net(pattern). Returns the pattern node. Main thread only.");
 
         janet_def(_janet_env, "zelph/path", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_path>), "(zelph/path pattern mode)\nTag a one-step fact pattern as a transitive path condition: creates "
                                                                                                     "(pattern closure mode), where mode is \"one-or-more\" (P⁺) or \"zero-or-more\" (P∗). Desugared form of "
-                                                                                                    "(X P⁺ Y). Returns the tag node, which is what a rule uses as its condition.");
+                                                                                                    "(X P⁺ Y). Returns the tag node, which is what a rule uses as its condition. Main thread only.");
 
         janet_def(_janet_env, "zelph/set-number-digits", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_number_digits>), "(zelph/set-number-digits digits)\nRegister the digit alphabet of the loaded number representation, as an "
                                                                                                                               "array of digit nodes or names in ascending order of value (e.g. [\"0\" \"1\"] for binary). "
                                                                                                                               "node_to_string then displays every canonical (no leading zero digit) nil-terminated cons list consisting solely of these digit "
                                                                                                                               "nodes as a decimal &-literal -- the inverse of the &-input syntax (zelph/number). All other "
-                                                                                                                              "cons lists keep the generic <...> display. An empty array disables the feature.");
+                                                                                                                              "cons lists keep the generic <...> display. An empty array disables the feature. Main thread only.");
 
         janet_def(_janet_env, "zelph/no-selffact-sugar", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_no_selffact_sugar>), "(zelph/no-selffact-sugar preds...)\nExclude predicates from the self-fact display sugar: facts (X pred X) "
                                                                                                                               "with a registered predicate always render verbose as \"X pred X\", never as \":pred X\". "
                                                                                                                               "Additive across calls, so stacked modules can each register their own operators. "
                                                                                                                               "Input sugar (\":pred X\") keeps working regardless. Intended for term-forming "
                                                                                                                               "operators (+, eml, nand, ...), where subject == object is a hash-consing "
-                                                                                                                              "coincidence rather than a request marker.");
+                                                                                                                              "coincidence rather than a request marker. Main thread only.");
 
         janet_def(_janet_env, "zelph/register-display-scheme", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_register_display_scheme>), "(zelph/register-display-scheme name open close &opt options)\nDeclare how this script's own notation is written, so node_to_string can "
                                                                                                                                           "render terms the way the script's parser reads them back. open/close enclose a rendering that DEVIATES from the default form "
@@ -324,19 +329,19 @@ namespace zelph
                                                                                                                                           "options is a struct: :numeral-prefix replaces the default \"&\" of number literals inside the scheme; :name-first and "
                                                                                                                                           ":name-chars declare which characters a leaf name may start with and consist of. A term containing anything the scheme cannot "
                                                                                                                                           "write -- a foreign predicate, a set, a name outside that grammar -- is rendered in the default form instead, so the output "
-                                                                                                                                          "always stays re-readable. Re-registering a name updates the scheme.");
+                                                                                                                                          "always stays re-readable. Re-registering a name updates the scheme. Main thread only.");
 
         janet_def(_janet_env, "zelph/set-infix-display", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_infix_display>), "(zelph/set-infix-display scheme entries)\nRegister infix operators into a scheme declared by zelph/register-display-scheme. "
                                                                                                                               "entries is an array of [predicate precedence &opt associativity]; associativity is :left (default), :right or :none. Higher "
                                                                                                                               "precedence binds tighter; node_to_string omits the parentheses around an operand whose operator binds tightly enough. Additive "
                                                                                                                               "across calls. A predicate already claimed by any scheme is an error -- otherwise a term's rendering would depend on load order. "
-                                                                                                                              "Registered operators are excluded from the self-fact display sugar (see zelph/no-selffact-sugar).");
+                                                                                                                              "Registered operators are excluded from the self-fact display sugar (see zelph/no-selffact-sugar). Main thread only.");
 
         janet_def(_janet_env, "zelph/set-application-display", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set_application_display>), "(zelph/set-application-display scheme predicates)\nRegister predicates whose facts are written in call notation: (S P O) renders as "
                                                                                                                                           "\"S(O)\", and the predicate name does not appear. The result is self-delimiting -- it never takes parentheses, and its "
                                                                                                                                           "argument never needs any. The head S must render as a bare name matching the scheme's leaf grammar; a composite head has "
                                                                                                                                           "no call notation, so such a term falls back to the default rendering. Shares the one-scheme-per-predicate namespace with "
-                                                                                                                                          "zelph/set-infix-display, and excludes the predicates from the self-fact display sugar.");
+                                                                                                                                          "zelph/set-infix-display, and excludes the predicates from the self-fact display sugar. Main thread only.");
 
         janet_def(_janet_env, "zelph/out", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_out>), "(zelph/out text)\nEmit text through zelph's output pipeline (Out channel). Unlike Janet's "
                                                                                                   "print (raw stdout), the text reaches the REPL, the playground and test collectors, and is "
@@ -397,26 +402,22 @@ namespace zelph
         // zelph/rule is a macro that ensures its argument forms execute within
         // the context of the rule's build process: since a function's
         // arguments are evaluated before execution, the function cannot know
-        // which parts of the rule were constructed via its invocation. The two
-        // functions are unquoted into the expansion, preventing a caller's own
-        // binding of zelph/build-rule from capturing the call. The second is
-        // kRuleMacroBuilder, whose binding is discarded as soon as the macro
-        // holds it: no program can call it by name, and zelph/rule* among the
-        // argument forms meets the refusal. A program that takes the builder
-        // from an expansion of the macro (macex1) calls it without
-        // encountering the refusal.
+        // which parts of the rule were constructed via its invocation. The
+        // function is unquoted into the expansion, preventing a caller's own
+        // binding of zelph/build-rule-parts from capturing the call. The thunk
+        // only evaluates the argument forms; the rule is assembled inside that
+        // function, based on the output the thunk returns.
         const char* code = R"janet(
                 (defmacro zelph/rule
-                  `Create an inference rule, built as a parsed rule is built. conditions: array of fact nodes (the conjunction). consequences: one or more fact nodes to deduce. Returns the condition set node. The argument forms run inside zelph/build-rule, so what they build into the rule is the rule's text: a collection they write into it is the rule's own, and a ground fact they build into it is a rule pattern, not a claim. A fact they build that the rule does not hold is a claim, and a node built before the call stays what it was. A macro is no value that apply or map can take: use zelph/rule* there.`
+                  `Create an inference rule, built as a parsed rule is built. conditions: array of fact nodes (the conjunction). consequences: one or more fact nodes to deduce. Returns the condition set node. The argument forms run inside the rule's build (zelph/build-rule-parts, which builds as zelph/build-rule does), so what they build into the rule is the rule's text: a collection they write into it is the rule's own, and a ground fact they build into it is a rule pattern, not a claim. Once the call succeeds, a fact they build that the rule does not hold is a claim; a call that fails leaves nothing of what they built. A node built before the call stays what it was. A macro is no value that apply or map can take: use zelph/rule* there. Main thread only.`
                   [conditions & consequences]
-                  ~(,zelph/build-rule (fn [] (,zelph/rule-macro-builder ,conditions ,;consequences))))
+                  ~(,zelph/build-rule-parts (fn [] [,conditions ,;consequences])))
             )janet";
 
         Janet out;
         int   status = janet_dostring(_janet_env, code, "rule-macro", &out);
         flush_err_trace();
         if (status != JANET_SIGNAL_OK) janet_stacktrace(nullptr, out);
-        janet_table_remove(_janet_env, janet_csymbolv(kRuleMacroBuilder));
     }
 
     void ScriptEngine::Impl::setup_peg()

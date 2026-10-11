@@ -27,7 +27,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/reasoning.hpp"
 #include "script/script_engine.hpp"
+#include "string/string_utils.hpp"
 
+#include <cstddef>
+#include <exception>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -174,5 +178,56 @@ namespace zelph::console
         // off are reported again the next time they are found.
         _n->record_contradictions(cmd[1] == "on");
         _n->out(std::string("Contradiction records: ") + cmd[1], true);
+    }
+
+    void CommandExecutor::Impl::cmd_explain_budget(const std::vector<std::string>& cmd)
+    {
+        constexpr std::size_t unlimited = std::numeric_limits<std::size_t>::max();
+
+        const auto status = [this]
+        {
+            const std::size_t budget = _n->explain_budget();
+            if (budget == unlimited) return std::string("Explain budget: unlimited");
+            return "Explain budget: " + std::to_string(budget) + (budget == 1 ? " work unit" : " work units")
+                 + (budget == network::Reasoning::default_explain_budget ? " (default)" : "");
+        };
+
+        if (cmd.size() == 1)
+        {
+            _n->out(status(), true);
+            return;
+        }
+
+        // The engine reads 0 as "the default", hence entering 0 here would
+        // not convey its literal value; it is rejected just like any other
+        // value that is not a positive number.
+        const auto usage = []
+        {
+            return std::runtime_error("Usage: .explain-budget [<units>|default|unlimited] -- <units> is a positive "
+                                      "whole number, and the smallest, 1, leaves practically every depth-limited "
+                                      ".explain to the search within the limit. There is no budget of 0: "
+                                      "'.explain <fact> 0' has no depth limit and always searches the complete proof.");
+        };
+        if (cmd.size() != 2) throw usage();
+
+        std::size_t budget = 0;
+        if (cmd[1] == "unlimited")
+        {
+            budget = unlimited;
+        }
+        else if (cmd[1] != "default")
+        {
+            try
+            {
+                budget = string::parse_count(cmd[1]);
+            }
+            catch (const std::exception&)
+            {
+                throw usage();
+            }
+        }
+
+        _n->set_explain_budget(budget);
+        _n->out(status(), true);
     }
 }

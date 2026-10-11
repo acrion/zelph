@@ -85,12 +85,12 @@ Answer: ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
 zelph+> .explain 3
 ($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven
    ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
-   │  ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   ├─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   │  ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
    …
-   │  └─ :topoly $( x ^ &2 - &1 )
+   │  └─ :topoly ((x - &1) * (x + &1))
    │     └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]
-   └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
+   └─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)
    …
 ```
 

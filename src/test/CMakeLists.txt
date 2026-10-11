@@ -311,6 +311,41 @@ if (Python3_Interpreter_FOUND)
                 "$<TARGET_FILE:zelph>" 0)
     endif ()
 
+    # --- what the REPL prints around an input ----------------------------------
+    #
+    # The library determines via its .timer setting whether a timing line is
+    # added to an input, and the doctest suite enforces this rule; this pins
+    # that the binary asks after every input. The continuation prompt is
+    # displayed exclusively when standard input is connected to a terminal,
+    # which only a pseudo-terminal can show, and Python offers none on Windows.
+    if (TARGET zelph)
+        zelph_add_check_test(timer_of_the_binary "${CMAKE_SOURCE_DIR}/tools/check_timer.py"
+                "$<TARGET_FILE:zelph>" 0)
+        if (NOT WIN32)
+            zelph_add_check_test(continuation_prompt_on_a_terminal "${CMAKE_SOURCE_DIR}/tools/check_continuation_prompt.py"
+                    "$<TARGET_FILE:zelph>" 0)
+        endif ()
+    endif ()
+
+    # --- the version a citation names ------------------------------------------
+    #
+    # CITATION.cff mirrors the version specified by project(), with no
+    # additional linkage between the two. PROJECT_VERSION represents the value
+    # reported by the binary (zelph_version.hpp.in).
+    zelph_add_check_test(citation_names_the_project_version "${CMAKE_SOURCE_DIR}/tools/check_citation_version.py"
+            "${CMAKE_SOURCE_DIR}/CITATION.cff ${PROJECT_VERSION}" 0)
+
+    # --- a Janet program that makes Janet collect ----------------------------
+    #
+    # Janet 1.41.2 frees the table storing zelph's :err binding during its
+    # first garbage collection, and the process died once the event loop read
+    # it (src/lib/patch_janet_gc.cmake). Since a crash ends the process it
+    # encounters, a separate process is invoked instead of the doctest suite.
+    if (TARGET zelph)
+        zelph_add_check_test(janet_programs_survive_garbage_collection "${CMAKE_SOURCE_DIR}/tools/check_janet_gc.py"
+                "$<TARGET_FILE:zelph>" 0)
+    endif ()
+
     # --- the paper's timing table --------------------------------------------
     #
     # s9_timings.py names stdlib modules, similar to the scripts

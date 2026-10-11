@@ -31,6 +31,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph_impl.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <unordered_set>
 #include <vector>
@@ -520,6 +522,7 @@ namespace
 {
     constexpr const char* rule_pattern_name = "rule pattern";
 
+    std::atomic<uint64_t> claim_steps{0}; // refer to Zelph::claim_walk_steps
 }
 
 Node Zelph::rule_pattern_predicate(const bool create) const
@@ -539,6 +542,11 @@ bool Zelph::is_rule_pattern(const Node node) const
 
     std::shared_lock lock(_pImpl->_rule_patterns_mtx);
     return _pImpl->_rule_patterns.count(node) != 0;
+}
+
+bool Zelph::is_older_rule_literal(const Node membership) const
+{
+    return _pImpl->_older_rule_literals.count(membership) != 0;
 }
 
 bool Zelph::is_refuted_fact(const Node node) const
@@ -692,6 +700,117 @@ bool Zelph::unmark_rule_pattern(const Node node) const
     }
 
     return true;
+}
+
+void Zelph::claim_nested(const Node statement, const ClaimReach& reach) const
+{
+    if (!_pImpl->_has_rule_patterns.load(std::memory_order_acquire)) return;
+
+    // The genuine-structure store first, which the profiler excludes from
+    // counting, so that a claim leaves the counters of a workload
+    // unchanged; a fact missing from the store, along with a set constant,
+    // is reconstructed.
+    const auto structure = [this](const Node n) -> FactStructure
+    {
+        FactStructurePtr genuine;
+        if (try_get_genuine_structure(n, genuine) && genuine && !genuine->empty()) return genuine->front();
+        return get_preferred_structure(this, n, 1);
+    };
+
+    // The first step consists of the statement in question.
+    struct Steps
+    {
+        uint64_t n{1};
+        ~Steps() { claim_steps.fetch_add(n, std::memory_order_relaxed); }
+    } steps;
+
+    const FactStructure top = structure(statement);
+    if (top.subject == 0 || top.predicate == core.Causes) return;
+
+    // Only beneath a direct part that is to be entered or that carries a
+    // mark does the walk have work.
+    const auto needs_walk = [&](const Node n, const bool into)
+    {
+        if (n == 0 || Impl::is_var(n)) return false;
+        const ClaimStep step = reach(n, into);
+        return step == ClaimStep::Enter || (step == ClaimStep::Claim && Impl::is_hash(n) && is_rule_pattern(n));
+    };
+    bool needed = needs_walk(top.subject, false) || needs_walk(top.predicate, false);
+    for (const Node o : top.objects)
+        needed = needed || needs_walk(o, top.predicate == core.PartOf);
+    if (!needed) return;
+
+    std::vector<std::pair<Node, bool>> pending;
+    const auto                         push_parts = [&](const FactStructure& fs)
+    {
+        pending.emplace_back(fs.subject, false);
+        pending.emplace_back(fs.predicate, false);
+        for (const Node o : fs.objects)
+            pending.emplace_back(o, fs.predicate == core.PartOf);
+    };
+    push_parts(top);
+
+    std::unordered_set<Node> seen{statement};
+    while (!pending.empty() && _pImpl->_has_rule_patterns.load(std::memory_order_acquire))
+    {
+        const auto [n, into] = pending.back();
+        pending.pop_back();
+        ++steps.n;
+        if (n == 0 || Impl::is_var(n) || !seen.insert(n).second) continue;
+
+        const ClaimStep step = reach(n, into);
+        if (step == ClaimStep::Pass) continue;
+
+        if (Impl::is_hash(n))
+        {
+            const FactStructure fs = structure(n);
+            if (fs.subject != 0)
+            {
+                // A membership in a rule's own collection or in its condition
+                // set is rule text, identified by the id of what it is
+                // written into, regardless of its position: a rule over rules
+                // that binds a rule's consequence `c in @{d}` references it
+                // within data, and when claimed, it answered beside the member
+                // that the rule's firing wrote into the term.
+                if (fs.predicate == core.PartOf && std::any_of(fs.objects.begin(), fs.objects.end(), [this](const Node o)
+                                                               { return holds_rule_text(o); }))
+                    continue;
+
+                const bool marked = is_rule_pattern(n) && unmark_rule_pattern(n);
+
+                // A rule that is mentioned is data the statement discusses,
+                // and what that rule says is not claimed by saying it.
+                if (fs.predicate == core.Causes) continue;
+
+                // Constructed with a rule's text, a marked fact can hold more
+                // of it.
+                if (marked || step == ClaimStep::Enter) push_parts(fs);
+                continue;
+            }
+        }
+        else if (is_rule_template(n))
+        {
+            continue;
+        }
+
+        // A set constant or a collection. The identifier decides before the
+        // adjacency is read: an atom serves as the object of every fact
+        // concerning it.
+        if (step != ClaimStep::Enter) continue;
+        for (const Node rel : get_right(n))
+        {
+            ++steps.n;
+            if (predicate_of(rel) != core.PartOf) continue;
+            adjacency_set objs;
+            const Node    member = parse_fact(rel, objs, 0);
+            if (member != 0 && objs.count(n) == 1) pending.emplace_back(member, false);
+        }
+    }
+}
+
+uint64_t Zelph::claim_walk_steps()
+{
+    return claim_steps.load(std::memory_order_relaxed);
 }
 
 void Zelph::rebuild_rule_pattern_index() const
@@ -1160,16 +1279,16 @@ void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequen
         // shapes.
         //
         // Only a container created by THIS construction is walked -- a set
-        // that the rule only references keeps its members and its own facts
-        // -- thus the adjacency read remains within what the rule brought
-        // into being. A SET CONSTANT is excluded: its membership is
-        // determined by definition, not asserted -- `a in {a b}` holds
-        // because that is what the set IS -- hence a rule quantifying over it
-        // using `(X in {a b})` legitimately binds a and b. Only a COLLECTION
-        // that the rule itself constructed holds members that nobody claimed.
-        // Its membership facts belong to the rule regardless of whether they
-        // appear in `created`: a rule that a statement merely mentions lists
-        // only the collections it wrote and nothing else (zelph/rule-text).
+        // that the rule only references keeps its members and its own facts --
+        // thus the adjacency read remains within what the rule brought into
+        // being. A SET CONSTANT is excluded: its membership is determined by
+        // definition, not asserted -- `a in {a b}` holds because that is what
+        // the set IS -- hence a rule quantifying over it using `(X in {a b})`
+        // legitimately binds a and b. Only a COLLECTION that the rule itself
+        // constructed holds members that nobody claimed. Its membership facts
+        // belong to the rule regardless of whether they appear in `created`:
+        // the collection emerged alongside the rule, so whatever it holds is
+        // the rule's text.
         if (fresh.count(nd) != 0 && !is_set_constant(nd))
         {
             for (const Node rel : get_right(nd))
@@ -1359,7 +1478,7 @@ void Zelph::remove_rules() const
     // instead of being cleared: a rule mentioned by a statement is not
     // removed, and its text might belong to the older engine.
 #ifndef __EMSCRIPTEN__
-    if (_pImpl->_older_rules) _pImpl->_older_rules = rules_written_before_template_ids();
+    if (!_pImpl->_older_rule_literals.empty()) _pImpl->_older_rule_literals = literals_written_before_template_ids();
 #endif
 }
 
@@ -1658,9 +1777,9 @@ void Zelph::load_from_file(const std::string& filename) const
     // counter IDs throughout the save). A view is not subject to reasoning
     // (.run rejects it), and might be missing the facts and names that the
     // test reads.
-    if (!template_ids && rules_written_before_template_ids())
+    if (!template_ids) _pImpl->_older_rule_literals = literals_written_before_template_ids();
+    if (!_pImpl->_older_rule_literals.empty())
     {
-        _pImpl->_older_rules = true;
         out("Note: rules in this network were saved by an older zelph, and their collections are data here; "
             "rebuild the network from its scripts before reasoning over it.",
             true);
@@ -1695,10 +1814,15 @@ void Zelph::load_from_file(const std::string& filename) const
 // which is why only a file whose header lacks the template-id field is
 // asked.
 //
+// The outcome is every such membership, not merely the first one found:
+// the printer outputs precisely these as members of a data collection
+// even though they are patterns (is_older_rule_literal), ensuring the
+// rule continues to print the literal as originally written.
+//
 // A single traversal through the rules' texts, and through the
 // memberships contained within the collections encountered there,
 // once per load.
-bool Zelph::rules_written_before_template_ids() const
+std::unordered_set<Node> Zelph::literals_written_before_template_ids() const
 {
     constexpr int max_depth = 64; // a guard against cycles; the rules are shallow
 
@@ -1751,6 +1875,7 @@ bool Zelph::rules_written_before_template_ids() const
         collections.push_back(n);
     }
 
+    std::unordered_set<Node> literals;
     for (const Node collection : collections)
     {
         for (const Node rel : get_right(collection))
@@ -1758,10 +1883,10 @@ bool Zelph::rules_written_before_template_ids() const
             if (predicate_of(rel) != core.PartOf || text.count(rel) != 0) continue;
             if (!is_rule_pattern(rel) && !var_in_closure(rel)) continue;
             adjacency_set objects;
-            if (parse_fact(rel, objects, 0) != 0 && objects.count(collection) == 1) return true;
+            if (parse_fact(rel, objects, 0) != 0 && objects.count(collection) == 1) literals.insert(rel);
         }
     }
-    return false;
+    return literals;
 }
 
 void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const

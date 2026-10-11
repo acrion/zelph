@@ -902,6 +902,26 @@ TEST_CASE("build_pattern_info: decomposition matches the get_fact_structures rea
         CHECK(pi.objects.count(C) == 1);
     }
 
+    // When the structured subject's predicate holds a variable: no hint
+    // provided. The raw inner predicate served as the hint since commit
+    // 5551eb2, the variable W or the composite (W f B) included, yet no
+    // data statement has an edge to either, causing extract_bindings to
+    // reject every candidate of ((A W B) g C) -- a query yielded no
+    // results, a negated condition always succeeded.
+    {
+        const Node W         = z.var();
+        const Node open      = z.fact(A, W, {B});
+        const Node composite = z.fact(A, z.fact(W, f, {B}), {C});
+        const Node D         = z.var();
+        for (const Node subject : {open, composite})
+        {
+            const PatternInfo pi = build_pattern_info(&z, z.fact(subject, g, {D}), 1);
+            CHECK(pi.relation == g);
+            CHECK(pi.subject == subject);
+            CHECK(pi.subject_pred_hint == 0);
+        }
+    }
+
     // Variable predicate (A W B): the raw variable is preserved -- the
     // constructor's relation-variable machinery must keep seeing it.
     const Node W     = z.var();

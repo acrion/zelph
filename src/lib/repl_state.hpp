@@ -45,6 +45,14 @@ namespace zelph::console
         Off    // print no deductions
     };
 
+    // When the REPL prints the time an input took (`.timer`).
+    enum class TimerMode
+    {
+        Auto, // only following an input that consumed a discernible duration
+        On,   // following each input
+        Off   // never
+    };
+
     // Whether the mode removes deductions from the output. Quiet differs from
     // Focus in what it SAYS, not in what it shows, so every decision about
     // filtering has to treat the two alike.
@@ -92,6 +100,13 @@ namespace zelph::console
         // Focus, and choosing it is also what tells them what it means.
         DeductionMode deduction_mode{DeductionMode::Quiet};
 
+        // As with deduction mode, this setting belongs to the session
+        // rather than the engine, so `.new` keeps it: it decides what the
+        // person at the REPL sees, and the network remains silent on this
+        // matter. Read by Interactive::report_timing, which both front ends
+        // call.
+        TimerMode timer_mode{TimerMode::Auto};
+
         // Whether a prompt will be shown after each run. False for
         // `zelph script.zph`, which prints none -- and there the mark has
         // nowhere to appear, so Quiet falls back to the notice (see
@@ -125,6 +140,17 @@ namespace zelph::console
         // (the guards on the stack restore it correctly even when .new is
         // issued from inside a script).
         int import_depth{0};
+
+        // Whether the lines of a SESSION script are currently being read. The
+        // loop that reads them is part of the command executor, and `.new`
+        // replaces both the executor and the engine: carried out at the point
+        // of reading, it destroyed the loop that was still running, causing
+        // `zelph script.zph` containing a `.new` to crash with a segmentation
+        // fault after its last line. Thus, while this state is set, `.new`
+        // merely records the request; the loop stops after that line, and
+        // Interactive::process_file clears the network and proceeds to read
+        // from the subsequent line.
+        bool reading_session_script{false};
 
         // Import guard ("import once"): maps every registered module ID to
         // the default ID (lowercase filename stem) of the script that

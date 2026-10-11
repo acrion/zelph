@@ -265,7 +265,7 @@ namespace zelph::console
     }
 #endif
 
-    void CommandExecutor::Impl::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role) const
+    std::size_t CommandExecutor::Impl::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role, const std::size_t lines_done) const
     {
         // Resolve against the working directory first, then the standard
         // library ('.zph' extension optional). This also covers scripts
@@ -338,7 +338,7 @@ namespace zelph::console
                     _n->diagnostic_stream() << "Skipping " << resolved << ": module ID '" << id
                                             << "' is already provided by '" << it->second << "'" << std::endl;
                 }
-                return;
+                return 0;
             }
 
             // Register BEFORE executing: a second import request -- including an
@@ -425,8 +425,10 @@ namespace zelph::console
         // thing the log could not otherwise be asked afterwards.
         if (as_module)
             _n->diagnostic_stream() << "Importing file " << resolved << "..." << std::endl;
-        else if (resolved != file)
+        else if (resolved != file && lines_done == 0)
             _n->diagnostic_stream() << "Running " << resolved << "..." << std::endl;
+
+        std::size_t lines_run = lines_done;
 
         if (std::filesystem::path(resolved).extension() == ".janet")
         {
@@ -446,9 +448,27 @@ namespace zelph::console
             std::ifstream stream(resolved);
             if (stream.fail()) throw std::runtime_error("Could not open file '" + resolved + "'");
 
+            struct SessionReading
+            {
+                ReplState* state;
+                explicit SessionReading(ReplState* s) : state(s)
+                {
+                    if (state) state->reading_session_script = true;
+                }
+                ~SessionReading()
+                {
+                    if (state) state->reading_session_script = false;
+                }
+            } session_reading{as_module ? nullptr : _repl_state.get()};
+
+            bool        reset_pending = false;
+            std::size_t line_number   = 0;
             for (std::string line_utf8; std::getline(stream, line_utf8);)
             {
+                if (line_number++ < lines_done) continue;
+
                 _process_line_callback(line_utf8);
+                ++lines_run;
 
                 // `.quit` ends a session script where it stands, the way it
                 // ends a piped one. It used to be a silent no-op in a file:
@@ -461,9 +481,23 @@ namespace zelph::console
                     if (!as_module) break;
                     _repl_state->quit_requested = false;
                 }
+
+                // A `.new` pertaining to the session: this loop operates
+                // within the executor that the reset supersedes, thus the
+                // caller performs it and calls again for the remaining lines
+                // (see ReplState::reading_session_script). Within a module,
+                // a `.new` is disallowed, hence only a session reaches this
+                // point.
+                if (!as_module && _repl_state->reset_requested)
+                {
+                    reset_pending = true;
+                    break;
+                }
             }
 
-            finish_input();
+            // Whatever is still being read gets removed upon reset, just as it
+            // is when `.new` is received through standard input.
+            if (!reset_pending) finish_input();
         }
 
         module_id_claim.committed = true;
@@ -483,6 +517,8 @@ namespace zelph::console
         {
             _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, true);
         }
+
+        return lines_run;
     }
 
 #ifndef __EMSCRIPTEN__
@@ -507,6 +543,14 @@ namespace zelph::console
             _data_manager->load();
             _repl_state->partial_load_mode   = false;
             _repl_state->partial_load_source = "";
+
+            // The import completed successfully, so the session continues
+            // using the network that was requested. What is missing is the
+            // `.bin` file that `.load` of a dump generates alongside it, and a
+            // caller that reads solely the exit status -- a Makefile rule
+            // whose target is that file -- received 0 even though the file was
+            // never written.
+            if (_data_manager->cache_save_failed()) _repl_state->failed = true;
 
             watch.stop();
             _n->diagnostic(" Time needed for loading/importing: " + watch.format(), true);
@@ -709,6 +753,28 @@ namespace zelph::console
             // aber std::getline verwirft das '\n'.
             _n->out(line, true);
         }
+    }
+
+    void CommandExecutor::Impl::cmd_timer(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() > 2) throw std::runtime_error("Usage: .timer [on|off|auto]");
+
+        if (cmd.size() == 2)
+        {
+            if (cmd[1] == "auto")
+                _repl_state->timer_mode = TimerMode::Auto;
+            else if (cmd[1] == "on")
+                _repl_state->timer_mode = TimerMode::On;
+            else if (cmd[1] == "off")
+                _repl_state->timer_mode = TimerMode::Off;
+            else
+                throw std::runtime_error("Usage: .timer [on|off|auto]");
+        }
+
+        const TimerMode mode = _repl_state->timer_mode;
+        _n->out(std::string("Timer: ") + (mode == TimerMode::Auto ? "auto" : mode == TimerMode::On ? "on"
+                                                                                                   : "off"),
+                true);
     }
 
 #ifndef __EMSCRIPTEN__

@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "test_helpers.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -192,6 +193,62 @@ TEST_CASE("session script: .quit ends the file where it stands")
 
         CHECK(any_output_contains(collector, "before rel it"));
         CHECK_FALSE(any_event_contains(collector, "after rel it")); });
+}
+
+TEST_CASE("session script: .new clears the network, and the lines after it run on the new one")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // Running `zelph script.zph` containing a `.new` triggered execution of
+        // every line before terminating with a segmentation fault: the loop
+        // responsible for reading the file is part of the command executor, and
+        // the `.new` directive replaced the executor while the loop remained
+        // active. When piped in, the identical lines executed without issue.
+        // The script has two resets, so that reading resumes twice from the
+        // point it had paused; `tools/check_exit_status.py` holds the binary to
+        // its status.
+        const fs::path script = write_script("new.zph", "a p b\n.new\nc p d\n.new\ne p f\nA p B\n");
+        collector.clear();
+        interactive.process_file(script.string());
+        fs::remove(script);
+
+        CHECK(count_outputs_containing(collector, "Cleared network") == 2);
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e p f"});
+
+        // The session continues with the engine the most recent
+        // reset built.
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e p f"}); });
+}
+
+TEST_CASE("session script: a module cannot clear the session that loads it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // A module does not end the session that imports it via `.quit`, nor
+        // does it reset it using `.new`. When executed, `.new` destroyed the
+        // executor running the `.import` -- or the Janet engine managing
+        // `zelph/import` -- resulting in a segmentation fault in both cases.
+        // When refused, the module stops at that line just as it would upon
+        // encountering any error, preserving the effects of its preceding
+        // lines, exactly as occurs when any module fails halfway.
+        const fs::path module = write_script("clearing.zph", "m p n\n.new\nq p r\n");
+        interactive.process("s p t");
+
+        CHECK_THROWS_WITH_AS(interactive.process(".import " + module.string()),
+                             doctest::Contains("cannot run inside a module"),
+                             std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process("%(zelph/import \"" + module.generic_string() + "\")"),
+                             doctest::Contains("cannot run inside a module"),
+                             std::runtime_error);
+        fs::remove(module);
+
+        collector.clear();
+        interactive.process("A p B");
+        auto answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"m p n", "s p t"}); });
 }
 
 TEST_CASE("session script: an unknown extension is run, an imported one is refused")

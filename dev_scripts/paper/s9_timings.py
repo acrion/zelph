@@ -30,11 +30,12 @@ EML = [".deductions off", ".auto-run",
 SYM = [".deductions off", ".auto-run",
        ".import decimal-arithmetic", ".import symbolic-core", "x ~ symvar", ".run"]
 
-# The session associated with the import row. Janet's monotonic clock times
-# the import exclusively, within the session. The REPL's statement timer is
-# unable to do so: it prints only from 10 ms on (kReplTimingThreshold,
-# src/app/main.cpp), and the import duration is roughly that long, so most
-# runs printed none. The query following the import pins the row's label:
+# The session associated with the import row. Janet's monotonic clock times the
+# import exclusively, within the session. The REPL’s statement timer cannot
+# achieve this: it outputs results solely for durations of 10 ms or more unless
+# `.timer on` is set (kReplTimingThreshold, src/lib/interactive.cpp), and the
+# import duration is approximately that duration, meaning that in most cases,
+# no output was produced. The query following the import pins the row's label:
 # with auto-run disabled, no prior derivation has derived the gate table, so
 # the query must stay unanswered. An answer would imply that inference
 # executed, and the row would time more than parse and load.

@@ -56,6 +56,8 @@ namespace zelph::console
         }
         else
         {
+            if (network::Zelph::is_scratch_cluster_name(cmd[1]))
+                throw std::runtime_error(".cluster: " + network::Zelph::scratch_cluster_name_refusal(cmd[1]));
             _n->set_active_cluster(cmd[1]);
             _n->out("Active cluster: " + cmd[1], true);
         }
@@ -86,6 +88,8 @@ namespace zelph::console
     {
         if (cmd.size() != 3) throw std::runtime_error("Usage: .cluster-merge <from> <to>  (to may be 'default')");
         const std::string to = (cmd[2] == "default") ? "" : cmd[2];
+        if (network::Zelph::is_scratch_cluster_name(to))
+            throw std::runtime_error(".cluster-merge: " + network::Zelph::scratch_cluster_name_refusal(to));
         if (!_n->merge_cluster(cmd[1], to))
             throw std::runtime_error(".cluster-merge: unknown cluster '" + cmd[1] + "'");
         _n->out("Merged cluster " + cmd[1] + " into " + cmd[2] + ".", true);

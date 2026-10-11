@@ -1021,6 +1021,370 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
 }
 
 // ---------------------------------------------------------------------------
+// The other half of the threading rule: the graph is tied to the thread that
+// created the engine. The script engine beneath it keeps the state that a
+// statement, a rule build, and the scratch clusters rely on, once per
+// process, so a second thread that wrote facts while the primary thread was
+// active had its thousands of facts lost to the primary thread's scratch
+// drops, and every one of its calls returned ZELPH_OK. Writing the graph,
+// building a rule, running the engine, and switching clusters are now
+// disallowed on a different thread; reading the graph and utilizing a
+// compiled net are not.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // The outcome of a call made on a dedicated thread, with the message
+    // zelph_last_error() held on that thread: the message is specific to the
+    // thread, thus it must be read on the thread that encountered the
+    // failure.
+    struct OffThread
+    {
+        int32_t     status = ZELPH_OK;
+        std::string message;
+    };
+
+    template <typename F>
+    OffThread off_thread(F&& call)
+    {
+        OffThread   result;
+        std::thread caller([&]
+                           {
+            result.status  = call();
+            result.message = zelph_last_error(); });
+        caller.join();
+        return result;
+    }
+
+    int64_t cluster_size(zelph_engine* engine, const char* name)
+    {
+        int64_t size = -2;
+        REQUIRE(zelph_cluster_count(engine, name, &size) == ZELPH_OK);
+        return size;
+    }
+}
+
+TEST_CASE("capi: a fact written from another thread is refused, and nothing is written")
+{
+    Engine engine;
+
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node b = engine.node("b");
+
+    // Each node generated from this point forward is recorded, meaning the
+    // cluster's size indicates if the refused call wrote anything.
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    zelph_node      fact    = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_fact(engine, a, p, &b, 1, &fact); });
+
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message.find("zelph_fact: main thread only") != std::string::npos);
+    CHECK(fact == 0);
+    CHECK(cluster_size(engine, "probe") == 0);
+
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+}
+
+TEST_CASE("capi: a rule built from another thread is refused, and nothing is written")
+{
+    Engine engine;
+
+    const zelph_node p = engine.node("p");
+    const zelph_node q = engine.node("q");
+    zelph_node       x = 0;
+    zelph_node       y = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "Y", &y) == ZELPH_OK);
+
+    zelph_node condition   = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, p, &y, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, q, &y, 1, &consequence) == ZELPH_OK);
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    zelph_node      rule    = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_rule(engine, &condition, 1, &consequence, 1, &rule); });
+
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message.find("zelph_rule: main thread only") != std::string::npos);
+    CHECK(rule == 0);
+    CHECK(cluster_size(engine, "probe") == 0);
+}
+
+TEST_CASE("capi: a run from another thread is refused, and derives nothing")
+{
+    Engine engine;
+
+    const zelph_node socrates = engine.node("socrates");
+    const zelph_node is_a     = engine.node("~");
+    const zelph_node human    = engine.node("human");
+    const zelph_node mortal   = engine.node("mortal");
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, socrates, is_a, &human, 1, &fact) == ZELPH_OK);
+
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node condition   = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, is_a, &human, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, is_a, &mortal, 1, &consequence) == ZELPH_OK);
+    zelph_node rule = 0;
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+
+    const OffThread refused = off_thread([&]
+                                         { return zelph_run(engine); });
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message.find("zelph_run: main thread only") != std::string::npos);
+
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, socrates, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    // The identical run on the engine's own thread derives it, thus
+    // the refusal is what maintained the fact's exclusion.
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, socrates, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+TEST_CASE("capi: a cluster switch from another thread is refused, and the active cluster stays")
+{
+    Engine engine;
+    REQUIRE(zelph_cluster(engine, "mine") == ZELPH_OK);
+
+    const OffThread refused = off_thread([&]
+                                         { return zelph_cluster(engine, "theirs"); });
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message.find("zelph_cluster: main thread only") != std::string::npos);
+
+    char* active = nullptr;
+    REQUIRE(zelph_cluster_active(engine, &active) == ZELPH_OK);
+    CHECK(std::string(active ? active : "") == "mine");
+    zelph_string_free(active);
+    CHECK(cluster_size(engine, "theirs") == -1);
+}
+
+TEST_CASE("capi: on another thread a name resolves only when it already has a node")
+{
+    // A thread evaluating a compiled net resolves the inputs' names; a name
+    // linked to a node provides a response identical to that on the
+    // engine's thread. A name requiring a new node constitutes a write
+    // operation and is refused.
+    Engine           engine;
+    const zelph_node known = engine.node("known");
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    zelph_node      found  = 0;
+    const OffThread lookup = off_thread([&]
+                                        { return zelph_resolve(engine, "known", nullptr, &found); });
+    CHECK(lookup.status == ZELPH_OK);
+    CHECK(found == known);
+
+    // The refusal names the name: the call performs a lookup that found
+    // nothing, so a caller looking names up can tell an absent name from a call
+    // that has no business on this thread at all, which reads "zelph_resolve:
+    // main thread only" and is what it stated previously.
+    zelph_node      created = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_resolve(engine, "unheard-of", nullptr, &created); });
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message == "zelph_resolve: 'unheard-of' has no node, and creating one is main thread only.");
+    CHECK(created == 0);
+    CHECK(cluster_size(engine, "probe") == 0);
+
+    // The name of a node, requested from a different thread, is not
+    // denied: reading is permitted.
+    std::string     name;
+    const OffThread read = off_thread([&]
+                                      {
+        char* text = nullptr;
+        const int32_t status = zelph_name(engine, known, nullptr, &text);
+        name = text ? text : "";
+        zelph_string_free(text);
+        return status; });
+    CHECK(read.status == ZELPH_OK);
+    CHECK(name == "known");
+}
+
+TEST_CASE("capi: on another thread the empty name gets the error the engine's thread gives")
+{
+    // No node may hold the empty name, thus the call constitutes an error on
+    // every thread, and it is the identical error: refusing it as a write
+    // that only the engine's thread can perform would unfairly attribute
+    // blame to the thread for a name that is invalid everywhere.
+    Engine engine;
+
+    zelph_node        own_node    = 0;
+    const int32_t     own_status  = zelph_resolve(engine, "", nullptr, &own_node);
+    const std::string own_message = zelph_last_error();
+    REQUIRE(own_status != ZELPH_OK);
+
+    zelph_node      node    = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_resolve(engine, "", nullptr, &node); });
+    CHECK(refused.status == own_status);
+    CHECK(refused.message == own_message);
+    CHECK(node == 0);
+}
+
+TEST_CASE("capi: trained weights are written back from another thread")
+{
+    // `zelph_nn_write_back` replaces solely the weights associated with the
+    // synapses from which the net was built, applying each under the
+    // protection of the weight store's lock, and creates nothing, making
+    // it permissible across any thread. A net compiled afterwards reads the
+    // weights directly from the graph, which is the mechanism through which
+    // the test detects their presence.
+    Engine engine;
+
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    engine.member_of("o2", "Out");
+
+    const zelph_node in        = engine.node("In");
+    const zelph_node out       = engine.node("Out");
+    const zelph_node layers[2] = {in, out};
+    const zelph_node i1        = engine.node("i1");
+    const zelph_node o1        = engine.node("o1");
+
+    REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.1, 3, nullptr) == ZELPH_OK);
+    zelph_net net = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+    for (int epoch = 0; epoch < 50; ++epoch)
+        REQUIRE(zelph_nn_train_nodes(engine, net, &i1, nullptr, 1, &o1, nullptr, 1, 0.1, nullptr) == ZELPH_OK);
+
+    const auto weights_of = [&](const zelph_net handle)
+    {
+        size_t count = 0;
+        CHECK(zelph_nn_snapshot(engine, handle, nullptr, &count) == ZELPH_BUFFER_TOO_SMALL);
+        std::vector<double> weights(count, 0.0);
+        REQUIRE(zelph_nn_snapshot(engine, handle, weights.data(), &count) == ZELPH_OK);
+        return weights;
+    };
+
+    const OffThread written = off_thread([&]
+                                         { return zelph_nn_write_back(engine, net); });
+    CHECK(written.status == ZELPH_OK);
+
+    zelph_net again = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &again) == ZELPH_OK);
+    CHECK(weights_of(again) == weights_of(net));
+}
+
+TEST_CASE("capi: every call that writes the graph or changes the engine is refused on another thread")
+{
+    // A single thread calls each refused entry point exactly once, and the
+    // list names every call that was NOT refused as main thread only,
+    // specifying what was returned in its place. The arguments are those that
+    // the engine's own thread accepts: actual nodes, existing
+    // clusters, and a file that is loadable. A preliminary argument check
+    // occurs before the thread check, meaning that a call containing a null
+    // node or a missing file would be rejected on that basis and would never
+    // proceed to the thread check.
+    const auto loadable = fs::temp_directory_path() / "zelph_capi_threads_loadable.bin";
+    const auto unsaved  = fs::temp_directory_path() / "zelph_capi_threads_unsaved.bin";
+    fs::remove(unsaved);
+
+    Engine engine;
+
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node q = engine.node("q");
+    const zelph_node b = engine.node("b");
+    zelph_node       x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node condition   = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, p, &b, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, q, &b, 1, &consequence) == ZELPH_OK);
+
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    const zelph_node in        = engine.node("In");
+    const zelph_node out       = engine.node("Out");
+    const zelph_node layers[2] = {in, out};
+    REQUIRE(zelph_nn_connect_layers(engine, in, out, 0.1, 3, nullptr) == ZELPH_OK);
+
+    REQUIRE(zelph_save(engine, loadable.string().c_str()) == ZELPH_OK);
+    REQUIRE(zelph_cluster(engine, "other") == ZELPH_OK);
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    std::vector<std::string> accepted;
+    std::thread              caller([&]
+                                    {
+        const auto expect = [&](const char* function, const int32_t status, const std::string& refusal)
+        {
+            const std::string message = zelph_last_error();
+            if (status != ZELPH_RUNTIME_ERROR || message.rfind(refusal, 0) != 0)
+                accepted.push_back(std::string(function) + " -> " + std::to_string(status) + " " + message);
+        };
+        const auto refused = [&](const char* function, const int32_t status)
+        { expect(function, status, std::string(function) + ": main thread only"); };
+
+        const zelph_node elements[2] = {a, b};
+        zelph_node       node        = 0;
+        refused("zelph_fact", zelph_fact(engine, a, p, &b, 1, &node));
+        refused("zelph_list", zelph_list(engine, elements, 2, &node));
+        refused("zelph_set", zelph_set(engine, elements, 2, &node));
+        refused("zelph_collection", zelph_collection(engine, elements, 2, &node));
+        refused("zelph_negate", zelph_negate(engine, condition, &node));
+        refused("zelph_variable", zelph_variable(engine, "Y", &node));
+        refused("zelph_clear_variables", zelph_clear_variables(engine));
+        refused("zelph_rule", zelph_rule(engine, &condition, 1, &consequence, 1, &node));
+        refused("zelph_run", zelph_run(engine));
+        refused("zelph_run_once", zelph_run_once(engine));
+        refused("zelph_run_delta", zelph_run_delta(engine));
+        int32_t previous = -1;
+        refused("zelph_set_parallel", zelph_set_parallel(engine, 0, &previous));
+        size_t pairs = 0;
+        size_t rows  = 0;
+        refused("zelph_query", zelph_query(engine, condition, nullptr, &pairs, nullptr, &rows));
+        refused("zelph_cluster", zelph_cluster(engine, "other"));
+        char* active = nullptr;
+        refused("zelph_cluster_active", zelph_cluster_active(engine, &active));
+        zelph_string_free(active);
+        int64_t removed = -1;
+        refused("zelph_cluster_drop", zelph_cluster_drop(engine, "other", &removed));
+        int64_t count = -1;
+        refused("zelph_cluster_count", zelph_cluster_count(engine, "probe", &count));
+        refused("zelph_load", zelph_load(engine, loadable.string().c_str()));
+        refused("zelph_save", zelph_save(engine, unsaved.string().c_str()));
+        zelph_net net = -1;
+        refused("zelph_nn_compile", zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net));
+        refused("zelph_nn_connect_layers", zelph_nn_connect_layers(engine, in, out, 0.1, 3, nullptr));
+        expect("zelph_resolve",
+               zelph_resolve(engine, "never-named", nullptr, &node),
+               "zelph_resolve: 'never-named' has no node, and creating one is main thread only"); });
+    caller.join();
+
+    CHECK(accepted == std::vector<std::string>{});
+
+    // On the engine's own thread, observe what the calls would have
+    // altered.
+    CHECK(cluster_size(engine, "probe") == 0);
+    CHECK(cluster_size(engine, "other") == 0);
+    char* active = nullptr;
+    REQUIRE(zelph_cluster_active(engine, &active) == ZELPH_OK);
+    CHECK(std::string(active ? active : "") == "probe");
+    zelph_string_free(active);
+    zelph_node x_again = 0;
+    REQUIRE(zelph_variable(engine, "X", &x_again) == ZELPH_OK);
+    CHECK(x_again == x);
+    CHECK_FALSE(fs::exists(unsaved));
+
+    fs::remove(loadable);
+}
+
+// ---------------------------------------------------------------------------
 // The reasoning surface.
 //
 // This is the half of zelph that is the reason it exists, and up until now
@@ -1170,6 +1534,30 @@ TEST_CASE("capi: a cluster turns a graph that otherwise only grows into a worksp
     CHECK(exists == 0);
     REQUIRE(zelph_exists(engine, engine.node("permanent"), is_a, &thing, 1, &exists) == ZELPH_OK);
     CHECK(exists == 1);
+}
+
+TEST_CASE("capi: a cluster name beginning with \"__\" is refused")
+{
+    // The engine generates scratch clusters with a prefix of "__". If a caller
+    // attempts to use a cluster name starting with "__", it would be
+    // interpreted as a scratch cluster and discarded together with the caller's
+    // work in it, so zelph_cluster rejects such a name just as .cluster does:
+    // the caller can see that the argument is invalid, and the currently active
+    // cluster remains active.
+    Engine engine;
+    REQUIRE(zelph_cluster(engine, "scratch") == ZELPH_OK);
+
+    CHECK(zelph_cluster(engine, "__rule") == ZELPH_INVALID_ARGUMENT);
+    CHECK(std::string(zelph_last_error()).find("reserved for the engine's own scratch clusters") != std::string::npos);
+
+    char* active = nullptr;
+    REQUIRE(zelph_cluster_active(engine, &active) == ZELPH_OK);
+    CHECK(std::string(active ? active : "") == "scratch");
+    zelph_string_free(active);
+
+    int64_t size = 0;
+    REQUIRE(zelph_cluster_count(engine, "__rule", &size) == ZELPH_OK);
+    CHECK(size == -1);
 }
 
 TEST_CASE("capi: sets, collections and the directional relations")

@@ -33,8 +33,10 @@
 #     constitute a STRICT total order over the variables in use --
 #     declaring both V pouter W and W pouter V would violate
 #     single-valuedness, resulting in two normal forms for a product of
-#     the two variables. Unlike a conflicting declared equation in
-#     symbolic-core (rule SU), nothing reports such a conflict.
+#     the two variables. Similar to a conflicting declared equation in
+#     symbolic-core (rule SU), this inconsistency is reported as a
+#     contradiction naming both pouter facts (refer to the variable
+#     order rules below).
 #   - The variable tag eliminates ambiguity that a collapsed UNTAGGED
 #     list representation would introduce across nesting levels (the
 #     list for y as a constant-in-x polynomial would otherwise be
@@ -96,6 +98,19 @@
 # Variable order: adjacent declarations suffice
 # ---------------------------------------------------------------------------
 (A pouter B, B pouter C) => (A pouter C)
+
+# The order must be strict. Any pair of variables that are mutually
+# declared outer to one another -- either directly or via a longer
+# cycle that transitivity closes into such a pair -- is reported as a
+# contradiction, naming both pouter facts; this aligns with how rule SU
+# in symbolic-core reports a second simp. The two conditions make the
+# report a record in the graph, so it is announced once; the single
+# condition (V pouter V) would be announced again on every later run.
+# The guard excludes the self-loops that transitivity derives on every
+# cycle, each of which would otherwise be reported as a pair with
+# itself -- and with them a declared V pouter V, which this rule does
+# not report.
+(V pouter W, W pouter V, V != W) => !
 
 # ===========================================================================
 # Addition (P padd Q) -- flat case analysis on the operand shapes (the

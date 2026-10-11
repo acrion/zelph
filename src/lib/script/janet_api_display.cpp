@@ -46,6 +46,7 @@ namespace zelph
     {
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/set-number-digits");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-number-digits", argc, argv, true);
 
         const Janet* data;
@@ -84,6 +85,7 @@ namespace zelph
     {
         janet_arity(argc, 3, 4);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/register-display-scheme");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/register-display-scheme", argc, argv, true);
 
         network::DisplayScheme scheme;
@@ -128,6 +130,7 @@ namespace zelph
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/set-infix-display");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-infix-display", argc, argv, true);
 
         const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
@@ -199,6 +202,7 @@ namespace zelph
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/set-application-display");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-application-display", argc, argv, true);
 
         const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
@@ -244,6 +248,7 @@ namespace zelph
     {
         janet_arity(argc, 1, -1);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/no-selffact-sugar");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/no-selffact-sugar", argc, argv, true);
 
         std::vector<network::Node> preds;

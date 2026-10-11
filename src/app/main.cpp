@@ -50,11 +50,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace
 {
-    // Print a timing line after a REPL input only when it took noticeable
-    // time. A script import (.import file) arrives as a single REPL line,
-    // so it yields exactly one timing - never one per script line.
-    constexpr std::chrono::milliseconds kReplTimingThreshold{10};
-
     // Whether standard input is a person typing.
     //
     // It decides the one thing a terminal and a script genuinely differ in:
@@ -71,21 +66,6 @@ namespace
 #else
         return isatty(STDIN_FILENO) != 0;
 #endif
-    }
-
-    std::string format_duration(const std::chrono::steady_clock::duration d)
-    {
-        using namespace std::chrono;
-        const long long ms = duration_cast<milliseconds>(d).count();
-        if (ms < 1000) return std::to_string(ms) + " ms";
-
-        const long long s = ms / 1000;
-        char            buf[64];
-        if (s < 60)
-            std::snprintf(buf, sizeof(buf), "%lld.%03lld s", s, ms % 1000);
-        else
-            std::snprintf(buf, sizeof(buf), "%lldm%lld.%03llds", s / 60, s % 60, ms % 1000);
-        return buf;
     }
 }
 
@@ -204,7 +184,18 @@ int main(int argc, char** argv)
             const bool typed     = stdin_is_a_terminal();
             bool       broke_off = false;
 
-            interactive.prompt(interactive.prompt_text(), false);
+            // A user engaged in typing perceives the continuation of a
+            // statement; a pipe or a file gets the empty prompt at that
+            // point, ensuring that a recorded session displays continuation
+            // lines exactly as they were written.
+            const auto show_prompt = [typed]
+            {
+                std::string text = interactive.prompt_text();
+                if (text.empty() && typed) text = interactive.continuation_prompt_text();
+                interactive.prompt(text, false);
+            };
+
+            show_prompt();
 
             std::string line;
             while (std::getline(std::cin, line))
@@ -226,7 +217,7 @@ int main(int argc, char** argv)
                 if (line.empty() && !interactive.is_accumulating())
                 {
                     interactive.out("type .help for help --");
-                    interactive.prompt(interactive.prompt_text(), false);
+                    show_prompt();
                     continue;
                 }
 
@@ -261,13 +252,9 @@ int main(int argc, char** argv)
                 // well.
                 if (interactive.quit_requested()) break;
 
-                const auto elapsed = std::chrono::steady_clock::now() - start_time;
-                if (elapsed >= kReplTimingThreshold)
-                {
-                    interactive.log("-- " + format_duration(elapsed) + " --");
-                }
+                interactive.report_timing(std::chrono::steady_clock::now() - start_time);
 
-                interactive.prompt(interactive.prompt_text(), false);
+                show_prompt();
             }
 
             // End of input is the last chance to dispatch a half-read block.

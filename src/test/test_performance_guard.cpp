@@ -53,9 +53,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // here are what needs updating, in one line each. A change that moves them by
 // a factor is a regression until proven otherwise.
 //
-// On 30 September 2026, the baselines were re-taken for version 1.0.2,
+// On 30 September 2026, the baselines were re-taken for version 1.1.0,
 // involving three runs, all of which were bit-identical except for fs_cache
 // misses (spread of ±10 out of 428k).
+//
+// On 10 October 2026, they were re-taken after polynomial.zph gained
+// the rule that reports a pouter cycle: this rule derives nothing in
+// this context, yet a new rule shifts node numbering, thereby altering
+// the order of evaluation (deduce_calls 39866 to 39869, fs_cache misses
+// falling from about 428k to 425k). Three runs, bit-identical except
+// for fs_cache misses (spread of 1 out of 425k).
 
 #include "test_helpers.hpp"
 
@@ -153,13 +160,13 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     // fs_cache. Rose from 455644, the August baseline, to 678673 when the
     // store went, so this is the second net under the same failure -- and it
     // also catches an invalidation storm that leaves the store armed.
-    CHECK(misses <= ceiling(427796));
-    CHECK(full_clears <= ceiling(1103));
+    CHECK(misses <= ceiling(424622));
+    CHECK(full_clears <= ceiling(1105));
 
     // Volume of derivation and of candidate scanning: a different regression
     // class from the above (doing more work rather than paying more for it),
     // and the one a rule change shows up in first.
-    CHECK(deduce_calls <= ceiling(39784));
-    CHECK(facts_created <= ceiling(15393));
-    CHECK(scanned_seq + scanned_par <= ceiling(711111 + 81909));
+    CHECK(deduce_calls <= ceiling(39869));
+    CHECK(facts_created <= ceiling(15406));
+    CHECK(scanned_seq + scanned_par <= ceiling(727256 + 94054));
 }

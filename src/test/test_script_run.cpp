@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "network/reasoning.hpp"
 #include "test_helpers.hpp"
 
 #include <algorithm>
@@ -295,15 +296,15 @@ TEST_CASE("run-delta: chains, and matches what a full run would derive")
 }
 
 // ---------------------------------------------------------------------------
-// zelph/rule serves as a macro wrapping zelph/build-rule; zelph/rule*
+// zelph/rule serves as a macro that encapsulates a rule's build; zelph/rule*
 // functions as the raw procedure. Since a function's arguments are evaluated
 // before execution, it cannot know which parts of a rule were constructed
-// during the call. The macro runs its argument forms within
-// zelph/build-rule, operating inside the scratch cluster and the template
-// scope that zelph/dedup-rule provides when a parsed rule is processed,
-// ensuring that a rule written with zelph/rule is constructed identically to
-// how a typed rule is. Absent the deduplication verification: zelph/rule
-// never performs deduplication.
+// during the call. The macro runs its argument forms within the build context
+// that zelph/build-rule also invokes, operating inside the scratch cluster and
+// the template scope that zelph/dedup-rule provides when a parsed rule is
+// processed, ensuring that a rule written with zelph/rule is constructed
+// identically to how a typed rule is. Absent the deduplication verification:
+// zelph/rule never performs deduplication.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("zelph/rule: a rule is not built inside the argument forms of another")
@@ -316,7 +317,7 @@ TEST_CASE("zelph/rule: a rule is not built inside the argument forms of another"
     // failed, as a condition set does not constitute a consequence -- a
     // program that meant a generator got a rule that fires without condition.
     // The rejection occurs before the inner build creates anything, the outer
-    // build hands its scratch back as it would in any error case, and the
+    // build drops its scratch as it does in any error case, and the
     // cluster that had been active is active again.
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -339,6 +340,140 @@ TEST_CASE("zelph/rule: a rule is not built inside the argument forms of another"
         collector.clear();
         interactive.process("S q O");
         CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/rule: the argument forms cannot switch clusters, import, load, save or run")
+{
+    // The rule's build hosts the argument forms within its scratch cluster.
+    // `zelph/cluster` turned the rule's ground part `k is green` into data,
+    // which `A is green` responded to, and the build quietly reversed the
+    // switch upon reinstating the cluster it had found. The remaining calls
+    // change the graph beneath a rule that is half written, and a save wrote
+    // the incomplete rule in the file, using its ground condition as data. Each
+    // is refused under its own name, the build retains no trace of what the
+    // forms built, and the cluster that was active stays active.
+    const auto dir      = std::filesystem::temp_directory_path();
+    const auto imported = dir / "zelph_rule_args_import.zph";
+    const auto loaded   = dir / "zelph_rule_args_load.bin";
+    const auto saved    = dir / "zelph_rule_args_save.bin";
+    {
+        std::ofstream(imported) << "m n o\n";
+    }
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        std::filesystem::remove(saved);
+        interactive.process(".cluster other");
+        interactive.process("x y z");
+        interactive.process(".save \"" + loaded.generic_string() + "\"");
+        interactive.process(".cluster exp");
+        const std::size_t before = node_count(collector, interactive);
+
+        // The message does not indicate which forms are responsible for
+        // writing the rule: since the flag operates across the entire
+        // process, a call originating from a different thread also encounters
+        // the refusal while a rule is being built.
+        const auto refused = [&](const std::string& call, const std::string& name)
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y)] (do )js" + call + R"js( (zelph/fact 'X "likes" (zelph/fact "k" "is" "green")))))js"),
+                              doctest::Contains(name + ": refused while a rule is being built. Switch or drop a cluster, import a file, load or save a network, "
+                                                       "run the engine or query the graph before the rule is built or after it."));
+        };
+        SUBCASE("zelph/cluster")
+        {
+            refused(R"js((zelph/cluster "exp2"))js", "zelph/cluster");
+        }
+        // Omitting an argument results solely in reporting, and during a
+        // build, the answer would be the build's scratch cluster, a name the
+        // program cannot use.
+        SUBCASE("zelph/cluster without an argument")
+        {
+            refused("(zelph/cluster)", "zelph/cluster");
+        }
+        SUBCASE("zelph/cluster-drop")
+        {
+            refused(R"js((zelph/cluster-drop "other"))js", "zelph/cluster-drop");
+        }
+        SUBCASE("zelph/import")
+        {
+            refused("(zelph/import \"" + imported.generic_string() + "\")", "zelph/import");
+        }
+        SUBCASE("zelph/load")
+        {
+            refused("(zelph/load \"" + loaded.generic_string() + "\")", "zelph/load");
+        }
+        SUBCASE("zelph/save")
+        {
+            refused("(zelph/save \"" + saved.generic_string() + "\")", "zelph/save");
+            CHECK_FALSE(std::filesystem::exists(saved));
+        }
+        SUBCASE("zelph/run")
+        {
+            refused("(zelph/run)", "zelph/run");
+        }
+        SUBCASE("zelph/run-once")
+        {
+            refused("(zelph/run-once)", "zelph/run-once");
+        }
+        SUBCASE("zelph/run-delta")
+        {
+            refused("(zelph/run-delta)", "zelph/run-delta");
+        }
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "active=" (or (zelph/cluster) "none"))))js");
+        CHECK(any_output_contains(collector, "active=exp"));
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+        collector.clear();
+        interactive.process("A is green");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S y O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x y z"});
+        collector.clear();
+        interactive.process("S n O");
+        CHECK(collect_answers(collector).empty()); });
+    std::filesystem::remove(imported);
+    std::filesystem::remove(loaded);
+    std::filesystem::remove(saved);
+}
+
+TEST_CASE("zelph/rule: the argument forms cannot query")
+{
+    // A query resets the block's variable scope, which during the build binds
+    // the rule's variables. A query within the argument forms therefore made
+    // the consequence's `'X` and `'Y` new variables that display identically
+    // to the condition's: the rule was in force and derived `?? q ??` from
+    // `a p b`. The query is refused before resetting anything, meaning a
+    // program catching the refusal still builds the rule it wrote.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("m is n");
+        const std::size_t before = node_count(collector, interactive);
+        SUBCASE("the refusal")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y)] (do (zelph/query (zelph/fact 'A "is" 'B)) (zelph/fact 'X "q" 'Y))))js"),
+                              doctest::Contains("zelph/query: refused while a rule is being built."));
+            CHECK(node_count(collector, interactive) == before);
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK_FALSE(any_output_contains(collector, "=>"));
+
+            interactive.process("a p b");
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a refusal the program catches")
+        {
+            interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y)] (do (try (zelph/query (zelph/fact 'A "is" 'B)) ([e] nil)) (zelph/fact 'X "q" 'Y))))js");
+            interactive.process("a p b");
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"});
+        } });
 }
 
 TEST_CASE("zelph/rule: zelph/rule* is refused inside the argument forms of another rule")
@@ -386,6 +521,208 @@ TEST_CASE("zelph/rule: zelph/rule* is refused inside the argument forms of anoth
         CHECK(answers_contain(collector, "c r @{c}")); });
 }
 
+TEST_CASE("zelph/rule: a failed call leaves no rule its argument forms wrote")
+{
+    // A rule that the argument forms construct as a `=>` fact adjacent to the
+    // rule they generate is not included within it, and becomes active
+    // alongside the rule (as demonstrated in the test below). After the call
+    // failed, the build kept what the forms had built, and the `=>` fact
+    // operated independently as a rule in effect: `c r d` derived `c s d` from
+    // a call that had signalled an error. A failed call retains none of the
+    // output generated by its forms, just as a wait keeps nothing, and
+    // similarly, a failed thunk of zelph/build-rule retains nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        SUBCASE("zelph/rule")
+        {
+            interactive.process(R"js(%(try (zelph/rule [(zelph/fact 'X "p" 'Y)] (do (zelph/fact (zelph/fact 'A "r" 'B) "=>" (zelph/fact 'A "s" 'B)) (error "outer fails"))) ([e] nil)))js");
+        }
+        SUBCASE("zelph/build-rule")
+        {
+            interactive.process(R"js(%(try (zelph/build-rule (fn [] (zelph/fact (zelph/fact 'A "r" 'B) "=>" (zelph/fact 'A "s" 'B)) (error "thunk fails"))) ([e] nil)))js");
+        }
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+
+        interactive.process("c r d");
+        collector.clear();
+        interactive.process("S s O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/rule: an argument that is no node leaves no half-built rule")
+{
+    // The builder checked a consequence solely at the moment of writing it. If
+    // the second consequence was not a node, the condition set and the first
+    // `=>` fact remained active: a generator whose ground condition `k is on`
+    // had never been marked by a failed call, thus the data met its
+    // requirement, and `a p b` brought the inner rule into force. Should the
+    // first consequence not be a node, the condition set and its conditions
+    // persisted, with `k is on` included as data. Every argument undergoes
+    // verification before any writing, and a failed build keeps nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        SUBCASE("the second consequence")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y) (zelph/fact "k" "is" "on")] (zelph/fact (zelph/fact 'A "r" 'B) "=>" (zelph/fact 'A "s" 'B)) "notafact"))js"),
+                              doctest::Contains("zelph/rule: consequence at index 1 is not a valid zelph/node"));
+        }
+        SUBCASE("the first consequence")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact "k" "is" "on") (zelph/fact 'X "p" 'Y)] "notafact"))js"),
+                              doctest::Contains("zelph/rule: consequence at index 0 is not a valid zelph/node"));
+        }
+        // A node generated by a rolled-back build and still referenced by a
+        // binding is not a node either. The build has already discarded what
+        // it wrote; the call failed with the network's "requested left node
+        // ... does not exist" rather than naming the argument.
+        SUBCASE("a node of a rolled-back build")
+        {
+            interactive.process("%(var saved nil)");
+            interactive.process(R"js(%(try (zelph/rule [(zelph/fact 'X "m" 'Y)] (do (set saved (zelph/fact "g" "is" "gone")) (error "outer fails"))) ([e] nil)))js");
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y) (zelph/fact "k" "is" "on")] (zelph/fact 'X "q" 'Y) saved))js"),
+                              doctest::Contains("zelph/rule: consequence at index 1 is not a valid zelph/node"));
+        }
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+        collector.clear();
+        interactive.process("k is O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector).empty());
+
+        process_lines(interactive, "a p b\nc r d");
+        collector.clear();
+        interactive.process("S s O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/rule*: an argument that is no node leaves no rule")
+{
+    // zelph/rule* opens no build, thus nothing undid what it had written before
+    // it came to an invalid argument. If its second consequence was no node,
+    // the rule remained effective with the first consequence. It validates each
+    // argument prior to writing anything. The arguments are constructed
+    // beforehand, treated as claims, before it runs.
+    //
+    // An identifier that refers to no node within the graph passed the
+    // validation: a node generated by a rolled-back build and still
+    // referenced by a Janet binding, or a numeric value. The invocation
+    // encountered failure in the network with the message "requested left
+    // node ... does not exist" upon reaching that argument. Passed as a
+    // consequence, it left the rule in force with the consequences preceding
+    // it; as a condition, a condition set that was partially written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rolled_back = [&]
+        {
+            interactive.process("%(var saved nil)");
+            interactive.process(R"js(%(try (zelph/rule [(zelph/fact 'X "m" 'Y)] (do (set saved (zelph/fact "k" "is" "on")) (error "outer fails"))) ([e] nil)))js");
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "mentioned=" (zelph/mentioned "k" "is" "on"))))js");
+            CHECK(any_output_contains(collector, "mentioned=false"));
+        };
+        const auto refused = [&](const std::string& arguments, const std::string& message)
+        {
+            interactive.process(R"js(%(def [condition consequence] [(zelph/fact 'X "p" 'Y) (zelph/fact 'X "q" 'Y)]))js");
+            const std::size_t before = node_count(collector, interactive);
+            CHECK_THROWS_WITH(interactive.process("%(zelph/rule* " + arguments + ")"), doctest::Contains(message));
+            CHECK(node_count(collector, interactive) == before);
+        };
+        SUBCASE("a string")
+        {
+            refused(R"js([condition] consequence "notafact")js", "zelph/rule: consequence at index 1 is not a valid zelph/node");
+        }
+        SUBCASE("a node of a rolled-back build")
+        {
+            rolled_back();
+            refused("[condition] consequence saved", "zelph/rule: consequence at index 1 is not a valid zelph/node");
+        }
+        SUBCASE("a literal number")
+        {
+            REQUIRE_FALSE(interactive.graph()->exists(123456789));
+            refused("[condition] consequence 123456789", "zelph/rule: consequence at index 1 is not a valid zelph/node");
+        }
+        SUBCASE("a condition of a rolled-back build")
+        {
+            rolled_back();
+            refused("[condition saved] consequence", "zelph/rule: condition at index 1 is not a valid zelph/node");
+        }
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector).empty());
+
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/rule: a variable named again after a refused rule is a fresh one")
+{
+    // A variable symbol assigns a single node within a whole Janet block. Any
+    // build that is not preserved discards the variables it generated along
+    // with its temporary workspace, yet the block continues to associate those
+    // names with the vanished nodes: when the subsequent rule within the same
+    // block attempted to reference X again, it received a node that had been
+    // deleted, resulting in the block ending with the message "requested left
+    // node ... does not exist". A name whose underlying node has disappeared
+    // now refers to a new variable, regardless of the manner in which the build
+    // was discarded: following a wait, as a duplicate of a rule currently in
+    // force, or after an error, which no longer maintains the state established
+    // by the build.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a wait")
+        {
+            interactive.process(R"js(%(do (try (zelph/rule [(zelph/fact 'X "p" 'Y)] (do (ev/sleep 0) (zelph/fact 'X "q" 'Y))) ([e] nil)) (zelph/rule [(zelph/fact 'X "r" 'Y)] (zelph/fact 'X "s" 'Y))))js");
+        }
+        SUBCASE("a duplicate")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            interactive.process(R"js(%(do (zelph/dedup-rule (fn [] (zelph/fact (zelph/fact 'X "p" 'Y) "=>" (zelph/fact 'X "q" 'Y)))) (zelph/rule [(zelph/fact 'X "r" 'Y)] (zelph/fact 'X "s" 'Y))))js");
+        }
+        SUBCASE("an error")
+        {
+            interactive.process(R"js(%(do (try (zelph/rule [(zelph/fact 'X "p" 'Y)] (do (zelph/fact 'X "q" 'Y) (error "fails"))) ([e] nil)) (zelph/rule [(zelph/fact 'X "r" 'Y)] (zelph/fact 'X "s" 'Y))))js");
+        }
+        interactive.process("a r b");
+        collector.clear();
+        interactive.process("S s O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a s b"}); });
+}
+
+TEST_CASE("zelph/rule: a rule is not built inside the thunk of zelph/rule-text")
+{
+    // zelph/rule-text writes the rule that a statement mentions as a rule
+    // build of its own, hence its thunk corresponds to the text of a rule, as
+    // the argument forms of zelph/rule are. A rule built there was in force by
+    // itself, even though the statement merely mentions it. The refusal occurs
+    // before any construction, and the surrounding statement is not written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/fact "x" "noted" (zelph/rule-text (fn [] (zelph/rule [(zelph/fact 'X "p" 'Y)] (zelph/fact 'X "q" 'Y))))))js"),
+                          doctest::Contains("a rule cannot be built while another rule is being built"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+
+        collector.clear();
+        interactive.process("S noted O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 TEST_CASE("zelph/rule: a rule nested in another is written as a `=>` fact in its argument forms")
 {
     // What the refusal mentioned above tells the program to do instead. The
@@ -404,6 +741,108 @@ TEST_CASE("zelph/rule: a rule nested in another is written as a `=>` fact in its
         collector.clear();
         interactive.process("S q O");
         CHECK(answers_contain(collector, "a q b")); });
+}
+
+TEST_CASE("zelph/rule: no function in its expansion builds a rule past the refusal")
+{
+    // The expansion held the macro's builder: zelph/rule* devoid of refusal. A
+    // program that extracted it from an expansion via macex1 and invoked it
+    // within another rule's build wrote a rule of its own in that location,
+    // which the outer build preserved, in force by itself. The builder was
+    // unable to reject such an invocation: it ran from the same frame as the
+    // macro's original call. The expansion currently holds no builder, and the
+    // rule is constructed from the value returned by its thunk, within the
+    // build context. Every function within an expansion, when invoked inside a
+    // build that keeps what it constructs, builds nothing, whether using the
+    // arguments the expansion supplies or those of zelph/rule*. The arguments
+    // are built beforehand, so the graph must remain unchanged.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"js(%(defn cfunctions [form] (cond (cfunction? form) [form] (indexed? form) (mapcat cfunctions form) [])))js");
+        interactive.process(R"js(%(def found (cfunctions (macex1 '(zelph/rule [c] k)))))js");
+        interactive.process(R"js(%(def conditions [(zelph/fact 'A "r" 'B)]))js");
+        interactive.process(R"js(%(def consequence (zelph/fact 'A "s" 'B)))js");
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "found=" (length found))))js");
+        CHECK_FALSE(any_output_contains(collector, "found=0"));
+
+        const std::size_t before = node_count(collector, interactive);
+        const auto        call   = [&](const std::string& arguments)
+        {
+            collector.clear();
+            interactive.process(R"js(%(each f found (zelph/build-rule (fn [] (zelph/out (string "call: " (try (do (f )js" + arguments + R"js() "built") ([e] e)))) nil))))js");
+            CHECK(any_output_contains(collector, "call: "));
+            CHECK_FALSE(any_output_contains(collector, "call: built"));
+        };
+        SUBCASE("a thunk as the expansion passes it")
+        {
+            call("(fn [] [conditions consequence])");
+            CHECK(count_outputs_containing(collector, "call: ") == count_outputs_containing(collector, "call: zelph/rule: a rule cannot be built while another rule is being built"));
+        }
+        SUBCASE("the arguments of zelph/rule*")
+        {
+            call("conditions consequence");
+        }
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+
+        interactive.process("c r d");
+        collector.clear();
+        interactive.process("S s O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/rule: a bad argument is reported as before, by the macro and by zelph/rule*")
+{
+    // The builder now throws an exception instead of panicking. Regarding
+    // the macro, the builder operates within the build process, and a panic
+    // in that context would bypass the template scope's destructor. The
+    // messages it issues remain the same.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::string pattern     = "zelph/rule: condition at index 0 is \"a\", which is not a fact pattern and can never match";
+        const std::string consequence = "zelph/rule: consequence at index 1 is not a valid zelph/node";
+        SUBCASE("zelph/rule with a condition that is no pattern")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/resolve "a")] (zelph/fact "x" "q" "y")))js"), doctest::Contains(pattern));
+        }
+        SUBCASE("zelph/rule* with a condition that is no pattern")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule* [(zelph/resolve "a")] (zelph/fact "x" "q" "y")))js"), doctest::Contains(pattern));
+        }
+        SUBCASE("zelph/rule with a consequence that is no node")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y)] (zelph/fact 'X "q" 'Y) "notafact"))js"), doctest::Contains(consequence));
+        }
+        SUBCASE("zelph/rule* with a consequence that is no node")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/rule* [(zelph/fact 'X "p" 'Y)] (zelph/fact 'X "q" 'Y) "notafact"))js"), doctest::Contains(consequence));
+        } });
+}
+
+TEST_CASE("zelph/build-rule-parts: a thunk that returns no tuple builds no rule")
+{
+    // The macro's thunk consistently returns a tuple; a program invoking the
+    // function manually might not. Consequently, no components exist to build
+    // the rule from, the build process fails with a distinct message, and the
+    // content the thunk produced is discarded along with it -- `k is on`
+    // included, which would otherwise serve as data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/build-rule-parts (fn [] (zelph/fact 'X "p" 'Y) (zelph/fact "k" "is" "on") @{})))js"),
+                          doctest::Contains("zelph/rule: the forms did not return the rule's conditions and consequences"));
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+        collector.clear();
+        interactive.process("k is O");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 TEST_CASE("zelph/rule*: the plain function evaluates its arguments before it runs")
@@ -452,12 +891,15 @@ TEST_CASE("zelph/build-rule: a rule written by hand inside it is built as a type
             interactive.process("S in O");
             CHECK(collect_answers(collector).empty());
 
+            // The firing's conclusion claims the fact nested in it, just as
+            // the identical statement typed does; it formerly remained a
+            // pattern.
             collector.clear();
             interactive.process("a p b");
             CHECK(any_deduction_of(collector, "a likes (k is green)"));
             collector.clear();
             interactive.process("A is green");
-            CHECK(collect_answers(collector).empty());
+            CHECK(collect_answers(collector) == std::vector<std::string>{"k is green"});
         }
 
         SUBCASE("inside zelph/build-rule, a rule with two consequences")
@@ -617,37 +1059,194 @@ TEST_CASE("zelph/rule: a collection built in the call is the rule's text, one bu
         CHECK(collect_answers(collector).size() == 2); });
 }
 
-TEST_CASE("zelph/rule: a collection another thread builds while the call runs is a value")
+// ---------------------------------------------------------------------------
+// Janet threads. A thread initiated by a program via `ev/thread`,
+// `ev/spawn-thread`, or `ev/do-thread` possesses its own Janet VM, yet invokes
+// identical zelph functions through the same engine, with the state underlying a
+// statement, a rule build, and the scratch clusters existing only once per
+// process. While the main thread remained active, any facts authored by such a
+// thread were silently discarded during the main thread's next scratch drop; a
+// correct rule was rejected as nested within another, a claim vanished, and the
+// main thread's active cluster was reset. Consequently, operations such as
+// writing the graph, building a rule, and changing the engine's state are
+// disallowed on such a thread; however, reading the graph and using a compiled
+// network are permitted (refer to test_neural.cpp for the networks).
+// ---------------------------------------------------------------------------
+
+namespace
 {
-    // The rule scope is tied to the thread that writes the rule. A Janet
-    // thread that builds `@{q1}` and states `data has @{q1}` while the script
-    // thread resides within zelph/rule's argument forms writes data. It got a
-    // template id since a rule was being authored somewhere in the process:
-    // the generator subsequently bound a collection of rule text and inserted
-    // its empty data term into the rule it built, `(X q Y) => (X holds @{})`,
-    // so `a holds @{q1}` and `a ok yes` were never obtained through
-    // derivation.
+    // A Janet block that evaluates `form` within a thread, then outputs the
+    // result it returned, or displays "refused: " followed by the error it
+    // triggered. The block remains idle until the thread completes, ensuring
+    // the line becomes part of the collector once process() returns.
+    std::string on_janet_thread(const std::string& form)
+    {
+        return R"js(%(do (def ch (ev/thread-chan 1)) (ev/spawn-thread (ev/give ch (try (string "returned: " )js" + form
+             + R"js() ([e] (string "refused: " e))))) (zelph/out (ev/take ch))))js";
+    }
+}
+
+TEST_CASE("zelph/fact: a call from a Janet thread is refused, and nothing is written")
+{
+    // The refusal occurs before the resolution of any single name,
+    // meaning that the nodes associated with the three names are never
+    // instantiated.
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        // A single block: a statement returns only after the threads it
-        // started have ended, and the thread waits for the rule's
-        // argument forms.
-        interactive.process(R"js(%(do (def go (ev/thread-chan 1)) (def done (ev/thread-chan 1)) (ev/thread (fn [] (while (= 0 (ev/count go)) (os/sleep 0.01)) (zelph/fact "data" "has" (zelph/collection "q1")) (ev/give done true)) nil :n) (zelph/rule [(zelph/fact 'X "p" 'Y)] (do (ev/give go true) (while (= 0 (ev/count done)) (os/sleep 0.01)) (zelph/fact 'X "likes" 'Y)))))js");
-        process_lines(interactive, "(S has C) => ((X q Y) => (X holds C))\n(X holds C, data has C) => (X ok yes)\na q b");
-        interactive.run(true, false, false);
+        const std::size_t before = node_count(collector, interactive);
 
         collector.clear();
-        interactive.process("S holds O");
-        CHECK(collect_answers(collector) == std::vector<std::string>{"a holds @{q1}"});
+        interactive.process(on_janet_thread(R"js((zelph/fact "ta" "tp" "tb"))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/fact: main thread only"));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+TEST_CASE("zelph/rule: a rule from a Janet thread is refused as main thread only, not as a nested rule")
+{
+    // While the main thread was situated within `zelph/rule`'s argument
+    // forms, a rule authored by a thread was rejected due to "a rule cannot be
+    // built while another rule is being built" -- the flag that marks a build
+    // is present only once per process, and the thread's rule is not contained
+    // within any other structure. It is now refused for what it is, and
+    // the main thread's rule proceeds to be constructed as if the thread had
+    // never existed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // A single block: the thread remains pending until the main thread
+        // enters the argument forms, and the forms stay blocked, refraining
+        // from relinquishing control to the event loop, until the thread
+        // receives its answer.
+        interactive.process(R"js(%(do (def go (ev/thread-chan 1)) (def done (ev/thread-chan 1)) (def res (ev/thread-chan 1)) (ev/thread (fn [] (while (= 0 (ev/count go)) (os/sleep 0.01)) (ev/give res (try (do (zelph/rule [(zelph/fact 'X "p2" 'Y)] (zelph/fact 'X "q2" 'Y)) "built") ([e] (string "refused: " e)))) (ev/give done true)) nil :n) (zelph/rule [(zelph/fact 'X "p" 'Y)] (do (ev/give go true) (while (= 0 (ev/count done)) (os/sleep 0.01)) (zelph/fact 'X "q" 'Y))) (zelph/out (ev/take res))))js");
+        CHECK(any_output_contains(collector, "refused: zelph/rule: main thread only"));
+        CHECK_FALSE(any_output_contains(collector, "while another rule is being built"));
+
+        process_lines(interactive, "a p b\na p2 b");
         collector.clear();
-        interactive.process("S ok O");
-        CHECK(collect_answers(collector) == std::vector<std::string>{"a ok yes"}); });
+        interactive.process("S q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"});
+        collector.clear();
+        interactive.process("S q2 O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("zelph/collection: a call from a Janet thread is refused")
+{
+    // A collection constructed by a thread while the main thread wrote a
+    // rule used to be written as a value, since the rule's scope is tied to
+    // the thread that opens it. That scope (Zelph::TemplateScope, pinned in
+    // test_recipe_ids.cpp) can now no longer be reached from a Janet thread
+    // in any way: attempting to build anything on such a thread is refused.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/collection "q1"))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/collection: main thread only"));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+TEST_CASE("zelph/exists: a question from a Janet thread is answered")
+{
+    // Reading the graph is not rejected on a thread.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((string (zelph/exists "a" "p" "b") " " (zelph/exists "a" "p" "c")))js"));
+        CHECK(any_output_contains(collector, "returned: true false")); });
+}
+
+TEST_CASE("zelph/resolve: a Janet thread looks a name up, and creating one is refused")
+{
+    // A thread responsible for evaluating a compiled network resolves the
+    // names of its inputs (test_neural.cpp, "a network can be
+    // evaluated while another thread trains it"). If a name already
+    // corresponds to a node, it responds as it does on the main thread; if a
+    // name requires a new node, it constitutes a write.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("known p b");
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/name (zelph/resolve "known")))js"));
+        CHECK(any_output_contains(collector, "returned: known"));
+
+        // The refusal names the name: the call performs a lookup that yielded
+        // no result, something a program can tell apart from a call that has
+        // no business on a thread at all ("zelph/resolve: main thread only",
+        // as it previously stated).
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/resolve "unheard-of"))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/resolve: 'unheard-of' has no node, and creating one is main thread only."));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+TEST_CASE("zelph/resolve: on a Janet thread the empty name gets the main thread's error")
+{
+    // No node may hold the empty name, thus the call constitutes an error on
+    // every thread, and it is the identical error: refusing it as a write
+    // that only the main thread is permitted to perform would unfairly
+    // attribute blame to the thread for a name that is invalid everywhere.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (try (string "returned: " (zelph/resolve "")) ([e] (string "refused: " e)))))js");
+        const std::string on_main = last_out_text(collector);
+        REQUIRE(on_main.rfind("refused: ", 0) == 0);
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/resolve ""))js"));
+        CHECK(last_out_text(collector) == on_main); });
+}
+
+TEST_CASE("zelph/resolve: on a Janet thread a variable's name is not the node of that name")
+{
+    // The names associated with the variables in a typed rule are preserved
+    // for display, and the name lookup process for commands finds them.
+    // `zelph/resolve` answers with an atom and creates one when only a
+    // variable carries the name; a thread that is unable to produce it is
+    // rejected instead of being given the variable.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(V p W) => (V r W)");
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/resolve "V"))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/resolve: 'V' has no node, and creating one is main thread only."));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+TEST_CASE("Janet threads: every function that writes the graph or changes the engine is refused")
+{
+    // One call of each function, from a single thread; the line lists every
+    // call that was NOT refused as main thread only, specifying what was
+    // raised in its place. Arguments are irrelevant: the rejection occurs
+    // before their interpretation. `zelph/resolve` looks a name up on a
+    // thread, so its refusal names the name lacking a node, and the entry
+    // carries that text in place of "zelph/resolve: main thread only".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(R"js(%(do (def ch (ev/thread-chan 1)) (ev/spawn-thread (def accepted @[]) (each [name f refusal] [["zelph/fact" (fn [] (zelph/fact "ta" "tp" "tb"))] ["zelph/refute" (fn [] (zelph/refute "ta" "tp" "tc"))] ["zelph/negate" (fn [] (zelph/negate nil))] ["zelph/path-guard" (fn [] (zelph/path-guard "ta" "tb"))] ["zelph/list" (fn [] (zelph/list "ta" "tb"))] ["zelph/list-chars" (fn [] (zelph/list-chars "12"))] ["zelph/set" (fn [] (zelph/set "ta"))] ["zelph/collection" (fn [] (zelph/collection "ta"))] ["zelph/conjunction" (fn [] (zelph/conjunction nil nil))] ["zelph/resolve" (fn [] (zelph/resolve "never-named")) "zelph/resolve: 'never-named' has no node, and creating one is main thread only"] ["zelph/var" (fn [] (zelph/var))] ["zelph/query" (fn [] (zelph/query nil))] ["zelph/rule*" (fn [] (zelph/rule* [] nil))] ["zelph/rule" (fn [] (zelph/rule [] nil))] ["zelph/build-rule" (fn [] (zelph/build-rule (fn [] nil)))] ["zelph/dedup-rule" (fn [] (zelph/dedup-rule (fn [] nil)))] ["zelph/rule-text" (fn [] (zelph/rule-text (fn [] nil)))] ["zelph/register-keyword" (fn [] (zelph/register-keyword "tkw" (fn [x] x)))] ["zelph/approx" (fn [] (zelph/approx nil "tnet"))] ["zelph/path" (fn [] (zelph/path nil "one-or-more"))] ["zelph/nn-connect" (fn [] (zelph/nn-connect "ta" "tb"))] ["zelph/set-weight" (fn [] (zelph/set-weight "ta" "tb" 1))] ["zelph/nn-compile" (fn [] (zelph/nn-compile [nil nil]))] ["zelph/nn-connect-layers" (fn [] (zelph/nn-connect-layers "ta" "tb"))] ["zelph/set-number-digits" (fn [] (zelph/set-number-digits []))] ["zelph/register-display-scheme" (fn [] (zelph/register-display-scheme "ts" "(" ")"))] ["zelph/set-infix-display" (fn [] (zelph/set-infix-display "ts" []))] ["zelph/set-application-display" (fn [] (zelph/set-application-display "ts" []))] ["zelph/no-selffact-sugar" (fn [] (zelph/no-selffact-sugar "tp"))] ["zelph/import" (fn [] (zelph/import "tfile"))] ["zelph/save" (fn [] (zelph/save "tfile.bin"))] ["zelph/load" (fn [] (zelph/load "tfile.bin"))] ["zelph/run" (fn [] (zelph/run))] ["zelph/run-once" (fn [] (zelph/run-once))] ["zelph/run-delta" (fn [] (zelph/run-delta))] ["zelph/cluster" (fn [] (zelph/cluster "tc"))] ["zelph/cluster-drop" (fn [] (zelph/cluster-drop "tc"))] ["zelph/clusters" (fn [] (zelph/clusters))]] (try (do (f) (array/push accepted name)) ([e] (unless (string/find (or refusal (string name ": main thread only")) (string e)) (array/push accepted (string name " -> " e)))))) (ev/give ch (string "accepted: [" (string/join accepted ", ") "]"))) (zelph/out (ev/take ch))))js");
+        CHECK(last_out_text(collector) == "accepted: []");
+
+        CHECK(node_count(collector, interactive) == before); });
 }
 
 TEST_CASE("zelph/rule: argument forms that wait for the event loop are refused, and nothing of the rule remains")
 {
-    // The argument forms run within zelph/build-rule, a C call, with the
-    // template scope open. A form that waits for the event loop, like
+    // The argument forms execute inside the rule's build, via a C call, with
+    // the template scope open. A form that waits for the event loop, like
     // `ev/sleep`, pauses execution there, and a C call cannot be resumed: the
     // program went on as though the rule had been written, yet no rule was.
     // Nor could the scope remain open during the wait, because every other

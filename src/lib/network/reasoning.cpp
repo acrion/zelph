@@ -41,6 +41,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <set>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -224,6 +225,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     // anyway, but the boundary belongs here, not to the evaluation mode).
     end_input_capture();
     _filled_terms.clear();
+    _consequence_text.clear();
 
     // Take the facts created since the last run before anything else can add
     // to them. A classic run does not need them, but it must not leave them
@@ -1402,6 +1404,10 @@ namespace
     // represent a membership, meaning that in a firing, the objects of
     // such a relation are met both where they are kept and where they are
     // written into.
+    //
+    // An `on_container` returning a bool decides whether the walk proceeds
+    // into what the plan rebuilds; one returning nothing allows it to
+    // proceed.
     template <class OnVariable, class OnContainer>
     void walk_instantiation(const Zelph* const z, const Node n, const Recipe& recipe, const Place& place, const int depth, std::set<std::pair<Node, Position>>& seen, const OnVariable& on_variable, const OnContainer& on_container)
     {
@@ -1433,7 +1439,14 @@ namespace
 
         std::unordered_set<Node> members;
         const Plan               plan = container_plan(z, n, &recipe, place, members);
-        on_container(n, plan, members);
+        if constexpr (std::is_same_v<std::invoke_result_t<const OnContainer&, Node, Plan, const std::unordered_set<Node>&>, bool>)
+        {
+            if (!on_container(n, plan, members)) return;
+        }
+        else
+        {
+            on_container(n, plan, members);
+        }
         if (plan == Plan::Keep || plan == Plan::BucketTerm || plan == Plan::DataTerm) return;
 
         const Place member_place{Position::Value, plan == Plan::ConjunctionSet, 0};
@@ -1671,6 +1684,7 @@ namespace
         bool       created = false;
         const Node id      = z->recipe_collection(Zelph::Impl::recipe_id(node, recipe_key(z, *recipe, depth), construction), instances, created, recipe->created, !construction);
         if (created) record(id);
+        if (!construction && recipe->values != nullptr) recipe->values->push_back(id);
         return id;
     }
 
@@ -1717,6 +1731,33 @@ std::unordered_set<Node> zelph::network::statement_variables(const Zelph* const 
                    { vars.insert(v); },
                    [](Node, Plan, const std::unordered_set<Node>&) {});
     return vars;
+}
+
+bool zelph::network::keeps_rule_variable(const Zelph* const z, const Recipe& recipe, const int depth)
+{
+    // A firing keeps a conjunction set as written, ensuring that any
+    // variable within it survives the substitution: the outer rule's own
+    // variable as well as the mentioned rule's. Any other container holding
+    // a variable is rebuilt, while a variable located outside a container is
+    // either substituted or made fresh. The walk does not enter the value a
+    // firing builds for a collection of the rule's text: a value is data
+    // regardless of its content, and Zelph::var_in_closure does not enter it
+    // either, meaning the surrounding instance is not rule text.
+    //
+    // A rule contained within such a value whose conditions keep a variable
+    // is therefore not examined: its fact is derived and answered, holding
+    // half of a rule that no one authored within the value. Setting
+    // `enter_values` makes the walk traverse the value as well, and the
+    // firing skip that consequence too.
+    constexpr bool enter_values = false;
+
+    bool keeps = false;
+    walk_statement(z, recipe, depth, [](Node) {}, [&](const Node n, const Plan plan, const std::unordered_set<Node>&)
+                   {
+                       if (keeps || (!enter_values && plan == Plan::CollectionTemplate)) return false;
+                       if (plan == Plan::Keep && !Zelph::is_hash(n)) keeps = is_conjunction(z, n) && z->holds_variable_in_text(n);
+                       return true; });
+    return keeps;
 }
 
 Node zelph::network::recipe_key(const Zelph* const z, const Recipe& recipe, const int depth)
@@ -1872,11 +1913,13 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
         return pattern;
     }
 
-    // While a construction builds a rule, a fact emerging in this context is
-    // a part of that rule, and the construction marks it as a pattern once it
-    // keeps the rule (Reasoning::build_rule). A fact that existed prior,
-    // whether asserted or derived, stays what it was, just as it does under a
-    // typed rule. No fact is recorded that keeps a variable a firing would
+    // While a construction builds a rule, a fact emerging in this context is a
+    // part of that rule, and the construction marks it as a pattern once it
+    // keeps the rule (Reasoning::build_rule). A firing whose consequence
+    // mentions a rule records the same, and deduce() marks the parts of that
+    // rule once the instance is present. A fact that existed prior, whether
+    // asserted or derived, stays what it was, just as it does under a typed
+    // rule. No fact is recorded that keeps a variable a firing would
     // substitute: it is a template and is never marked, and the marking reads
     // the neighbours of each recorded node -- those of `(X p k)` include X,
     // the same node in every rule a generator writes.

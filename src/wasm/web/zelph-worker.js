@@ -50,6 +50,7 @@ const Module = await createZelphModule({
 const processLine = Module.cwrap("zelph_process", null, ["string"]);
 const promptStr = Module.cwrap("zelph_prompt", "string", []);
 const takeGraphPath = Module.cwrap("zelph_take_graph_html_path", "string", []);
+const reportTiming = Module.cwrap("zelph_report_timing", null, ["number"]);
 const isAccumulating = () =>
   Module.ccall("zelph_is_accumulating", "number", [], []) !== 0;
 
@@ -105,12 +106,14 @@ self.onmessage = (e) => {
         newline: true,
       });
     }
-    const ms = performance.now() - t0; // measure only the user's lines
+    // Only measure the lines written by the user. The timing line is reported
+    // before the silent .node, while output still reaches the terminal; under
+    // the .timer setting, the engine determines whether to print it.
+    reportTiming(performance.now() - t0);
     autoNode();
     publishMermaid();
     postMessage({
       type: "done",
-      ms,
       prompt: promptStr(),
       accumulating: isAccumulating(),
     });
@@ -118,7 +121,6 @@ self.onmessage = (e) => {
     Module.ccall("zelph_reset", null, [], []);
     postMessage({
       type: "done",
-      ms: 0,
       prompt: promptStr(),
       accumulating: false,
     });

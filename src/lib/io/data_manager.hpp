@@ -54,6 +54,13 @@ namespace zelph::io
         // Loads the data into the network (either from cache or source)
         virtual void load() = 0;
 
+        // Whether the most recent call to load() successfully brought in a
+        // source file yet failed to generate the corresponding .bin cache next
+        // to it. The network itself is complete, so load() reports the error
+        // and proceeds to return as usual; it is up to the caller to determine
+        // whether this constitutes a session failure.
+        virtual bool cache_save_failed() const { return false; }
+
         // Optional: Set logging verbosity
         virtual void set_logging(bool do_log) {}
 

@@ -68,6 +68,18 @@ mathematical stack built on top of it:
   them the ontology community would actually use is more valuable than the
   implementation.
 
+- **Queries that leave no trace.** A query is written into the graph just like any other element: `S p O` adds its two variables and its pattern, a two-triple SPARQL `SELECT` nine nodes, and no mechanism removes them afterwards. The expense extends beyond memory usage. Each query reads every pattern previously deposited on its predicate by earlier queries, meaning that reissuing the same question repeatedly becomes progressively slower, with the cumulative time increasing quadratically. Three solutions are open: an index capable of identifying a query with a shape it has already answered, a cache keyed by the query’s textual form, or evaluating each query within a scratch area that is erased alongside the answer, as `.explain` already does for its internal patterns.
+
+- **An integrity check.** A node is the hash of its structure, meaning a fact whose identifier does not align with the hash of its predicate, subject and objects, or a single statement stored across several identical nodes, represents corruption that nothing detects today. A `.check` command would scan the graph for such inconsistencies and report the findings.
+
+- **Every justification.** `.explain` reassembles a single derivation and marks it as `[one of several justifications]` if additional ones exist. Listing all of them is what a reader requires to know whether a conclusion remains valid after one of its premises is withdrawn.
+
+- **A run that cannot end should say so.** A rule generating a collection that loops back into its own binding, like `(X p Y) => (X likes @{bucket})` together with `(X likes C) => (C p k)`, derives a fresh collection with each iteration: the rules precisely dictate this behaviour, and thus the run fails to terminate. Detecting the cycle through the same rule and stopping with an error that names it would turn a hanging run into a diagnosis.
+
+- **A rule in force due to being asserted.** Today, a `=>` statement qualifies as a rule in force solely when no other element refers to it, meaning the validity of a rule is determined by its surroundings, and it evolves alongside that context: eliminating a statement that quoted a rule, or the generator that produced it, brings that rule into force, while a typed rule ceases to fire once something references it. A positive record, created at the moment a rule is asserted (via typing, via the API, or written by a firing), would make being in force an intrinsic attribute of the rule. Consequently, referencing a rule or removing what mentions it would no longer affect its validity, and removing a rule could then safely take along the rule text that was mentioned exclusively by it.
+
+- **Quoting a rule.** A rule containing variables that a statement merely references, such as `alice proposes ((X is bad) => (alarm is on))`, is on record but cannot be retrieved via a query, since those variables are tied to the rule. Adopting a HiLog-style quotation would make such a statement answerable as data, matching rule text up to a renaming of its variables.
+
 ### Where the mathematics goes next
 
 The mathematical stack will keep growing, and which way it grows should depend on what mathematicians actually want from it. Several directions are open, and none of them is committed:
@@ -77,6 +89,9 @@ The mathematical stack will keep growing, and which way it grows should depend o
 - **Rationals, and with them division.** The quotient rule is missing from differentiation for exactly one reason: there is no field to divide in yet.
 - **One-shot normalisation.** Rewriting is single-pass per request today. Equality saturation in the e-graph style is, at heart, forward chaining over equalities — the natural experiment, and one the current design deliberately left room for.
 - **Proofs that leave the system.** `.explain` already reconstructs a complete justification from the saturated graph – one of them, and it says so when there are several. Exporting it in a form another proof checker accepts would turn zelph's answers into externally verifiable ones.
+- **Arithmetic that waits for numbers.** The arithmetic triggers fire upon any operand, and for a list that is not a numeral they leave intermediate states that lead nowhere. Limiting the firing to numerals alone would save that effort; this alters proof trees and the counts recorded by measurements, thus requiring a measurement first.
+- **Knowledge about terms the simplifier rewrites.** A declaration concerning a term that simplification replaces, such as one regarding `(K * U)`, is not consulted once the term has been rewritten, meaning a second simplification run might yield a different outcome. Determining when knowledge folding should consult such declarations remains a design question.
+- **One integer, one comparison.** Differentiation answers `(x ^ &2) diffby x` but does not answer the identical power expressed via the internal integer form `(x ^ (pos zint &2))`. Directly comparing that format with natural numbers would remove the asymmetry, albeit at a cost in the arithmetic façade.
 
 If one of these matters to your work — or if the interesting direction is one not listed here — that is precisely the feedback that would shape the roadmap. Issues and discussions are on [GitHub](https://github.com/acrion/zelph).
 

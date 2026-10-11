@@ -94,7 +94,7 @@ strictly inner to `V`.
 | `(P psub Q) = R` | subtraction | identical to the condition for `padd` |
 | `(P pmul Q) = R` | multiplication | same as above |
 | `(P ppow N) = R` | power, `N` a natural numeral | `P` is not a zint nor a `(V poly L)` term, or it combines two composites in separate variables without a `pouter` order between their variables – except when `N` is zero, yielding `(pos zint &1)` regardless of `P`; or when `N` is not a natural numeral, other than a negative zero like `(neg zint &0)`, which the façade compares as `&0` and thus behaves as exponent zero; `(pos zint &0)` stays silent |
-| `A pouter B` | asserts that `A` is strictly outer relative to `B`; transitive | – |
+| `A pouter B` | asserts that `A` is strictly outer relative to `B`; this relationship is transitive; if a pair is declared in both directions, it is reported as a contradiction | – |
 
 As with the `z`-operations, results are defined solely for canonical operands: a non-canonical input – such as a signed zero, a magnitude that is not a numeral, or a coefficient list that is not canonical – might still yield a response, and that response need not be canonical.
 

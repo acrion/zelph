@@ -725,9 +725,10 @@ namespace zelph
             for (int32_t i = 1; i < len; ++i)
                 args.push_back(data[i]);
 
-            // A rule written inside another statement still constitutes
-            // rule text: the collections it writes belong exclusively to
-            // it (zelph/rule-text).
+            // A rule written inside another statement still constitutes rule
+            // text: its ground parts are patterns instead of claims, and the
+            // collections it writes belong exclusively to it
+            // (zelph/rule-text).
             if (args.size() >= 3 && is_atom(args[1], "=>"))
                 return "(zelph/rule-text (fn [] " + build_smart_call("zelph/fact", args) + "))";
 

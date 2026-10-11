@@ -29,13 +29,15 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 
 `output` may be null, in which case the engine writes to the process's standard streams as the `zelph` binary does. Otherwise every line the engine emits is handed to the callback with its channel (`ZELPH_CHANNEL_OUT`, `ZELPH_CHANNEL_ERROR`, `ZELPH_CHANNEL_DIAGNOSTIC`, `ZELPH_CHANNEL_PROMPT`) — which is what a host with its own protocol on stdout, such as a game engine speaking to a GUI, needs.
 
-**`zelph_nn_eval_nodes` is safe to call from any number of threads at once, including while another thread is training the same network.** That guarantee comes from `NeuralNet` itself and is the reason a compiled net can serve a parallel search. Everything that mutates the *graph* — `zelph_resolve`, `zelph_fact`, `zelph_list`, `zelph_load`, `zelph_save`, `zelph_nn_compile`, `zelph_nn_connect_layers`, `zelph_nn_write_back` — is main-thread only, exactly as the corresponding Janet functions are.
+**`zelph_nn_eval_nodes` is safe to call from any number of threads at once, including while another thread is training the same network.** That guarantee comes from `NeuralNet` itself and is the reason a compiled net can serve a parallel search. `zelph_nn_write_back` is also permissible on any thread: it modifies solely the weights of the net’s own synapses, under the lock of the graph’s weight store, and creates nothing. `zelph_save` reads the weights under the same lock, whereas `zelph_load` replaces the graph without taking it, thus a write-back must not run while the engine’s thread performs the load.
+
+**The graph is tied to the thread responsible for creating the engine.** Any attempt to modify it, run the engine, or alter its state from a different thread results in a `ZELPH_RUNTIME_ERROR`, with `zelph_last_error()` identifying the function and saying "main thread only": `zelph_fact`, `zelph_list`, `zelph_set`, `zelph_collection`, `zelph_negate`, `zelph_variable`, `zelph_clear_variables`, `zelph_rule`, the three run functions, `zelph_set_parallel`, `zelph_query`, the four cluster calls, `zelph_load`, `zelph_save`, `zelph_nn_compile`, and `zelph_nn_connect_layers` – exactly as the corresponding Janet functions are refused on a Janet thread. On a different thread, `zelph_resolve` carries out nothing but a name lookup, and a name lacking a corresponding node is rejected with the message "zelph_resolve: '<name>' has no node, and creating one is main thread only". Reading the graph (`zelph_fact_parts`, `zelph_list_elements`, `zelph_name`, `zelph_sources`, `zelph_targets`, `zelph_exists`) is permitted. `zelph_engine_destroy` cannot reject anything: invoke it on the thread that created the engine.
 
 ## The graph
 
 | Function | |
 | --- | --- |
-| `zelph_resolve(engine, name, lang, out_node)` | Name to node, creating it if needed. `lang` may be null for the current language. |
+| `zelph_resolve(engine, name, lang, out_node)` | Name to node, creating it if needed. `lang` may be null for the current language. When operating on a thread distinct from the engine’s, a name without an associated node is refused. |
 | `zelph_fact(engine, subject, predicate, objects, object_count, out_fact)` | Create the fact `(subject predicate object...)` and return its node. |
 | `zelph_fact_parts(engine, fact, out_subject, out_predicate, out_objects, count)` | The subject, predicate and objects of a fact – the inverse of `zelph_fact`. The objects come back unordered, because a fact’s objects are a set. |
 | `zelph_list(engine, elements, count, out_node)` | Cons list; the first element becomes the outermost cell. An empty list is the `nil` node. |
@@ -208,7 +210,7 @@ The graph is not only a store, and this is the surface a program needs to use ru
 | `zelph_run` / `zelph_run_once` / `zelph_run_delta` | Forward chaining: to a fixed point, one pass, or seeded by what was created since the previous run |
 | `zelph_set_parallel` | Whether unification may spread a relation's candidates over worker threads. On by default; returns the previous value |
 | `zelph_query(engine, pattern, pairs, pair_count, row_sizes, row_count)` | Answer a pattern. The bindings come back flat - `2n` node ids per row, alternating variable and value - with one size per row |
-| `zelph_cluster(engine, name)` | Activate a cluster, or deactivate with a null name. Nodes *created* while one is active are recorded in it |
+| `zelph_cluster(engine, name)` | Activate a cluster, or deactivate with a null name. Nodes *created* while one is active are recorded in it. A name beginning with `__` is refused with `ZELPH_INVALID_ARGUMENT`: the engine’s internal scratch clusters are designated with this prefix |
 | `zelph_cluster_active` / `_drop` / `_count` | The active cluster's name; remove everything a cluster recorded and report how many; how large a cluster is |
 
 A query reports the variable as the **node the caller created**, not as a name, so no string
@@ -262,7 +264,7 @@ Two crates in `rust/` sit on this ABI and are maintained with it — see [The Ru
 | `zelph-sys` | The raw declarations, generated from `zelph_c.h` by bindgen **at build time**, so header and bindings cannot drift. Its `build.rs` also rebuilds the C++ library on every `cargo build` — a stale library silently invalidates every measurement taken against it, and nothing in the output says so. `ZELPH_BUILD_DIR` selects the CMake build directory (default `build-release`), `ZELPH_NO_BUILD` skips the CMake step. |
 | `zelph` | The safe wrapper: `Engine` (resolve, fact, list, elements, name, sources, load, save, compile), `Net` (best, eval, train, write_back, snapshot, restore), failures as `Result<_, zelph::Error>` with a `kind()` to branch on. |
 
-The types state what the C header only documents. `Engine` is neither `Send` nor `Sync`, because graph mutation belongs to the thread that created it. `Net` is both — so a compiled network can be handed to a pool of search threads and evaluated there while another thread trains it, and the compiler checks that rather than a comment.
+At compile time, the types state what the C ABI refuses at runtime. `Engine` is neither `Send` nor `Sync`, because graph mutation belongs to the thread that created it. `Net` is both — so a compiled network can be handed to a pool of search threads and evaluated there while another thread trains it, and the compiler checks that rather than a comment.
 
 ```rust
 let z = zelph::Engine::new()?;

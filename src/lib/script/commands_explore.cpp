@@ -37,6 +37,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstddef>
 #include <cwctype>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <ios>
@@ -45,6 +46,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -161,10 +163,21 @@ namespace zelph::console
 
         if (depth > 0)
         {
-            generate_and_print_mermaid_link(nd,
-                                            depth,
-                                            max_neighbors,
-                                            DEFAULT_EXCLUDE_NODES);
+            // A page that cannot be written is reported in place of its link,
+            // with the details following all the same: .list, .out, and .in
+            // each display numerous nodes in this way, and the figure is the
+            // least of what they show.
+            try
+            {
+                generate_and_print_mermaid_link(nd,
+                                                depth,
+                                                max_neighbors,
+                                                DEFAULT_EXCLUDE_NODES);
+            }
+            catch (const std::exception& ex)
+            {
+                _n->out_stream() << "  Mermaid HTML: not written -- " << ex.what() << std::endl;
+            }
         }
 
         auto format_node = [this, max_neighbors](network::Node node) -> std::string
@@ -236,7 +249,29 @@ namespace zelph::console
         // guillemet would be incorrectly treated as marked.
         std::string hex_name = _n->get_name_hex(nd, false, max_neighbors);
         if (_n->get_name(nd, _n->lang(), true).empty()) hex_name = string::unmark_identifiers(hex_name);
-        std::string           safe_name = string::sanitize_filename(hex_name);
+        std::string safe_name = string::sanitize_filename(hex_name);
+
+        // On Linux and macOS, a file name may contain no more than 255
+        // bytes, and a rendering easily surpasses this limit -- indeed, a
+        // label written in a CJK script exceeds it at about 85 characters.
+        // Although the corresponding page was never created, its link was
+        // still printed. When a name exceeds max_name_bytes, it is cut at a
+        // code point boundary and then extended with the node ID, ensuring
+        // the result remains legible and allows distinction between two
+        // renderings that share a common beginning.
+        constexpr std::size_t max_name_bytes = 200;
+        if (safe_name.size() > max_name_bytes)
+        {
+            std::string cut;
+            bool        full = false;
+            string::for_each_codepoint(safe_name, [&](std::string_view cp)
+                                       {
+                if (full || cut.size() + cp.size() > max_name_bytes)
+                    full = true;
+                else
+                    cut += cp; });
+            safe_name = cut + " (ID " + std::to_string(nd) + ")";
+        }
         std::filesystem::path html_path = temp_dir / (safe_name + ".html");
 
         io::gen_mermaid_html(_n,

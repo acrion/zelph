@@ -186,6 +186,11 @@ namespace zelph::network
         static Node          bucket_term_id(Node bucket);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
 
+        // Throws whatever node() throws when encountering a name that no
+        // node can carry -- the empty one -- ensuring that a caller relying
+        // solely on lookup reports it alike.
+        static void check_node_name(const std::string& name);
+
         // get_left(b).size() and get_right(b).size(), without copying the set.
         std::size_t left_count(Node b) const;
         std::size_t right_count(Node b) const;
@@ -274,12 +279,6 @@ namespace zelph::network
         private:
             Zelph& _z;
         };
-        // A location within the list of the collections written while the
-        // scope is open, along with those written since it: what a rule
-        // that a statement mentions marks (zelph/rule-text). The list is
-        // cleared upon closure of the outermost scope.
-        std::size_t       template_scope_mark() const;
-        std::vector<Node> template_scope_collections_since(std::size_t mark) const;
         // A collection whose identifier is determined by its recipe (see
         // Network::recipe_id). Reuses the node if present -- avoiding any
         // comparison of members, which ensures that a collection that
@@ -303,6 +302,17 @@ namespace zelph::network
         // is created in the template class (Network::is_template_id), and no
         // subsequent writing alters an id.
         bool is_rule_template(Node n) const;
+        // Whether a membership fact having `container` as its object
+        // constitutes a component of a rule's text: either a template or a
+        // conjunction set.
+        bool holds_rule_text(Node container) const;
+        // Whether the `membership` belongs to a literal that an engine
+        // before template ids wrote into a rule's text under a counter id,
+        // with the collection being data within this engine, though the
+        // rule states the member, which is a pattern; only a load of a
+        // network that such an engine saved records any
+        // (literals_written_before_template_ids).
+        bool is_older_rule_literal(Node membership) const;
 
         // A bulk importer invokes these before its first triple and after
         // its final one. During the intervening period,
@@ -673,11 +683,16 @@ namespace zelph::network
         bool        is_named_any(Node node) const;
         void        remove_name(Node node, std::string lang = "");
         void        unset_name(Node node, std::string lang = "");
-        Node        get_node(const std::string& name, std::string lang = "") const;
         void        register_core_node(Node n, const std::string& name);
         Node        get_core_node(const std::string& name) const;
         std::string get_core_name(Node n) const;
         std::string get_name_hex(Node node, bool prepend_num, int max_neighbors) const;
+        // In the language, the node corresponding to a name, otherwise the
+        // core node sharing that spelling, otherwise 0. When atoms_only is
+        // set, a variable carrying the name does not constitute an answer:
+        // this is node()'s lookup before it creates a node, and the lookup
+        // performed by a caller who must not write the graph.
+        Node get_node(const std::string& name, const std::string& lang = "", bool atoms_only = false) const;
         // A node rendered for a HUMAN -- diagnostics, log lines, error
         // messages. The identifier markers node_to_string works with are
         // resolved here, so they stay an internal of the renderer instead
@@ -814,6 +829,35 @@ namespace zelph::network
         /// Returns whether there was one.
         bool unmark_rule_pattern(Node node) const;
 
+        /// What a claim does with a node nested in the statement
+        /// (claim_nested): `Pass` neither claims nor enters it, `Claim`
+        /// revokes its mark and enters it only if one was present, `Enter`
+        /// revokes its mark and enters it. `into` is set for the object of a
+        /// membership.
+        enum class ClaimStep
+        {
+            Pass,
+            Claim,
+            Enter
+        };
+        using ClaimReach = std::function<ClaimStep(Node node, bool into)>;
+
+        /// A statement claims itself and every fact nested in it outside a
+        /// `=>`: revoke the marks of the facts nested in `statement`, just as
+        /// unmark_rule_pattern revokes its own. A `=>` encountered along the
+        /// way is claimed as a node, yet its parts are not; a rule's own
+        /// collection and a conjunction set remain unchanged as rule text.
+        /// `reach` determines the outcome for every other node. A network
+        /// lacking a rule pattern pays one atomic load, and a statement whose
+        /// immediate parts yield no work for the walk results in no
+        /// allocation.
+        void claim_nested(Node statement, const ClaimReach& reach) const;
+
+        /// The nodes that claim_nested has taken up and the adjacency
+        /// entries it has read in this process. Unaffected by hardware,
+        /// enabling a test to bound what a claim costs per statement.
+        static uint64_t claim_walk_steps();
+
         /// Rebuild the in-memory index from the graph. A binary load restores
         /// the marking facts without going through fact(), so the index has
         /// to be read back off the marker's extent afterwards.
@@ -932,6 +976,20 @@ namespace zelph::network
         size_t            drop_cluster(const std::string& name) const;
         size_t            drop_scratch_cluster(const std::string& name) const;
         bool              merge_cluster(const std::string& from, const std::string& to) const;
+        // The engine employs clusters whose names begin with a leading "__":
+        // the scratch where a rule is constructed (__rule), a construction's
+        // (__construction), and those used by .explain (__explain) and
+        // .prune-facts (__prune). Should a user define a cluster with such a
+        // name, it is treated as the scratch: the engine drops or merges that
+        // cluster, and any work the user has done within it goes with it. The
+        // entry points that allow a user to designate a cluster for activation
+        // or merging explicitly reject such names: .cluster, .cluster-merge,
+        // zelph/cluster, and zelph_cluster.
+        static bool        is_scratch_cluster_name(const std::string& name) { return name.starts_with("__"); }
+        static std::string scratch_cluster_name_refusal(const std::string& name)
+        {
+            return "the cluster name '" + name + "' begins with \"__\", which is reserved for the engine's own scratch clusters";
+        }
 
         // --- Members ---
 
@@ -1003,11 +1061,6 @@ namespace zelph::network
         // again.
         void note_rule_text_changed() const;
 
-        // Whether a membership fact having `container` as its object
-        // constitutes a component of a rule's text: either a template or a
-        // conjunction set.
-        bool holds_rule_text(Node container) const;
-
         // collection() and conjunction_collection(): a written template when
         // `rule_text` indicates it, a counter otherwise.
         Node new_collection(const std::unordered_set<Node>& elements, bool rule_text);
@@ -1019,10 +1072,10 @@ namespace zelph::network
         // holds one.
         bool component_holds_text_variable(Node component) const;
 
-        // Whether the text of a rule contains a collection that an
-        // engine before template ids wrote as part of it; see the
+        // The memberships of the collections that an engine before
+        // template ids wrote as part of a rule's text; see the
         // definition.
-        bool rules_written_before_template_ids() const;
+        std::unordered_set<Node> literals_written_before_template_ids() const;
 
         zelph::io::OutputStream locked_stream(zelph::io::OutputChannel channel) const;
         void                    register_operator_display(std::size_t scheme, const std::vector<std::pair<Node, OperatorDisplay>>& entries);

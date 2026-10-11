@@ -25,9 +25,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "network/zelph.hpp"
 #include "test_helpers.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <utility>
 
@@ -134,6 +136,248 @@ TEST_CASE("rule patterns: being derived announces the statement")
         CHECK(answers_contain(collector, "alarm needs attention")); });
 }
 
+TEST_CASE("rule patterns: a derived statement claims the facts nested in it")
+{
+    // A derivation is a claim and reaches as far as a typed statement: the
+    // facts nested in what a firing derives are claimed, outside a `=>`.
+    // Previously, only the derived node was claimed, so a part that a rule
+    // had written remained a pattern, whereas the identical statement, once
+    // typed, made it data. Each claimed part is announced, and the rule over
+    // it fires.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+
+        SUBCASE("a ground part of the consequence")
+        {
+            interactive.process("(X go Y) => ((a p b) q Y)");
+            interactive.process("t go z");
+        }
+        SUBCASE("a ground part nested deeper")
+        {
+            // The firing builds `(a p b) q z` and claims it, with the claim
+            // continuing into what the fact holds.
+            interactive.process("(X go Y) => (k says ((a p b) q Y))");
+            interactive.process("t go z");
+        }
+        SUBCASE("a ground part that the binding supplies as well")
+        {
+            // The rule over rules binds G to `a p b`, and its consequence
+            // writes the identical fact as it stands: what the consequence
+            // writes is claimed, regardless of whether a variable represents
+            // it in another context.
+            interactive.process("(G => H) => ((a p b) seen G)");
+        }
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(answers_contain(collector, "c q d")); });
+}
+
+TEST_CASE("rule patterns: a rule over rules asserts nothing of the rule it reads")
+{
+    // A derivation claims what its consequence writes, not the values its
+    // binding supplies: the firing read those. A rule over rules binds the
+    // parts of the rules it reads, so `(G => H) => (G seen H)` writes
+    // `(rust is bad) seen (alarm is on)` and asserts neither part, and a rule
+    // that is only mentioned stays a rule nobody put in force. When it
+    // claimed them, any such rule over rules turned the condition and the
+    // consequence of every ground rule it read into data, and for a rule with
+    // two conditions the consequence alone. The same statement typed by the
+    // user writes both parts and claims both.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+        const auto explained = [&](const std::string& fact)
+        {
+            collector.clear();
+            interactive.process(".explain " + fact);
+            return collector;
+        };
+        process_lines(interactive, R"(
+((X is bad) => (alarm is on)) "was proposed by" alice
+alice says ((rust is bad) => (alarm is on))
+)");
+
+        SUBCASE("a mentioned rule that a rule over rules reads")
+        {
+            interactive.process("(G => H) => (G seen H)");
+            interactive.run(true, false, false);
+            CHECK(answered("S seen O") == std::vector<std::string>{"(rust is bad) seen (alarm is on)"});
+            CHECK(answered("A is B").empty());
+            CHECK(any_output_contains(explained("(alarm is on)"), "alarm is on  [rule pattern; not asserted]"));
+        }
+        SUBCASE("a mentioned rule that a rule over rules reads, beside a fact its consequence writes")
+        {
+            // The consequence writes `k is listed` and the fact around the
+            // two values, and the claim walks through both; the values it
+            // meets inside remain the ones the binding supplied.
+            interactive.process("(G => H) => ((k is listed) about (G seen H))");
+            interactive.run(true, false, false);
+            CHECK(answered("A is B") == std::vector<std::string>{"k is listed"});
+            CHECK(any_output_contains(explained("(alarm is on)"), "alarm is on  [rule pattern; not asserted]"));
+        }
+        SUBCASE("the statement it derives, typed")
+        {
+            interactive.process("(rust is bad) seen (alarm is on)");
+            interactive.run(true, false, false);
+            CHECK(answered("A is B") == std::vector<std::string>{"alarm is on", "rust is bad"});
+            CHECK(any_output_contains(explained("(alarm is on)"), "alarm is on  [axiom]"));
+        } });
+}
+
+TEST_CASE("rule patterns: a rule over rules asserts no part of a typed rule it reads")
+{
+    // G binds the condition, or the condition set, and H the consequence;
+    // the derived statement claims none of these, and the typed rule stays
+    // silent. A derivation that claimed the values it bound made both parts
+    // of a rule with a single condition data, thus triggering the rule, and
+    // for a rule with several conditions, only the consequence, which then
+    // answered while the conditions it depends on remained patterns.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("one condition")
+        {
+            interactive.process("(a p b) => (e r f)");
+        }
+        SUBCASE("several conditions")
+        {
+            interactive.process("(a p b, c q d) => (e r f)");
+        }
+        interactive.process("(G => H) => (G seen H)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S seen O");
+        CHECK(collect_answers(collector).size() == 1);
+
+        for (const std::string query : {"S p O", "S q O", "S r O"})
+        {
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).empty());
+        }
+
+        collector.clear();
+        interactive.process(".explain (e r f)");
+        CHECK(any_output_contains(collector, "e r f  [rule pattern; not asserted]")); });
+}
+
+TEST_CASE("rule patterns: a derivation's claim reads no term that earlier firings filled")
+{
+    // A term into which each firing writes a member is not entered by the
+    // claim of a firing: it retains the content all prior firings
+    // contributed, and entering it caused the cost of a run to increase
+    // with the square of the number of firings (4000 firings: 0.01 s
+    // escalated to 3 s). Claimed is what the firing wrote; a term is
+    // entered solely when the firing built it under its binding, at a
+    // value position. Zelph::claim_walk_steps counts the statements and
+    // nodes the claims take up and the memberships they read, independently
+    // of the machine; the facts are written with evaluation disabled,
+    // ensuring only the firings are counted.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        constexpr int firings = 500;
+
+        SUBCASE("a term the consequence names at a value position")
+        {
+            // The rule over rules binds C to the typed rule's collection,
+            // and the rule it produces names the collection's term in its
+            // place, at both positions. A firing of the generated rule did
+            // not build that term.
+            process_lines(interactive, R"(
+.deductions off
+(a p b) => (c q @{d})
+(G => (S q C)) => ((X r Y) => ((X in C) noted C))
+)");
+        }
+        SUBCASE("a term the consequence writes into")
+        {
+            interactive.process(".deductions off");
+            interactive.process("(a p b) => (c q d)");
+            interactive.process("(X r Y) => ((X in @{z}) noted X)");
+        }
+        interactive.run(true, false, false);
+        interactive.process(".auto-run"); // a toggle: off
+        interactive.process("%(for i 0 " + std::to_string(firings) + R"( (let [k (string "k" i)] (zelph/fact k "r" k))))");
+
+        const uint64_t steps = zelph::network::Zelph::claim_walk_steps();
+        interactive.run(true, false, false);
+        CHECK(zelph::network::Zelph::claim_walk_steps() - steps <= 16 * firings);
+
+        collector.clear();
+        interactive.process("S noted O");
+        CHECK(collect_answers(collector).size() == firings); });
+}
+
+TEST_CASE("rule patterns: a statement with nothing to claim costs the claim at most one step")
+{
+    // After a rule acquires a ground pattern, each statement can include a
+    // part that carries a mark. A statement whose immediate parts provide
+    // the walk with nothing to process is settled before the walk allocates
+    // any resources, and two callers decide it without invoking a claim: a
+    // fact originating from Janet whose parts bear no mark (those parts are
+    // at hand) and a derivation whose consequence's parts are all values
+    // supplied by its binding (read once per rule and run) take no step at
+    // all, and a typed statement whose parts bear no mark costs the one step
+    // associated with the statement. Each of these had allocated a walk per
+    // statement, which cost a bulk Janet import after a single ground rule
+    // 12 %.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+
+        SUBCASE("a fact from Janet")
+        {
+            const uint64_t steps = zelph::network::Zelph::claim_walk_steps();
+            interactive.process(R"(%(for i 0 500 (zelph/fact (zelph/fact (string "x" i) "r" "y") "s" "z")))");
+            CHECK(zelph::network::Zelph::claim_walk_steps() == steps);
+            collector.clear();
+            interactive.process("S s O");
+            CHECK(collect_answers(collector).size() == 500);
+        }
+        SUBCASE("a typed statement")
+        {
+            interactive.process(".auto-run"); // a toggle: off
+            const uint64_t steps = zelph::network::Zelph::claim_walk_steps();
+            for (int i = 0; i < 500; ++i)
+                interactive.process("x" + std::to_string(i) + " s z");
+            CHECK(zelph::network::Zelph::claim_walk_steps() - steps == 500);
+            collector.clear();
+            interactive.process("S s O");
+            CHECK(collect_answers(collector).size() == 500);
+        }
+        SUBCASE("a derivation")
+        {
+            interactive.process("(X r Y) => (Y s X)");
+            interactive.run(true, false, false);
+            interactive.process(".auto-run"); // a toggle: off
+            interactive.process(R"(%(for i 0 500 (let [k (string "k" i)] (zelph/fact k "r" "m"))))");
+            const uint64_t steps = zelph::network::Zelph::claim_walk_steps();
+            interactive.run(true, false, false);
+            CHECK(zelph::network::Zelph::claim_walk_steps() == steps);
+            collector.clear();
+            interactive.process("S s O");
+            CHECK(collect_answers(collector).size() == 500);
+        }
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 TEST_CASE("rule patterns: asserting the statement first keeps it data")
 {
     // Order matters and must not: a statement that was CLAIMED before any
@@ -170,6 +414,159 @@ TEST_CASE("rule patterns: asserting it afterwards revokes the mark")
         collector.clear();
         interactive.process("C q D");
         CHECK(answers_contain(collector, "c q d")); });
+}
+
+TEST_CASE("rule patterns: a statement claims the facts nested in it")
+{
+    // A statement claims itself and every fact nested in it outside a `=>`.
+    // Previously, only its own node was considered claimed, meaning a nested
+    // fact served as data when the statement created it and as a pattern
+    // when a rule had created it first: following `(a p b) => (c q d)`, the
+    // statement `(a p b) q z` left `a p b` unanswered and the rule silent,
+    // whereas in reverse order both were answered. Each subcase puts the
+    // part in a different position the claim reaches, and the rule fires
+    // once the part becomes data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+
+        SUBCASE("in the subject")
+        {
+            interactive.process("(a p b) q z");
+        }
+        SUBCASE("in an object")
+        {
+            interactive.process("z q (a p b)");
+        }
+        SUBCASE("nested deeper")
+        {
+            interactive.process("x says ((a p b) q z)");
+        }
+        SUBCASE("in a set constant")
+        {
+            interactive.process("x has {(a p b) k}");
+        }
+        SUBCASE("in a collection the statement writes")
+        {
+            interactive.process("x has @{(a p b) k}");
+        }
+        SUBCASE("in a collection the statement writes into")
+        {
+            // A collection written as a literal is the statement's own,
+            // regardless of its position.
+            interactive.process("(m n o) in @{(a p b)}");
+        }
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(answers_contain(collector, "c q d"));
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "a p b  [axiom]")); });
+}
+
+TEST_CASE("rule patterns: what a statement writes in a mentioned rule is not claimed")
+{
+    // The claim stops at a `=>`: the mentioned rule constitutes data the
+    // statement refers to, and its parts are what that rule says. A part
+    // that a typed rule marked before remains a pattern.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process("x about ((a p b) => (e r f))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rule patterns: the order of writing does not decide what a statement claims")
+{
+    // A part that stands both beside a mentioned rule and within it is
+    // claimed by the statement, regardless of which of the two appears
+    // first. The mention marks what it created once the statement ends, and
+    // the claim of the statement subsequently revokes that mark, as the part
+    // also stands outside the `=>`. If the mention appeared first, it
+    // formerly created `a p b` and marked it, and nothing revoked the mark.
+    // The consequence, which only the mentioned rule states, remains a
+    // pattern irrespective of the order.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("the plain part first")
+        {
+            interactive.process("(a p b) about ((a p b) => (c q d))");
+        }
+        SUBCASE("the mention first")
+        {
+            interactive.process("((a p b) => (c q d)) about (a p b)");
+        }
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "a p b  [axiom]"));
+
+        collector.clear();
+        interactive.process(".explain (c q d)");
+        CHECK(any_output_contains(collector, "c q d  [rule pattern; not asserted]")); });
+}
+
+TEST_CASE("rule patterns: a statement that mentions a rule with variables claims the facts nested in it")
+{
+    // The variables of the mentioned rule fail to turn the statement into a
+    // query, meaning it claims what stands outside that rule. Read by
+    // checking whether the statement held any variable, the claim of
+    // `a p b` was skipped.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process("(a p b) about ((X r Y) => (X s Y))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"}); });
+}
+
+TEST_CASE("rule patterns: a query claims none of the facts nested in it")
+{
+    // A query builds its pattern using identical calls to those used by a
+    // claim, and that pattern says nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process("S about ((a p b) q z)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK_FALSE(answers_contain(collector, "c q d")); });
 }
 
 TEST_CASE("rule patterns: the Janet read surface answers about claims")
@@ -243,6 +640,181 @@ TEST_CASE("rule patterns: a fact asserted from Janet revokes the mark")
         CHECK(any_output_contains(collector, "EX2-false")); });
 }
 
+TEST_CASE("rule patterns: a fact asserted from Janet claims the facts nested in it")
+{
+    // `zelph/fact` claims the facts nested in what it asserts, much like a
+    // typed statement does. A nested fact built by a prior `zelph/fact`
+    // invocation within the block was claimed by that prior call; this one
+    // comes from the thunk of `zelph/rule-text`, which claims nothing, thus
+    // remaining the typed rule's pattern at the moment `zelph/fact` receives
+    // it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(R"(%(zelph/fact (zelph/rule-text (fn [] (zelph/fact "a" "p" "b"))) "q" "z"))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(answers_contain(collector, "c q d")); });
+}
+
+TEST_CASE("rule patterns: a refutation claims the facts nested in it")
+{
+    // A refutation is a statement, and a statement claims the facts nested
+    // in it outside a `=>`: `¬(x says (a p b))` denies that x says it and
+    // asserts `a p b`, thereby firing the rule over it. A refutation that
+    // created the nested fact previously established it as data, so this
+    // solely eliminates the dependence on whether a rule had written the
+    // fact first.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+
+        SUBCASE("typed")
+        {
+            interactive.process("¬(x says (a p b))");
+        }
+        SUBCASE("from Janet")
+        {
+            interactive.process(R"(%(zelph/refute "x" "says" (zelph/rule-text (fn [] (zelph/fact "a" "p" "b")))))");
+        }
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"});
+
+        collector.clear();
+        interactive.process("A says B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rule patterns: a mention built with zelph/fact claims its parts")
+{
+    // The contract of the assertion API, pinned beside the typed mention,
+    // which claims nothing: every zelph/fact call within a Janet block
+    // constitutes a claim, and the inner calls execute before the `=>` call,
+    // so nothing can know at that point that their outcomes will form the
+    // parts of a rule. The mentioned rule is not in force.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"(%(zelph/fact "x" "noted" (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d"))))");
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"});
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found.")); });
+}
+
+TEST_CASE("rule patterns: a mention built inside zelph/build-rule or zelph/rule-text claims none of its parts")
+{
+    // The method for composing an unclaimed mention from Janet. Either form
+    // runs its calls as the rule's text, where zelph/fact claims nothing, and
+    // marks the ground parts they created. Previously, zelph/rule-text
+    // operated by running them as a block, thereby treating them as claims,
+    // and it marked only the memberships within the collections they wrote.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto unclaimed = [&]
+        {
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S noted O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"x noted ((a p b) => (c q d))"});
+
+            collector.clear();
+            interactive.process(".explain (c q d)");
+            CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+        };
+
+        SUBCASE("zelph/build-rule")
+        {
+            interactive.process(R"(%(zelph/fact "x" "noted" (zelph/build-rule (fn [] (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d"))))))");
+            unclaimed();
+        }
+        SUBCASE("zelph/rule-text")
+        {
+            interactive.process(R"(%(zelph/fact "x" "noted" (zelph/rule-text (fn [] (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d"))))))");
+            unclaimed();
+        }
+        SUBCASE("zelph/rule-text around the statement that names the rule")
+        {
+            // Each rule created by the thunk is marked, just as in a firing,
+            // and not merely a rule that the thunk returns: this thunk returns
+            // the statement.
+            interactive.process(R"(%(zelph/rule-text (fn [] (zelph/fact "x" "noted" (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d"))))))");
+            unclaimed();
+        }
+        SUBCASE("zelph/rule-text around that statement and around the rule")
+        {
+            // The inner call operates inside the build of the outer one and
+            // leaves the marking to it, whereas the outer call returns the
+            // statement.
+            interactive.process(R"(%(zelph/rule-text (fn [] (zelph/fact "x" "noted" (zelph/rule-text (fn [] (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d"))))))))");
+            unclaimed();
+        } });
+}
+
+TEST_CASE("rule patterns: a fact written in the thunk of zelph/rule-text revokes no mark")
+{
+    // The calls within the thunk write the text of a rule, even within a Janet
+    // block, where zelph/fact otherwise claims ("a fact asserted from Janet
+    // revokes the mark"). Run as a part of the block, the thunk claimed the
+    // condition of a typed rule by writing it again, and the rule fired.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(R"(%(zelph/rule-text (fn [] (zelph/fact "a" "p" "b"))))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rule patterns: a mention whose thunk fails leaves nothing")
+{
+    // A failed mention retains nothing that its thunk wrote, just as a failed
+    // rule build does. After merging, the parts stayed in the graph unmarked,
+    // as claims that nobody had made: `a p b` was answered after the error.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_THROWS(interactive.process(R"(%(zelph/rule-text (fn [] (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d")) (error "stop"))))"));
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 TEST_CASE("rule patterns: zelph/rule marks what its argument forms built")
 {
     // Typed, `(X p k) => (X likes (k is green))` maintains `k is green` as a
@@ -260,7 +832,7 @@ TEST_CASE("rule patterns: zelph/rule marks what its argument forms built")
         const auto build = [&interactive]
         { interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" "k")] (zelph/fact 'X "likes" (zelph/fact "k" "is" "green"))))js"); };
 
-        SUBCASE("a part the argument forms built is a pattern, also once the rule has fired")
+        SUBCASE("a part the argument forms built is a pattern until a firing claims it")
         {
             build();
             collector.clear();
@@ -272,13 +844,16 @@ TEST_CASE("rule patterns: zelph/rule marks what its argument forms built")
             CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
             CHECK_FALSE(any_output_contains(collector, "[axiom]"));
 
+            // The derived `a likes (k is green)` claims the fact nested in
+            // it, just as the identical statement, when typed, does; the part
+            // used to remain a pattern following the firing.
             collector.clear();
             interactive.process("a p k");
             CHECK(any_deduction_of(collector, "a likes (k is green)"));
 
             collector.clear();
             interactive.process("A is green");
-            CHECK(collect_answers(collector).empty());
+            CHECK(collect_answers(collector) == std::vector<std::string>{"k is green"});
         }
 
         SUBCASE("so is a part that a helper called in the argument forms built")
@@ -417,6 +992,204 @@ TEST_CASE("rule patterns: naming a rule does not claim what it says")
         CHECK(collect_answers(collector).size() == 1); });
 }
 
+TEST_CASE("rule patterns: a mentioned ground rule claims none of its parts")
+{
+    // Mentioning a rule does not assert the rule itself nor what it says. The
+    // parser constructed the parts of a mention as plain nested facts, meaning
+    // that `((a p b) => (a likes b)) is noted` answered `a likes b` and
+    // `a p b`, and `.explain` called both axioms, even though neither had been
+    // claimed and the rule is not in force. The mention marks the parts it
+    // created, just as a typed rule would; the statement regarding the rule
+    // constitutes data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("((a p b) => (a likes b)) is noted");
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S is O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"((a p b) => (a likes b)) is noted"});
+
+        collector.clear();
+        interactive.process(".explain (a likes b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+        CHECK_FALSE(any_output_contains(collector, "[axiom]"));
+
+        collector.clear();
+        interactive.process(R"(%(string "EX-" (zelph/exists "a" "likes" "b") "/" (zelph/mentioned "a" "likes" "b")))");
+        CHECK(any_output_contains(collector, "EX-false/true")); });
+}
+
+TEST_CASE("rule patterns: a mentioned rule with variables claims none of its ground parts")
+{
+    // A proposal recorded but not in force: its condition holds a variable,
+    // its consequence is ground, and `S is O` answered `alarm is on` as though
+    // the alarm were active. A ground condition paired with conditions
+    // involving variables was answered in the same way.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+((X is bad) => (alarm is on)) "was proposed by" alice
+((X p Y, a r b) => (X q Y)) is noted
+)");
+
+        collector.clear();
+        interactive.process("S is O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rule patterns: a part asserted before the mention stays a claim")
+{
+    // The mention marks only what it created, just as a typed rule does
+    // ("asserting the statement first keeps it data"): `a p b` was claimed
+    // before the rule was mentioned, and the reuse of its node through mention
+    // alters nothing regarding that.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("((a p b) => (c q d)) is noted");
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}
+
+TEST_CASE("rule patterns: asserting a part after the mention claims it")
+{
+    // A claim revokes the mark, just as it does for a typed rule's pattern.
+    // The rule remains mentioned and does not fire, so its consequence
+    // persists as a pattern: it was answered earlier, since the mention had
+    // written it as a fact.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("((a p b) => (c q d)) is noted");
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rule patterns: a typed rule over a comma list does not fire on what a mention wrote")
+{
+    // The typed rule functions as an independent node, because every statement
+    // constructs a new conjunction set from a comma list, and it is in force.
+    // It was triggered by `a p b` and `c q d`, which had been written
+    // exclusively by the prior mention, and `.explain (e r f)` named both as
+    // axioms. Claimed, the conditions are satisfied and the rule fires.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("((a p b, c q d) => (e r f)) is noted");
+        interactive.process("(a p b, c q d) => (e r f)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".explain (e r f)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+        CHECK_FALSE(any_output_contains(collector, "[axiom]"));
+
+        process_lines(interactive, R"(
+a p b
+c q d
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e r f"}); });
+}
+
+TEST_CASE("rule patterns: the parts of a mention nested deeper or in a set are patterns")
+{
+    // The parser generates a mention for every `=>` found within another
+    // statement, regardless of its position. A rule that is mentioned inside a
+    // mentioned rule is a part of the outer rule, which marks both. The plain
+    // nested fact around a mention remains unchanged: it is asserted.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("several conditions")
+        {
+            interactive.process("((a p b, c q d) => (e r f)) is noted");
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S r O").empty());
+        }
+        SUBCASE("a member of a set")
+        {
+            interactive.process("x has {((a p b) => (c q d)) k}");
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S q O").empty());
+        }
+        SUBCASE("inside a nested fact")
+        {
+            interactive.process("alice says (bob believes ((a p b) => (c q d)))");
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S believes O") == std::vector<std::string>{"bob believes ((a p b) => (c q d))"});
+        }
+        SUBCASE("a member of a collection")
+        {
+            interactive.process("x has @{((a p b) => (c q d))}");
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S q O").empty());
+        }
+        SUBCASE("a mention inside a mention")
+        {
+            interactive.process("((a p b) => ((c q d) => (e r f))) is noted");
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S r O").empty());
+        }
+        SUBCASE("a mention inside a mention, read by a rule over rules")
+        {
+            // The inner rule constitutes a part of the outer rule and is
+            // marked with it, as a rule that a typed generator writes is. The
+            // rule over rules reads only the outer rule, and what it derives
+            // claims none of the parts it bound ("rule patterns: a rule over
+            // rules asserts nothing of the rule it reads"): `a p b` stays a
+            // pattern, and the inner rule continues to be a part of the outer
+            // one, which the rule over rules does not read. A derivation that
+            // claimed the values it bound made both data, and the rule over
+            // rules then read the inner rule as well.
+            interactive.process("(G => H) => (G seen H)");
+            interactive.process("((a p b) => ((c q d) => (e r f))) is noted");
+            interactive.run(true, false, false);
+            CHECK(answered("S seen O") == std::vector<std::string>{"(a p b) seen ((c q d) => (e r f))"});
+            CHECK(answered("S p O").empty());
+            CHECK(answered("S r O").empty());
+        } });
+}
+
 TEST_CASE("rule patterns: a read-only command does not claim the pattern it asks about")
 {
     // .explain, .node and the prune commands parse their argument into the
@@ -442,6 +1215,117 @@ TEST_CASE("rule patterns: a read-only command does not claim the pattern it asks
         collector.clear();
         interactive.process(R"(%(string "EX-" (zelph/exists "a" "p" "b")))");
         CHECK(any_output_contains(collector, "EX-false")); });
+}
+
+TEST_CASE("rule patterns: a read-only command that parses a mention leaves no mark")
+{
+    // As the .explain command builds its argument, the mention within that
+    // argument writes its parts into the scratch cluster which the command
+    // drops afterwards, and it marks nothing: `a p b`, later asserted as a
+    // plain nested fact, represents a new node bearing the prior identifier,
+    // and a mark left in the index would hide the claim.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".explain (x noted ((a p b) => (c q d)))");
+        interactive.process("x says (a p b)");
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}
+
+TEST_CASE("rule patterns: a query that names a mention leaves no mark")
+{
+    // A query builds its pattern through the calls a claim makes, and nothing
+    // drops what it has assembled. Its mention marked the parts it created,
+    // the marks persisted beyond the query's lifetime, and they hid `a r b`
+    // from the statement that wrote it afterwards: `x says (a r b)` was not
+    // answered, and the rule over it did not fire. Only the end of a statement
+    // shows that it asks, hence the marks wait for it. What a query leaves
+    // within the graph is the same as without the mention: nested facts of a
+    // query are written as data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto claimed_afterwards = [&]
+        {
+            interactive.process("x says (a r b)");
+            interactive.run(true, false, false);
+
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a r b"});
+
+            collector.clear();
+            interactive.process("S seen O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a seen b"});
+
+            collector.clear();
+            interactive.process(".explain (a r b)");
+            CHECK(any_output_contains(collector, "[axiom]"));
+        };
+
+        interactive.process("(X r Y) => (X seen Y)");
+
+        SUBCASE("a query")
+        {
+            interactive.process("S noted ((a r b) => (c q d))");
+            claimed_afterwards();
+        }
+        SUBCASE("a query after the ? prefix")
+        {
+            interactive.process("? S noted ((a r b) => (c q d))");
+            claimed_afterwards();
+        }
+        SUBCASE("a variable that the query shares with the rule it names")
+        {
+            // The resolution of X occurs first within the mention, and then
+            // again through the statement that surrounds it: it is this second
+            // use that makes the statement ask.
+            interactive.process("X noted ((X q b) => (a r b))");
+            claimed_afterwards();
+        } });
+}
+
+TEST_CASE("rule patterns: a ground request after ? is asserted with the mention in it")
+{
+    // `?` asserts the statement it asks about before it asks (Interactive),
+    // so a ground request marks the parts of the rule it mentions, just as
+    // the identical statement typed alone does. Entered afterwards,
+    // `x says (a r b)` claims the part it holds, as each statement claims the
+    // facts nested in it outside a `=>`. Previously, it left the part a
+    // pattern: only the statement's own node was claimed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X r Y) => (X seen Y)");
+        interactive.process("? x noted ((a r b) => (c q d))");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".explain (a r b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+
+        interactive.process("x says (a r b)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a r b"});
+
+        collector.clear();
+        interactive.process("S seen O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a seen b"});
+
+        collector.clear();
+        interactive.process(".explain (a r b)");
+        CHECK(any_output_contains(collector, "a r b  [axiom]")); });
 }
 
 TEST_CASE("rule patterns: a propositional rule reaches its conclusion")
@@ -580,6 +1464,127 @@ TEST_CASE("rule patterns: a firing does not derive its own consequence pattern w
             collector.clear();
             interactive.process("S about O");
             CHECK(collect_answers(collector) == std::vector<std::string>{"k about z"});
+        } });
+}
+
+TEST_CASE("rule patterns: a firing does not derive a fact that keeps a variable of a rule it mentions")
+{
+    // A firing keeps the condition set of a rule its consequence mentions,
+    // exactly as it stands. If that set holds a variable, the instance
+    // becomes rule text: no query answers it, and where the firing would
+    // have substituted into the mentioned rule's conditions, it constitutes
+    // half of a rule that nobody wrote. Such a consequence is not derived in
+    // any way -- no write occurs, no claim is made, no line is produced, no
+    // witness is provided -- and its own pattern, the case outlined above,
+    // is merely one among many. These instances were formerly written and
+    // printed, a witness `??` was made for the fresh variable of sib1 and
+    // b4, and b4's `c q k` was answered as data.
+    //
+    // The choice stems solely from the consequence, before any construction:
+    // fresh nodes are made before the consequences are processed, and the
+    // instantiation builds the nested `=>` before the fact that holds it,
+    // and a `=>` that belongs to nothing is a rule in force (b4's
+    // `.list-rules`). Single passes, as counts_over_passes executes them,
+    // followed by a run to the fixpoint in the alternate evaluation mode: an
+    // engine that makes a witness no fact stands in makes one on every pass.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+        const auto printed_deduction = [&]
+        {
+            return std::any_of(collector.events().begin(), collector.events().end(), [](const auto& e)
+                               { return e.channel == zelph::io::OutputChannel::Out && normalize(e.text).find("⇐") != std::string::npos; });
+        };
+        const auto passes = [&](const std::string& lines)
+        {
+            interactive.process(".deductions all");
+            interactive.process(".semi-naive off");
+            interactive.process(".auto-run"); // a toggle: off
+            process_lines(interactive, lines);
+            const std::size_t before = node_count(collector, interactive);
+
+            std::vector<std::size_t> counts;
+            for (int pass = 0; pass < 4; ++pass)
+            {
+                collector.clear();
+                interactive.process(".run-once");
+                CHECK_FALSE(printed_deduction());
+                counts.push_back(node_count(collector, interactive));
+            }
+            CHECK(counts == std::vector<std::size_t>(4, before));
+
+            interactive.process(".semi-naive on");
+            collector.clear();
+            interactive.process(".run");
+            CHECK_FALSE(printed_deduction());
+            CHECK(node_count(collector, interactive) == before);
+        };
+
+        SUBCASE("a fresh variable in the subject (sib1)")
+        {
+            passes("(X p Y) => (W about ((A r B, A s B) => (c q d)))\na p b");
+            CHECK(answered("S about O").empty());
+        }
+        SUBCASE("a fresh variable of its own beside another consequence")
+        {
+            // W exists solely in the consequence that is not derived, V in
+            // the one that is: the firing makes the witness for V and the
+            // fact that names it, and no node for W, which would stand in no
+            // fact.
+            interactive.process(".deductions all");
+            interactive.process(".semi-naive off");
+            interactive.process(".auto-run"); // a toggle: off
+            process_lines(interactive, "(X p Y) => (W about ((A r B, A s B) => (c q d))) (V t X)\na p b");
+            const std::size_t before = node_count(collector, interactive);
+            interactive.process(".run-once");
+            const std::size_t after = node_count(collector, interactive);
+            CHECK(after == before + 2);
+            for (int pass = 0; pass < 3; ++pass)
+            {
+                interactive.process(".run-once");
+                CHECK(node_count(collector, interactive) == after);
+            }
+            CHECK(answered("S t O") == std::vector<std::string>{"?? t a"});
+            CHECK(answered("S about O").empty());
+        }
+        SUBCASE("a bound variable in the subject (sib2)")
+        {
+            passes("(X p Y) => (X about ((A r B, A s B) => (c q d)))\na p b");
+            CHECK(answered("S about O").empty());
+        }
+        SUBCASE("the outer variables in the mentioned conditions (c1)")
+        {
+            passes("(X p Y) => (((X q Y, X r Y) => (X s Y)) is noted)\nb p k\nc q d\nc r d");
+            CHECK(answered("S is O").empty());
+            CHECK(answered("S s O").empty());
+        }
+        SUBCASE("a predicate variable in the mentioned conditions (b4)")
+        {
+            passes("(G go H) => (((X G Y, X r Y) => (c q H)) noted W)\nt go k");
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S noted O").empty());
+
+            // Only the typed rule.
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(std::count_if(collector.events().begin(), collector.events().end(), [](const auto& e)
+                                { return normalize(e.text).find("=>") != std::string::npos; })
+                  == 1);
+            CHECK_FALSE(any_output_contains(collector, "(c q k)"));
+        }
+        SUBCASE("the control: a mention the substitution makes ground (c3)")
+        {
+            interactive.process(".deductions all");
+            interactive.process("(X p Y) => (X about ((X r Y) => (X q Y)))");
+            collector.clear();
+            interactive.process("k p m");
+            CHECK(any_deduction_of(collector, "k about ((k r m) => (k q m))"));
+            CHECK(answered("S about O") == std::vector<std::string>{"k about ((k r m) => (k q m))"});
         } });
 }
 
@@ -1190,22 +2195,29 @@ TEST_CASE("rule patterns: a SET constant in a condition is not a pattern")
 TEST_CASE("rule patterns: what a rule writes inside a set constant is rule text")
 {
     // A set constant's inherent memberships define its essence and stay
-    // unmarked. The content the rule penned within it constitutes its text,
-    // just as with any other: `k in m` exists solely due to the rule's
-    // inscription, and answered a query from the moment it was written. The
-    // firing derives the set constant, whose membership constitutes data;
-    // `k in m` persists as a pattern.
+    // unmarked. The content the rule inscribed inside it constitutes its
+    // text, just as in any other case: `k in m` exists only because of the
+    // rule's inscription, and answered a query from the moment it was
+    // written. The firing derives the set constant, whose membership
+    // constitutes data, and claims what the set holds, much like a statement
+    // claims the facts nested in it outside a `=>`: `a likes {(k in m)}`
+    // typed performs the same function. Prior to the firing, `k in m` serves
+    // as a pattern; following it, it used to stay one.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         SUBCASE("a fact")
         {
             interactive.process("(X q Y) => (X likes {(k in m)})");
+            collector.clear();
+            interactive.process("S in O");
+            CHECK_FALSE(answers_contain(collector, "k in m"));
+
             interactive.process("a q b");
             interactive.run(true, false, false);
 
             collector.clear();
             interactive.process("S in O");
-            CHECK_FALSE(answers_contain(collector, "k in m"));
+            CHECK(answers_contain(collector, "k in m"));
             CHECK(answers_contain(collector, "(k in m) in {(k in m)}"));
             collector.clear();
             interactive.process("S likes O");
@@ -1222,11 +2234,12 @@ TEST_CASE("rule patterns: what a rule writes inside a set constant is rule text"
 
 TEST_CASE("rule patterns: a rule a statement mentions writes its collections as rule text")
 {
-    // `((X p Y) => (X q @{c})) is noted` writes the rule it mentions, and
-    // the collection that rule holds is contained within its text, just as
-    // in a typed rule: its membership answers no query. The other ground
-    // components of the mention retain their status -- a ground rule that is
-    // mentioned may serve as data and as a premise.
+    // `((X p Y) => (X q @{c})) is noted` writes the rule it mentions, and the
+    // collection that rule holds is contained within its text, just as in a
+    // typed rule: its membership answers no query. The remaining ground parts
+    // of the mention are also patterns; the mentioned rule itself remains
+    // unmarked, because it can function as data and as a premise ("explain: a
+    // ground rule a statement talks about is a premise").
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("((X p Y) => (X q @{c})) is noted");
@@ -1237,7 +2250,7 @@ TEST_CASE("rule patterns: a rule a statement mentions writes its collections as 
         interactive.process("((a p b) => (c q d)) is odd");
         collector.clear();
         interactive.process("S p O");
-        CHECK(answers_contain(collector, "a p b")); });
+        CHECK_FALSE(answers_contain(collector, "a p b")); });
 }
 
 TEST_CASE("rule patterns: a container the rule did not build keeps its facts")
@@ -1297,6 +2310,52 @@ TEST_CASE("rule patterns: the mark survives .save and .load")
         collector.clear();
         interactive.process("C q D");
         CHECK(answers_contain(collector, "c q d"));
+    }
+
+    fs::remove(file);
+}
+
+TEST_CASE("rule patterns: the marks of a mention survive .save and .load")
+{
+    // The marks a mention writes constitute facts within the graph, just as
+    // those of a typed rule do. Following the load, claiming the condition
+    // does not put the mentioned rule in force, thus its consequence stays a
+    // pattern.
+    const auto file = fs::temp_directory_path() / "zelph_mention_pattern_test.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process("((a p b) => (c q d)) is noted");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process(".load \"" + file.string() + "\"");
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S is O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"((a p b) => (c q d)) is noted"});
+
+        // .load disables auto-run.
+        interactive.process("a p b");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
     }
 
     fs::remove(file);

@@ -1073,6 +1073,136 @@ subj pred (obj is (subj2 a_val (b test c_val)))
         CHECK(any_output_starts_with(collector, "( success a_val c_val )")); });
 }
 
+TEST_CASE("nested unification: a statement subject with a variable predicate is matched")
+{
+    // A pattern where the subject is a statement featuring a variable
+    // predicate, (X R Y) noted yes, matched nothing: the candidate
+    // pre-filter demanded that the subject point to R itself, a node that
+    // no data statement points to, regardless of whether R was bound. The
+    // object position, yes noted (X R Y), and a fixed inner predicate
+    // always matched, so the same statement was answered in one position
+    // and not in the other.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a query")
+        {
+            interactive.process("(j sub k) noted yes");
+            interactive.process("yes noted (a sub b)");
+            collector.clear();
+            interactive.process("(X R Y) noted yes");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"(j sub k) noted yes"});
+            collector.clear();
+            interactive.process("yes noted (X R Y)");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"yes noted (a sub b)"});
+        }
+        SUBCASE("a rule condition")
+        {
+            interactive.process("((X R Y) noted yes) => (X got Y)");
+            interactive.process("(j sub k) noted yes");
+            collector.clear();
+            interactive.process("S got O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"j got k"});
+        }
+        SUBCASE("a relation an earlier condition binds")
+        {
+            // R is bound before the nested condition is matched; the filter
+            // used the pattern's own R, regardless of the binding.
+            process_lines(interactive, R"(
+sub is memrel
+j sub k
+(j sub k) noted yes
+(R is memrel, (X R Y) noted yes) => (X got Y)
+)");
+            collector.clear();
+            interactive.process("S got O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"j got k"});
+        }
+        SUBCASE("a composite predicate")
+        {
+            // At the top level, (A r s) matched as a composite predicate;
+            // nested in the subject, the filter required an edge pointing to
+            // the pattern's own (A r s).
+            interactive.process("(j (a r s) k) noted yes");
+            collector.clear();
+            interactive.process("X (A r s) Z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"j (a r s) k"});
+            collector.clear();
+            interactive.process("(X (A r s) Z) noted yes");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"(j (a r s) k) noted yes"});
+        }
+        SUBCASE("a relation variable that recurs in the subject is the statement's relation")
+        {
+            // The value was taken by R from the subject, and the statement's
+            // inherent relation was never compared with it: `(a p b) q c` was
+            // answered as `(a p b) p c`, a statement that the graph does not
+            // hold.
+            interactive.process("(j sub k) sub m");
+            interactive.process("(a p b) q c");
+            collector.clear();
+            interactive.process("(X R Y) R Z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"(j sub k) sub m"});
+        }
+        SUBCASE("a rule whose relation variable recurs in the subject")
+        {
+            interactive.process("((X R Y) R Z) => (X same Y)");
+            interactive.process("(j sub k) sub m");
+            interactive.process("(a p b) q c");
+            collector.clear();
+            interactive.process("S same O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"j same k"});
+        }
+        SUBCASE("a negated condition whose relation variable recurs in the subject")
+        {
+            // No R makes `(a R b) R c` a statement, thus `a free b` holds.
+            // The negation matched `(a p b) q c` as `(a p b) p c` and
+            // blocked the rule from applying.
+            process_lines(interactive, R"(
+a p b
+(a p b) q c
+a twin b
+(X twin Y, ¬((X R Y) R c)) => (X free Y)
+)");
+            collector.clear();
+            interactive.process("S free O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a free b"});
+        }
+        SUBCASE("a relation variable that recurs in the object is the statement's relation")
+        {
+            interactive.process("(Z R (X R Y)) => (X osame Y)");
+            interactive.process("m sub (j sub k)");
+            interactive.process("c q (a p b)");
+            collector.clear();
+            interactive.process("Z R (X R Y)");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"m sub (j sub k)"});
+            collector.clear();
+            interactive.process("S osame O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"j osame k"});
+        } });
+}
+
+TEST_CASE("unification: a relation variable that is also the subject is the statement's relation")
+{
+    // The top-level counterpart to the recurring relation variable
+    // mentioned earlier: R took its value from the subject, thus `R R Z`
+    // yielded `a a b` for the statement `a p b`. `p p c` and the core
+    // statement `~ ~ ->`, with IsA functioning as a relation type in its
+    // own right, constitute the statements of that particular shape.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("p p c");
+        collector.clear();
+        interactive.process("R R Z");
+        auto answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == std::vector<std::string>{"p p c", "~ ~ ->"});
+
+        interactive.process("(R R Z) => (R self Z)");
+        collector.clear();
+        interactive.process("p self Z");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"p self c"}); });
+}
+
 // ---------------------------------------------------------------------------
 // Complex conjunction rule
 // ---------------------------------------------------------------------------
@@ -1999,6 +2129,27 @@ TEST_CASE("unification: consequence templates with variables only at depth 2 are
         CHECK(any_output_contains(collector, "leaked")); });
 }
 
+TEST_CASE("unification: a statement whose predicate holds a variable is not data for a relation variable")
+{
+    // The query `(d q b) (R r c) d` leaves its pattern within the graph, and
+    // its predicate `(R r c)` gets recorded as a relation type. A relation
+    // variable took that pattern for data: `(d q b) X d` answered it at the
+    // top level, and so did `(d Y b) X d` once a variable inner predicate
+    // matched at all. A candidate was already dismissed when its subject or
+    // an object held a variable, or when it met a composite predicate
+    // pattern.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(d q b) p d");
+        interactive.process("(d q b) (R r c) d");
+        collector.clear();
+        interactive.process("(d q b) X d");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(d q b) p d"});
+        collector.clear();
+        interactive.process("(d Y b) X d");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(d q b) p d"}); });
+}
+
 // ---------------------------------------------------------------------------
 // Self-referential facts: subject == object reconstruction
 // ---------------------------------------------------------------------------
@@ -2367,23 +2518,26 @@ h is m
         CHECK(collect_answers(collector) == std::vector<std::string>{"y near h"}); });
 }
 
-TEST_CASE("fresh variables: a witness whose fact mentions a rule with variables in its conditions is found")
+TEST_CASE("fresh variables: a fact that mentions a rule with variables in its conditions gets no witness")
 {
     // A firing keeps the condition set of a rule its consequence refers to,
-    // so the first rule writes `w about R` with A and B still present in R's
-    // conditions, while the second rule, acting as a generator, produces
-    // `R' noted w` with X, G, and Y still part of the conditions of R'. For
-    // a query, such a fact is regarded as rule text, not data
-    // (Zelph::var_in_closure reads a rule's conditions), and the check for
-    // an earlier witness read its candidates in the same way: it never found
-    // the fact the firing had generated, either via its object or its
-    // subject, and each pass created a new witness. Under `.semi-naive off`,
-    // the run never ended. In the one-condition twins, A and B, or X and Y,
-    // are fresh and the fact is ground, meaning it was found all along.
+    // meaning the first rule would output `w about R` while A and B remain
+    // within R's conditions, and the second rule `R' noted w` with X, G, and
+    // Y still present in the conditions of R'. For a query, this kind of
+    // fact is rule text, not data (Zelph::var_in_closure reads a rule's
+    // conditions), and the check for a prior witness once read its
+    // candidates in the same way: it never found the fact that the firing
+    // had produced, and every pass created a new witness, so under
+    // `.semi-naive off` the run never ended. That check came to read them as
+    // a firing writes them, and each rule made one witness. Now, neither
+    // consequence is derived in any way, because its instance would keep a
+    // variable from the rule it mentions, so W stands in no fact and no
+    // witness is made. In the single-condition twin cases, A and B, or X and
+    // Y, are fresh and the fact is ground.
     //
-    // `.semi-naive on`, and the first passes behind REQUIRE: an engine with
-    // the defect fails at this stage rather than causing a hang during the
-    // classic run that follows.
+    // `.semi-naive on`, and the first passes behind REQUIRE: an engine that
+    // makes a witness with every pass fails at this point instead of
+    // triggering a hang during the subsequent classic run.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process(".semi-naive on");
@@ -2398,10 +2552,12 @@ t go k
         const std::size_t before = node_count(collector, interactive);
         interactive.process(".run");
         const std::size_t after = node_count(collector, interactive);
-        // Two witnesses and the facts that name them; the second rule
-        // additionally writes the rule it refers to, along with its
-        // consequence `c q k`.
-        CHECK(after == before + 6);
+        // Nothing: not a single witness, not a single fact that could name
+        // one, and no rule that the second consequence refers to. This
+        // comprised seven nodes: two witnesses, the two facts, the rule that
+        // was mentioned, its consequence `c q k`, and the fact that marked
+        // it.
+        CHECK(after == before);
 
         for (const char* pass : {".run", ".run-once"})
         {
@@ -2443,6 +2599,30 @@ TEST_CASE("fresh variables: a fresh variable nested in a consequence is created 
         // "?\?" instead of "??": "??)" would constitute a
         // trigraph.
         CHECK(collect_answers(collector) == std::vector<std::string>{"(a f ?\?) q b"}); });
+}
+
+TEST_CASE("fresh variables: a nested statement with a variable predicate gets one witness")
+{
+    // The check for a prior witness matches (X R Y) noted W as a pattern,
+    // and a statement subject with a variable predicate matched nothing:
+    // it never located `(j sub k) noted ??`, so every pass created another
+    // one. With the fixed predicate `sub`, the witness was found.
+    //
+    // `.semi-naive on`: refer to the note located
+    // directly above this group.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+
+        interactive.process("sub is memrel");
+        interactive.process("j sub k");
+        interactive.process("(R is memrel, X R Y) => ((X R Y) noted W)");
+        interactive.process(".run");
+        interactive.process(".run");
+
+        collector.clear();
+        interactive.process("S noted O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(j sub k) noted ?\?"}); });
 }
 
 TEST_CASE("fresh variables: the consequence that can bind a witness is joined first")

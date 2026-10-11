@@ -788,17 +788,17 @@ void Zelph::unset_name(Node node, std::string lang)
     _pImpl->remove_name_locked(node, lang);
 }
 
-Node Zelph::get_node(const std::string& name, std::string lang) const
+Node Zelph::get_node(const std::string& name, const std::string& lang, const bool atoms_only) const
 {
-    if (lang.empty()) lang = _lang;
+    const std::string& language = lang.empty() ? _lang : lang;
 
     {
         std::shared_lock lock(_pImpl->_mtx_node_of_name);
-        auto             lang_it = _pImpl->_node_of_name.find(lang);
+        auto             lang_it = _pImpl->_node_of_name.find(language);
         if (lang_it != _pImpl->_node_of_name.end())
         {
             auto it = lang_it->second.find(name);
-            if (it != lang_it->second.end()) return it->second;
+            if (it != lang_it->second.end() && !(atoms_only && Impl::is_var(it->second))) return it->second;
         }
     }
 

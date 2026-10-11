@@ -80,7 +80,13 @@ the module, so adjacent pairs suffice:
 [`math.zph`](frontend.md) derives these from a `<x y z> ~ polyring`
 declaration, outermost first.
 
-The ordering needs to constitute a **strict total order** across the variables involved. Asserting both `V pouter W` and `W pouter V` would break single-valuedness: the product of those two variables would end up with two distinct normal forms. In contrast to a conflicting declared equation in [`symbolic-core`](symbolic.md), which triggers a contradiction report, this case elicits no such response. When two composites lack any declared ordering, they derive nothing – a manifestation of partiality by absence.
+The ordering needs to constitute a **strict total order** across the variables involved. Asserting both `V pouter W` and `W pouter V` would break single-valuedness: the product of those two variables would end up with two distinct normal forms. Similar to a conflicting declared equation in [`symbolic-core`](symbolic.md), this case is reported as a contradiction that names both `pouter` facts, and it is reported only once:
+
+```
+(V pouter W, W pouter V, V != W) => !
+```
+
+A more extended cycle is closed into such pairings through transitivity. A variable declared as outer to itself (`x pouter x`) remains unreported. When two composites lack any declared ordering, they derive nothing – a manifestation of partiality by absence.
 
 A different order is not wrong, only different; within one session the
 normal form is unique either way:

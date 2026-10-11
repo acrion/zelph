@@ -192,7 +192,7 @@ void Zelph::Impl::clear_loaded_state()
     _name_of_node.clear();
     _node_of_name.clear();
     _string_pool.clear();
-    _older_rules = false;
+    _older_rule_literals.clear();
 }
 #endif
 
@@ -947,7 +947,19 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         return sorted;
     };
 
-    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << _weights.size() << ", left size=" << _left.size() << ", right size=" << _right.size();
+    // The weights constitute the sole segment of the graph that may undergo
+    // writing by a different thread simultaneously: a compiled net's
+    // write-back is allowed on any thread. They are accessed for reading
+    // while the weight store's lock is held, specifically for the count here
+    // and for serialisation below, meaning that a concurrent write-back must
+    // wait for this lock. The lock is not held during output emission.
+    const size_t weight_count = [this]
+    {
+        std::shared_lock lock(_mtx_weights);
+        return _weights.size();
+    }();
+
+    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << weight_count << ", left size=" << _left.size() << ", right size=" << _right.size();
     io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
     io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: string pool size=" << _string_pool.size();
 
@@ -963,6 +975,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     kj::FdOutputStream output(fileno(file));
 
     // Main message (small data)
+    std::shared_lock              lock_weights(_mtx_weights);
     ::capnp::MallocMessageBuilder mainMessage(firstSegmentWords(_weights.size()));
     auto                          impl = mainMessage.initRoot<ZelphImpl>();
 
@@ -975,9 +988,10 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         probs[idx].setProb(static_cast<double>(p.second));
         ++idx;
     }
+    lock_weights.unlock();
     impl.setLast(_last);
     impl.setLastVar(_last_var);
-    impl.setTemplateIds(!_older_rules);
+    impl.setTemplateIds(_older_rule_literals.empty());
 
     const bool filtering = keep != nullptr;
 

@@ -165,8 +165,18 @@ namespace zelph
             const uint8_t* sym   = janet_unwrap_symbol(arg);
             std::string    s_sym = reinterpret_cast<const char*>(sym);
 
+            // A symbol assigns a single variable node to an entire Janet block.
+            // A rule build that is discarded -- following an error, a wait, or
+            // as a duplicate of an active rule -- eliminates the variables it
+            // created, and handing such a node to the subsequent rule within
+            // the block resulted in the error "requested left node ... does not
+            // exist". A symbol whose associated node has vanished refers to a
+            // newly created one. Its entry is updated, not deleted upon
+            // removal: whether a statement named variables at all determines if
+            // it constitutes a query (ScriptEngine::process_janet).
             std::lock_guard<std::mutex> lock(_state_mutex);
-            if (_scoped_variables.count(s_sym)) return _scoped_variables[s_sym];
+            if (_statement && !_building_rule) _statement->asks = true;
+            if (const auto it = _scoped_variables.find(s_sym); it != _scoped_variables.end() && _n->exists(it->second)) return it->second;
 
             network::Node v = _n->var();
             _n->set_name(v, s_sym, _n->lang(), false);

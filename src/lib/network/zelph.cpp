@@ -161,13 +161,18 @@ void Zelph::set_lang(const std::string& lang)
     }
 }
 
-Node Zelph::node(const std::string& name, std::string lang)
+void Zelph::check_node_name(const std::string& name)
 {
-    if (lang.empty()) lang = _lang;
     if (name.empty())
     {
         throw std::invalid_argument("Zelph::node(): name cannot be empty");
     }
+}
+
+Node Zelph::node(const std::string& name, std::string lang)
+{
+    if (lang.empty()) lang = _lang;
+    check_node_name(name);
 
     // This function answers "the ATOM of this name", and creates it when it
     // is not there: the parser calls it for every quoted name, the Janet API
@@ -178,31 +183,13 @@ Node Zelph::node(const std::string& name, std::string lang)
     // and returning it built a fact ABOUT a rule's variable: `"A" rel c`
     // next to a rule using A was accepted, echoed as `A rel c`, and then
     // invisible to every query, because a statement carrying a variable is a
-    // pattern rather than data. The name lookup that commands use
-    // (get_node) still finds variables; only the creating path refuses them.
+    // pattern rather than data. The name lookup employed by commands
+    // (get_node without atoms_only) continues to locate variables; solely the
+    // creating path refuses them.
     //
-    // 1. Fast path: shared lock for lookup
-    {
-        std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
-
-        // Check existing regular nodes
-        auto lang_it = _pImpl->_node_of_name.find(lang);
-        if (lang_it != _pImpl->_node_of_name.end())
-        {
-            auto it = lang_it->second.find(name);
-            if (it != lang_it->second.end() && !Impl::is_var(it->second))
-            {
-                return it->second;
-            }
-        }
-
-        // Check core nodes
-        auto it_core = _core_names_by_name.find(name);
-        if (it_core != _core_names_by_name.end())
-        {
-            return it_core->second;
-        }
-    }
+    // 1. Fast path: perform a lookup via get_node, under a shared lock,
+    //    restricted to atoms only
+    if (const Node existing = get_node(name, lang, true)) return existing;
 
     // 2. Slow path: exclusive lock for creation (double-checked)
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
@@ -666,23 +653,6 @@ void Zelph::leave_template_scope()
     if (scope == _pImpl->_template_scopes.end() || --scope->second.depth > 0) return;
     _pImpl->_template_scopes.erase(scope);
     _pImpl->_template_scopes_open.fetch_sub(1, std::memory_order_release);
-}
-
-std::size_t Zelph::template_scope_mark() const
-{
-    std::lock_guard lock(_pImpl->_template_scopes_mtx);
-    const auto      scope = _pImpl->_template_scopes.find(std::this_thread::get_id());
-    return scope == _pImpl->_template_scopes.end() ? 0 : scope->second.collections.size();
-}
-
-std::vector<Node> Zelph::template_scope_collections_since(const std::size_t mark) const
-{
-    std::lock_guard lock(_pImpl->_template_scopes_mtx);
-    const auto      scope = _pImpl->_template_scopes.find(std::this_thread::get_id());
-    if (scope == _pImpl->_template_scopes.end()) return {};
-    const auto& written = scope->second.collections;
-    if (mark >= written.size()) return {};
-    return {written.begin() + static_cast<std::ptrdiff_t>(mark), written.end()};
 }
 
 bool Zelph::holds_rule_text(const Node container) const
@@ -1332,12 +1302,6 @@ Node Zelph::new_collection(const std::unordered_set<Node>& elements, const bool 
     // be it a claim naming it or another rule writing into it -- can turn
     // it into data.
     const Node collection_node = rule_text ? _pImpl->create_written_template() : _pImpl->create();
-    if (rule_text)
-    {
-        std::lock_guard lock(_pImpl->_template_scopes_mtx);
-        if (const auto scope = _pImpl->_template_scopes.find(std::this_thread::get_id()); scope != _pImpl->_template_scopes.end())
-            scope->second.collections.push_back(collection_node);
-    }
 
     for (const auto& current_node : elements)
     {

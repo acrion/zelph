@@ -525,6 +525,20 @@ fn a_cluster_is_a_rollback() {
 }
 
 #[test]
+fn a_cluster_name_beginning_with_two_underscores_is_refused() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    // The engine names its own scratch clusters in this way, and it either
+    // discarded a caller's cluster bearing such a name or merged it with
+    // its own.
+    let err = z.cluster(Some("__rule")).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+    assert_eq!(z.active_cluster().unwrap(), None);
+    assert_eq!(z.cluster_size("__rule").unwrap(), None);
+}
+
+#[test]
 fn sets_collections_and_the_two_directions() {
     let _guard = engine_lock();
     let z = silent_engine();

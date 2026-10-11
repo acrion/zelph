@@ -91,6 +91,7 @@ public:
 #endif
     bool                  _logging{true};
     std::filesystem::path _bin_path;
+    bool                  _cache_save_failed{false};
 };
 
 Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& input_path)
@@ -122,9 +123,15 @@ void Wikidata::load()
     import_all();
 }
 
+bool Wikidata::cache_save_failed() const
+{
+    return _pImpl->_cache_save_failed;
+}
+
 void Wikidata::import_all(const std::string& constraints_dir)
 {
     const bool export_constraints = !constraints_dir.empty();
+    _pImpl->_cache_save_failed    = false;
 
     if (!export_constraints)
     {
@@ -381,6 +388,7 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 }
                 catch (std::exception& ex)
                 {
+                    _pImpl->_cache_save_failed = true;
                     _pImpl->_n->error("Failed to save cache: "s + ex.what(), true);
                 }
             }

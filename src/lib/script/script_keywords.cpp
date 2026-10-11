@@ -47,6 +47,8 @@ namespace zelph
         JanetFunction* f   = janet_unwrap_function(handler);
         Janet          arg = janet_cstringv(text.c_str());
 
+        const StatementScope outside(_statement, nullptr); // a handler is Janet code of the user's own
+
         if (pcall_rooted(f, 1, &arg, &result) != JANET_SIGNAL_OK)
         {
             std::string err = "Janet error in handler for keyword '" + name + "'";
@@ -209,6 +211,7 @@ namespace zelph
     {
         janet_arity(argc, 2, 3);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/register-keyword");
 
         const bool inline_mode = argc == 3;
 

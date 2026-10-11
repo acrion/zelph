@@ -31,7 +31,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <janet.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace zelph
 {
@@ -255,6 +257,7 @@ namespace zelph
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/approx");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/approx", argc, argv, true);
 
         network::Node pattern = zelph_unwrap_node(argv[0]);
@@ -279,6 +282,7 @@ namespace zelph
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/path");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/path", argc, argv, true);
 
         network::Node pattern = zelph_unwrap_node(argv[0]);
@@ -315,10 +319,16 @@ namespace zelph
     //
     // A Janet block is exempt: there the caller is using the API directly and
     // may well be assembling a condition for zelph/rule by hand.
+    //
+    // Main thread only: the outcome hinges on the statement currently
+    // being evaluated by the main thread (_in_janet_block,
+    // _building_rule), and the path condition it guards cannot be built
+    // on any other thread anyway.
     Janet ScriptEngine::Impl::janet_cfun_zelph_path_guard(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/path-guard");
 
         if (s_instance->_in_janet_block || s_instance->_building_rule) return janet_wrap_nil();
 
@@ -374,6 +384,7 @@ namespace zelph
     {
         janet_arity(argc, 0, 1);
         if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/var");
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/var", argc, argv, true);
 
         const network::Node v = s_instance->_n->var();
@@ -415,6 +426,24 @@ namespace zelph
         if (argc >= 2 && janet_checktype(argv[1], JANET_STRING))
         {
             lang = reinterpret_cast<const char*>(janet_unwrap_string(argv[1]));
+        }
+
+        // On any thread other than the main thread, a name is simply looked up:
+        // the node it already holds delivers the answer (Zelph::get_node with
+        // atoms_only), whereas a name requiring a new node is rejected, as
+        // creating it constitutes a write operation. The empty name gets the
+        // same error as the main thread. A program evaluating a compiled network
+        // on a worker thread resolves its input names in this way.
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+        {
+            network::Zelph::check_node_name(wstr);
+            const network::Node existing = s_instance->_n->get_node(wstr, lang, true);
+            if (existing == 0)
+                throw std::runtime_error("zelph/resolve: '" + wstr + "' has no node, and creating one is main thread only.");
+
+            Janet res = zelph_wrap_node(existing);
+            if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, false, res);
+            return res;
         }
 
         network::Node n   = s_instance->_n->node(wstr, lang);

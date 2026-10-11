@@ -71,15 +71,6 @@ function writeEvent(channel, text, newline) {
   term.write(styled + (newline ? "\n" : ""));
 }
 
-// Mirrors format_duration in src/app/main.cpp (10 ms threshold).
-function formatDuration(ms) {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(3)} s`;
-  const m = Math.floor(s / 60);
-  return `${m}m${(s - m * 60).toFixed(3)}s`;
-}
-
 // --- elements & state ----------------------------------------------------------
 
 const promptEl = document.getElementById("prompt");
@@ -217,8 +208,6 @@ function spawnWorker() {
       term.writeln("");
       setBusy(false);
     } else if (m.type === "done") {
-      if (m.ms >= 10)
-        term.writeln(DIM + `-- ${formatDuration(m.ms)} --` + RESET);
       prompt = m.prompt || "zelph> ";
       accumulating = m.accumulating;
       setBusy(false);

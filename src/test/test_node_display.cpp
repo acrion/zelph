@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "test_helpers.hpp"
 
 #include <filesystem>
+#include <string>
 
 using namespace zelph::test;
 
@@ -1255,10 +1256,92 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             interactive.process(".mermaid \"«Le Monde»\"");
             CHECK(any_output_contains(collector, "/«Le Monde».html"));
         }
+        SUBCASE("a rendering too long for a file name is shortened and the file is written")
+        {
+            // On Linux and macOS, a file name stores no more than 255
+            // bytes, and a rendering exceeding that length was never
+            // written while its link was displayed. When a label uses three
+            // bytes per character, a cut at a set number of bytes would fall
+            // within a character.
+            std::string label = "a";
+            for (int i = 0; i < 90; ++i)
+                label += "数";
+            interactive.process(label + " rel b");
+            collector.clear();
+            interactive.process(".node " + label + " rel b");
+
+            std::string printed;
+            for (const auto& event : collector.events())
+                printed += event.text + "\n";
+            const auto line_after = [&printed](const std::string& label_text)
+            {
+                const std::size_t at = printed.find(label_text);
+                REQUIRE(at != std::string::npos);
+                return printed.substr(at + label_text.size(), printed.find('\n', at) - at - label_text.size());
+            };
+            const std::string id             = line_after("Node ID: ");
+            const std::string representation = line_after("Representation: ");
+            REQUIRE((representation + ".html").size() > 255);
+
+            const std::size_t end = printed.find(".html");
+            REQUIRE(end != std::string::npos);
+            const std::size_t start     = printed.rfind('/', end) + 1;
+            const std::string file_name = printed.substr(start, end + 5 - start);
+            CHECK(file_name.size() <= 255);
+
+            const std::string suffix = " (ID " + id + ").html";
+            REQUIRE(file_name.ends_with(suffix));
+            const std::string cut = file_name.substr(0, file_name.size() - suffix.size());
+            CHECK(representation.starts_with(cut));
+            CHECK((static_cast<unsigned char>(representation[cut.size()]) & 0xC0) != 0x80);
+
+            const std::filesystem::path page = std::filesystem::temp_directory_path() / std::filesystem::path(std::u8string(file_name.begin(), file_name.end()));
+            CHECK(std::filesystem::exists(page));
+            std::filesystem::remove(page);
+        }
         SUBCASE("a name nothing answers to is refused")
         {
             CHECK_THROWS_AS(interactive.process(".mermaid nosuchnode"), std::runtime_error);
         } });
+}
+
+// A page that could not be written was bypassed silently, yet its link still
+// appeared in the output. A directory located in the position where the page
+// ought to reside halts every user across all platforms -- in contrast to
+// permissions, which fail to block root, or a missing temporary directory,
+// which causes failure before any page is written.
+TEST_CASE("mermaid: a page that cannot be written is reported instead of linked")
+{
+    const std::filesystem::path blocker = std::filesystem::temp_directory_path() / "zelph_test_unwritable_page.html";
+    std::filesystem::remove_all(blocker);
+    REQUIRE(std::filesystem::create_directory(blocker));
+
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("zelph_test_unwritable_page rel b");
+        interactive.run(true, false, false);
+
+        SUBCASE(".mermaid fails instead of printing a link")
+        {
+            collector.clear();
+            CHECK_THROWS_WITH_AS(interactive.process(".mermaid zelph_test_unwritable_page"),
+                                 doctest::Contains("Cannot write the Mermaid page"),
+                                 std::runtime_error);
+            CHECK_FALSE(any_event_contains(collector, "file://"));
+        }
+        // The .list, .out, and .in commands display numerous nodes in
+        // this way, so a single page that cannot be written must not
+        // cost the rest of the listing.
+        SUBCASE(".node says so where the link would stand and shows the rest")
+        {
+            collector.clear();
+            interactive.process(".node zelph_test_unwritable_page");
+            CHECK(any_output_contains(collector, "Mermaid HTML: not written -- Cannot write the Mermaid page"));
+            CHECK_FALSE(any_event_contains(collector, "file://"));
+            CHECK(last_out_text(collector) == "------------------------");
+        } });
+
+    std::filesystem::remove_all(blocker);
 }
 
 // The ambiguity introduced by a second command with trailing counts, and the

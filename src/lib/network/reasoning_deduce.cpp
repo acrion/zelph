@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <string_view>
@@ -64,20 +65,64 @@ namespace
         return members;
     }
 
-    // Whether the instance a firing of `deduction` writes is the
-    // consequence's own pattern node containing a variable: a firing keeps
-    // the condition set of a rule that the consequence mentions, including
-    // all variables, and when no other substitutions occur, the instance is
-    // the pattern itself. That node is rule text, and a firing does not
-    // derive it: since the pattern already exists, deduce() writes nothing,
-    // makes no claim, and prints nothing about it, and
-    // consequences_already_exist counts it as present -- otherwise, a rule
-    // with a fresh variable next to it would make a new witness on each
-    // pass. A ground consequence is also its own pattern, and deriving that
-    // one constitutes a claim.
-    bool instance_is_rule_text(const Zelph* const z, const Node instance, const Node deduction)
+    // Whether a consequence holds a rule beneath its top level: a `=>` fact
+    // present at any depth of its subject, relation, or objects, or as a
+    // member of a set constant or of a collection of the rule's text. A firing
+    // writes such a rule as a mention, and deduce() marks the ground parts
+    // that firing creates for it. The walk terminates at a node preserved
+    // unchanged by the firing, either at an atom or a value. It reads the
+    // structure from the genuine-structure store and the adjacency, which the
+    // profiler does not include in its count, and reconstructs a fact that has
+    // no entry in the store, which the profiler does include. A fact is
+    // missing the entry when the stores are off, following a load, or after a
+    // removal that disarms the store, so on a loaded network the
+    // reconstruction is the normal path: a walk that skipped such a fact would
+    // let every firing there claim the parts of the rule it mentions. deduce()
+    // asks once per consequence and run (Reasoning::_consequence_text), so a
+    // consequence lacking a nested rule, which applies to every consequence in
+    // the standard library, costs one lookup per firing.
+    bool holds_nested_rule(const Zelph* const z, const Node source, const Node relation, const adjacency_set& targets)
     {
-        return instance == deduction && z->var_in_closure(deduction);
+        std::vector<Node> pending(targets.begin(), targets.end());
+        pending.push_back(source);
+        pending.push_back(relation);
+
+        std::unordered_set<Node> seen;
+        while (!pending.empty())
+        {
+            const Node n = pending.back();
+            pending.pop_back();
+            if (n == 0 || Zelph::is_var(n) || !seen.insert(n).second) continue;
+            if (!Zelph::is_hash(n) && !z->is_rule_template(n)) continue;
+
+            if (Zelph::is_hash(n))
+            {
+                FactStructurePtr genuine;
+                if (z->try_get_genuine_structure(n, genuine) && genuine && !genuine->empty())
+                {
+                    const FactStructure& fs = genuine->front();
+                    if (fs.predicate == z->core.Causes) return true;
+                    pending.push_back(fs.subject);
+                    pending.push_back(fs.predicate);
+                    pending.insert(pending.end(), fs.objects.begin(), fs.objects.end());
+                    continue;
+                }
+            }
+
+            const std::vector<Node> members = conjunction_members(z, n);
+            if (members.empty() && Zelph::is_hash(n))
+            {
+                const FactStructure fs = get_preferred_structure(z, n, 1);
+                if (fs.subject == 0) continue;
+                if (fs.predicate == z->core.Causes) return true;
+                pending.push_back(fs.subject);
+                pending.push_back(fs.predicate);
+                pending.insert(pending.end(), fs.objects.begin(), fs.objects.end());
+                continue;
+            }
+            pending.insert(pending.end(), members.begin(), members.end());
+        }
+        return false;
     }
 }
 
@@ -516,6 +561,81 @@ bool Reasoning::asserts_fact(const Node deduction) const
         && filter(deduction, core.IsA, core.RelationTypeCategory).size() == 1;
 }
 
+const Reasoning::ConsequenceText& Reasoning::consequence_text(const Node deduction, const Node source, const Node relation, const adjacency_set& targets, const Node parent, const int depth)
+{
+    if (const auto it = _consequence_text.find(deduction); it != _consequence_text.end()) return it->second;
+
+    ConsequenceText text;
+    text.mentions_rule = source != 0 && relation != 0 && holds_nested_rule(this, source, relation, targets);
+
+    const auto claimable = [this](const Node n)
+    { return n != 0 && !Zelph::is_var(n) && (Zelph::is_hash(n) || is_rule_template(n)); };
+    text.claims_nested = claimable(source) || claimable(relation) || std::any_of(targets.begin(), targets.end(), claimable);
+
+    // Only a consequence that mentions a rule may retain one of its
+    // variables, and none of the consequences from the standard library
+    // does: the instance walk, which the profiler tracks, remains off the
+    // math stack.
+    if (text.mentions_rule)
+    {
+        static const Variables unbound;
+        const Recipe           recipe{deduction, &unbound, RecipeMode::Firing, parent, nullptr};
+        text.keeps_rule_variable = keeps_rule_variable(this, recipe, depth);
+    }
+
+    return _consequence_text.emplace(deduction, std::move(text)).first->second;
+}
+
+const Reasoning::ConsequenceText& Reasoning::consequence_text(const Node deduction, const Node parent, const int depth)
+{
+    if (const auto it = _consequence_text.find(deduction); it != _consequence_text.end()) return it->second;
+
+    const adjacency_set relations = filter(deduction, core.IsA, core.RelationTypeCategory);
+    adjacency_set       targets;
+    const Node          source = parse_fact(deduction, targets, parent);
+    return consequence_text(deduction, source, relations.size() == 1 ? *relations.begin() : Node{0}, targets, parent, depth);
+}
+
+bool Reasoning::consequence_writes(const Node deduction, const Node source, const Node relation, const adjacency_set& targets, const Node node)
+{
+    ConsequenceText& text = _consequence_text.at(deduction);
+    if (!text.written)
+    {
+        std::unordered_set<Node> written;
+        std::vector<Node>        pending(targets.begin(), targets.end());
+        pending.push_back(source);
+        pending.push_back(relation);
+        while (!pending.empty())
+        {
+            const Node n = pending.back();
+            pending.pop_back();
+            if (n == 0 || Zelph::is_var(n) || !written.insert(n).second) continue;
+
+            if (Zelph::is_hash(n))
+            {
+                const FactStructure fs = get_preferred_structure(this, n, 1);
+                if (fs.subject != 0)
+                {
+                    if (fs.predicate == core.Causes) continue;
+                    pending.push_back(fs.subject);
+                    pending.push_back(fs.predicate);
+                    pending.insert(pending.end(), fs.objects.begin(), fs.objects.end());
+                    continue;
+                }
+            }
+            else if (!is_rule_template(n))
+            {
+                continue;
+            }
+
+            const std::vector<Node> members = conjunction_members(this, n);
+            pending.insert(pending.end(), members.begin(), members.end());
+        }
+        text.written = std::move(written);
+    }
+    return text.written->count(node) != 0;
+}
+
 std::optional<Reasoning::ConsequenceParts> Reasoning::predict_consequence(const Node deduction, const Variables& variables, const int depth, const Node parent) const
 {
     // Subject, predicate, and objects are read as deduce() interprets
@@ -597,6 +717,28 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     {
         if (variables.find(var) == variables.end())
             fresh_vars.insert(var);
+    }
+
+    // A consequence that would keep a variable from a rule it mentions is
+    // not derived (below), thus no witness is made for its variables
+    // either: such a witness would stand in no fact. This is checked only
+    // for a rule that has fresh variables at all, before a node is created
+    // for one.
+    if (!fresh_vars.empty())
+    {
+        std::unordered_set<Node> derived_vars;
+        {
+            std::lock_guard<std::mutex> lock(_mtx_network);
+            for (const Node deduction : ctx.rule_deductions)
+            {
+                if (deduction == core.Contradiction || deduction_is_rule(deduction)) continue;
+                if (consequence_text(deduction, parent, depth).keeps_rule_variable) continue;
+                std::vector<Node> history;
+                collect_variables(this, deduction, derived_vars, depth, history);
+            }
+        }
+        std::erase_if(fresh_vars, [&](const Node v)
+                      { return derived_vars.count(v) == 0; });
     }
 
     // --- Termination Check ---
@@ -732,10 +874,40 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         {
             std::lock_guard<std::mutex> lock_network(_mtx_network);
 
-            // One instantiation of this consequence: a collection of the rule's
-            // own text, contained within it, becomes its term under this
-            // binding.
-            const Recipe recipe{deduction, &augmented, RecipeMode::Firing, parent, nullptr, &_filled_terms};
+            // One instantiation of this consequence: a collection of the
+            // rule's own text, contained within it, becomes its term under
+            // this binding. A consequence that holds a rule writes a mention
+            // of it, and a mention claims none of the rule's parts, as the
+            // parser's does (zelph/rule-text): what the instantiation creates
+            // is collected, and the ground parts of each rule within it are
+            // marked once the instance comes into existence. The parser
+            // collects what the mention itself created, the firing gathers
+            // what the whole consequence created, and the claim of the
+            // instance (below) revokes a mark where the part also stands
+            // outside the mention: after `k p m`, the rule
+            // `(X p Y) => ((X r Y) about ((X r Y) => (X q Y)))` answers
+            // `k r m` and not `k q m`, just as the statement
+            // `(k r m) about ((k r m) => (k q m))` does.
+            const ConsequenceText& text = consequence_text(deduction, var_source, *relations.begin(), var_targets, parent, depth);
+
+            // A consequence whose instance would keep a variable from a rule
+            // it mentions is not derived: no write, no claim, no line, no
+            // witness. That instance is rule text, which no query answers,
+            // and where the firing would have substituted into the mentioned
+            // rule's conditions, it constitutes half of a rule no one
+            // authored. The determination comes before the instantiation,
+            // which builds the nested `=>` prior to the fact that holds it: a
+            // `=>` belonging to nothing is a rule in force.
+            if (text.keeps_rule_variable)
+            {
+                if (should_log(depth))
+                    log(depth, "deduce", "SKIP: " + format(deduction) + " would keep a variable of a rule it mentions");
+                continue;
+            }
+
+            std::vector<Node> mention_parts;
+            std::vector<Node> built_values;
+            const Recipe      recipe{deduction, &augmented, RecipeMode::Firing, parent, text.mentions_rule ? &mention_parts : nullptr, &_filled_terms, text.claims_nested ? &built_values : nullptr};
 
             // Seed history with the deduction node so that get_preferred_structure()
             // skips it as a parent and does not mistake it for the subject of var_source.
@@ -828,7 +1000,6 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                     // counts as new -- "(A is bad) => (alarm is on)" has to
                     // start answering the moment something IS bad.
                     const bool was_pattern = answer.is_known() && !answer.is_wrong()
-                                          && !instance_is_rule_text(this, answer.relation(), deduction)
                                           && unmark_rule_pattern(answer.relation());
 
                     if (should_log(depth))
@@ -858,6 +1029,52 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                             // correct), the existing probability is NOT upgraded or touched.
                             d       = fact(source, rel, targets, confidence);
                             created = true;
+
+                            // The collection constructed by the firing for the
+                            // mentioned rule is a value, as determined by
+                            // container_plan, with its memberships
+                            // constituting its data, which every subsequent
+                            // firing derives again: solely the facts created
+                            // by the firing are parts of the rule.
+                            if (!mention_parts.empty())
+                            {
+                                std::erase_if(mention_parts, [](const Node n)
+                                              { return !Zelph::is_hash(n); });
+                                for (const Node part : mention_parts)
+                                    if (predicate_of(part) == core.Causes) mark_rule_patterns(part, mention_parts);
+                            }
+
+                            // A statement that is derived claims the facts
+                            // nested in it outside a `=>` that its
+                            // consequence wrote, just as a typed statement
+                            // claims what it holds: following
+                            // `(a p b) => (c q d)`, a firing that derives
+                            // `(a p b) q z` causes `a p b` to become data,
+                            // and the marks just set for the mentioned
+                            // rule's parts are revoked again where the
+                            // consequence also writes a part beside the
+                            // mention. A value the binding supplied is
+                            // neither claimed nor entered, unless the
+                            // consequence also writes it as it stands: the
+                            // firing read it, and a rule over rules that
+                            // binds the parts of a rule asserts none of
+                            // them. The walk enters a value the firing
+                            // built under this binding, at a value
+                            // position, and no other: a term the
+                            // consequence names as a constant, or one it
+                            // writes into, holds what every firing wrote,
+                            // and entering it made each firing cost as much
+                            // as all firings before it.
+                            if (text.claims_nested)
+                                claim_nested(d, [&](const Node n, const bool into)
+                                             {
+                                                 if (std::any_of(augmented.begin(), augmented.end(), [n](const auto& binding)
+                                                                 { return binding.second == n; })
+                                                     && (!is_rule_pattern(n) || !consequence_writes(deduction, var_source, *relations.begin(), var_targets, n)))
+                                                     return ClaimStep::Pass;
+                                                 if (Zelph::is_hash(n)) return ClaimStep::Enter;
+                                                 if (!into && std::find(built_values.begin(), built_values.end(), n) != built_values.end()) return ClaimStep::Enter;
+                                                 return ClaimStep::Claim; });
 
                             if (_seminaive_check)
                                 if (const auto negating = _negating_rules.find(parent); negating != _negating_rules.end())
@@ -1022,8 +1239,18 @@ bool Reasoning::consequences_already_exist(
         // it) and carries its own exact duplicate check in rebuild_rule, so
         // it neither satisfies this guard nor may it block the others. Nor
         // does a deduction that deduce() skips for want of exactly one
-        // predicate: it adds nothing that a witness could stand for.
-        if (asserts_fact(deduction)) consequences.push_back(deduction);
+        // predicate: it adds nothing that a witness could stand for. A
+        // consequence that would keep a variable of a rule it mentions
+        // does not either: no firing derives it, thus it is considered
+        // present, and the check demands only the remaining consequences
+        // -- otherwise, a rule with a fresh variable beside it would make
+        // a new witness with each pass.
+        if (!asserts_fact(deduction)) continue;
+        {
+            std::lock_guard<std::mutex> lock(_mtx_network);
+            if (consequence_text(deduction, parent, depth).keeps_rule_variable) continue;
+        }
+        consequences.push_back(deduction);
     }
 
     // The fresh variables, as deduce() finds them: located beyond any
@@ -1058,8 +1285,7 @@ bool Reasoning::consequences_already_exist(
         // A node that only a rule mentions, or one considered incorrect,
         // does not constitute a fact -- Unification passes over both alike.
         const Answer answer = check_fact(parts->source, parts->relation, parts->targets);
-        return answer.is_known() && !answer.is_wrong()
-            && (!is_rule_pattern(answer.relation()) || instance_is_rule_text(this, answer.relation(), deduction));
+        return answer.is_known() && !answer.is_wrong() && !is_rule_pattern(answer.relation());
     };
 
     // Set once a consequence was matched through a stand-in for any given

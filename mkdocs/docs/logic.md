@@ -373,6 +373,52 @@ zelph>
 
 Nothing fires — which is the only defensible reading, since the alternative is that doubting a rule puts it to work.
 
+What the rule says is not claimed either. A mention writes the rule’s parts as patterns, exactly as a typed rule does, so a proposal on record leaves its ground consequence unanswered:
+
+```
+zelph> ((X is bad) => (alarm is on)) "was proposed by" alice
+zelph> rust is bad
+zelph> A is B
+Answer: rust is bad
+zelph> .explain (alarm is on)
+alarm is on  [rule pattern; not asserted]
+```
+
+Only what the mention has brought into existence qualifies as a pattern, and a claim undoes it: a statement claims itself and every fact nested in it outside a `=>`, while nothing situated within a `=>` is claimed by writing it. A statement asserted before the mention therefore remains asserted, and one written afterwards that holds the identical fact outside the rule, either independently or as a part, claims it, even though neither puts the mentioned rule in force. The order of writing within a single statement does not matter either. In the example below, the mention comes first and creates `rust is bad` as its condition, yet the statement still claims it, while the consequence that only the mentioned rule states remains a pattern:
+
+```
+zelph> ((rust is bad) => (alarm is on)) "was proposed because of" (rust is bad)
+zelph> A is B
+Answer: rust is bad
+zelph> .explain (alarm is on)
+alarm is on  [rule pattern; not asserted]
+```
+
+The mentioned rule itself remains stored as data, accessible for reading by a rule over rules, unless it is contained within another mentioned rule, in which case it is a part of that rule; a statement that holds it outside a rule claims it as a node, yet not what it says. A query that names a mention does not mark anything. The same principle applies to a Janet program that writes a mention using `zelph/rule-text` (see [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)), and to a mention written by a firing. What a firing derives claims the facts its consequence writes outside the mentioned rule, just as any statement does, yet it does not assert a value that a variable within the rule represents: a value the rule binds is claimed solely by the statement that asserted it. A rule over rules therefore asserts no part of the rules it reads, and the proposal stays a proposal:
+
+```
+zelph> (G => H) => (G seen H)
+zelph> alice says ((rust is bad) => (alarm is on))
+((rust is bad) seen (alarm is on)) ⇐ ((rust is bad) => (alarm is on))
+zelph> A is B
+zelph> .explain (alarm is on)
+alarm is on  [rule pattern; not asserted]
+```
+
+When the user types the identical `(rust is bad) seen (alarm is on)`, it writes both parts and claims them.
+
+A firing does not derive a statement whose instance would keep a variable from a rule it mentions. It writes the conditions of such a rule exactly as they are, meaning that `(X p Y) => (X about ((A r B, A s B) => (c q d)))` would write rule text that no query answers, and the rule below would produce half of a rule that was never written, with `b` and `k` appearing in its consequence while `X` and `Y` remain in its conditions. Neither is derived: nothing is written, claimed, or printed, and no witness is made for a fresh variable that exists solely in that context. The check does not analyse a rule within a collection of the rule’s text, as the firing builds a value for that collection: `(X p Y) => (X likes @{((X q Y, X r Y) => (X s Y))})` derives `b likes @{(((X r Y), (X q Y)) => (b s k))}` from `b p k`, a value that holds half of a rule no one authored.
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+  Every derivation is printed.
+zelph> (X p Y) => (((X q Y, X r Y) => (X s Y)) is noted)
+zelph> b p k
+zelph> S is noted
+zelph>
+```
+
 The distinction is decidable from the graph alone, and cheaply.
 Building a rule in order to talk about it creates the same nodes and the same edges as asserting it, so the rule node itself cannot say which happened — but its surroundings can: an **asserted** rule is a part of nothing, while a **mentioned** one is the subject, the predicate or an object of the statement that mentions it.
 Nothing is remembered, so a `.save`/`.load` round trip cannot lose the difference, and a graph without rules never pays for the test.
@@ -981,7 +1027,7 @@ It is the same node in both lines; a node the engine generated has no name to pr
 The default mode is `quiet`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
 The fact is derived and stored either way; only the line announcing it is suppressed.
 
-**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence counts as present without being a fact: one whose sole variables appear only within a rule it mentions, like `k about ((C r D, C s D) => (c q d))`. A firing would write it exactly as written, which is the rule’s own text, so no firing derives it and no query answers it, and the check focuses solely on the remaining consequences. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
+**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A rule contained within a value constructed by the firing does not cause a consequence to be treated as present: such a consequence is derived, and the check requests it just like any other. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
 
 The arithmetic that follows requires no such thing: a rule builds a result list like `(D cons T)` using variables its conditions bound, and a fact node built from those identical components is the same node.
 

@@ -138,6 +138,86 @@ TEST_CASE("clusters: dropping an unknown cluster is an error, not a silent no-op
         CHECK_FALSE(any_output_contains(collector, "unknown cluster")); });
 }
 
+TEST_CASE("clusters: a name beginning with \"__\" is refused wherever a user names a cluster")
+{
+    // The engine employs scratch clusters whose names begin with "__" (__rule,
+    // __construction, __explain, __prune). If a user defined a cluster with
+    // such a name, the engine treated it as scratch and discarded it along with
+    // its contained experiment (as demonstrated in the test below). Any attempt
+    // to name a cluster for activation or merging is rejected if the name
+    // starts with "__", and the cluster currently active remains active,
+    // preserving its contents.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".cluster exp");
+        interactive.process("a p b");
+        SUBCASE(".cluster")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".cluster __x"),
+                                 doctest::Contains(".cluster: the cluster name '__x' begins with \"__\""),
+                                 std::runtime_error);
+        }
+        SUBCASE(".cluster-merge into it")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".cluster-merge exp __x"),
+                                 doctest::Contains(".cluster-merge: the cluster name '__x' begins with \"__\""),
+                                 std::runtime_error);
+        }
+        SUBCASE("zelph/cluster")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/cluster "__x"))js"),
+                              doctest::Contains("zelph/cluster: the cluster name '__x' begins with \"__\""));
+        }
+        collector.clear();
+        interactive.process(".cluster");
+        CHECK(any_output_contains(collector, "Active cluster: exp"));
+        CHECK_FALSE(any_output_contains(collector, "__x"));
+
+        interactive.process(".cluster-drop exp");
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("clusters: an experiment keeps its facts through .explain, .prune-facts and a duplicate rule")
+{
+    // Each of the three executions operates within an individual scratch
+    // cluster and drops it afterwards. Within a user's cluster bearing the
+    // scratch's name, the discard carried the experiment along: following
+    // `.explain` or `.prune-facts`, `a p O` and `c q O` answered nothing, and
+    // a rule typed a second time removed the facts too. The name is refused,
+    // and the facts stay.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto experiment = [&](const std::string& scratch)
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".cluster " + scratch), doctest::Contains("reserved"), std::runtime_error);
+            process_lines(interactive, "a p b\nc q d");
+        };
+        SUBCASE(".explain")
+        {
+            experiment("__explain");
+            interactive.process(".explain (a p b)");
+        }
+        SUBCASE(".prune-facts")
+        {
+            experiment("__prune");
+            interactive.process(".prune-facts (x y z)");
+        }
+        SUBCASE("a duplicate rule")
+        {
+            interactive.process("(X p Y) => (X r Y)");
+            experiment("__rule");
+            interactive.process("(X p Y) => (X r Y)");
+        }
+        collector.clear();
+        interactive.process("a p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+        collector.clear();
+        interactive.process("c q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"}); });
+}
+
 TEST_CASE("clusters: dropping the active cluster reports the fallback to default")
 {
     // take_cluster deactivates the cluster it removes. Without saying so,

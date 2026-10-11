@@ -55,6 +55,7 @@ namespace zelph::console
             "  .help [command]                           – Show this help or detailed help for a specific command",
             "  .quit                                     – Exit REPL (quits zelph)",
             "  .licenses                                 – Show third-party libraries and licenses",
+            "  .timer [on|off|auto]                      – Show or set when the time an input took is printed (default: auto, from 10 ms on)",
             "",
             "Scripts, Loading & Saving",
             "  .import <script> [args...]                – Load a MODULE: quiet (no echo, no focus anchors, one run at the end), .zph/.janet only, falls back to the standard library",
@@ -126,6 +127,7 @@ namespace zelph::console
             "  .semi-naive [on|off|check]                – Show or set the fixpoint evaluation strategy (default: on)",
             "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
+            "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
             "",
             "Logging & Profiling",
             "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
@@ -214,6 +216,17 @@ namespace zelph::console
 
             {".quit", ".quit\n"
                       "Exits the interactive REPL session and quits zelph."},
+
+            {".timer", ".timer [on|off|auto]\n"
+                       "Controls the line with the time an input took, e.g. \"-- 12 ms --\",\n"
+                       "which the REPL prints after the output of that input. Without an\n"
+                       "argument, shows the current setting.\n"
+                       "  auto  (default) only after an input that took 10 ms or more\n"
+                       "  on    after every input, however short\n"
+                       "  off   never\n"
+                       "An .import is one input, however many lines the file has. A script\n"
+                       "run as 'zelph script.zph' prints no timing lines. The setting belongs\n"
+                       "to the session: .new keeps it, as it keeps .deductions."},
 
             {".lang", ".lang [language_code]\n"
                       "Without argument: displays the current language used for node names.\n"
@@ -379,8 +392,8 @@ namespace zelph::console
                          "      rule could also derive, a derived fact that lost its\n"
                          "      justification, or a fact on a cycle (below).\n"
                          "  [rule pattern; not asserted]  the queried node exists only\n"
-                         "      because a rule was written with it as a ground pattern;\n"
-                         "      such a node is never a premise.\n"
+                         "      because a rule, typed or mentioned, was written with it\n"
+                         "      as a ground pattern; such a node is never a premise.\n"
                          "  [rule mentioned; not in force]  a queried rule that a\n"
                          "      statement mentions (above). It may have been typed as\n"
                          "      well, since a statement can name a typed rule itself:\n"
@@ -449,10 +462,11 @@ namespace zelph::console
                          "nothing below it is printed, and every fact above it has the\n"
                          "derivation and the label it has without the limit. The complete\n"
                          "proof is searched once per fact. When finding a proof of the\n"
-                         "queried fact whose leaves are all axioms takes more than a fixed\n"
-                         "amount of work -- about 0.2 s, what a proof of 5 000 facts on the\n"
-                         "arithmetic modules takes -- the search runs again within the limit\n"
-                         "instead, and a note above the tree says so. That search does not\n"
+                         "queried fact whose leaves are all axioms takes more than the work\n"
+                         "budget -- by default about 0.2 s, what a proof of 5 000 facts on\n"
+                         "the arithmetic modules takes; .explain-budget shows and sets it --\n"
+                         "the search runs again within the limit instead, and a note above\n"
+                         "the tree says so. That search does not\n"
                          "go beyond the limit, and a fact met again higher up than any\n"
                          "search of it so far is searched again from there, so it is\n"
                          "expanded as far as the limit allows -- at most max-depth searches\n"
@@ -793,7 +807,15 @@ namespace zelph::console
 
             {".new", ".new\n"
                      "Clears the complete network, including node names. Re-initializes core nodes.\n"
-                     "Also clears the import registry, so all scripts can be imported again."},
+                     "Also clears the import registry, so all scripts can be imported again.\n"
+                     "The engine is created anew, so everything it holds returns to its default:\n"
+                     "the settings .parallel, .anchors, .semi-naive, .fact-stores,\n"
+                     ".contradiction-records, .explain-budget, .lang, .log and .log-janet, the\n"
+                     "clusters, and every Janet definition. What belongs to the session stays:\n"
+                     ".deductions, .auto-run and .timer keep their mode.\n"
+                     "A module loaded with .import cannot run it: a module does not clear the\n"
+                     "session that loads it. A script run as 'zelph script.zph' can, and its\n"
+                     "following lines run on the cleared network, as they do when piped in."},
 
             {".stat", ".stat\n"
                       "Shows current network statistics:\n"
@@ -912,7 +934,10 @@ namespace zelph::console
             {".anchors", ".anchors [on|off]\n"
                          "Controls the unification engine's anchor-based candidate lookups:\n"
                          "subject/object-driven snapshots, grounded-subject anchoring, and\n"
-                         "partial-pattern anchoring. Without argument: shows the current state.\n"
+                         "partial-pattern anchoring. The same switch controls the subject-predicate\n"
+                         "hint, which skips a candidate whose statement subject lacks the predicate\n"
+                         "of the pattern's subject before matching it.\n"
+                         "Without argument: shows the current state.\n"
                          "  on   – (default) conditions with a concrete anchor node scan only that\n"
                          "         node's adjacency instead of the whole relation extent. This is a\n"
                          "         pure index shortcut: results are identical to 'off'.\n"
@@ -971,6 +996,25 @@ namespace zelph::console
                                        "  on  – the default\n"
                                        "See also: .run-export, which records every contradiction a run\n"
                                        "encounters whether or not the line was printed."},
+            {".explain-budget", ".explain-budget [<units>|default|unlimited]\n"
+                                "Shows or sets how much work .explain may spend searching for the\n"
+                                "complete proof under a depth limit before it searches within the\n"
+                                "limit instead -- the tree is then not the top of the complete proof,\n"
+                                "and a note above it says so (see '.help .explain').\n"
+                                "  (no argument) – show the current budget\n"
+                                "  <units>   – a positive whole number. A unit is one step of the\n"
+                                "              search -- a fact entered, a match enumerated, a premise\n"
+                                "              reached, and the like. Counting steps rather than\n"
+                                "              seconds makes the tree the same on every machine. The\n"
+                                "              smallest budget, 1, leaves practically every proof to\n"
+                                "              the search within the limit.\n"
+                                "  default   – 80000 units, about 0.2 s on the machine where the\n"
+                                "              default was measured\n"
+                                "  unlimited – always search the complete proof and print its top,\n"
+                                "              however much work that takes\n"
+                                "'.explain <fact> 0' has no depth limit and therefore no budget: it\n"
+                                "always searches the complete proof. The budget is a setting of the\n"
+                                "engine, so .new restores the default."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"
                              "structure store (exact triple per created fact node) and the\n"
@@ -986,7 +1030,11 @@ namespace zelph::console
                              "  on  – valid only while the stores are still enabled: they cannot\n"
                              "        be re-armed retroactively, because ABSENCE of an entry is\n"
                              "        meaningful while a store is authoritative.\n"
-                             "Restart zelph to start with stores enabled again."},
+                             "Every command that removes something turns them off as well, whether\n"
+                             "or not it finds anything to remove: .remove, .prune-facts, .prune-nodes,\n"
+                             ".remove-rules and .cleanup; .cluster-drop does so when the cluster\n"
+                             "holds nodes. Use .new to start with a fresh engine and the stores\n"
+                             "enabled again."},
 #ifndef __EMSCRIPTEN__
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
@@ -1038,6 +1086,9 @@ namespace zelph::console
                          "existed, so nothing was created and nothing would otherwise be rolled back,\n"
                          "and the experiment would have turned the rule's patterns into data for good.\n"
                          "'.cluster default' deactivates cluster tracking.\n"
+                         "A name beginning with '__' is refused: the engine's own scratch clusters\n"
+                         "(a rule's build, a construction, .explain, .prune-facts) are named so, and\n"
+                         "the engine would drop or merge a cluster of that name with its own.\n"
                          "Note: clusters are session state and are not persisted by .save."},
 
             {".cluster-drop", ".cluster-drop <name>\n"
@@ -1051,12 +1102,14 @@ namespace zelph::console
                               "recorded whenever such a fact existed.\n"
                               "Dropping the ACTIVE cluster falls back to 'default', i.e. tracking stops.\n"
                               "An unknown name is an error, not a no-op.\n"
+                              "Dropping a cluster that holds nodes turns the fact-path stores off until\n"
+                              "the next .new (see .help .fact-stores).\n"
                               "WARNING: destructive and irreversible."},
 
             {".cluster-merge", ".cluster-merge <from> <to>\n"
                                "Moves the membership bookkeeping of <from> into <to> (commit semantics).\n"
                                "No nodes or edges are touched. If <to> is 'default', the nodes simply\n"
-                               "become ordinary nodes."},
+                               "become ordinary nodes. A <to> beginning with '__' is refused, as in .cluster."},
         };
 
         if (cmd[0] == ".help")

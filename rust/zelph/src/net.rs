@@ -73,8 +73,16 @@ pub struct Net<'e> {
     _engine: PhantomData<&'e ()>,
 }
 
-// Sound because every operation reachable through &Net is one the C ABI
-// documents as safe to call concurrently. Nothing here touches the graph.
+// Each operation accessible via &Net is allowed by the C ABI to be invoked
+// from any thread and is documented as safe for concurrent invocation, with
+// none of them introducing new elements into the graph: write_back solely
+// modifies the weights of the net's own synapses, under the lock of the
+// graph's weight store, and a save reads the weights while holding the
+// same lock. The types do not exclude a specific scenario: Engine::load
+// takes &self, meaning the engine's thread may load while another thread
+// performs write_back, and the load operation substitutes the graph without
+// taking that lock. Net::write_back documents that these two actions must
+// not occur simultaneously.
 unsafe impl Send for Net<'_> {}
 unsafe impl Sync for Net<'_> {}
 
@@ -398,6 +406,11 @@ impl<'e> Net<'e> {
     ///
     /// Required before saving: what training changed lives in the compiled
     /// net, and the graph knows nothing about it until this call.
+    ///
+    /// Any thread can invoke it, yet not when the engine's thread is
+    /// within [`Engine::load`](crate::Engine::load): during the load, the
+    /// graph gets substituted without the lock under which this call
+    /// writes the weights.
     pub fn write_back(&self) -> Result<()> {
         check(unsafe { zelph_sys::zelph_nn_write_back(self.engine, self.handle) })
     }

@@ -128,6 +128,44 @@ TEST_CASE("wikidata import: a decoded label is addressable under its real name")
     remove_dump(dump);
 }
 
+TEST_CASE("wikidata import: a cache that cannot be written is a failure of the session")
+{
+    // Loading a dump via `.load` generates a corresponding .bin file for the
+    // network, which is frequently the primary purpose of the load operation: a
+    // regeneration script or a Makefile rule depends on this file as its
+    // output. If the file could not be written, zelph said
+    // "Failed to save cache" yet still returned 0, causing a caller checking
+    // the status to mistakenly treat a non-existent file as if it were present.
+    // The import process completed successfully, allowing the session to
+    // continue, but only the status records the failure.
+    const auto dump = std::filesystem::temp_directory_path() / "zelph_unwritable_cache_test.json";
+    std::ofstream(dump, std::ios::binary) << "[\n"
+                                          << item("Q1", "B\\u00fcdner") << "\n]\n";
+
+    // A directory designated for the cache: no file can be written there on any
+    // system or by any user, which a read-only directory fails to ensure for
+    // root.
+    std::filesystem::path cache = dump;
+    cache.replace_extension(".bin");
+    std::filesystem::remove_all(cache);
+    std::filesystem::create_directory(cache);
+
+    run_single_core_mode([&](auto& collector, auto& interactive)
+                         {
+        CHECK_FALSE(interactive.had_failure());
+        interactive.process(".load \"" + dump.string() + "\"");
+        CHECK(any_event_contains(collector, "Failed to save cache"));
+        CHECK(interactive.had_failure());
+
+        interactive.process(".lang en");
+        collector.clear();
+        interactive.process(".node Büdner");
+        CHECK(any_event_contains(collector, "Q1")); });
+
+    std::filesystem::remove_all(cache);
+    std::filesystem::remove(dump);
+}
+
 TEST_CASE("JSON unescaping covers the whole escape set")
 {
     using zelph::string::unicode::unescape;

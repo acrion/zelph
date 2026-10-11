@@ -55,6 +55,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network_types.hpp"
 
+#include <zelph_export.h>
+
+#include <cstdint>
 #include <string>
 
 namespace zelph::network
@@ -84,4 +87,12 @@ namespace zelph::network
     // a rule's own collection, or as the subject or an object of a fact, or
     // as a member of a set constant, that is one of these.
     bool is_rule_statement(const Zelph* z, Node rel);
+
+    // The number of facts that is_rule_statement has inspected in this
+    // process. Each climb visits every fact that holds the node it starts
+    // from, and data may hold a pattern without restriction, meaning a
+    // caller that climbs once per member it outputs bears the cost of each
+    // such fact across every rendering. It is independent of hardware,
+    // allowing a test to hold that shape without requiring a quiet machine.
+    ZELPH_EXPORT uint64_t rule_statement_climb_steps();
 }

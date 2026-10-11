@@ -412,6 +412,17 @@ namespace zelph::console
     void CommandExecutor::Impl::cmd_new(const std::vector<std::string>& cmd)
     {
         if (cmd.size() != 1) throw std::runtime_error("Command .new takes no arguments");
+
+        // A module does not clear the session that loads it, just as a `.quit`
+        // within it does not end that session. Nor is a module capable of being
+        // continued after a reset, unlike a session script: the `.import`
+        // command responsible for loading it, or the Janet call `zelph/import`,
+        // resides within the engine that the reset eliminates, and carrying out
+        // the reset there ended in a segmentation fault.
+        if (_repl_state->import_depth > 0)
+            throw std::runtime_error("Command .new cannot run inside a module (a file loaded with .import or zelph/import): "
+                                     "a module does not clear the session that loads it");
+
         _repl_state->reset_requested = true;
     }
 }

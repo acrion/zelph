@@ -160,11 +160,11 @@ zelph> < $( (2+a*b)^3*c + 2*b^2*(2+a*b)*(8+3*a*b) ) $( 8*b + 3*a*(2+a*b)^2*c + 6
 …
 zelph+> .run
 Starting reasoning with 24 worker threads.
-Reasoning complete. Total unification matches processed: 62955. Total
+Reasoning complete. Total unification matches processed: 62958. Total
 contradictions found: 0.
-Reasoning summary: 62955 matches processed, 0 contradictions found.
+Reasoning summary: 62958 matches processed, 0 contradictions found.
 Parallel unifications activated for 69 distinct fixed relations.
-Reasoning complete in 0h0m…s – 62955 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m…s – 62958 matches processed, 0 contradictions found.
 Ready.
 zelph> _M jdet _P
 Answer: (<($( (&2 + a * b) ^ &3 * c + &2 * b ^ &2 * (&2 + a * b) * (&8 + &3 * a * b) )) ($( &8 * b + &3 * a * (&2 + a * b) ^ &2 * c + &6 * a * b ^ &2 * (&8 + &3 * a * b) )) ($( &8 * a - (&6 * a ^ &2 * b + a ^ &3 * c) ))> jac3 <a b c>) jdet (neg zint &512)
@@ -196,12 +196,12 @@ Deduction printing mode: off
 with '+' (e.g. "zelph+> ").
 Starting reasoning with 24 worker threads.
 …
-Reasoning complete. Total unification matches processed: 105904. Total
+Reasoning complete. Total unification matches processed: 104159. Total
 contradictions found: 0.
 Note: 15406 deductions were hidden.
-Reasoning summary: 105904 matches processed, 0 contradictions found.
+Reasoning summary: 104159 matches processed, 0 contradictions found.
 Parallel unifications activated for 63 distinct fixed relations.
-Reasoning complete in 0h0m…s – 105904 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m…s – 104159 matches processed, 0 contradictions found.
 Ready.
 zelph> _M jdet _P
 Answer: … jdet (neg zint &512)

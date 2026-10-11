@@ -306,31 +306,6 @@ TEST_CASE("template scope: a collection written in it is a written template, a c
     CHECK_FALSE(Network::is_recipe(after));
 }
 
-TEST_CASE("template scope: the collections written in it are listed until the outermost scope closes")
-{
-    // zelph/rule-text marks the memberships of the collections written for
-    // the rule it writes: these are the collections written after its own
-    // scope was initiated, even if nested within another scope. A
-    // condition set does not constitute such a collection.
-    Zelph      z(null_handler());
-    const Node a = z.node("a");
-
-    z.enter_template_scope();
-    const Node        outer = z.collection({a});
-    const std::size_t mark  = z.template_scope_mark();
-    z.enter_template_scope();
-    const Node inner = z.collection({a});
-    z.conjunction_collection({a});
-
-    CHECK(z.template_scope_collections_since(mark) == std::vector<Node>{inner});
-    CHECK(z.template_scope_collections_since(0) == std::vector<Node>{outer, inner});
-
-    z.leave_template_scope();
-    CHECK(z.template_scope_collections_since(0).size() == 2);
-    z.leave_template_scope();
-    CHECK(z.template_scope_collections_since(0).empty());
-}
-
 TEST_CASE("template scope: it belongs to the thread that opened it, on the network it was opened on")
 {
     // Whether a collection belongs to a rule's text says who wrote it, thus
@@ -369,7 +344,6 @@ TEST_CASE("template scope: it belongs to the thread that opened it, on the netwo
     CHECK(refusal.find("fixed once the rule is written") != std::string::npos);
     CHECK_FALSE(z.check_fact(z.node("b"), z.core.PartOf, {own}).is_known());
     CHECK_FALSE(Network::is_recipe(other.collection({other.node("a")})));
-    CHECK(z.template_scope_collections_since(0) == std::vector<Node>{own});
 }
 
 TEST_CASE("template ids survive a save and a load, and the next one written is fresh")
@@ -464,6 +438,15 @@ TEST_CASE("load: a network saved before template ids says that the collections i
         collector.clear();
         interactive.process("S likes O");
         CHECK(zelph::test::collect_answers(collector) == std::vector<std::string>{"a likes @{c d}"});
+
+        // The members of the rule's literal are patterns, and a data
+        // collection conceals each pattern membership except those members
+        // of a literal that an engine before template ids wrote into a
+        // rule. The load records them, hence the rule keeps printing the
+        // literal exactly as it was originally written.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(zelph::test::any_output_contains(collector, "(X p Y) => (X likes @{c d})"));
 
         auto* const z         = interactive.graph();
         const auto  liked_by  = [z](const std::string& subject)
@@ -866,14 +849,14 @@ TEST_CASE("template scope: what the parser writes as rule text has template ids"
 
 TEST_CASE("template scope: what zelph/rule's argument forms write has template ids")
 {
-    // The zelph/rule macro runs its argument forms within zelph/build-rule,
-    // which opens the template scope similarly to how the parser's build
-    // does, ensuring that any collection written by those forms is the
-    // rule's own. A collection that the program constructed before the
-    // call, and another provided to zelph/rule*, whose arguments are
-    // evaluated before execution, are created as data and keep counter ids;
-    // likewise, the condition set built by zelph/rule* also keeps counter
-    // ids. A rule authored manually within zelph/build-rule writes its
+    // The zelph/rule macro runs its argument forms inside the rule's build
+    // context, mirroring how zelph/build-rule establishes the template scope,
+    // just as the parser's build does, thereby guaranteeing that any collection
+    // written by those forms is the rule's own. A collection that the program
+    // constructed before the call, and another provided to zelph/rule*, whose
+    // arguments are evaluated before execution, are created as data and keep
+    // counter ids; likewise, the condition set built by zelph/rule* also keeps
+    // counter ids. A rule authored manually within zelph/build-rule writes its
     // collections into the same scope.
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());

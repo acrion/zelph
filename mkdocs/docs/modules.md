@@ -46,6 +46,11 @@ Inside the REPL the same file is a module:
 `.quit` ends a session script where it stands. A module ignores it — a library
 that stopped the session it is being loaded into would be a surprising thing.
 
+In a session script, `.new` resets the network, and subsequent lines execute on
+the reset state, just as they would when processed through a pipe. Within a
+module, this is invalid: the library does not clear the session that loads it,
+thus the import stops at that line.
+
 ### Import once
 
 Every imported `.zph` script is registered under a **module ID** — by default

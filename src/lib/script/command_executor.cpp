@@ -236,6 +236,8 @@ namespace zelph::console
 #endif
         _command_map[".licenses"] = [this](auto& c)
         { cmd_licenses(c); };
+        _command_map[".timer"] = [this](auto& c)
+        { cmd_timer(c); };
         _command_map[".log"] = [this](auto& c)
         { cmd_log(c); };
         _command_map[".log-janet"] = [this](auto& c)
@@ -270,6 +272,8 @@ namespace zelph::console
         { cmd_fact_stores(c); };
         _command_map[".contradiction-records"] = [this](auto& c)
         { cmd_contradiction_records(c); };
+        _command_map[".explain-budget"] = [this](auto& c)
+        { cmd_explain_budget(c); };
         _command_map[".cluster"] = [this](auto& c)
         { cmd_cluster(c); };
         _command_map[".cluster-drop"] = [this](auto& c)
@@ -322,7 +326,7 @@ void console::CommandExecutor::finish_input()
     _pImpl->finish_input();
 }
 
-void console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role) const
+std::size_t console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role, const std::size_t lines_done) const
 {
-    _pImpl->import_file(file, args, role);
+    return _pImpl->import_file(file, args, role, lines_done);
 }

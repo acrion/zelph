@@ -98,6 +98,18 @@ CASES = [
         "Answer:",
     ),
     (
+        # The `.new` directive supersedes the engine, including the executor
+        # whose loop reads a script designated via the command line. The file
+        # form executed each line in sequence and subsequently terminated with a
+        # segmentation fault (139) upon that loop returning into the destroyed
+        # executor; the piped form operated without issue. The phrase shows that
+        # the lines succeeding `.new` were indeed executed.
+        "a .new in the middle of a script",
+        "a p b\n.new\nc p d\nc p X\n",
+        0,
+        "Answer: c p d",
+    ),
+    (
         # A command line that reaches the .quit handler even though it is
         # not the bare command. The file ends at that point, since the
         # handler merely records the request and the loop that reads the

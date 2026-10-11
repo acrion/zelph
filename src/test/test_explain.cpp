@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -318,6 +319,34 @@ TEST_CASE("explain: axioms and single-step derivations")
         } });
 }
 
+TEST_CASE("explain: a fact derived through a nested statement with a variable predicate is explained by its rule")
+{
+    // The consequence of the rule, (Z R m) noted yes, has a statement
+    // subject with a variable predicate, and the search matches the fact
+    // against it as a pattern. Such a pattern matched nothing, hence the
+    // derived fact was labelled an axiom even though a query answers it
+    // and its rule is in force.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+sub is memrel
+m is box
+(X R Y, R is memrel, Y is box, X twin Z) => ((Z R m) noted yes)
+j sub m
+j twin k
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".explain (k sub m) noted yes");
+        const std::string tree = explained(collector);
+        CHECK(tree.starts_with("(k sub m) noted yes\n   ├─ "));
+        for (const char* premise : {"j sub m  [axiom]", "sub is memrel  [axiom]", "m is box  [axiom]", "j twin k  [axiom]"})
+        {
+            CAPTURE(premise);
+            CHECK(tree.find(premise) != std::string::npos);
+        } });
+}
+
 // A rule that some statement only MENTIONS never fires: the template within a
 // rule generator, or a rule that a statement refers to (logic.md, "Mentioning
 // a Rule Is Not Asserting It"). Forward evaluators skip it, and so must the
@@ -469,6 +498,12 @@ a p b
             collector.clear();
             interactive.process(".list-rules");
             CHECK(any_output_contains(collector, "No rules found."));
+
+            // What the rule says is no input either: the mention wrote it as a
+            // pattern, and it bore the label "[axiom]".
+            collector.clear();
+            interactive.process(".explain (c q d) 0");
+            CHECK(explained(collector) == "c q d  [rule pattern; not asserted]");
         }
         SUBCASE("a ground rule typed and mentioned, named by its text")
         {
@@ -770,7 +805,11 @@ a p b
             // writes its own X into it. That X is not a variable in the
             // ground rule mentioned by the statement, which the rule over
             // rules reads as data regardless of what other rules wrote into a
-            // value it holds: as a premise, it is that input.
+            // value it holds: as a premise, it is that input. What the rule
+            // over rules derives claims none of the parts it bound, thus
+            // `a p b` stays a pattern and the generated rule writes nothing
+            // into the value. A derivation that claimed the values it bound
+            // transformed `a p b` into data, and the value became `@{x a}`.
             process_lines(interactive, R"(
 d has @{x}
 (A has C) => ((X p Y) => (X in C))
@@ -1753,6 +1792,23 @@ TEST_CASE("explain: a fact cut where it was first expanded is expanded again at 
     CHECK(fact_under_itself(tree).empty());
 }
 
+namespace
+{
+    // The program associated with the following case, which the
+    // .explain-budget cases that follow have in common.
+    const char* const too_large_program = R"(
+((:a X), (:b X)) => (:r X)
+(:r X) => (:a X)
+(:p X) => (:a X)
+(:b X) => (:p X)
+(:q X) => (:p X)
+((:p X), (:r X)) => (:b X)
+(:r X) => (:b X)
+:r c
+:q c
+)";
+}
+
 // The complete proof is searched within a budget of fact searches; a proof
 // that needs more before the queried fact is justified is searched within
 // the depth limit instead, and a note positioned above the tree says that
@@ -1766,17 +1822,7 @@ TEST_CASE("explain: a proof too large to search whole is searched within the lim
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
-    process_lines(interactive, R"(
-((:a X), (:b X)) => (:r X)
-(:r X) => (:a X)
-(:p X) => (:a X)
-(:b X) => (:p X)
-(:q X) => (:p X)
-((:p X), (:r X)) => (:b X)
-(:r X) => (:b X)
-:r c
-:q c
-)");
+    process_lines(interactive, too_large_program);
     interactive.run(true, false, false);
     const auto graph = interactive.graph();
     const auto noted = [&]
@@ -1809,6 +1855,145 @@ TEST_CASE("explain: a proof too large to search whole is searched within the lim
     interactive.process(".explain (:r c) 3");
     CHECK_FALSE(noted());
     CHECK_FALSE(graph->last_explain_counts().limited);
+}
+
+// The budget determines if a tree constitutes the top of the complete
+// proof, and no indication revealed which budget was in force, nor that
+// one existed.
+TEST_CASE("explain-budget: without an argument it shows the budget, and whether it is the default")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".explain-budget");
+    CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+
+    interactive.process(".explain-budget 1");
+    collector.clear();
+    interactive.process(".explain-budget");
+    CHECK(any_output_contains(collector, "Explain budget: 1 work unit"));
+    CHECK_FALSE(any_output_contains(collector, "units"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+}
+
+// The command sets the budget that "a proof too large to search whole is
+// searched within the limit" defines via the engine, achieving the same
+// effect, and the note says how to change it: the sole action a reader can
+// take regarding a tree that is not the top of the complete proof.
+TEST_CASE("explain-budget: a small budget makes the depth-limited search take over")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, too_large_program);
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process(".explain-budget 2");
+    CHECK(any_output_contains(collector, "Explain budget: 2 work units"));
+    CHECK(interactive.graph()->explain_budget() == 2);
+
+    collector.clear();
+    interactive.process(".explain (:r c) 3");
+    CHECK(any_output_contains(collector, "Note: the search for a proof whose leaves are all axioms ran out of its budget"));
+    CHECK(any_output_contains(collector, "the budget is set with '.explain-budget'"));
+    CHECK(interactive.graph()->last_explain_counts().limited);
+    CHECK(explained(collector) == ":r c\n"
+                                  "   ├─ :a c  [asserted; no derivation found]\n"
+                                  "   └─ :b c  [asserted; no derivation found]");
+}
+
+TEST_CASE("explain-budget: default restores the default budget")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, too_large_program);
+    interactive.run(true, false, false);
+    interactive.process(".explain-budget 2");
+
+    collector.clear();
+    interactive.process(".explain-budget default");
+    CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+
+    collector.clear();
+    interactive.process(".explain (:r c) 3");
+    CHECK_FALSE(any_output_contains(collector, "Note:"));
+    CHECK_FALSE(interactive.graph()->last_explain_counts().limited);
+}
+
+// The program above operates within the default budget, thus it is unable to
+// distinguish "unlimited" from the default. In this case, the complete proof
+// incurs a higher cost than the default: a chain of a hundred steps, each
+// checking a negation at a hub containing sixty thousand facts from a
+// different predicate (see "the adjacency a condition is read from counts
+// against the budget"). Under the default setting, the tree is searched
+// within the limit; "unlimited" searches the complete proof regardless of the
+// amount of work required, which is precisely what a session demands when
+// large proofs must still be shown as the top of the complete proof.
+TEST_CASE("explain-budget: unlimited never falls back to the search within the limit")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, ".deductions off\n((X next Y), (Y ok yes), ¬(h bad X)) => (X ok yes)\nzz bad qq\n");
+    auto* const graph = interactive.graph();
+    for (std::size_t i = 0; i < 100; ++i)
+        assert_fact(graph, "n" + std::to_string(i), "next", "n" + std::to_string(i + 1));
+    for (std::size_t i = 0; i <= 100; ++i)
+        assert_fact(graph, "n" + std::to_string(i), "ok", "yes");
+    for (std::size_t k = 0; k < 60000; ++k)
+        assert_fact(graph, "h", "other", "k" + std::to_string(k));
+
+    interactive.process(".explain (n0 ok yes) 0");
+    const std::size_t whole = graph->last_explain_counts().work;
+    CAPTURE(whole);
+    REQUIRE(whole > zelph::network::Reasoning::default_explain_budget);
+    interactive.process(".explain (n0 ok yes) 4");
+    REQUIRE(graph->last_explain_counts().limited);
+
+    collector.clear();
+    interactive.process(".explain-budget unlimited");
+    CHECK(any_output_contains(collector, "Explain budget: unlimited"));
+    CHECK(graph->explain_budget() == std::numeric_limits<std::size_t>::max());
+
+    collector.clear();
+    interactive.process(".explain (n0 ok yes) 4");
+    CHECK_FALSE(graph->last_explain_counts().limited);
+    CHECK_FALSE(any_output_contains(collector, "Note:"));
+    CHECK(explained(collector).rfind("n0 ok yes\n", 0) == 0);
+}
+
+// The engine reads a budget value of 0 as "the default", meaning that
+// entering 0 here would not achieve the intended effect; it is rejected
+// just like any other value that is not a positive number, and such a
+// rejection preserves the budget in its prior state.
+TEST_CASE("explain-budget: a malformed or zero budget is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".explain-budget 500");
+    for (const char* argument : {"0", "-1", "abc", "1x", "+5", "1 2", "unlimited x"})
+    {
+        CAPTURE(argument);
+        CHECK_THROWS_WITH_AS(interactive.process(std::string(".explain-budget ") + argument),
+                             doctest::Contains("Usage: .explain-budget [<units>|default|unlimited]"),
+                             std::runtime_error);
+    }
+    CHECK(interactive.graph()->explain_budget() == 500);
+}
+
+// The budget functions as a configuration parameter within the engine,
+// similar to .semi-naive, and .new initializes the engine from scratch.
+TEST_CASE("explain-budget: .new restores the default")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".explain-budget 7");
+    interactive.process(".new");
+
+    collector.clear();
+    interactive.process(".explain-budget");
+    CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
 }
 
 // The budget limits the search for the proof of the queried fact, not the
@@ -2303,31 +2488,36 @@ TEST_CASE("explain: a proof the size of the documentation's is searched whole" *
     CHECK_FALSE(any_output_contains(collector, "Note:"));
     CHECK_FALSE(interactive.graph()->last_explain_counts().limited);
     const std::string cut = "  … [depth limit -- use '.explain <pattern> 0' for the full proof]";
+    // The order of the premises adheres to node numbering, which a new
+    // stdlib rule shifts: after the addition of the rule that reports a
+    // pouter cycle in polynomial.zph (10 October 2026), the two :topoly
+    // premises and the leaves beneath the aspoly of $( x ^ &2 - &1 ) come in
+    // a different order. The proof stays unaltered.
     CHECK(explained(collector) == "($( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))) = proven\n"
                                   "   ├─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]\n"
-                                  "   ├─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
-                                  "   │  ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
-                                  "   │  │  ├─ :needstopoly $( x ^ &2 - &1 )"
+                                  "   ├─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
+                                  "   │  ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
+                                  "   │  │  ├─ :needstopoly ((x - &1) * (x + &1))"
                                       + cut + "\n"
-                                              "   │  │  ├─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)"
+                                              "   │  │  ├─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)"
                                       + cut + "\n"
-                                              "   │  │  ├─ &1 aspoly (pos zint &1)"
+                                              "   │  │  ├─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)"
                                       + cut + "\n"
-                                              "   │  │  └─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)"
+                                              "   │  │  └─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)"
                                       + cut + "\n"
-                                              "   │  └─ :topoly $( x ^ &2 - &1 )\n"
+                                              "   │  └─ :topoly ((x - &1) * (x + &1))\n"
                                               "   │     └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]\n"
-                                              "   └─ (:topoly ((x - &1) * (x + &1))) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
-                                              "      ├─ ((x - &1) * (x + &1)) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
-                                              "      │  ├─ :needstopoly ((x - &1) * (x + &1))"
+                                              "   └─ (:topoly $( x ^ &2 - &1 )) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
+                                              "      ├─ $( x ^ &2 - &1 ) aspoly (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)\n"
+                                              "      │  ├─ :needstopoly $( x ^ &2 - &1 )"
                                       + cut + "\n"
-                                              "      │  ├─ ((x poly <(neg zint &1) (pos zint &1)>) pmul (x poly <(pos zint &1) (pos zint &1)>)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)"
+                                              "      │  ├─ (x ^ &2) aspoly (x poly <(pos zint &0) (pos zint &0) (pos zint &1)>)"
                                       + cut + "\n"
-                                              "      │  ├─ (x + &1) aspoly (x poly <(pos zint &1) (pos zint &1)>)"
+                                              "      │  ├─ &1 aspoly (pos zint &1)"
                                       + cut + "\n"
-                                              "      │  └─ (x - &1) aspoly (x poly <(neg zint &1) (pos zint &1)>)"
+                                              "      │  └─ ((x poly <(pos zint &0) (pos zint &0) (pos zint &1)>) psub (pos zint &1)) = (x poly <(neg zint &1) (pos zint &0) (pos zint &1)>)"
                                       + cut + "\n"
-                                              "      └─ :topoly ((x - &1) * (x + &1))\n"
+                                              "      └─ :topoly $( x ^ &2 - &1 )\n"
                                               "         └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]");
 }
 
@@ -4138,6 +4328,30 @@ TEST_CASE("explain: a negation with a variable free inside it is checked, not as
         } });
 }
 
+TEST_CASE("explain: a negated statement subject with a variable predicate is checked against the facts")
+{
+    // ¬((X R Y) noted yes) negates a pattern whose statement subject bears
+    // a variable predicate, and such a pattern matched no fact: the search
+    // justified the asserted `j unnoted k` through the rule, and printed
+    // `¬((j sub k) noted yes) [absent]` beside the asserted fact that
+    // refutes it. `j unnoted k` is introduced as an assertion here, since
+    // the rule, now blocked by the negation, does not derive it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+sub is memrel
+j sub k
+(j sub k) noted yes
+(R is memrel, ¬((X R Y) noted yes), X R Y) => (X unnoted Y)
+j unnoted k
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".explain j unnoted k");
+        CHECK(any_output_contains(collector, "no derivation found"));
+        CHECK_FALSE(any_output_contains(collector, "[absent]")); });
+}
+
 // A negated path condition is satisfied by a walk that finds no path, thus
 // requiring verification through walking, just as the forward pass does. The
 // search tested it as a pattern, which never yields a match -- a walk lacks a
@@ -5591,6 +5805,28 @@ TEST_CASE("help: a topic may be named with or without its dot")
         // The refusal goes to the error channel, not to Out.
         interactive.process(".help nosuchthing");
         CHECK(any_event_contains(collector, "Unknown command")); });
+}
+
+// A command appears in four locations where none is derived from another: the
+// dispatch table, the topics covered by .help, the overview .help prints, and
+// the command list in quickstart.md, which no test reads. The new one must be
+// present in all of these, and .help .explain, which describes what the budget
+// determines, must include its name.
+TEST_CASE("help: .explain-budget is documented and listed with the engine settings")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .explain-budget");
+    CHECK(any_output_contains(collector, ".explain-budget [<units>|default|unlimited]"));
+    CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+
+    collector.clear();
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, ".explain-budget [<units>|default|unlimited]"));
+
+    collector.clear();
+    interactive.process(".help .explain");
+    CHECK(any_output_contains(collector, ".explain-budget"));
 }
 
 TEST_CASE("explain: an argument that names a node is not a parse failure")

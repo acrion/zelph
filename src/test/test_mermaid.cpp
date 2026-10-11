@@ -94,6 +94,25 @@ TEST_CASE("mermaid: the hidden-neighbor count reports the true total at a hub")
     std::filesystem::remove(out);
 }
 
+// A page that failed to be written was bypassed silently, causing the
+// command to proceed with printing a link to no destination. The generator
+// reports it, and names the page.
+TEST_CASE("mermaid: a page that cannot be written is reported")
+{
+    Zelph      z(null_handler());
+    const Node a = z.node("a");
+    z.fact(a, z.node("rel"), {z.node("b")});
+
+    const std::filesystem::path missing = std::filesystem::temp_directory_path() / "zelph_test_mermaid_missing_directory";
+    std::filesystem::remove_all(missing);
+    const std::filesystem::path out = missing / "a.html";
+
+    CHECK_THROWS_WITH_AS(zelph::io::gen_mermaid_html(&z, a, out.string(), 1, 5, {}, false, false, true),
+                         doctest::Contains(out.string().c_str()),
+                         std::runtime_error);
+    CHECK_FALSE(std::filesystem::exists(missing));
+}
+
 // ---------------------------------------------------------------------------
 // Label escaping.
 //

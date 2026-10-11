@@ -59,7 +59,7 @@ thing: that makes it a quiet **module**, see [Scripts and Modules](modules.md).
 zelph leaves with a non-zero status when something failed, so a script can be
 used in a pipeline or a Makefile.
 
-**Organization of the transcripts found in this documentation.** After a prompt comes your input; every other line corresponds to what zelph outputs. A line that extends a partial statement, a Janet `%` block, or a keyword block such as `sparql` is considered input, even though zelph does not display a prompt before it. Four kinds of zelph output in a terminal are typically excluded: its echo of a statement you typed, the `Importing file …` and `Skipping …` messages from an `.import`, timing indicators like `-- 12 ms --`, and the banner some modules show when initialized (`math loaded: …`). A page keeps one of these when it contains meaningful content: a banner indicating the next thing to type, a timing referenced in the text, an echo discussed within the text. A full session log includes them too: the [appendix on neural networks](neural.md#appendix-complete-session-log) and the [archival SPARQL session](sparql.md#complete-example-session). When zelph’s echo of your input varies from the original in a way that matters, the transcript captures that difference. The prompt is rendered precisely as zelph prints it: `zelph+>` after a run that hid deductions, `zelph->` when auto-run is turned off – see [Deduction Output Modes](rules.md#deduction-output-modes). A transcript that leaves out any other line indicates this: `...` or `…` on a line by itself denotes missing lines, while `…` within a line indicates a segment of that line. Long messages are broken at roughly 80 columns here; zelph outputs each as a single line.
+**Organization of the transcripts found in this documentation.** After a prompt comes your input; every other line corresponds to what zelph outputs. A line that extends a partial statement, a Janet `%` block, or a keyword block such as `sparql` is considered input, even though zelph does not display a prompt before it during input from a pipe or file – this is how these transcripts were recorded; at a terminal, it shows dots, `.....>`, under `zelph>`. Four kinds of zelph output in a terminal are typically excluded: its echo of a statement you typed, the `Importing file …` and `Skipping …` messages from an `.import`, timing indicators like `-- 12 ms --` (`.timer` controls their display), and the banner some modules show when initialized (`math loaded: …`). A page keeps one of these when it contains meaningful content: a banner indicating the next thing to type, a timing referenced in the text, an echo discussed within the text. A full session log includes them too: the [appendix on neural networks](neural.md#appendix-complete-session-log) and the [archival SPARQL session](sparql.md#complete-example-session). When zelph’s echo of your input varies from the original in a way that matters, the transcript captures that difference. The prompt is rendered precisely as zelph prints it: `zelph+>` after a run that hid deductions, `zelph->` when auto-run is turned off – see [Deduction Output Modes](rules.md#deduction-output-modes). A transcript that leaves out any other line indicates this: `...` or `…` on a line by itself denotes missing lines, while `…` within a line indicates a segment of that line. Long messages are broken at roughly 80 columns here; zelph outputs each as a single line.
 
 Let's try a basic example:
 
@@ -243,6 +243,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.help [command]` – Show this help or detailed help for a specific command
 - `.quit` – Exit REPL (quits zelph)
 - `.licenses` – Show third-party libraries and licenses
+- `.timer [on|off|auto]` – Show or set whether the duration of an input’s execution is printed (default: auto, activated for times of 10 ms or more)
 
 ### Scripts, Loading & Saving
 
@@ -317,6 +318,7 @@ Assigning a node a name that another node already holds in that language **merge
 - `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
 - `.fact-stores [on|off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
 - `.contradiction-records [on|off]` – Show or disable writing each contradiction into the graph (memory vs. repeated reports)
+- `.explain-budget [<units>|default|unlimited]` – Show or adjust the amount of work `.explain` can allocate toward the complete proof under a depth limit (default: 80000)
 
 ### Logging & Profiling
 

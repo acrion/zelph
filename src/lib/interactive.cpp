@@ -34,10 +34,36 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <memory>
 #include <utility>
 
 using namespace zelph;
+
+namespace
+{
+    // Within `.timer auto`, a timing line is assigned to an input solely upon
+    // the occurrence of noticeable time taken. A script import (.import file)
+    // arrives as a single REPL line, so it yields exactly one timing - never
+    // one per script line.
+    constexpr std::chrono::milliseconds kReplTimingThreshold{10};
+
+    std::string format_duration(const std::chrono::nanoseconds d)
+    {
+        using namespace std::chrono;
+        const long long ms = duration_cast<milliseconds>(d).count();
+        if (ms < 1000) return std::to_string(ms) + " ms";
+
+        const long long s = ms / 1000;
+        char            buf[64];
+        if (s < 60)
+            std::snprintf(buf, sizeof(buf), "%lld.%03lld s", s, ms % 1000);
+        else
+            std::snprintf(buf, sizeof(buf), "%lldm%lld.%03llds", s / 60, s % 60, ms % 1000);
+        return buf;
+    }
+}
 
 class console::Interactive::Impl
 {
@@ -136,6 +162,9 @@ public:
     // Member function to delegate to CommandExecutor
     void process_command(const std::vector<std::string>& cmd, const std::vector<std::string>& sources);
 
+    // The prompt as it reads when nothing is currently being accumulated.
+    std::string full_prompt() const;
+
     std::unique_ptr<network::Reasoning> _n;
     std::unique_ptr<ScriptEngine>       _script_engine;
     std::unique_ptr<CommandExecutor>    _command_executor;
@@ -160,7 +189,18 @@ console::Interactive::~Interactive()
 
 void console::Interactive::process_file(const std::string& file, const std::vector<std::string>& args) const
 {
-    _pImpl->_command_executor->import_file(file, args, ScriptRole::Session);
+    // A `.new` in the script stops the reading loop following its line, since
+    // that loop is tied to the executor being replaced by the reset. The
+    // reset occurs at this point, when no part of the old engine remains
+    // active, and the fresh executor proceeds with the next line.
+    std::size_t lines_done = 0;
+    for (;;)
+    {
+        lines_done = _pImpl->_command_executor->import_file(file, args, ScriptRole::Session, lines_done);
+        if (!_pImpl->_repl_state->reset_requested) return;
+        _pImpl->_repl_state->reset_requested = false;
+        _pImpl->reset_reasoning();
+    }
 }
 
 bool console::Interactive::quit_requested() const
@@ -666,7 +706,10 @@ void console::Interactive::Impl::process_command(const std::vector<std::string>&
 {
     _command_executor->execute(cmd, sources);
 
-    if (_repl_state->reset_requested)
+    // During the execution of a session script, the reset operation
+    // remains pending until the loop responsible for reading it has
+    // stopped (see ReplState::reading_session_script).
+    if (_repl_state->reset_requested && !_repl_state->reading_session_script)
     {
         _repl_state->reset_requested = false;
         reset_reasoning();
@@ -692,17 +735,47 @@ void console::Interactive::set_prompt_available(const bool available) const
 std::string console::Interactive::prompt_text() const
 {
     if (is_accumulating()) return {};
+    return _pImpl->full_prompt();
+}
 
-    const auto& state = _pImpl->_repl_state;
+std::string console::Interactive::continuation_prompt_text() const
+{
+    if (!is_accumulating()) return {};
 
-    std::string prompt = _pImpl->_n->get_lang();
+    // Nothing that alters the prompt can run while a statement remains in the
+    // process of being read, thus the prompt that would be displayed at this
+    // moment is the one the statement initially started under.
+    const std::size_t width = string::utf8::codepoint_count(_pImpl->full_prompt());
+    return std::string(width > 2 ? width - 2 : 0, '.') + "> ";
+}
+
+void console::Interactive::report_timing(const std::chrono::nanoseconds elapsed) const
+{
+    switch (_pImpl->_repl_state->timer_mode)
+    {
+    case TimerMode::Off:
+        return;
+    case TimerMode::Auto:
+        if (elapsed < kReplTimingThreshold) return;
+        break;
+    case TimerMode::On:
+        break;
+    }
+    log("-- " + format_duration(elapsed) + " --");
+}
+
+std::string console::Interactive::Impl::full_prompt() const
+{
+    const auto& state = _repl_state;
+
+    std::string prompt = _n->get_lang();
 
     // Only where something was ACTUALLY withheld, and by the most recent run:
     // a mark that is always on says no more than the mode does, and the mode
     // is what the user just typed. `.deductions focus` is deliberately not
     // marked -- there the notice already says it, in words.
     if (marks_withheld_in_prompt(state->deduction_mode)
-        && _pImpl->_n->deductions_withheld() > 0)
+        && _n->deductions_withheld() > 0)
         prompt += "+";
 
     prompt += state->auto_run ? "> " : "-> ";

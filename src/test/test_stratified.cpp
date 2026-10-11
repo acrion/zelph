@@ -150,6 +150,28 @@ free trigger free
         CHECK_FALSE(any_output_contains(collector, "gated allowed gated")); });
 }
 
+TEST_CASE("stratified: a negated statement subject with a variable predicate fails where the statement holds")
+{
+    // The negated pattern ¬((X R Y) noted yes) succeeded for every binding:
+    // it has a statement subject with a variable predicate, and no fact was
+    // matched by such a pattern, hence `j unnoted k` was derived in
+    // addition to the asserted `(j sub k) noted yes` that refutes it. Where
+    // the statement is missing, as in `c sub d`, the negation still
+    // succeeds.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+sub is memrel
+j sub k
+c sub d
+(j sub k) noted yes
+(R is memrel, ¬((X R Y) noted yes), X R Y) => (X unnoted Y)
+)");
+        collector.clear();
+        interactive.process("S unnoted O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c unnoted d"}); });
+}
+
 TEST_CASE("stratified: deferred consequences re-open the positive stratum")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -255,6 +277,33 @@ c p d
         // guard; nothing could reach it before, because no spelling created a
         // fact below probability 0.5.
         CHECK_THROWS(interactive.process("a p b")); });
+}
+
+// A typed rule whose statement is rejected by fact() -- specifically due to one
+// of its conditions being a fact that the graph holds as incorrect -- failed
+// after its other conditions were built, and the construction preserved those
+// conditions: `k is on`, stated solely as a condition of a rule that never
+// materialized, was the answer to `k is O`, as data. A refused rule retains
+// none of the elements its statement built.
+TEST_CASE("negation: a typed rule that fact() refuses asserts none of its conditions")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("¬(a p b)");
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process("(k is on, a p b, X q Y) => (X r Y)"), doctest::Contains("this fact is known to be wrong"));
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("k is O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK_FALSE(any_output_contains(collector, "=>"));
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 // The reading `¬(F)` got on its own line does not extend below the top level,

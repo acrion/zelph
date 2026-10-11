@@ -104,6 +104,24 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(janet)
 
+# Janet 1.41.2 frees the table of its top-level dynamic bindings during the
+# first garbage collection cycle; the file patch_janet_gc.cmake explains the
+# reason behind the crash in zelph and indicates when the patch is to be
+# removed. The patch runs here, for every configuration, instead of being
+# specified as the declaration's PATCH_COMMAND: FetchContent bypasses this
+# phase when the source tree is provided via FETCHCONTENT_SOURCE_DIR_JANET,
+# and also when the tree is populated before the patch's existence under
+# FETCHCONTENT_FULLY_DISCONNECTED, while both builds below compile using this
+# tree.
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DJANET_SOURCE_DIR=${janet_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/patch_janet_gc.cmake"
+    RESULT_VARIABLE result
+)
+if(result)
+    message(FATAL_ERROR "Patching Janet's gc.c failed: ${result}")
+endif()
+
 if(EMSCRIPTEN)
     # The Meson/ninja subprocess build cannot produce wasm objects. Instead,
     # generate Janet's amalgamated source with the HOST toolchain (the
@@ -111,15 +129,18 @@ if(EMSCRIPTEN)
     # compile that single file with emcc. This is the officially recommended
     # way to build Janet for Emscripten. CC=cc on the command line overrides
     # any CC set in the environment by the emsdk.
-    if(NOT EXISTS ${janet_SOURCE_DIR}/build/c/janet.c)
-        execute_process(
-            COMMAND make CC=cc build/c/janet.c
-            WORKING_DIRECTORY ${janet_SOURCE_DIR}
-            RESULT_VARIABLE result
-        )
-        if(result)
-            message(FATAL_ERROR "Janet amalgam generation failed: ${result}")
-        endif()
+    #
+    # make runs on every configuration and regenerates the amalgam solely when
+    # a source file has been updated more recently than the existing amalgam,
+    # such as `gc.c` once the patch mentioned above modifies a tree that
+    # previously contained an amalgam.
+    execute_process(
+        COMMAND make CC=cc build/c/janet.c
+        WORKING_DIRECTORY ${janet_SOURCE_DIR}
+        RESULT_VARIABLE result
+    )
+    if(result)
+        message(FATAL_ERROR "Janet amalgam generation failed: ${result}")
     endif()
 
     add_library(janet_lib STATIC ${janet_SOURCE_DIR}/build/c/janet.c)
@@ -219,6 +240,13 @@ endian = 'little'\n"
         IMPORTED_LOCATION "${JANET_RUNTIME_DLL}"
         INTERFACE_INCLUDE_DIRECTORIES "${janet_SOURCE_DIR}/src/include;${janet_SOURCE_DIR}/build"
     )
+
+        # The import library resolves a Janet function to its unadorned name via a
+        # thunk, yet a variable is exported by the DLL only under the form
+        # __imp_<name>, like janet_parser_type, the reader of a %( line. Declaring
+        # the import makes the compiler reference that name; Janet's own build
+        # compiles the client it links to the DLL in the same fashion.
+        target_compile_definitions(janet_lib INTERFACE JANET_DLL_IMPORT)
     else ()
         add_library(janet_lib STATIC IMPORTED)
 

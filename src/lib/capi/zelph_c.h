@@ -51,14 +51,33 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
  *     would be needed and the call returns ZELPH_BUFFER_TOO_SMALL - so
  *     passing a null buffer with capacity 0 is the way to ask for the size.
  *
- * Threading. One engine per process: the Janet host binds to a single script
- * engine, and creating a second one while the first is alive is refused.
- * Evaluating a compiled net (zelph_nn_eval_nodes) is safe from any number of
- * threads at once, including while another thread trains the same net -
- * that guarantee comes from NeuralNet itself. Everything that mutates the
- * GRAPH (zelph_resolve, zelph_fact, zelph_list, zelph_load, zelph_save,
- * zelph_nn_compile, zelph_nn_connect_layers, zelph_nn_write_back) is main
- * thread only, exactly as the corresponding Janet functions are.
+ * Threading. One engine per process: the Janet host associates with a
+ * solitary script engine, and attempting to instantiate a second one while
+ * the first remains active is rejected. The graph is tied to the thread
+ * responsible for engine creation. Any invocation that modifies it, runs the
+ * engine, or changes its state is blocked on any thread other than the main
+ * thread, triggering ZELPH_RUNTIME_ERROR, and zelph_last_error() says "main
+ * thread only": zelph_fact, zelph_list, zelph_set, zelph_collection,
+ * zelph_negate, zelph_variable, zelph_clear_variables, zelph_rule,
+ * zelph_run, zelph_run_once, zelph_run_delta, zelph_set_parallel,
+ * zelph_query, the four zelph_cluster calls, zelph_load, zelph_save,
+ * zelph_nn_compile, and zelph_nn_connect_layers -- exactly as their
+ * equivalent Janet functions are refused on a Janet thread. On a different
+ * thread, zelph_resolve conducts solely a name lookup, and any name without
+ * an associated node is rejected in that setting, with the message
+ * "zelph_resolve: '<name>' has no node, and creating one is main thread
+ * only". Reading the graph
+ * (zelph_fact_parts, zelph_list_elements, zelph_name, zelph_sources,
+ * zelph_targets, zelph_exists) is permitted. A compiled net can be evaluated
+ * concurrently from any number of threads, even while another thread trains
+ * the same net -- this assurance is provided by NeuralNet itself -- and
+ * zelph_nn_write_back is also permitted on any thread: it solely updates the
+ * weights of the net's synapses, under the lock of the graph's weight store.
+ * zelph_save reads the weights under the same lock, yet zelph_load replaces
+ * the graph without taking it, thus a write-back must not run while the
+ * engine's thread performs the load.
+ * zelph_engine_destroy is not subject to refusal; invoke it on the thread
+ * that originated the engine.
  */
 
 #ifndef ZELPH_C_H
@@ -240,8 +259,10 @@ extern "C"
     /* ------------------------------------------------------------ reasoning */
     /*
      * The graph is not only a store: rules over it are the reason zelph
-     * exists, and this is the surface a program needs to use them. Everything
-     * here is main thread only.
+     * exists, and this is the surface a program needs to use them. All
+     * components here, aside from zelph_exists and zelph_targets, which serve
+     * solely to read, are restricted to the main thread and are rejected when
+     * invoked from any other thread (refer to Threading above).
      */
 
     /* A variable, for use inside a rule or a query pattern.
@@ -353,7 +374,11 @@ extern "C"
      *
      * When a cluster is active, any nodes CREATED are logged within it,
      * which is why removing the cluster is a rollback -- and this
-     * transforms a graph that otherwise only grows into a workspace. */
+     * transforms a graph that otherwise only grows into a workspace.
+     *
+     * A name beginning with "__" is refused with ZELPH_INVALID_ARGUMENT
+     * because the engine's internal scratch clusters are named in this
+     * manner. */
     ZELPH_EXPORT int32_t zelph_cluster(zelph_engine* engine, const char* name);
 
     /* The active cluster's name, or null in *out_name for the default. Free

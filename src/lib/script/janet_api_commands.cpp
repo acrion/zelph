@@ -33,12 +33,57 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace zelph
 {
+    // All operations that write the graph, build a rule, or change the engine's
+    // state are confined to the main thread -- the one responsible for hosting the
+    // Janet VM where the REPL, scripts, and parsed statements run. A thread
+    // initiated via `ev/thread`, `ev/spawn-thread`, or `ev/do-thread` possesses
+    // its own VM, yet invokes identical functions on the shared engine, and the
+    // state underlying rule builds, statement processing, and scratch clusters is
+    // singular per process. In earlier versions, writes stemming from that
+    // thread were lost when the main thread dropped a scratch cluster, a correct
+    // rule was rejected as nested, a claim disappeared, and the main thread's
+    // active cluster was reset. A thread may read the graph and use a compiled
+    // network; any computation it performs is passed to the main thread, which
+    // performs the actual writing.
+    void ScriptEngine::Impl::require_main_thread(const char* const name)
+    {
+        if (std::this_thread::get_id() != s_instance->_main_thread_id)
+            janet_panicf("%s: main thread only. A thread started with ev/thread, ev/spawn-thread or ev/do-thread "
+                         "may read the graph and use a compiled network, but writing the graph, building a rule and "
+                         "everything else that changes the engine belong to the main thread: hand the thread's result "
+                         "to the main thread (a thread channel) and write it there.",
+                         name);
+    }
+
+    // The forms that write a rule operate within its build: inside the rule's
+    // scratch cluster, which records what is the rule's own. Switching the
+    // cluster at that point causes the rule's ground components to become
+    // data, and the switch concludes silently once the build reverts to the
+    // cluster it originally detected. Dropping a cluster, importing a file,
+    // loading a network, or running the engine changes the graph beneath a
+    // rule that is still being constructed, and saving the network writes the
+    // incomplete rule in the file as data. Each of these operations is
+    // rejected at that stage.
+    //
+    // Only the main thread constructs a rule, and each caller checks that it
+    // runs on the main thread before it makes this request, thus the build in
+    // progress always includes the caller's own forms.
+    void ScriptEngine::Impl::refuse_inside_rule_build(const char* const name)
+    {
+        if (s_instance->_building_rule)
+            janet_panicf("%s: refused while a rule is being built. "
+                         "Switch or drop a cluster, import a file, load or save a network, run the engine or query the graph "
+                         "before the rule is built or after it.",
+                         name);
+    }
+
     // Load and execute a script via the .import machinery. This is the way
     // to pull .zph files (facts, rules, arithmetic definitions) into the
     // network from Janet code.
@@ -55,8 +100,9 @@ namespace zelph
         if (!s_instance) return janet_wrap_nil();
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/import", argc, argv, true);
 
-        if (std::this_thread::get_id() != s_instance->_main_thread_id)
-            janet_panicf("zelph/import: must be called from the main thread, not from ev/spawn-thread (the import pipeline is bound to the main Janet VM)");
+        require_main_thread("zelph/import");
+
+        refuse_inside_rule_build("zelph/import");
 
         if (!s_instance->_import_handler)
             janet_panicf("zelph/import: no import handler registered (script engine not fully initialized)");
@@ -101,8 +147,9 @@ namespace zelph
         if (!s_instance) return janet_wrap_nil();
         if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
 
-        if (std::this_thread::get_id() != s_instance->_main_thread_id)
-            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+        require_main_thread(name);
+
+        refuse_inside_rule_build(name);
 
         if (!s_instance->_command_handler)
             janet_panicf("%s: no command handler registered (script engine not fully initialized)", name);
@@ -142,8 +189,9 @@ namespace zelph
         if (!s_instance) return janet_wrap_nil();
         if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
 
-        if (std::this_thread::get_id() != s_instance->_main_thread_id)
-            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+        require_main_thread(name);
+
+        refuse_inside_rule_build(name);
 
         if (!s_instance->_command_handler)
             janet_panicf("%s: no command handler registered (script engine not fully initialized)", name);
@@ -205,8 +253,7 @@ namespace zelph
     {
         if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
 
-        if (std::this_thread::get_id() != s_instance->_main_thread_id)
-            janet_panicf("%s: must be called from the main thread, not from ev/spawn-thread", name);
+        require_main_thread(name);
     }
 
     Janet ScriptEngine::Impl::janet_cfun_zelph_cluster(int32_t argc, Janet* argv)
@@ -214,6 +261,7 @@ namespace zelph
         janet_arity(argc, 0, 1);
         if (!s_instance) return janet_wrap_nil();
         cluster_preamble(argc, argv, "zelph/cluster");
+        refuse_inside_rule_build("zelph/cluster");
 
         if (argc == 1)
         {
@@ -227,6 +275,8 @@ namespace zelph
                 const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
                 if (name.empty() || name == "default")
                     s_instance->_n->deactivate_cluster();
+                else if (network::Zelph::is_scratch_cluster_name(name))
+                    throw std::runtime_error("zelph/cluster: " + network::Zelph::scratch_cluster_name_refusal(name));
                 else
                     s_instance->_n->set_active_cluster(name);
             }
@@ -241,6 +291,7 @@ namespace zelph
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
         cluster_preamble(argc, argv, "zelph/cluster-drop");
+        refuse_inside_rule_build("zelph/cluster-drop");
 
         const std::string name = reinterpret_cast<const char*>(janet_getstring(argv, 0));
         if (name.empty() || name == "default")

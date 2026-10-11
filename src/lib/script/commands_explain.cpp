@@ -338,7 +338,7 @@ namespace zelph::console
         // "[asserted; no derivation found]" leaf had been immediately
         // discovered.
         if (limited)
-            _n->out("Note: the search for a proof whose leaves are all axioms ran out of its budget; this tree was searched within the depth limit (see '.help .explain').", true);
+            _n->out("Note: the search for a proof whose leaves are all axioms ran out of its budget; this tree was searched within the depth limit (see '.help .explain'; the budget is set with '.explain-budget').", true);
 
         std::string                                            out;
         const std::map<const network::ProofNode*, std::size_t> shallowest = shallowest_levels(proof, cyclic);

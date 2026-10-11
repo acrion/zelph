@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -39,6 +40,8 @@ namespace zelph::network
 {
     namespace
     {
+        std::atomic<uint64_t> climb_steps{0}; // refer to rule_statement_climb_steps
+
         // Rules are small and shallow; the cap only stops a pathological
         // cycle from becoming an infinite walk. A truncated rendering makes
         // the shape less selective, never wrong -- the decision is taken by
@@ -538,6 +541,7 @@ namespace zelph::network
                 for (const Node r : side)
                 {
                     if (!Zelph::is_hash(r) || r == n) continue;
+                    climb_steps.fetch_add(1, std::memory_order_relaxed);
 
                     adjacency_set objects;
                     const Node    subject = z->parse_fact(r, objects, 0);
@@ -560,5 +564,10 @@ namespace zelph::network
             }
         }
         return false;
+    }
+
+    uint64_t rule_statement_climb_steps()
+    {
+        return climb_steps.load(std::memory_order_relaxed);
     }
 }

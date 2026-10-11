@@ -136,8 +136,9 @@ Same polynomial, two normal forms — which is fine, because *within one
 session* the order is fixed and the form is unique. What is not optional is
 that the order be a **strict total order** on the variables in use.
 Declaring both `x pouter y` and `y pouter x` would break single-valuedness,
-and two composites with no declared order derive nothing at all — partiality
-by absence, once again.
+and the polynomial layer reports such a pair as a contradiction, naming
+both conflicting facts. Two composites with no declared order derive
+nothing at all — partiality by absence, once again.
 
 ## The operations
 

@@ -50,6 +50,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <emscripten/em_js.h>
 #include <emscripten/emscripten.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <memory>
@@ -144,6 +145,18 @@ extern "C"
         static std::string prompt;
         prompt = instance().prompt_text();
         return prompt.c_str();
+    }
+
+    // Provide a timing report for a batch of input lines, with the
+    // duration measured in milliseconds by the caller. The decision on
+    // whether a line appears and its exact content is governed by
+    // Interactive::report_timing based on the `.timer` setting -- the
+    // identical rule applied by the terminal. The line is delivered
+    // through the diagnostic channel, just like any other output.
+    EMSCRIPTEN_KEEPALIVE void zelph_report_timing(double ms)
+    {
+        const auto elapsed = std::chrono::duration<double, std::milli>(ms);
+        instance().report_timing(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed));
     }
 
     // Discard the current engine and start from scratch (Reset button).

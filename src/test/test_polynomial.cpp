@@ -27,6 +27,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,24 @@ namespace
         interactive.process(R"js(%(defn zn [s] (zelph/fact "neg" "zint" (zelph/number s))))js");
         interactive.process(R"js(%(defn pl [& xs] (var acc (zelph/resolve "nil")) (each x (reverse xs) (set acc (zelph/fact x "cons" acc))) acc))js");
         interactive.process(R"js(%(defn pv [v l] (zelph/fact v "poly" l)))js");
+    }
+
+    // The `! ⇐` lines from the collected output, one for each
+    // announced contradiction, each having undergone
+    // normalization.
+    std::vector<std::string> contradiction_lines(const zelph::io::OutputCollector& collector)
+    {
+        std::vector<std::string> lines;
+        for (const auto& e : collector.events())
+        {
+            std::istringstream in(e.text);
+            for (std::string line; std::getline(in, line);)
+            {
+                line = normalize(line);
+                if (line.starts_with("! ⇐")) lines.push_back(line);
+            }
+        }
+        return lines;
     }
 } // namespace
 
@@ -158,6 +181,124 @@ TEST_CASE("polynomial: cross-variable and constant-composite addition (all arith
             interactive.process(R"js(%(let [t (zelph/fact (pv "x" (pl (pv "y" (pl (zp "0") (zp "1"))) (zp "1"))) "padd" (pv "x" (pl (zp "1") (zp "1")))) r (pv "x" (pl (pv "y" (pl (zp "1") (zp "1"))) (zp "2")))] (string "P-NEST-" (zelph/exists t "=" r))))js");
             CHECK(any_output_contains(collector, "P-NEST-true"));
         } });
+}
+
+// ---------------------------------------------------------------------------
+// The variable order must adhere to strict ordering: declaring two
+// variables outer to each other results in their product having two
+// distinct normal forms. The file `polynomial.zph` reports such a pair
+// as a contradiction. The rule includes two conditions and a guard,
+// ensuring the report is recorded in the graph and made only once,
+// naming the two pouter facts instead of the self-loops that
+// transitivity derives from them. Before this rule, nothing reported a
+// cycle.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("polynomial: a pouter cycle is reported once, naming both declarations")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        import_polynomial(interactive);
+        interactive.process("y pouter x");
+        collector.clear();
+        interactive.process("x pouter y");
+
+        const std::vector<std::string> reported = contradiction_lines(collector);
+        REQUIRE(reported.size() == 1);
+        CHECK(reported.front().find("(y pouter x)") != std::string::npos);
+        CHECK(reported.front().find("(x pouter y)") != std::string::npos); });
+}
+
+// Why the rule features two conditions: the single-condition form
+// (V pouter V) => ! leaves no record, thus it is re-announced
+// following each subsequent input line, whose run re-derives
+// everything.
+TEST_CASE("polynomial: a reported pouter cycle is not announced again on later input")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        import_polynomial(interactive);
+        collector.clear();
+        interactive.process("y pouter x");
+        interactive.process("x pouter y");
+        REQUIRE_FALSE(contradiction_lines(collector).empty());
+
+        collector.clear();
+        interactive.process("a q b");
+        interactive.process("c q d");
+        interactive.run(true, false, false);
+        CHECK(contradiction_lines(collector).empty()); });
+}
+
+// x pouter y, y pouter z, z pouter x: transitivity derives the reverse
+// of each declared pair, thus each of the three pairs is reported, and
+// each appears exactly once.
+TEST_CASE("polynomial: a longer pouter cycle is reported through the pairs transitivity closes")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        import_polynomial(interactive);
+        interactive.process("x pouter y");
+        interactive.process("y pouter z");
+        collector.clear();
+        interactive.process("z pouter x");
+
+        const std::vector<std::string> reported = contradiction_lines(collector);
+        CHECK(reported.size() == 3);
+        for (const auto& [v, w] : {std::pair{"x", "y"}, std::pair{"y", "z"}, std::pair{"x", "z"}})
+        {
+            const std::string forward  = std::string("(") + v + " pouter " + w + ")";
+            const std::string backward = std::string("(") + w + " pouter " + v + ")";
+            int               naming   = 0;
+            for (const auto& line : reported)
+                if (line.find(forward) != std::string::npos && line.find(backward) != std::string::npos) ++naming;
+            INFO(forward, " / ", backward);
+            CHECK(naming == 1);
+        }
+
+        collector.clear();
+        interactive.process("a q b");
+        CHECK(contradiction_lines(collector).empty()); });
+}
+
+// The closure x pouter z, which transitivity derives, is no cycle. A
+// rule that matched any two chained pouter facts would issue a report
+// here.
+TEST_CASE("polynomial: a strict pouter order reports nothing")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        import_polynomial(interactive);
+        collector.clear();
+        interactive.process("x pouter y");
+        interactive.process("y pouter z");
+        interactive.run(true, false, false);
+        CHECK(contradiction_lines(collector).empty());
+        CHECK_FALSE(has_contradiction(collector));
+
+        // Non-vacuity: the closure exists, so a rule had something to match.
+        collector.clear();
+        interactive.process(R"js(%(string "PO-CLOSURE-" (zelph/exists "x" "pouter" "z")))js");
+        CHECK(any_output_contains(collector, "PO-CLOSURE-true")); });
+}
+
+// The standard route: math.zph derives the adjacent pouter pairs
+// through the ring declaration, polynomial.zph their closure; none of
+// these may be reported, and the identity is still proven.
+TEST_CASE("polynomial: a declared ring reports no cycle and still proves an identity" * doctest::test_suite("slow"))
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import math");
+        collector.clear();
+        interactive.process("<x y z> ~ polyring");
+        interactive.process("? $( (x+y)*(x-y) ) ≡ $( x^2 - y^2 )");
+        CHECK(contradiction_lines(collector).empty());
+        CHECK_FALSE(has_contradiction(collector));
+
+        collector.clear();
+        interactive.process(R"js(%(let [l (zelph/fact (zelph/fact "x" "+" "y") "*" (zelph/fact "x" "-" "y")) r (zelph/fact (zelph/fact "x" "^" (zelph/number "2")) "-" (zelph/fact "y" "^" (zelph/number "2")))] (string "PO-RING-" (zelph/exists (zelph/fact l "≡" r) "=" (zelph/resolve "proven")))))js");
+        CHECK(any_output_contains(collector, "PO-RING-true")); });
 }
 
 TEST_CASE("polynomial: negation and subtraction (all arithmetic modules)" * doctest::test_suite("slow"))

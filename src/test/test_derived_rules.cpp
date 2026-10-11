@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "network/reasoning.hpp"
+#include "network/rule_identity.hpp"
 #include "test_helpers.hpp"
 
 #include <algorithm>
@@ -2517,7 +2518,8 @@ TEST_CASE("derived rules: a data collection bound into generated rules stays a v
         {
             process_lines(interactive, "d has @{x}\ne has @{y}\n" + first + "\n" + second + "\na r b\n");
             CHECK(rules() == 6);
-            CHECK(answers_of("S in O") == std::vector<std::string>{"a in @{x k a}", "a in @{y k a}", "x in @{x k a}", "y in @{y k a}"});
+            // The pattern `k in C` in a generated rule's text is one that nothing derives, hence no printed collection includes `k`.
+            CHECK(answers_of("S in O") == std::vector<std::string>{"a in @{x a}", "a in @{y a}", "x in @{x a}", "y in @{y a}"});
         };
         SUBCASE("two generators over two collections, one order")
         {
@@ -2537,7 +2539,8 @@ e has @{y}
 a r b
 )");
             CHECK(rules() == 6);
-            CHECK(answers_of("S in O") == std::vector<std::string>{"a in @{x k a}", "a in @{y k a}", "x in @{x k a}", "y in @{y k a}"});
+            // The condition `k in C` is a generated rule's condition, a pattern that has not yet been derived by anything, thus no printed collection lists `k`.
+            CHECK(answers_of("S in O") == std::vector<std::string>{"a in @{x a}", "a in @{y a}", "x in @{x a}", "y in @{y a}"});
             CHECK(answers_of("S flagged O").empty());
 
             interactive.process("k r z");
@@ -2566,7 +2569,8 @@ e has @{y}
 a r b
 )");
             CHECK(rules() == 6);
-            CHECK(answers_of("S in O") == std::vector<std::string>{"(k in @{x k a}) in {(k in @{x k a})}", "(k in @{y k a}) in {(k in @{y k a})}", "a in @{x k a}", "a in @{y k a}", "x in @{x k a}", "y in @{y k a}"});
+            // The membership `k in C` belongs to a literal within a rule that has been generated, forming a pattern of the rule's text, thus no printed collection includes `k`.
+            CHECK(answers_of("S in O") == std::vector<std::string>{"(k in @{x a}) in {(k in @{x a})}", "(k in @{y a}) in {(k in @{y a})}", "a in @{x a}", "a in @{y a}", "x in @{x a}", "y in @{y a}"});
         }
         SUBCASE("a pattern membership the generated rule derives")
         {
@@ -2620,15 +2624,38 @@ y q k
 
 TEST_CASE("derived rules: a nested rule a firing writes into a collection or a mention is not answered")
 {
-    // The conditions of the nested rule hold variables from the outer
-    // rule, which the firing substitutes, along with variables unique to
-    // itself: it is a rule's text, partially substituted, and neither a
-    // rule in force nor data. `b s k` is still answered: a firing asserts
-    // the facts nested in what it writes, with the consequence of the
-    // nested rule being one of them.
+    // A firing keeps the condition set of the nested rule exactly as
+    // written, and that set holds variables: the outer rule's own, which
+    // the firing substitutes everywhere else, along with
+    // the nested rule's. In a mention, the instance would be rule text
+    // holding half of a rule that nobody wrote, so the consequence is not
+    // derived in any way ("rule patterns: a firing does not derive a fact
+    // that keeps a variable of a rule it mentions"); it was previously
+    // written and printed. In a collection, the firing builds a value for
+    // the rule's collection, and that check does not enter a value: the
+    // fact around it is derived and answered, and the value holds the same
+    // half of a rule. That is a known residual, pinned below so that a
+    // change is noticed, not a content anyone aims for. Either way, the
+    // nested rule's consequence `b s k` is a part of that rule and is not
+    // answered: the firing marks the ground parts it creates for a rule it
+    // writes, just as the parser marks those of a mention ("derived rules: a
+    // firing that writes a mention claims none of the parts it created").
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        SUBCASE("in a collection")
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+        const auto printed_deduction = [&]
+        {
+            return std::any_of(collector.events().begin(), collector.events().end(), [](const auto& e)
+                               { return e.channel == zelph::io::OutputChannel::Out && normalize(e.text).find("⇐") != std::string::npos; });
+        };
+        interactive.process(".deductions all");
+
+        SUBCASE("in a collection: a known residual, the fact holding half of a rule is answered")
         {
             process_lines(interactive, R"(
 (X p Y) => (X likes @{((X q Y, X r Y) => (X s Y))})
@@ -2636,29 +2663,27 @@ b p k
 c q d
 c r d
 )");
-            collector.clear();
-            interactive.process("S in O");
-            CHECK(collect_answers(collector).empty());
-            collector.clear();
-            interactive.process("S s O");
-            CHECK(collect_answers(collector) == std::vector<std::string>{"b s k"});
+            const auto liked = answered("S likes O");
+            REQUIRE(liked.size() == 1);
+            CHECK(liked.front().find("(X q Y)") != std::string::npos);
+            CHECK(liked.front().find("=> (b s k)") != std::string::npos);
+            CHECK(answered("S in O").empty());
+            CHECK(answered("S s O").empty());
         }
         SUBCASE("in a mention")
         {
+            interactive.process("(X p Y) => (((X q Y, X r Y) => (X s Y)) is noted)");
+            collector.clear();
             process_lines(interactive, R"(
-(X p Y) => (((X q Y, X r Y) => (X s Y)) is noted)
 b p k
 c q d
 c r d
 )");
-            collector.clear();
-            interactive.process("S is noted");
-            CHECK(collect_answers(collector).empty());
-            collector.clear();
-            interactive.process("S s O");
-            CHECK(collect_answers(collector) == std::vector<std::string>{"b s k"});
+            CHECK_FALSE(printed_deduction());
+            CHECK(answered("S is noted").empty());
+            CHECK(answered("S s O").empty());
         }
-        SUBCASE("in a collection, with a fresh variable")
+        SUBCASE("in a collection, with a fresh variable: the same residual")
         {
             process_lines(interactive, R"(
 (X p Y) => (X likes @{((W r X, W s Y) => (c q d))}) (W t X)
@@ -2666,16 +2691,174 @@ e r f
 e s g
 a p b
 )");
-            collector.clear();
-            interactive.process("S in O");
-            CHECK(collect_answers(collector).empty());
-            collector.clear();
-            interactive.process("S q O");
-            CHECK(collect_answers(collector).empty());
+            CHECK(answered("S likes O").size() == 1);
+            CHECK(answered("S in O").empty());
+            CHECK(answered("S q O").empty());
         }
         collector.clear();
         interactive.process(".list-rules");
         CHECK(listed_rules(collector) == 1); });
+}
+
+TEST_CASE("derived rules: a firing that writes a mention claims none of the parts it created")
+{
+    // A typed mention claims none of the parts of the rule ("rule patterns: a
+    // mentioned ground rule claims none of its parts"). A firing that writes
+    // the identical mention must align with it, so it marks the ground parts
+    // it created for the rule that its consequence mentions. Previously, those
+    // parts were considered claims: queries answered them and `.explain`
+    // designated them as axioms. A part that was present prior to the firing
+    // remains unchanged in its prior state. The derived statement regarding
+    // the rule constitutes a claim. A mention that forms part of the typed
+    // rule's own text was marked at the time the rule was written.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("in an object")
+        {
+            process_lines(interactive, R"(
+(X p Y) => (X about ((X r Y) => (X q Y)))
+k p m
+)");
+            CHECK(answered("S about O") == std::vector<std::string>{"k about ((k r m) => (k q m))"});
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S r O").empty());
+
+            collector.clear();
+            interactive.process(".explain (k q m)");
+            CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+        }
+        SUBCASE("in the subject")
+        {
+            process_lines(interactive, R"(
+(X p Y) => (((X q Y) => (X s Y)) is noted)
+b p k
+)");
+            CHECK(answered("S is O") == std::vector<std::string>{"((b q k) => (b s k)) is noted"});
+            CHECK(answered("S q O").empty());
+            CHECK(answered("S s O").empty());
+        }
+        SUBCASE("a part asserted before the firing stays a claim")
+        {
+            process_lines(interactive, R"(
+k r m
+(X p Y) => (X about ((X r Y) => (X q Y)))
+k p m
+)");
+            CHECK(answered("S r O") == std::vector<std::string>{"k r m"});
+
+            collector.clear();
+            interactive.process(".explain (k r m)");
+            CHECK(any_output_contains(collector, "[axiom]"));
+        }
+        SUBCASE("a mention the rule's own text holds")
+        {
+            process_lines(interactive, R"(
+(X p Y) => (X about ((a r b) => (c q d)))
+k p m
+)");
+            CHECK(answered("S about O") == std::vector<std::string>{"k about ((a r b) => (c q d))"});
+            CHECK(answered("S r O").empty());
+            CHECK(answered("S q O").empty());
+        }
+        SUBCASE("a rule over a part does not fire")
+        {
+            // The part is marked in the firing that creates it, before any
+            // other rule could read it as data.
+            process_lines(interactive, R"(
+(A r B) => (A flagged B)
+(X p Y) => (X about ((X r Y) => (X q Y)))
+k p m
+)");
+            CHECK(answered("S about O") == std::vector<std::string>{"k about ((k r m) => (k q m))"});
+            CHECK(answered("S flagged O").empty());
+        }
+        SUBCASE("a part the consequence also writes beside the mention")
+        {
+            // The derived statement claims `k r m`, which stands in its
+            // subject, outside the mentioned rule; `k q m` is what the
+            // mentioned rule alone states. A parsed
+            // `(k r m) about ((k r m) => (k q m))` performs the identical
+            // function. Pinned previously as a pattern: the firing marks what
+            // its whole consequence created, and `k r m` emerged inside the
+            // subject, while nothing revoked a mark for a part that a claim
+            // nests.
+            process_lines(interactive, R"(
+(X p Y) => ((X r Y) about ((X r Y) => (X q Y)))
+k p m
+)");
+            CHECK(answered("S about O") == std::vector<std::string>{"(k r m) about ((k r m) => (k q m))"});
+            CHECK(answered("S r O") == std::vector<std::string>{"k r m"});
+            CHECK(answered("S q O").empty());
+
+            collector.clear();
+            interactive.process(".explain (k r m)");
+            CHECK(any_output_contains(collector, "k r m  [axiom]"));
+        }
+        SUBCASE("after .save and .load")
+        {
+            // A loaded consequence lacks an entry in the genuine-structure
+            // store, causing the check for a mentioned rule to reconstruct its
+            // structure; skipping such a node let the firing claim the parts.
+            const auto file = fs::temp_directory_path() / "zelph_derived_rules_mention_after_load_test.bin";
+            interactive.process("(X p Y) => (X about ((X r Y) => (X q Y)))");
+            interactive.process(".save \"" + file.string() + "\"");
+            interactive.process(".new");
+            interactive.process(".load \"" + file.string() + "\"");
+            fs::remove(file);
+            interactive.process(".auto-run"); // a toggle: .load switched it off
+            interactive.process("k p m");
+
+            CHECK(answered("S about O") == std::vector<std::string>{"k about ((k r m) => (k q m))"});
+            CHECK(answered("S q O").empty());
+
+            collector.clear();
+            interactive.process(".explain (k q m)");
+            CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+        } });
+}
+
+TEST_CASE("derived rules: a firing that writes a mention keeps the collections it builds there as values")
+{
+    // A firing constructs the collection of a mentioned rule as a value
+    // (container_plan), and the memberships of a value constitute its data: it
+    // prints them, and each firing derives them again. Marking them with the
+    // parts of the rule printed the instance as `(k q @{})`, while the next
+    // firing's claim made `c in @{c}` an answer once more, so the answer
+    // depended on the pass. Only the facts created by the firing qualify as
+    // the rule's parts. Single passes ensure that each firing of the same
+    // binding is seen.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions all");
+        interactive.process(".semi-naive off");
+        interactive.process(".auto-run"); // a toggle: off
+        process_lines(interactive, R"(
+(X p Y) => (X about ((X r Y) => (X q @{c})))
+k p m
+)");
+
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            CAPTURE(pass);
+            collector.clear();
+            interactive.process(".run-once");
+            if (pass == 0) CHECK(any_deduction_of(collector, "k about ((k r m) => (k q @{c}))"));
+
+            collector.clear();
+            interactive.process("S in O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"c in @{c}"});
+
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).empty());
+        } });
 }
 
 TEST_CASE("derived rules: a rule with a fresh variable in a bucket gets one witness per binding")
@@ -5340,24 +5523,32 @@ k r k
         }
         SUBCASE("a ground member")
         {
-            // The expression `m in C` constitutes a ground pattern within
-            // the generated rule, one that is not derived through any
-            // firing: the term holds `d` after the typed rule has fired,
-            // and never `m`, which it printed from the start.
+            // The expression `m in C` constitutes a ground pattern in the
+            // rule that has been generated: the term holds `d` after the
+            // typed rule has fired, and not `m`, which it printed from the
+            // start. A firing of the generated rule claims it, because what
+            // it derives holds the membership outside a `=>`, just as the
+            // identical statement typed would; that firing previously left
+            // it a pattern.
             process_lines(interactive, R"(
 (a p b) => (c q @{d})
 (G => (S q C)) => ((X r Y) => ((m in C) noted X))
-k r k
 )");
             interactive.run(true, false, false);
             CHECK(answers("S in O").empty());
-            CHECK(answers("S noted O") == std::vector<std::string>{"(m in @{}) noted k"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r Y) => ((m in @{}) noted X)"));
 
             interactive.process("a p b");
             CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
             collector.clear();
             interactive.process(".list-rules");
             CHECK(any_output_contains(collector, "(X r Y) => ((m in @{d}) noted X)"));
+
+            interactive.process("k r k");
+            CHECK(answers("S noted O") == std::vector<std::string>{"(m in @{d m}) noted k"});
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d m}", "m in @{d m}"});
         }
         SUBCASE("a ground member that the typed rule's firing derives")
         {
@@ -5368,18 +5559,22 @@ k r k
             // `d in @{d}` even though the term holds d. Deriving a
             // statement revokes its mark as a pattern, and a membership of
             // a term that a firing builds is derived.
+            //
+            // `k r k` concludes the sequence: the membership is claimed
+            // by the firing of the generated rule, as demonstrated by
+            // the example above.
             process_lines(interactive, R"(
 (a p b) => (c q @{d})
 (G => (S q C)) => ((X r Y) => ((d in C) noted X))
-k r k
 )");
             interactive.run(true, false, false);
             CHECK(answers("S in O").empty());
-            CHECK(answers("S noted O") == std::vector<std::string>{"(d in @{}) noted k"});
 
             interactive.process("a p b");
             CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
             CHECK(answers("c q O") == std::vector<std::string>{"c q @{d}"});
+
+            interactive.process("k r k");
             CHECK(answers("S noted O") == std::vector<std::string>{"(d in @{d}) noted k"});
         }
         SUBCASE("a rule's conjunction set")
@@ -5397,6 +5592,173 @@ k r k
             collector.clear();
             interactive.process(".list-rules");
             CHECK(any_output_contains(collector, "(X r Y) => ((X in @{k}) noted {(c q d) (a p b)})"));
+        } });
+}
+
+TEST_CASE("derived rules: a data collection holds no membership that a generated rule's text states in it")
+{
+    // A generator that binds a data collection through `(box has C)` writes
+    // rules that name that exact collection. A ground membership stated by
+    // such a rule, `m in C`, therefore functions as a pattern within the
+    // rule's text, located inside a collection that the data holds. No query
+    // produces an answer for it, but the collection printed `m` as one of
+    // its members wherever it appeared: `box has @{d m}`. A data term hides
+    // such a membership (as illustrated in the test case above), and so does
+    // any other data collection, regardless of where the membership is
+    // positioned within the rule or after the rule has been removed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto out = collect_answers(collector);
+            std::ranges::sort(out);
+            return out;
+        };
+        SUBCASE("a ground member of a data collection the generator binds")
+        {
+            // The generator binds the data collection `@{d}` directly, and
+            // the generated rule states `m in @{d}` as a ground pattern
+            // within its text. Although no query answers that membership, the
+            // collection printed m as one of its members regardless of
+            // context -- in the deduction, among the answers, in the
+            // generated rule, and in the outcome derived by the rule:
+            // `box has @{d m}`.
+            collector.clear();
+            process_lines(interactive, R"(
+box has @{d}
+(box has C) => ((X r Y) => ((m in C) noted X))
+)");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "((X r Y) => ((m in @{d}) noted X)) ⇐ (box has @{d})"));
+            CHECK(answers("box has O") == std::vector<std::string>{"box has @{d}"});
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r Y) => ((m in @{d}) noted X)"));
+
+            // What the firing derives claims the membership nested in it,
+            // just as the identical statement typed does, and from that
+            // point forward `m` becomes a member that the collection prints;
+            // the firing previously left it a pattern.
+            interactive.process("k r k");
+            CHECK(answers("S noted O") == std::vector<std::string>{"(m in @{d m}) noted k"});
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d m}", "m in @{d m}"});
+        }
+        SUBCASE("a ground member of a data collection that the generated rule derives")
+        {
+            // The same pattern in a consequence: the collection holds no
+            // m until a firing derives `m in @{d}`, and from that point
+            // onward m becomes a member that a query answers and the
+            // collection prints.
+            process_lines(interactive, R"(
+box has @{d}
+(box has C) => ((X r Y) => (m in C))
+)");
+            interactive.run(true, false, false);
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r Y) => (m in @{d})"));
+
+            interactive.process("k r k");
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d m}", "m in @{d m}"});
+            CHECK(answers("box has O") == std::vector<std::string>{"box has @{d m}"});
+        }
+        SUBCASE("a ground member of a data collection in the generated rule's condition")
+        {
+            // A condition is also a statement within the rule's text:
+            // `k in @{d}` remains a non-member until another rule derives it,
+            // and the generated rule fires solely at that point.
+            process_lines(interactive, R"(
+box has @{d}
+(box has C) => ((k in C) => (box flagged yes))
+)");
+            interactive.run(true, false, false);
+            CHECK(answers("box has O") == std::vector<std::string>{"box has @{d}"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(k in @{d}) => (box flagged yes)"));
+            CHECK(answers("box flagged O").empty());
+
+            process_lines(interactive, R"(
+(box has C) => ((X r Y) => (X in C))
+k r z
+)");
+            interactive.run(true, false, false);
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d k}", "k in @{d k}"});
+            CHECK(answers("box flagged O") == std::vector<std::string>{"box flagged yes"});
+        }
+        SUBCASE("a ground member nested in a membership of another data collection")
+        {
+            // The rule that was generated declares `m in @{d}` within its
+            // membership inside `@{e}`. Determining through a climb starting
+            // from the membership and proceeding through the facts that hold
+            // it ended at a membership within a collection that is neither
+            // rule text nor a set constant, thus `@{e}` hid the outer
+            // membership while `@{d}` continued to output m.
+            process_lines(interactive, R"(
+box has @{d}
+box owns @{e}
+((box has C), (box owns E)) => ((X r Y) => ((m in C) in E))
+)");
+            interactive.run(true, false, false);
+            CHECK(answers("box has O") == std::vector<std::string>{"box has @{d}"});
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}", "e in @{e}"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r Y) => ((m in @{d}) in @{e})"));
+        }
+        SUBCASE("a ground member of a generated rule that .remove-rules took away")
+        {
+            // Removing the rules leaves `m in @{d}` behind, still marked as a
+            // pattern, and no query answers it. The climb found no rule
+            // positioned above it anymore, and the collection printed m once
+            // more.
+            process_lines(interactive, R"(
+box has @{d}
+(box has C) => ((X r Y) => ((m in C) noted X))
+)");
+            interactive.run(true, false, false);
+            interactive.process(".remove-rules");
+            CHECK(answers("box has O") == std::vector<std::string>{"box has @{d}"});
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
+        }
+        SUBCASE("printing a pattern that every firing's conclusion holds visits none of those conclusions")
+        {
+            // Each instance of firing produces an additional fact that holds
+            // `m in @{d}`. During every rendering of `@{d}`, the climb from
+            // membership through the facts that hold it reviewed each such
+            // fact, and from every one of those, it examined the membership
+            // along with all its associated holders. Outputting 300 firings
+            // required seconds, whereas generating 2000 answers consumed over
+            // two minutes. `rule_statement_climb_steps` tracks the number of
+            // facts a climb examines, and printing this collection within the
+            // deductions, the answers, and the rules examines none.
+            //
+            // The membership stands in a rule that each firing mentions: a
+            // conclusion that kept it outside a `=>`,
+            // `(m in @{d}) noted k`, claims it, and a claimed membership
+            // appears in print without a climb.
+            process_lines(interactive, R"(
+box has @{d}
+(box has C) => ((X r Y) => (((m in C) => (X seen m)) noted X))
+)");
+            interactive.run(true, false, false);
+            const uint64_t climbs = zelph::network::rule_statement_climb_steps();
+            interactive.process(R"(%(for i 0 300 (let [k (string "k" i)] (zelph/fact k "r" k))))");
+            interactive.run(true, false, false);
+            std::vector<std::string> noted;
+            for (int i = 0; i < 300; ++i)
+                noted.push_back("((m in @{d}) => (k" + std::to_string(i) + " seen m)) noted k" + std::to_string(i));
+            std::ranges::sort(noted);
+            CHECK(answers("S noted O") == noted);
+            CHECK(answers("S in O") == std::vector<std::string>{"d in @{d}"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r Y) => (((m in @{d}) => (X seen m)) noted X)"));
+            CHECK(zelph::network::rule_statement_climb_steps() == climbs);
         } });
 }
 
@@ -5651,11 +6013,18 @@ TEST_CASE("derived rules: a construction does not start in a cluster that has it
     // name exists, it would be that scratch, and the drop would take the
     // user's statements with it, so the construction refuses to start
     // and the run stops with the error.
+    //
+    // A user is no longer permitted to assign such a name to a cluster:
+    // .cluster, .cluster-merge, zelph/cluster, or zelph_cluster reject one that
+    // starts with "__" (test_clusters.cpp). The C++ API via which the engine
+    // opens its scratches does not reject such names, yet a program that sets a
+    // scratch's name using that API meets this refusal, which stays as the
+    // safeguard behind the others.
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".auto-run");
+    interactive.graph()->set_active_cluster("__construction");
     process_lines(interactive, R"(
-.auto-run
-.cluster __construction
 z1 foo bar
 (K is on) => ((X p Y) => (X t Y))
 (G go H) => ((K is on) => ((X p Y) => (X G Y)))

@@ -274,24 +274,21 @@ namespace zelph::network
         // never marks anything and therefore never takes a lock at all.
         std::atomic<bool> _has_rule_patterns{false};
 
-        // The template scope (see Zelph::enter_template_scope), for every
-        // thread holding it open on this network: its depth, and the
-        // collections written during its open state, which zelph/rule-text
-        // reads. The writers of a rule's text open it: zelph/dedup-rule,
-        // zelph/build-rule, and zelph/rule-text on the script thread, along
-        // with a construction (Reasoning::rebuild_rule) on the thread
-        // executing it. A collection created by another thread in parallel --
-        // for instance, a Janet thread writing data while the script thread
-        // writes a rule -- does not belong to that rule, so the scope remains
-        // tied to the opening thread and the network: two engines within a
-        // single process do not share it. An entry persists as long as its
-        // depth exceeds zero; the count of entries is read before acquiring
-        // the mutex, so a fact written when no rule is being written takes no
-        // lock.
+        // The template scope (see Zelph::enter_template_scope), for each
+        // thread holding it open on this network: its depth. The writers of a
+        // rule's text open it: zelph/dedup-rule, zelph/build-rule, and
+        // zelph/rule-text on the script thread, along with a construction
+        // (Reasoning::rebuild_rule) on the thread executing it. A collection
+        // created by another thread in parallel -- for instance, a Janet
+        // thread writing data while the script thread writes a rule -- does
+        // not belong to that rule, so the scope remains tied to the opening
+        // thread and the network: two engines within a single process do not
+        // share it. An entry persists as long as its depth exceeds zero; the
+        // count of entries is read before acquiring the mutex, so a fact
+        // written when no rule is being written takes no lock.
         struct TemplateScopeState
         {
-            int               depth{0};
-            std::vector<Node> collections;
+            int depth{0};
         };
         mutable std::mutex                                      _template_scopes_mtx;
         std::unordered_map<std::thread::id, TemplateScopeState> _template_scopes;
@@ -362,18 +359,22 @@ namespace zelph::network
         Node                      _pidx_last_var{0};
         mutable std::atomic<bool> _pidx_io_enabled{false};
 
-        // Set during a whole-file load that detected rules previously
-        // stored by an older engine
-        // (Zelph::rules_written_before_template_ids). A save keeps their
-        // counter collections, thereby maintaining the template-id field
-        // as false, causing the next load of the file to re-read the
-        // rules. Cleared by clear_loaded_state, which discards the network
-        // where they were discovered; the view a partial or manifest load
-        // puts in its place is not subjected to scanning.
-        // Zelph::remove_rules prompts a re-scan; a rule eliminated through
-        // alternative means leaves it set until the next load of the saved
-        // file reads the rules again.
-        bool _older_rules{false};
+        // The memberships of the literals that an older engine wrote into
+        // the rule text, recorded during a whole-file load that detected
+        // such rules (Zelph::literals_written_before_template_ids). Their
+        // collections are data within this engine, and the printer continues
+        // to enumerate these members (Zelph::is_older_rule_literal). As long
+        // as any remain, a save keeps their counter collections, thus
+        // preserving the template-id field as false, which leads the next
+        // load of the file to re-read the rules. Cleared via
+        // clear_loaded_state, which discards the network in which they were
+        // discovered; the view substituted by a partial or manifest load is
+        // not subjected to scanning. Zelph::remove_rules prompts a re-scan;
+        // a rule removed by other means leaves its entries until the next
+        // load of the saved file reads the rules. Only a network that an
+        // older engine saved with such rules has entries, one per member of
+        // their literals.
+        std::unordered_set<Node> _older_rule_literals;
 
         int               _max_log_depth{0};
         bool              _logging{false};

@@ -351,11 +351,6 @@ namespace zelph::network
         {
         };
 
-        // How much work the search to find the complete proof may expend
-        // beneath a depth limit before the search within the limit takes
-        // over (see Reasoning::explain).
-        constexpr std::size_t default_explain_budget = 80000;
-
         // When the root holds a clean proof, it may seek a further
         // justification provided no more work has been done since the proof
         // was completed than the amount the proof required, plus the value of

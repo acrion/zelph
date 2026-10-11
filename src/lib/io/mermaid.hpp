@@ -38,6 +38,8 @@ namespace zelph::network
 
 namespace zelph::io
 {
+    // When the page cannot be written, it throws a
+    // std::runtime_error.
     ZELPH_EXPORT void gen_mermaid_html(const network::Zelph* const              z,
                                        network::Node                            start,
                                        std::string                              file_name,

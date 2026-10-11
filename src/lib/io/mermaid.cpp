@@ -31,9 +31,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <fstream>
 #include <map>
 #include <set>
+#include <stdexcept>
+#include <string>
+#include <system_error>
 
 // #define DEBUG_MERMAID
 
@@ -1613,10 +1617,20 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
 </html>
 )";
 
+    // A page that failed to be written was bypassed silently, and the caller
+    // proceeded to print a link to a file that was absent. The explanation
+    // originates in errno where the platform sets it, and only then: errno is
+    // reset first, ensuring that a value carried over from a prior invocation
+    // is never reported.
+    errno = 0;
     std::ofstream out_file(file_name);
-    if (out_file.is_open())
+    if (!out_file.is_open())
     {
-        out_file << html_header << html_escape(mermaid.str()) << html_footer;
-        out_file.close();
+        const int error = errno;
+        throw std::runtime_error("Cannot write the Mermaid page " + file_name
+                                 + (error != 0 ? ": " + std::generic_category().message(error) : std::string{}));
     }
+    out_file << html_header << html_escape(mermaid.str()) << html_footer;
+    out_file.close();
+    if (!out_file) throw std::runtime_error("Cannot write the Mermaid page " + file_name + " completely");
 }

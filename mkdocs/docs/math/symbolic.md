@@ -154,15 +154,15 @@ zelph> (x * &1) = z
 zelph> :simplify (x * &1)
 (:needssimp (x * &1)) ⇐ (:simplify (x * &1))
 (:needssimp x) ⇐ (:needssimp (x * &1))
-(:simp x) ⇐ {(x ~ symvar) (:needssimp x)}
-(:red (x * &1)) ⇐ {(:simp &1) (:simp x) (:needssimp (x * &1))}
+(:simp x) ⇐ {(:needssimp x) (x ~ symvar)}
+(:red (x * &1)) ⇐ {(:needssimp (x * &1)) (:simp x) (:simp &1)}
 ((x * &1) rw x) ⇐ (:red (x * &1))
 ((x * &1) rw z) ⇐ {(:red (x * &1)) ((x * &1) = z)}
-((x * &1) simp x) ⇐ {((x * &1) rw x) (:red (x * &1))}
-((x * &1) simp z) ⇐ {((x * &1) rw z) (:red (x * &1))}
-! ⇐ {((x * &1) simp x) (z != x) ((x * &1) simp z)}
-((:simplify (x * &1)) = x) ⇐ {(:simplify (x * &1)) ((x * &1) simp x)}
-((:simplify (x * &1)) = z) ⇐ {(:simplify (x * &1)) ((x * &1) simp z)}
+((x * &1) simp z) ⇐ {(:red (x * &1)) ((x * &1) rw z)}
+((x * &1) simp x) ⇐ {(:red (x * &1)) ((x * &1) rw x)}
+! ⇐ {(x != z) ((x * &1) simp z) ((x * &1) simp x)}
+((:simplify (x * &1)) = z) ⇐ {((x * &1) simp z) (:simplify (x * &1))}
+((:simplify (x * &1)) = x) ⇐ {((x * &1) simp x) (:simplify (x * &1))}
 Found one or more contradictions!
 ```
 

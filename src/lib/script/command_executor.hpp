@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "repl_state.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -104,10 +105,17 @@ namespace zelph::console
          * @param role Module (a library load, the default) or Session (a file
          *        named on the command line, run as if it had been typed). See
          *        ScriptRole in repl_state.hpp for what the two differ in.
+         * @param lines_done Session only: the number of lines at the start of
+         *        the file that have already executed, enabling reading to
+         *        continue following a `.new` (refer to
+         *        ReplState::reading_session_script).
+         * @return The number of lines executed, calculated beginning at the
+         *         file’s start.
          */
-        void import_file(const std::string&              file,
-                         const std::vector<std::string>& args = {},
-                         ScriptRole                      role = ScriptRole::Module) const;
+        std::size_t import_file(const std::string&              file,
+                                const std::vector<std::string>& args       = {},
+                                ScriptRole                      role       = ScriptRole::Module,
+                                std::size_t                     lines_done = 0) const;
 
         // Non-copyable due to internal state references
         CommandExecutor(const CommandExecutor&)            = delete;

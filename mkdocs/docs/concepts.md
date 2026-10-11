@@ -83,6 +83,17 @@ A parenthesised statement `(s p o)` creates the fact and evaluates to the **stat
 
 Here, the subject of the outer statement is the node representing the inner fact.
 
+The outer statement asserts the inner fact as well: a statement claims itself and every fact nested in it, also those in a set constant or a collection literal it writes, excluding what resides within a rule it mentions (see [Mentioning a Rule Is Not Asserting It](logic.md#mentioning-a-rule-is-not-asserting-it)). The order in which the two were written is irrelevant, so a rule that names the inner fact as its condition fires once a statement holds it:
+
+```
+zelph> (Berlin is-capital-of Germany) => (Germany has-capital yes)
+zelph> atlas lists (Berlin is-capital-of Germany)
+zelph+> X has-capital Y
+Answer: Germany has-capital yes
+```
+
+A statement that a rule derives asserts the facts its consequence writes in the same manner, yet it does not assert the value associated with a variable of the rule: the value the rule binds is claimed exclusively by the statement that asserted it (see [Mentioning a Rule Is Not Asserting It](logic.md#mentioning-a-rule-is-not-asserting-it)).
+
 > Note: A line consisting of only a bare nested fact like `(subject rel object)` is not a valid _top-level_ statement in the REPL; nested facts are meant to be used _as parts_ of a larger statement.
 
 > Note: **two values are separated by whitespace**, so a value written directly
@@ -243,7 +254,7 @@ Answer: bug1 in @{bug3 bug1 bug2}
 Answer: bug2 in @{bug3 bug1 bug2}
 ```
 
-A membership written inside another statement, such as `(X p Y) => ((Y in @{X}) is noted)`, writes into the term in the same manner, since a nested fact is also asserted.
+A membership written within another statement, like `(X p Y) => ((Y in @{X}) is noted)`, writes into the term in the same way, because a statement also asserts the facts nested in it, except when situated inside a rule (see [Parentheses: Nested Facts](#parentheses-nested-facts)).
 
 Note the asymmetry, and that it is the point: quantify over a **set constant**
 to read its members, write into a **collection** to gather results.

@@ -65,14 +65,15 @@ namespace zelph
         Janet               _zelph_peg{};
         bool                _log_janet_functions = false;
 
-        // Set during the execution of a rule's construction -- specifically
-        // while `zelph/dedup-rule` or `zelph/build-rule` (via the
-        // `zelph/rule` macro) runs its thunk: the facts generated within that
-        // context serve as patterns for the rule, not claims, hence
-        // `zelph/fact` must refrain from revoking a pattern marking at that
-        // time. Neither begins while it is set, nor does `zelph/rule*` run
-        // (see refuse_nested_rule), and `zelph/rule-text` leaves the marking
-        // to the build it is in.
+        // Set during the execution of a rule's construction -- more precisely
+        // while `zelph/dedup-rule`, `zelph/build-rule`, the build of the
+        // `zelph/rule` macro, or, outside all of them, `zelph/rule-text` runs
+        // its thunk: the facts generated within that scope function as
+        // patterns for the rule, not assertions, thus `zelph/fact` must avoid
+        // removing a pattern marking at that time. None of the first three
+        // operations initiates while it is set, nor does `zelph/rule*` execute
+        // (refer to refuse_nested_rule), and `zelph/rule-text` delegates the
+        // handling of the marker to the build it is part of.
         bool _building_rule = false;
 
         // Set while a user's Janet BLOCK runs -- `%(...)` in the REPL or in a
@@ -113,6 +114,49 @@ namespace zelph
             ~BlockScope() { _flag = _saved; }
             bool&      _flag;
             const bool _saved;
+        };
+
+        // The statement whose parser-generated code is running, enabling
+        // `zelph/rule-text` to distinguish a mention within a claim from one
+        // within a query. Both build the rule using identical function calls,
+        // with only the end of the statement indicating which one it was:
+        // `S noted ((a p b) => (c q d))` resolves S after the rule it names.
+        // `zelph/rule-text` thus records what a mention created, while
+        // `process_janet` marks it once the statement has succeeded as a
+        // claim. The marks of a query would persist beyond it and hide `a p b`
+        // from a later claim, hence they are discarded, as are those from a
+        // statement that fails, since not all of its variables may have been
+        // resolved at that point. Null outside a parsed statement: Janet code
+        // of the user's own marks at once.
+        struct ParsedStatement
+        {
+            // What each `zelph/rule-text` invocation outside a rule build
+            // created.
+            std::vector<std::vector<network::Node>> mentions;
+            // The collections its `@{...}` literals created outside a rule
+            // build: what the statement says about them is part of the claim
+            // (Zelph::claim_nested); however, a collection merely referenced
+            // by name is not entered.
+            std::vector<network::Node> collections;
+            // Whether a variable was resolved outside every rule build: the
+            // statement asks. The variables of a rule it mentions do not
+            // count.
+            bool asks = false;
+        };
+        ParsedStatement* _statement = nullptr;
+
+        // Save/restore of _statement, just as BlockScope does for a flag.
+        struct StatementScope
+        {
+            StatementScope(ParsedStatement*& current, ParsedStatement* const statement)
+                : _current(current)
+                , _saved(current)
+            {
+                _current = statement;
+            }
+            ~StatementScope() { _current = _saved; }
+            ParsedStatement*&      _current;
+            ParsedStatement* const _saved;
         };
 
         // `janet_dostring` prints the stack trace itself, through `janet_eprintf`,
@@ -193,6 +237,8 @@ namespace zelph
         // The thread that owns _janet_env. zelph/import must run here: the REPL
         // pipeline it delegates to executes Janet code in the main VM, which is
         // not usable from other Janet threads (each has its own VM).
+        // Every function that writes the graph or changes the engine's state also
+        // executes here (require_main_thread).
         std::thread::id _main_thread_id;
 
         enum class NestedOp
@@ -202,6 +248,8 @@ namespace zelph
             Approx,
             Path
         };
+
+        using RuleBuildStep = Janet (*)(Janet);
 
         // --- Implemented in script_engine_setup.cpp ---
 
@@ -253,11 +301,15 @@ namespace zelph
         static Janet  janet_cfun_zelph_negate(int32_t argc, Janet* argv);
         network::Node find_duplicate_rule(const network::Node rule);
         void          refuse_nested_rule(const char* caller) const;
-        JanetSignal   run_rule_build(const char* caller, JanetFunction* thunk, std::string& previous, Janet& out);
+        JanetSignal   run_rule_build(const char* caller, JanetFunction* thunk, std::string& previous, Janet& out, RuleBuildStep build = nullptr);
         static Janet  janet_cfun_zelph_dedup_rule(int32_t argc, Janet* argv);
+        Janet         build_marked_rule(JanetFunction* thunk, RuleBuildStep build);
         static Janet  janet_cfun_zelph_build_rule(int32_t argc, Janet* argv);
-        static Janet  janet_cfun_zelph_rule(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_build_rule_parts(int32_t argc, Janet* argv);
+        Janet         make_rule(int32_t argc, const Janet* argv);
+        static Janet  rule_from_parts(Janet parts);
         static Janet  janet_cfun_zelph_rule_star(int32_t argc, Janet* argv);
+        void          mark_mentioned_rules(const std::vector<network::Node>& created) const;
         static Janet  janet_cfun_zelph_rule_text(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list_chars(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list(int32_t argc, Janet* argv);
@@ -299,6 +351,8 @@ namespace zelph
 
         // --- Implemented in janet_api_commands.cpp ---
 
+        static void  require_main_thread(const char* name);
+        static void  refuse_inside_rule_build(const char* name);
         static Janet janet_cfun_zelph_import(int32_t argc, Janet* argv);
         static Janet command_impl(int32_t argc, Janet* argv, const char* name, const char* command);
         static Janet janet_cfun_zelph_save(int32_t argc, Janet* argv);

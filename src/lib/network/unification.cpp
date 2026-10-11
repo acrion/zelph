@@ -432,9 +432,9 @@ namespace
     {
         Node              node{0}; // concrete node (after variable substitution)
         std::vector<Node> preds;   // climb filter per level, immediate parent's
-                                   // predicate first; 0 = no filter (variable
-                                   // predicate). The final climb to the fact
-                                   // candidates uses the condition's relation.
+                                   // predicate first; 0 = no filter (a predicate
+                                   // holding a variable). The final climb to the
+                                   // fact candidates uses the condition's relation.
     };
 }
 
@@ -503,7 +503,10 @@ static void collect_partial_anchors(
     if (structs->size() == 1)
     {
         const FactStructure& fs = (*structs)[0];
-        const Node           p  = Zelph::Impl::is_var(fs.predicate) ? Node{0} : fs.predicate;
+        // A composite predicate holding a variable, `(A r s)`, does not
+        // function as a filter either: no data statement includes an edge
+        // directed toward the pattern's own node.
+        const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate) ? Node{0} : fs.predicate;
 
         chain.insert(chain.begin(), p);
         collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
@@ -586,8 +589,14 @@ zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, c
     pi.objects              = fs.objects;
 
     {
+        // The predicate within a structured subject that holds a variable --
+        // R in `(X R Y)`, `(A r s)` in `(X (A r s) Y)` -- refers to no node
+        // that a data statement targets, hence, as a hint, it would reject
+        // every candidate, even if R is bound: the hint is the pattern's own
+        // node, not a binding.
         const auto subject_structs = get_fact_structures(n, pi.subject, log_depth);
-        pi.subject_pred_hint       = subject_structs->empty() ? Node{0} : subject_structs->front().predicate;
+        const Node inner           = subject_structs->empty() ? Node{0} : subject_structs->front().predicate;
+        pi.subject_pred_hint       = inner == 0 || Zelph::Impl::is_var(inner) || n->var_in_closure(inner) ? Node{0} : inner;
     }
 
     return pi;
@@ -651,10 +660,13 @@ Unification::Unification(
 
     if (pattern.relation != 0)
     {
-        Node relation      = pattern.relation;
-        _subject           = pattern.subject;
-        _objects           = std::move(pattern.objects); // sink: the by-value parameter is ours
-        _subject_pred_hint = pattern.subject_pred_hint;
+        Node relation = pattern.relation;
+        _subject      = pattern.subject;
+        _objects      = std::move(pattern.objects); // sink: the by-value parameter is ours
+        // The hint functions as a candidate pre-filter of the same kind as
+        // the anchors; therefore `.anchors off`, the reference used to
+        // validate anchor lookups, also disables it.
+        _subject_pred_hint = _n->use_anchors() ? pattern.subject_pred_hint : Node{0};
 
         // A subject or an object that represents a bucket's term is matched
         // and anchored on as that term. One that represents any term stays,
@@ -1568,9 +1580,30 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
     U_LOG(depth, "extract_bindings START RuleSubj=" + U_NODE(_subject) + " FactSubj=" + U_NODE(subject));
 
-    // --- Subject unification ---
     Variables                          base_result;
     std::vector<std::pair<Node, Node>> history;
+
+    // A predicate variable is bound to the candidate's relation before any
+    // other unification, ensuring that every further occurrence -- R in
+    // `(X R Y) R Z`, `Z R (X R Y)` or `R R Z` -- is checked against that
+    // relation. Bound only after the objects, it was taken from the first
+    // nested occurrence instead, and the candidate's own relation was never
+    // subjected to comparison: `(X R Y) R Z` answered `(a p b) p c` for the
+    // statement `(a p b) q c`.
+    //
+    // A candidate whose predicate holds a variable is a pattern left in the
+    // graph by a query or a rule, `(d q b) (R r c) d`, not data: it is
+    // rejected here just as it is for a composite predicate pattern below,
+    // and as a subject or an object holding a variable is rejected further
+    // down.
+    if (_relation_variable != 0 && _variables->count(_relation_variable) == 0)
+    {
+        if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation, _candidates))
+            return results;
+        base_result[_relation_variable] = relation;
+    }
+
+    // --- Subject unification ---
     if (!unify_nodes(_n, _subject, subject, base_result, *_variables, history, _log_depth, _prof, _stand_ins))
     {
         if (_n->logging_active())
@@ -1584,7 +1617,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // --- Predicate unification ---
     // Only for a composite predicate carrying a variable; a fixed one is
     // already the relation this candidate was reached through, and a
-    // predicate VARIABLE is bound at the end of the enumeration below.
+    // predicate VARIABLE was previously bound above, before the subject.
     if (_relation_pattern != 0)
     {
         if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation, _candidates))
@@ -1669,13 +1702,6 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
         if (idx == rule_obj_vec.size())
         {
             auto result = std::make_shared<Variables>(std::move(bindings));
-
-            if (_relation_variable != 0
-                && _variables->count(_relation_variable) == 0
-                && result->count(_relation_variable) == 0)
-            {
-                (*result)[_relation_variable] = relation;
-            }
 
             if (_n->logging_active())
             {

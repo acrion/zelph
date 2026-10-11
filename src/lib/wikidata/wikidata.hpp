@@ -44,6 +44,7 @@ namespace zelph::wikidata
         ~Wikidata() override;
 
         void         load() override;
+        bool         cache_save_failed() const override;
         void         import_all(const std::string& constraints_dir = "");
         void         set_logging(bool do_log) override;
         io::DataType get_type() const override { return io::DataType::Wikidata; }

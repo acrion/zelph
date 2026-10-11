@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,23 @@ namespace zelph::console
         // a notice saying so. Both mark a state the user set and would
         // otherwise have to remember.
         std::string prompt_text() const;
+
+        // What a terminal shows instead of the empty prompt when a statement or
+        // block extends across multiple lines: dots matching the width of the
+        // prompt the statement began under, followed by "> ", such as ".....> "
+        // beneath "zelph> ". It remains empty when no input is being collected.
+        // This behaviour applies solely to interactive input: a pipe or a file
+        // keeps the empty prompt, ensuring that continuation lines in a
+        // transcript appear exactly as originally typed.
+        std::string continuation_prompt_text() const;
+
+        // Print the time an input required, formatted as "-- 12 ms --" on the
+        // diagnostic channel, whenever the `.timer` setting requests it:
+        // consistently enabled via `on`, never enabled via `off`, and only
+        // enabled with `auto` (the default) when the duration reaches 10 ms.
+        // Since both front ends call this after each input, the rule and the
+        // line's formatting are maintained in a single location.
+        void report_timing(std::chrono::nanoseconds elapsed) const;
 
         // Tell the library whether a prompt will follow each run. False for a
         // caller that shows none -- `zelph script.zph` -- where the mark of
